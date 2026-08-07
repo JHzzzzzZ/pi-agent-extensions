@@ -1,0 +1,23 @@
+{
+	"name": "pwr",
+	"version": "2.2.0",
+	"private": true,
+	"type": "module",
+	"description": "PWR (Pi Workflow Runtime) — 合并交付 v2.1.0：v2.0.0 + PiAgentRunner 适配层 (JHL-14)",
+	"engines": {
+		"node": ">=22.18"
+	},
+	"scripts": {
+		"test": "node --test \"test/validator.test.ts\" \"test/interpreter.test.ts\" \"test/plain.test.ts\" \"test/perf.test.ts\" \"test/validate-tool.test.ts\" \"test/entry.test.ts\" \"tests/*.test.ts\" \"runtime/test/*.test.ts\" \"runner/test/*.test.ts\"",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "^0.83.0",
+		"@earendil-works/pi-coding-agent": "^0.83.0",
+		"@earendil-works/pi-tui": "^0.83.0",
+		"@types/node": "^22.0.0",
+		"typebox": "^1.3.10",
+		"typescript": "^5.8.0"
+	}
+}
+
