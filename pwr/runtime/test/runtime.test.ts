@@ -35,6 +35,7 @@ return ${ret};`;
 
 class FakeRunner implements AgentRunner {
 	readonly calls: string[] = [];
+	readonly specs: AgentRunSpec[] = [];
 	private active = 0;
 	maxActive = 0;
 	private readonly behavior: (spec: AgentRunSpec) => Promise<AgentRunResult> | AgentRunResult;
@@ -52,6 +53,7 @@ class FakeRunner implements AgentRunner {
 		this.active++;
 		this.maxActive = Math.max(this.maxActive, this.active);
 		this.calls.push(spec.prompt);
+		this.specs.push(spec);
 		try {
 			return await this.behavior(spec);
 		} finally {
@@ -111,6 +113,19 @@ test("run lifecycle: queued → running → completed, summary delivered once af
 	assert.ok(view.tasks.every((t) => t.status === "completed" && t.attempt === 1));
 	assert.equal(runtime.getRun("r1")?.startedAt !== undefined, true);
 	assert.equal(runtime.getRun("r1")?.endedAt !== undefined, true);
+});
+
+test("agent() per-call model override reaches the runner (JHL-14 regression: dispatch dropped model)", async () => {
+	const runner = new FakeRunner();
+	const runtime = new WorkflowRuntime({ runner });
+	const MODEL = "opencode-go/deepseek-v4-flash";
+	const source = makeScript(`const a = await agent("audit routes", { label: "scan", model: "${MODEL}" });`);
+	await runtime.start({ runId: "r1", script: scriptOf(source) });
+	const view = await waitForTerminal(runtime, "r1");
+	assert.equal(view.status, "completed");
+	assert.equal(runner.specs.length, 1);
+	assert.equal(runner.specs[0]!.model, MODEL, "per-call model override must be forwarded to the runner");
+	assert.equal(runner.specs[0]!.prompt, "audit routes");
 });
 
 test("agent failure fails the run with the engine error code", async () => {
