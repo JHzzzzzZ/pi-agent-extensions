@@ -23,8 +23,18 @@ export const PIPELINE_FANOUT_ESTIMATE = 3;
 
 /** Maximum accepted script source size (bytes). */
 export const MAX_SCRIPT_SIZE = 256 * 1024;
-/** Maximum final summary size delivered back to the main session (bytes). */
+/**
+ * Inline full-summary threshold AND the state/persisted-entry summary cap
+ * (bytes). Results at or below this size are delivered inline unchanged;
+ * larger results are written to `<workflowsDir>/results/<runId>.json` and
+ * the message carries a JSON-safe preview + the file path.
+ */
 export const MAX_FINAL_SUMMARY_SIZE = 8 * 1024;
+/**
+ * Total completion-message budget (bytes): header + preview + path line.
+ * The preview is sized so the final assembled message never exceeds this.
+ */
+export const MAX_MESSAGE_BUDGET_BYTES = 16 * 1024;
 
 export interface WorkflowMeta {
 	name: string;

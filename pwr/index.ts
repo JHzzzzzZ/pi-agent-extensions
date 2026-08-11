@@ -28,6 +28,7 @@ import { confirmApprovalCard, formatPlanText, registerPwrTools, type ApprovalCar
 import { createWorkflowsUi } from "./src/ui/index.ts";
 import type { RunEntryData, UiRuntimeAdapter } from "./src/ui/types.ts";
 import {
+	defaultUserWorkflowsDir,
 	deleteSavedWorkflow,
 	invokeSavedWorkflow,
 	isPwrError,
@@ -35,6 +36,7 @@ import {
 	saveWorkflowCommand,
 	type ApprovalDecision,
 } from "./src/save.ts";
+import { resultPathForSummary } from "./runtime/persist.ts";
 import type { RuntimeAdapter, WorkflowRun } from "./src/types.ts";
 import type { RuntimeRunView } from "./runtime/types.ts";
 import * as os from "node:os";
@@ -115,6 +117,11 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		saveAdapter: null as never, // set below before tools are callable
 	};
 
+	// Over-8KB workflow results land in `<workflowsDir>/results/<runId>.json`
+	// (sibling of the saved-script directory); the completion message and the
+	// persisted entry carry the path.
+	const resultsDir = (): string => path.join(deps.getUserWorkflowsDir?.() ?? defaultUserWorkflowsDir(), "results");
+
 	// ----- saved-workflow command registry (JHL-17) -----
 	// `workflow:<name>` commands are registered once per session (saved on
 	// demand, scanned from disk at session_start). Handlers always read the
@@ -176,6 +183,8 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		// and delivered through the runtime's per-run settle callback (JHL-13
 		// wires `onRunSettled`, see session_start). A settle event for one run
 		// must never flush another run's pending results.
+		undefined,
+		{ resultDir: resultsDir() },
 	);
 	deps.notifier = notifier;
 
@@ -382,6 +391,7 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 				startedAt: view.startedAt,
 				endedAt: view.endedAt,
 				summary: view.summary,
+				resultPath: resultPathForSummary(view.summary, resultsDir(), view.runId),
 				errorCode: view.errorCode,
 				errorMessage: view.errorMessage,
 				tasks: view.tasks.map((t) => ({

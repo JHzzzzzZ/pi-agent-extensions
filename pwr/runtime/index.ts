@@ -36,6 +36,7 @@ import {
 import { RunnerError } from "../runner/errors.ts";
 import type { RuntimeAdapter, WorkflowPlan, WorkflowRunView, WorkflowScript } from "../src/types.ts";
 import { extractPlan as extractStaticPlan } from "../src/plan.ts";
+import { truncateJsonSummary } from "../src/notify.ts";
 import { RunCache, cacheKey, type CacheEntry, type NormalizedAgentInput } from "./cache.ts";
 import { RuntimeError } from "./errors.ts";
 import {
@@ -50,6 +51,7 @@ import { RunScheduler } from "./scheduler.ts";
 import { ALLOWED_OPERATIONS, assertTransition, isTerminal } from "./state.ts";
 import type { RunEvent } from "../src/ui/types.ts";
 import {
+	MAX_FINAL_SUMMARY_SIZE,
 	type AgentTask,
 	type AgentTaskStatus,
 	type RunStage,
@@ -77,6 +79,12 @@ interface RuntimeRunState {
 	script: WorkflowScript;
 	plan: WorkflowPlan;
 	onFinalResult?: (summary: string) => void;
+	/**
+	 * Untruncated final return JSON (may exceed the 8KB state/persist cap).
+	 * Delivered only via onFinalResult so the main session can recover the
+	 * full result; state/persisted views stay bounded.
+	 */
+	fullSummary?: string;
 	controller: AbortController | null;
 	executor: () => Promise<void>;
 	tasks: Map<string, AgentTask>;
@@ -396,6 +404,7 @@ export class WorkflowRuntime implements RuntimeAdapter {
 		assertTransition(state.run.status, "queued");
 		state.run.status = "queued";
 		state.run.summary = undefined;
+		state.fullSummary = undefined;
 		state.run.errorCode = undefined;
 		state.run.startedAt = undefined;
 		state.run.endedAt = undefined;
@@ -446,7 +455,8 @@ export class WorkflowRuntime implements RuntimeAdapter {
 		if (state.run.status === "paused" || state.run.status === "cancelled") return;
 		assertTransition(state.run.status, "completed");
 		state.run.status = "completed";
-		state.run.summary = truncateSummary(formatSummary(result.value));
+		state.fullSummary = formatSummary(result.value);
+		state.run.summary = truncateJsonSummary(state.fullSummary, MAX_FINAL_SUMMARY_SIZE);
 		state.run.errorCode = undefined;
 		state.run.errorMessage = undefined;
 		state.run.endedAt = this.nowFn();
@@ -497,7 +507,7 @@ export class WorkflowRuntime implements RuntimeAdapter {
 		const runId = state.run.runId;
 		if (state.run.status === "completed") {
 			try {
-				state.onFinalResult?.(state.run.summary ?? "");
+				state.onFinalResult?.(state.fullSummary ?? state.run.summary ?? "");
 			} catch {
 				// Observer errors never break the runtime.
 			}

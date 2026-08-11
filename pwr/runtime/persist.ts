@@ -7,8 +7,10 @@
  * sanitized to numeric counters before they may enter an entry.
  */
 
+import * as path from "node:path";
 import { MAX_FINAL_SUMMARY_SIZE, MAX_TASK_ERROR_SIZE, PWR_RUN_ENTRY_VERSION } from "./types.ts";
 import type { AgentTaskStatus, RunStatus, WorkflowMeta, WorkflowRun } from "./types.ts";
+import { truncateJsonSummary } from "../src/notify.ts";
 
 export interface RunEntryPayload {
 	entryVersion: typeof PWR_RUN_ENTRY_VERSION;
@@ -21,6 +23,8 @@ export interface RunEntryPayload {
 	startedAt?: string;
 	endedAt?: string;
 	summary?: string;
+	/** Full-result file (`<resultsDir>/<runId>.json`) when the summary was truncated. */
+	resultPath?: string;
 	errorCode?: string;
 	errorMessage?: string;
 	budget: { agentCalls: number; maxAgents: number; concurrency: number };
@@ -162,8 +166,24 @@ export function serializeRunEntry(
 	// structurally args-free.
 	if (run.startedAt !== undefined) entry.startedAt = run.startedAt;
 	if (run.endedAt !== undefined) entry.endedAt = run.endedAt;
-	if (run.summary !== undefined) entry.summary = truncateSummary(run.summary);
+	if (run.summary !== undefined) entry.summary = truncateJsonSummary(run.summary, MAX_FINAL_SUMMARY_SIZE);
 	if (run.errorCode !== undefined) entry.errorCode = run.errorCode;
 	if (run.errorMessage !== undefined) entry.errorMessage = truncateError(run.errorMessage);
 	return entry;
+}
+
+/**
+ * Full-result file path for a run whose summary carries a truncation marker
+ * (`__pwr_truncated__` JSON marker or the text `[Summary truncated.]`
+ * scalar fallback). Judgment is marker-based, never fs-based: the file is
+ * written by the notifier before the summary is ever persisted.
+ */
+export function resultPathForSummary(
+	summary: string | undefined,
+	resultsDir: string,
+	runId: string,
+): string | undefined {
+	if (typeof summary !== "string") return undefined;
+	if (!summary.includes("__pwr_truncated__") && !summary.includes("[Summary truncated.]")) return undefined;
+	return path.join(resultsDir, `${runId}.json`);
 }

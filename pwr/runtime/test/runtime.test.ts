@@ -498,14 +498,35 @@ test("large final summaries are truncated to the 8KB limit", async () => {
 	const runner = new FakeRunner();
 	const runtime = new WorkflowRuntime({ runner });
 	const source = makeScript(`const arr = [];
-for (let i = 0; i < 30000; i++) { arr.push("x"); }
-return arr.join("");`, "arr.join(\"\")");
+for (let i = 0; i < 30000; i++) { arr.push({ name: "x" + i }); }`, "arr");
 	await runtime.start({ runId: "r1", script: scriptOf(source) });
 	const view = await waitForTerminal(runtime, "r1");
 	assert.equal(view.status, "completed");
 	assert.ok(view.summary !== undefined);
 	assert.ok(Buffer.byteLength(view.summary!, "utf8") <= 8192, "summary size bounded");
-	assert.ok(view.summary!.endsWith("[Summary truncated.]"));
+	const parsed = JSON.parse(view.summary!) as Array<{ __pwr_truncated__?: boolean }>;
+	assert.equal(parsed[parsed.length - 1]?.__pwr_truncated__, true, "truncated summary stays JSON-safe with marker");
+});
+
+test("onFinalResult receives the full untruncated summary while view.summary stays bounded", async () => {
+	const runner = new FakeRunner();
+	const runtime = new WorkflowRuntime({ runner });
+	const received: string[] = [];
+	const expected = JSON.stringify(
+		Array.from({ length: 4000 }, (_, i) => ({ name: "r" + i, body: "x".repeat(80) })),
+	);
+	assert.ok(Buffer.byteLength(expected, "utf8") > 8000, "fixture must exceed the 8KB summary limit");
+	const source = makeScript(`const arr = [];
+for (let i = 0; i < 4000; i++) { arr.push({ name: "r" + i, body: "x".repeat(80) }); }`, "arr");
+	await runtime.start({ runId: "r1", script: scriptOf(source), onFinalResult: (s) => received.push(s) });
+	const view = await waitForTerminal(runtime, "r1");
+	assert.equal(view.status, "completed");
+	assert.equal(received.length, 1, "final result delivered exactly once");
+	assert.equal(received[0], expected, "onFinalResult carries the FULL untruncated summary");
+	assert.ok(Buffer.byteLength(received[0], "utf8") > 8000);
+	assert.ok(view.summary !== undefined);
+	assert.ok(Buffer.byteLength(view.summary!, "utf8") <= 8192, "view.summary stays bounded");
+	assert.ok(JSON.parse(view.summary!), "view.summary stays JSON-safe");
 });
 
 // ------------------------------------------------------------------

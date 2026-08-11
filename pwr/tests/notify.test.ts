@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RunNotifier, type SendMessageFn } from "../src/notify.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { RunNotifier, truncateJsonSummary, type SendMessageFn } from "../src/notify.ts";
 import { controlWorkflow, saveWorkflow, startWorkflow, validateWorkflow, RunRegistry, type FlowDeps } from "../src/flow.ts";
 import { ApprovalStore } from "../src/approval.ts";
 import { ErrorCode } from "../src/errors.ts";
@@ -13,7 +16,7 @@ const files = await agent('list', { label: 'discover', tools: 'readonly' });
 return await agent('summarize', { label: 'verify' });
 `;
 
-function makeNotifier() {
+function makeNotifier(options?: { resultDir?: string }) {
 	const sent: Array<{
 		content: string;
 		details?: Record<string, unknown>;
@@ -25,6 +28,7 @@ function makeNotifier() {
 			sent.push({ content: message.content, details: message.details, options });
 		}) as SendMessageFn,
 		{ onRunSettled: (handler) => settleHandlers.push(handler) },
+		options,
 	);
 	return {
 		notifier,
@@ -181,4 +185,109 @@ test("save: adapter NAME_CONFLICT propagates", async () => {
 	const result = await saveWorkflow(deps as never, { runId: v.runId, scope: "user", name: "dup" });
 	assert.ok("code" in result);
 	assert.equal(result.code, ErrorCode.NAME_CONFLICT);
+});
+
+// ------------------------------------------------------------------
+// over-8KB final results: full JSON to disk + preview/path in message
+// ------------------------------------------------------------------
+
+const BIG_RESULT = () =>
+	JSON.stringify({ repos: Array.from({ length: 400 }, (_, i) => ({ name: "repo-" + i, analysis: "x".repeat(100) })) });
+
+function previewOf(content: string): string {
+	// Message layout: "<header>\n\n<preview>[<path line>]" — preview is JSON.
+	const marker = content.indexOf("\n\n完整结果:");
+	const body = marker === -1 ? content : content.slice(0, marker);
+	return body.slice(body.indexOf("{"));
+}
+
+test("over-8KB JSON results are written to the results file and the message carries the path (message ≤ 16KB)", () => {
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pwr-result-"));
+	try {
+		const { notifier, sent, settle } = makeNotifier({ resultDir: tmpDir });
+		const big = BIG_RESULT();
+		assert.ok(Buffer.byteLength(big, "utf8") > 8 * 1024, "fixture must exceed the inline limit");
+		notifier.queue("r1", "audit", big);
+		settle("r1");
+		assert.equal(sent.length, 1);
+		const content = sent[0]!.content;
+		assert.ok(content.includes("完整结果:"), "message carries the 完整结果 path line");
+		assert.ok(content.includes(path.join(tmpDir, "r1.json")), "path points at the run's results file");
+		assert.ok(Buffer.byteLength(content, "utf8") <= 16 * 1024, "message stays within the 16KB budget");
+		const parsed = JSON.parse(previewOf(content)) as { __pwr_truncated__?: boolean };
+		assert.equal(parsed.__pwr_truncated__, true, "preview is JSON-safe with the truncation marker");
+		assert.equal(
+			fs.readFileSync(path.join(tmpDir, "r1.json"), "utf8"),
+			big,
+			"the results file carries the FULL untruncated JSON",
+		);
+	} finally {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test("over-8KB summary without a results dir still delivers a parseable JSON preview", () => {
+	const { notifier, sent, settle } = makeNotifier();
+	notifier.queue("r1", "audit", BIG_RESULT());
+	settle("r1");
+	assert.equal(sent.length, 1);
+	const content = sent[0]!.content;
+	assert.ok(!content.includes("完整结果:"), "no path line without a results dir");
+	const parsed = JSON.parse(previewOf(content)) as { __pwr_truncated__?: boolean };
+	assert.equal(parsed.__pwr_truncated__, true, "preview stays JSON-safe without a results dir");
+});
+
+test("results-file write failure degrades to preview-only delivery", () => {
+	const blocker = path.join(os.tmpdir(), `pwr-result-blocker-${process.pid}.json`);
+	fs.writeFileSync(blocker, "");
+	try {
+		// resultDir points AT an existing file → mkdirSync throws → degrade.
+		const { notifier, sent, settle } = makeNotifier({ resultDir: blocker });
+		notifier.queue("r1", "audit", BIG_RESULT());
+		settle("r1");
+		assert.equal(sent.length, 1, "message still delivered on write failure");
+		const content = sent[0]!.content;
+		assert.ok(!content.includes("完整结果:"), "no path line when the file could not be written");
+		const parsed = JSON.parse(previewOf(content)) as { __pwr_truncated__?: boolean };
+		assert.equal(parsed.__pwr_truncated__, true, "preview still parseable on write failure");
+	} finally {
+		fs.rmSync(blocker, { force: true });
+	}
+});
+
+// ------------------------------------------------------------------
+// truncateJsonSummary
+// ------------------------------------------------------------------
+
+test("truncateJsonSummary: object root stays valid JSON with the __pwr_truncated__ marker", () => {
+	const out = truncateJsonSummary(BIG_RESULT(), 8192);
+	assert.ok(out.startsWith("{"), "object root preserved");
+	assert.ok(Buffer.byteLength(out, "utf8") <= 8192);
+	const parsed = JSON.parse(out) as { __pwr_truncated__?: boolean };
+	assert.equal(parsed.__pwr_truncated__, true);
+	// Under-budget roots pass through untouched (no marker) and stay parseable.
+	assert.equal(truncateJsonSummary("{}", 8192), "{}");
+	assert.equal(JSON.parse(truncateJsonSummary("{}", 8192)).__pwr_truncated__, undefined);
+});
+
+test("truncateJsonSummary: array root appends a marker object element; scalar roots fall back to the text marker", () => {
+	const arr = JSON.stringify(Array.from({ length: 4000 }, (_, i) => ({ name: "r" + i, body: "x".repeat(80) })));
+	const out = truncateJsonSummary(arr, 8192);
+	const parsed = JSON.parse(out) as Array<{ __pwr_truncated__?: boolean }>;
+	assert.deepEqual(parsed[parsed.length - 1], { __pwr_truncated__: true }, "marker is the last array element");
+	assert.ok(Buffer.byteLength(out, "utf8") <= 8192);
+	assert.equal(truncateJsonSummary("[]", 8192), "[]", "empty array passes through");
+	// Scalar root: no JSON reconstruction (would fabricate data) — text marker.
+	const scalar = truncateJsonSummary("x".repeat(20 * 1024), 8192);
+	assert.ok(scalar.endsWith("[Summary truncated.]"));
+	assert.ok(Buffer.byteLength(scalar, "utf8") <= 8192);
+});
+
+test("truncateJsonSummary: under-cap passthrough and UTF-8 byte safety", () => {
+	assert.equal(truncateJsonSummary("短", 8192), "短");
+	assert.equal(truncateJsonSummary('{"ok":true}', 8192), '{"ok":true}', "small JSON passes through unmangled");
+	const big = "汉".repeat(100_000);
+	const truncated = truncateJsonSummary(big, 8192);
+	assert.ok(Buffer.byteLength(truncated, "utf8") <= 8192);
+	assert.ok(!truncated.includes("\uFFFD"), "no replacement characters — multi-byte chars never split");
 });

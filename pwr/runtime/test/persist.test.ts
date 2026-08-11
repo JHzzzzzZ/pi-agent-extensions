@@ -7,7 +7,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MemoryPersister, sanitizeUsage, serializeRunEntry, truncateError, truncateSummary } from "../persist.ts";
+import * as path from "node:path";
+import { MemoryPersister, resultPathForSummary, sanitizeUsage, serializeRunEntry, truncateError, truncateSummary } from "../persist.ts";
 import type { RunEntryPayload } from "../persist.ts";
 import type { AgentTask, WorkflowRun } from "../types.ts";
 
@@ -148,4 +149,35 @@ test("missing optional fields stay absent", () => {
 	assert.equal(entry.startedAt, undefined);
 	assert.equal(entry.endedAt, undefined);
 	assert.ok(!("args" in entry));
+});
+
+test("serializeRunEntry persists a JSON-safe final summary (truncateJsonSummary)", () => {
+	const big = JSON.stringify({
+		repos: Array.from({ length: 400 }, (_, i) => ({ name: "repo-" + i, analysis: "x".repeat(100) })),
+	});
+	assert.ok(Buffer.byteLength(big, "utf8") > 8192, "fixture must exceed the summary cap");
+	const entry = serializeRunEntry({ ...run, summary: big }, []);
+	assert.ok(entry.summary !== undefined);
+	assert.ok(Buffer.byteLength(entry.summary, "utf8") <= 8192);
+	const parsed = JSON.parse(entry.summary) as { __pwr_truncated__?: boolean };
+	assert.equal(parsed.__pwr_truncated__, true, "persisted summary stays JSON-safe with marker");
+	// Under-cap summaries pass through untouched.
+	const small = serializeRunEntry({ ...run, summary: '{"ok":true}' }, []);
+	assert.equal(small.summary, '{"ok":true}');
+});
+
+test("resultPathForSummary returns the path only when the summary carries a truncation marker", () => {
+	const dir = path.join("C:", "results");
+	assert.equal(
+		resultPathForSummary('{"__pwr_truncated__":true}', dir, "r1"),
+		path.join(dir, "r1.json"),
+		"JSON marker -> results path",
+	);
+	assert.equal(
+		resultPathForSummary('...\n\n[Summary truncated.]', dir, "r1"),
+		path.join(dir, "r1.json"),
+		"text marker -> results path (scalar fallback still recoverable via file)",
+	);
+	assert.equal(resultPathForSummary('{"ok":true}', dir, "r1"), undefined, "no marker -> no path");
+	assert.equal(resultPathForSummary(undefined, dir, "r1"), undefined);
 });
