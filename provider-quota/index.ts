@@ -1,5 +1,5 @@
 /**
- * provider-quota.ts — Pi extension
+ * provider-quota/index.ts — Pi extension
  *
  * 查询当前 provider 的账户额度/余额，并显示在终端底部（footer status 行）。
  *
@@ -36,7 +36,7 @@
  *
  * API Key 解析：从 ~/.pi/agent/auth.json 按 provider id 读取 key，不使用环境变量。
  *
- * 安装：把本文件放到 ~/.pi/agent/extensions/provider-quota.ts（全局）或 .pi/extensions/ 下（项目级），
+ * 安装：把本目录复制到 ~/.pi/agent/extensions/provider-quota/（全局）或 .pi/extensions/provider-quota/（项目级），
  *       然后在 pi 里执行 /reload。
  */
 import { readFile } from "node:fs/promises";

@@ -1,5 +1,5 @@
 /**
- * safe-git-autocommit.ts — Pi extension
+ * safe-git-autocommit/index.ts — Pi extension
  *
  * 双层架构：
  *   Layer 1 — 诊断基线（只读，fail-closed 事件驱动）
@@ -14,8 +14,8 @@
  *     但允许在通过后执行 git init / git commit --only（仅候选路径，不 push）。
  *     保留前次诊断基线的只读安全基线，作为退出时/手动诊断的兜底。
  *
- * 安装：放到 ~/.pi/agent/extensions/safe-git-autocommit.ts（全局）
- *       或 .pi/extensions/（项目级），/reload 生效。
+ * 安装：把本目录复制到 ~/.pi/agent/extensions/safe-git-autocommit/（全局）
+ *       或 .pi/extensions/safe-git-autocommit/（项目级），/reload 生效。
  *
  * 依赖：pi / @earendil-works/pi-coding-agent (ExtensionAPI, ExtensionContext)
  *       typebox (Type) — pi 内置提供。

@@ -31,7 +31,7 @@ PWR (`pwr/`) is layered, with `src/types.ts` as the shared contract hub (`Runtim
 - `pwr/src/` + `pwr/src/ui/` — orchestration contracts and TUI layer.
 - `pwr/test/`, `pwr/tests/`, `pwr/runtime/test/`, `pwr/runner/test/` — node:test suites (see Testing).
 - `pwr/vendor/` — vendored acorn 8.18.0 (`acorn.mjs` + hand-rolled `acorn.d.mts` + license); generated file, don't modify. Imported only by `engine/parser.ts` so PWR has zero runtime npm deps.
-- Satellites: `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (single file, no package.json), `safe-git-autocommit/` (safe-git-autocommit.ts + sga-selftest.ts + package.json without `pi` field), `run-timer/` (single file + test, no package.json).
+- Satellites: `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `safe-git-autocommit/` (index.ts + sga-selftest.ts + package.json without `pi` field), `run-timer/` (index.ts + test, no package.json). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy.
 
 ## Development Commands
 
@@ -93,7 +93,7 @@ Other patterns:
 - TypeScript ^5.8 (5.9.3 resolved); `@earendil-works/pi-*` ^0.83.0 as devDependencies only — the host Pi environment resolves them at runtime.
 - Pi extension API surface used across the workspace: `pi.on` (`session_start`, `agent_start`, `agent_settled`, `turn_start/end`, `model_select`, `message_start/update/end`, `input`, `before_agent_start`, `tool_call`, `tool_result`), `pi.registerCommand`, `pi.registerTool`, `pi.registerProvider`, `pi.registerShortcut`, `pi.registerEntryRenderer`, `pi.appendEntry`, `pi.sendMessage`, `ctx.ui.setStatus/setWidget/notify`, `ctx.sessionManager.getEntries`.
 - Config via env vars (`CHATANYWHERE_API_KEY`, `CHATANYWHERE_BASE_URL`) or `~/.pi/agent/auth.json` keyed by provider id (provider-quota — explicitly not env vars).
-- Install shapes differ: directory copies (pwr, stream-token-speed; chatanywhere-provider with `pi.extensions: ["./index.ts"]` manifest) vs single-file installs (provider-quota, safe-git-autocommit, run-timer).
+- Install shape: all extensions are directories with an `index.ts` entry point (chatanywhere-provider additionally declares `pi.extensions: ["./index.ts"]` in its package.json); copy the directory into `extensions/` and pi loads it automatically.
 
 ## Testing & QA
 

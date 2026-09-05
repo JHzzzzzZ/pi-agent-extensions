@@ -10,7 +10,7 @@
  *
  * 运行：npx tsx sga-selftest.ts
  */
-import { runGit, captureBaseline, diagnose, sanitizeMessage, executeSafeGitCommit } from "./safe-git-autocommit.ts";
+import { runGit, captureBaseline, diagnose, sanitizeMessage, executeSafeGitCommit } from "./index.ts";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

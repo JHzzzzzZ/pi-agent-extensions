@@ -5,8 +5,8 @@ import runTimer, {
   visualLen,
   truncateVisual,
   buildDisplayLine,
-} from "./run-timer.ts";
-import type { TimerState } from "./run-timer.ts";
+} from "./index.ts";
+import type { TimerState } from "./index.ts";
 
 // Mock setInterval/clearInterval to prevent real timers and track active ones
 const activeTimers = new Set<ReturnType<typeof setInterval>>();
