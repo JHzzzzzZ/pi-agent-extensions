@@ -58,8 +58,9 @@ members:
 
 要点：
 - **leader.prompt 是整个功能的核心入口**——你在这里教 leader 如何完成任务（拆解策略、派发规则、验收标准）。扩展会自动追加团队花名册、`team_dispatch` 用法与最终报告格式。
+- **leader 默认拥有全部内置工具**（读写文件、bash 等）。若要限制 leader 亲自动手（例如只让它拆解派发），在团队文件里设置 `leader.tools`（如 `tools: [read, grep, find, ls]`）。实测中 leader 可能会用编辑工具自行"降级代写"或修订团队配置——不希望如此就收紧它的工具。
 - `worktree: true` 的成员在 `~/.pi/agent/teams/worktrees/<runId>/<member>`（分支 `team/<runId>/<member>`）中工作，改动留在该分支**不自动合并**，结果中附路径与分支名，由 leader/用户决定整合；要求当前目录是 git 仓库。
-- 文件是唯一事实来源：手改后下一次派单即生效；删除文件即删除团队（`/reload` 后动态命令消失）。
+- 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（`/reload` 后动态命令消失）。
 
 ### 3. 派单与复用
 
