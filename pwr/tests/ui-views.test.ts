@@ -6,6 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { PWR_SHORTCUTS, shortcutHint } from "../src/ui/keybindings.ts";
 import {
 	RUN_STATUS_GLYPH,
 	formatAgentLine,
@@ -165,7 +166,9 @@ test("detail view covers PRD 4.3 sections and command reachability", () => {
 	assert.ok(text.includes("/workflows:stop"));
 	assert.ok(text.includes("/workflows:restart"));
 	assert.ok(text.includes("/workflows:save"));
-	assert.ok(text.includes("ctrl+alt+p"));
+	assert.ok(text.includes(`  ${shortcutHint("pause")}  pause run`));
+	assert.ok(text.includes(shortcutHint("stop")));
+	assert.ok(text.includes(shortcutHint("restart")));
 	assert.ok(text.includes("[!] large run (40 agents)"));
 });
 

@@ -1,8 +1,9 @@
 /**
  * PWR UI - /workflows command parsing and control dispatch (JHL-15)
  *
- * Pure argument parsing + action dispatch. Every keyboard operation (p/x/r)
- * is ALSO reachable as a command (PRD 4.3: 键盘和命令均须可达):
+ * Pure argument parsing + action dispatch. Every keyboard operation (keys
+ * defined in keybindings.ts, the single source of truth) is ALSO reachable
+ * as a command (PRD 4.3: 键盘和命令均须可达):
  *
  *   /workflows                     - run list
  *   /workflows <runId>             - run detail
@@ -29,11 +30,9 @@ import { confirmApprovalCard, formatPlanText } from "../tools.ts";
 import type { RunStatus } from "../types.ts";
 import type { PwrErrorResult } from "../types.ts";
 import type { MemoryRunStore } from "./run-store.ts";
+import { PWR_SHORTCUTS } from "./keybindings.ts";
 
 export const WORKFLOWS_COMMAND = "workflows";
-export const SHORTCUT_PAUSE = "ctrl+alt+p";
-export const SHORTCUT_STOP = "ctrl+alt+x";
-export const SHORTCUT_RESTART = "ctrl+alt+r";
 
 export type WorkflowsParse =
 	| { kind: "help" }
@@ -199,6 +198,8 @@ export function workflowsHelpText(): string {
 		"  /workflows:approve <runId>     approve a run waiting for approval",
 		"  /workflow-delete <name>        delete a saved workflow",
 		"Keys (operate on the last viewed run):",
-		`  ${SHORTCUT_PAUSE} pause · ${SHORTCUT_STOP} stop · ${SHORTCUT_RESTART} restart agent`,
+		`  ${Object.values(PWR_SHORTCUTS)
+			.map((s) => `${s.key} ${s.action}`)
+			.join(" · ")}`,
 	].join("\n");
 }

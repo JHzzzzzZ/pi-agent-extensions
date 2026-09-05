@@ -9,6 +9,7 @@
  */
 
 import type { RunStatus } from "../types.ts";
+import { shortcutHint } from "./keybindings.ts";
 import type { AgentView, RunDetail, RunListEntry, StageView } from "./types.ts";
 import { COST_WARN_USD } from "./types.ts";
 
@@ -202,10 +203,10 @@ export function formatRunDetail(detail: RunDetail): string {
 
 	lines.push("");
 	lines.push("Actions (commands + keys):");
-	lines.push(`  /workflows:pause ${detail.runId.slice(0, 8)}    [ctrl+alt+p]  pause run`);
+	lines.push(`  /workflows:pause ${detail.runId.slice(0, 8)}    ${shortcutHint("pause")}  pause run`);
 	lines.push(`  /workflows:resume ${detail.runId.slice(0, 8)}                 resume run`);
-	lines.push(`  /workflows:stop ${detail.runId.slice(0, 8)}      [ctrl+alt+x]  stop run (or one agent)`);
-	lines.push(`  /workflows:restart ${detail.runId.slice(0, 8)} <taskId>  [ctrl+alt+r]  restart agent`);
+	lines.push(`  /workflows:stop ${detail.runId.slice(0, 8)}      ${shortcutHint("stop")}  stop run (or one agent)`);
+	lines.push(`  /workflows:restart ${detail.runId.slice(0, 8)} <taskId>  ${shortcutHint("restart")}  restart agent`);
 	lines.push(`  /workflows:save ${detail.runId.slice(0, 8)}      save as command`);
 	lines.push(`  /workflows:script ${detail.runId.slice(0, 8)}    view raw script`);
 	lines.push(`  /workflows      list all runs`);

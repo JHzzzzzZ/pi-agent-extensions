@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseControlArgs, parseWorkflowsArgs, resolveRunId, runApproveAction, runControlAction, workflowsHelpText } from "../src/ui/commands.ts";
+import { PWR_SHORTCUTS } from "../src/ui/keybindings.ts";
 import { MemoryRunStore } from "../src/ui/run-store.ts";
 import { RunRegistry, type FlowDeps } from "../src/flow.ts";
 import { ApprovalStore } from "../src/approval.ts";
@@ -141,9 +142,19 @@ test("help text lists both commands and shortcuts (keyboard AND commands reachab
 	assert.ok(help.includes("/workflows:save"));
 	assert.ok(help.includes("/workflows:approve"));
 	assert.ok(help.includes("/workflow-delete"));
-	assert.ok(help.includes("ctrl+alt+p"));
-	assert.ok(help.includes("ctrl+alt+x"));
-	assert.ok(help.includes("ctrl+alt+r"));
+	assert.ok(help.includes(PWR_SHORTCUTS.pause.key));
+	assert.ok(help.includes(PWR_SHORTCUTS.stop.key));
+	assert.ok(help.includes(PWR_SHORTCUTS.restart.key));
+});
+
+test("shortcut registry pins exact keys (update here + keybindings.ts when deliberately rebinding)", () => {
+	// Guards against accidental key drift and collisions with other extensions
+	// (plan-mode owns ctrl+alt+p; see src/ui/keybindings.ts history note).
+	assert.equal(PWR_SHORTCUTS.pause.key, "ctrl+alt+z");
+	assert.equal(PWR_SHORTCUTS.stop.key, "ctrl+alt+x");
+	assert.equal(PWR_SHORTCUTS.restart.key, "ctrl+alt+r");
+	const keys = Object.values(PWR_SHORTCUTS).map((s) => s.key);
+	assert.equal(new Set(keys).size, keys.length, "shortcut keys must be unique");
 });
 
 // ---------- /workflows:approve (runApproveAction) ----------

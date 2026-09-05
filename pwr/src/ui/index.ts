@@ -12,9 +12,6 @@ import type { ToolDeps } from "../tools.ts";
 import type { RunStatus, WorkflowPlan, WorkflowScript, WorkflowRun } from "../types.ts";
 import { PWR_RUN_ENTRY } from "../types.ts";
 import {
-	SHORTCUT_PAUSE,
-	SHORTCUT_RESTART,
-	SHORTCUT_STOP,
 	parseControlArgs,
 	parseWorkflowsArgs,
 	resolveRunId,
@@ -27,6 +24,7 @@ import { MemoryRunStore } from "./run-store.ts";
 import { createRunEntryRenderer, refreshUiStatus, runCardSummaryLine } from "./renderer.ts";
 import type { RunEntryData, UiRuntimeAdapter } from "./types.ts";
 import { formatRunDetail, formatRunList, formatStatus } from "./views.ts";
+import { PWR_SHORTCUTS } from "./keybindings.ts";
 
 export interface WorkflowsUi {
 	store: MemoryRunStore;
@@ -303,9 +301,9 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		},
 	});
 
-	// ----- shortcuts (operate on the last viewed run) -----
-	pi.registerShortcut(SHORTCUT_PAUSE, {
-		description: "Pause the last viewed PWR run",
+	// ----- shortcuts (operate on the last viewed run; keys from keybindings.ts) -----
+	pi.registerShortcut(PWR_SHORTCUTS.pause.key, {
+		description: PWR_SHORTCUTS.pause.description,
 		handler: async (ctx) => {
 			if (!lastViewedRunId) {
 				ctx.ui.notify("No PWR run viewed yet — open one with /workflows <runId> first.", "warning");
@@ -315,8 +313,8 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		},
 	});
 
-	pi.registerShortcut(SHORTCUT_STOP, {
-		description: "Stop the last viewed PWR run",
+	pi.registerShortcut(PWR_SHORTCUTS.stop.key, {
+		description: PWR_SHORTCUTS.stop.description,
 		handler: async (ctx) => {
 			if (!lastViewedRunId) {
 				ctx.ui.notify("No PWR run viewed yet — open one with /workflows <runId> first.", "warning");
@@ -326,8 +324,8 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		},
 	});
 
-	pi.registerShortcut(SHORTCUT_RESTART, {
-		description: "Restart an agent of the last viewed PWR run",
+	pi.registerShortcut(PWR_SHORTCUTS.restart.key, {
+		description: PWR_SHORTCUTS.restart.description,
 		handler: async (ctx) => {
 			if (!lastViewedRunId) {
 				ctx.ui.notify("No PWR run viewed yet — open one with /workflows <runId> first.", "warning");
