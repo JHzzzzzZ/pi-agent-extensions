@@ -12,6 +12,31 @@
 
 ## 安装
 
+本仓库是一个标准 **pi 包**（根目录 `package.json` 带 `pi` manifest，keyword `pi-package`）。推荐通过 `pi install` 安装，由 pi 统一管理并支持升级；也可手动复制（开发调试用）。
+
+要求：**Node.js ≥ 22.18**（原生 TS type-stripping，无构建步骤、无 bundler）。
+
+### 方式一：pi install（推荐）
+
+```bash
+# 全局安装（写入 ~/.pi/agent/settings.json，跟随默认分支）
+pi install git:github.com/JHzzzzzZ/pi-agent-extensions
+
+# 或仅当前项目使用（写入项目 .pi/settings.json，项目信任后启动自动补装）
+pi install -l git:github.com/JHzzzzzZ/pi-agent-extensions
+
+# 免安装试用（仅本次运行，装到临时目录）
+pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
+```
+
+安装后由 pi 统一管理：
+
+- **升级**：仓库 push 后执行 `pi update --extensions`（或 `pi update --all`）拉取最新即可
+- `pi list` 查看已装包；`pi config` 可单独启停包内的某个扩展
+- 如需锁定版本，可带 tag 安装（如 `pi install git:...@v1.0.0`）；此时 `pi update` 只把克隆对齐到该 ref，不会自动跳新版本，升级需重新 `pi install git:...@新tag`
+
+### 方式二：手动复制（开发调试）
+
 将扩展目录复制到 `~/.pi/agent/extensions/`（全局）或可信项目 `.pi/extensions/`（项目级），然后在 Pi 中执行 `/reload` 生效。卸载 = 删除目录。每个扩展目录均以 `index.ts` 为入口（pi 自动发现约定：`extensions/*/index.ts`），整目录复制即可被自动加载。
 
 ```text
@@ -20,7 +45,7 @@
 ...
 ```
 
-要求：**Node.js ≥ 22.18**（原生 TS type-stripping，无构建步骤、无 bundler）。
+> 两种方式不要混用同一扩展，否则会重复加载（命令/状态条重复注册）。从手动复制切换到 `pi install` 时，先删除 `extensions/` 下的旧拷贝。
 
 ---
 
