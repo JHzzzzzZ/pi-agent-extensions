@@ -5,6 +5,9 @@
  *   /loop at 15:00 <任务>  一次性提醒（本地时刻）
  *   /loop list | pause <id> | resume <id> | delete <id> | clear
  *
+ * agent 工具（tools.ts）：loop_create / loop_list / loop_delete，
+ * 供模型用自然语言创建与管理定时任务。
+ *
  * 到期任务经 pi.sendMessage(deliverAs: "followUp") 在回合间送达：
  * agent 空闲则开新 turn，正在响应则排队到当前 turn 结束。
  * 任务以全量快照持久化为自定义会话条目（loop-tasks-v1），随会话恢复；
@@ -15,6 +18,7 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseLoopCommand, formatInterval, type CreateSpec } from "./parse.ts";
+import { registerLoopTools } from "./tools.ts";
 import {
   clearTasks,
   createTask,
@@ -245,6 +249,8 @@ export default function (pi: ExtensionAPI) {
       }
     },
   });
+
+  registerLoopTools(pi, { tasks, genId, persist, refreshWidget });
 
   pi.on("session_start", async (_event, ctx) => {
     stopSession();

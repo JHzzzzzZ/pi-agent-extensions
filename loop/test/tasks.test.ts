@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   MAX_TASKS,
+  MAX_TASK_LEN,
   RECURRING_TTL_MS,
   clearTasks,
   createTask,
@@ -79,6 +80,22 @@ describe("createTask", () => {
     assert.ok(!r.ok);
     assert.match(r.message, /上限/);
     assert.equal(tasks.length, MAX_TASKS);
+  });
+
+  it(`任务内容超过 ${MAX_TASK_LEN} 字符拒绝`, () => {
+    const tasks: LoopTask[] = [];
+    const r1 = createTask(tasks, { task: "x".repeat(MAX_TASK_LEN), recurring: false, fireAtMs: BASE, nowMs: BASE }, genId);
+    assert.ok(r1.ok);
+    const r2 = createTask(tasks, { task: "x".repeat(MAX_TASK_LEN + 1), recurring: false, fireAtMs: BASE, nowMs: BASE }, genId);
+    assert.ok(!r2.ok);
+    assert.match(r2.message, /过长/);
+  });
+
+  it("循环任务缺 intervalMs 拒绝（防御工具调用方）", () => {
+    const tasks: LoopTask[] = [];
+    const r = createTask(tasks, { task: "x", recurring: true, fireAtMs: BASE, nowMs: BASE }, genId);
+    assert.ok(!r.ok);
+    assert.match(r.message, /间隔/);
   });
 });
 

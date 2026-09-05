@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseLoopCommand, formatInterval, MIN_INTERVAL_MS } from "../parse.ts";
+import { parseLoopCommand, parseSchedule, formatInterval, MIN_INTERVAL_MS } from "../parse.ts";
 import type { CreateSpec } from "../parse.ts";
 
 // 固定"当前时刻"：本地 2026-09-05 10:00:00
@@ -176,5 +176,49 @@ describe("formatInterval", () => {
     assert.equal(formatInterval(86_400_000), "1d");
     assert.equal(formatInterval(172_800_000), "2d");
     assert.equal(formatInterval(90_000), "90s");
+  });
+});
+
+describe("parseSchedule（agent 工具用）", () => {
+  const atMs = (hh: number, mm: number, dayOffset = 0): number => {
+    const d = new Date(BASE);
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(hh, mm, 0, 0);
+    return d.getTime();
+  };
+
+  it("循环：every 5m / 5m / 2 hours / every 2 hours", () => {
+    const r1 = parseSchedule("every 5m", BASE);
+    assert.ok(r1.ok && r1.value.recurring && r1.value.intervalMs === 300_000);
+    const r2 = parseSchedule("5m", BASE);
+    assert.ok(r2.ok && r2.value.recurring && r2.value.intervalMs === 300_000);
+    const r3 = parseSchedule("2 hours", BASE);
+    assert.ok(r3.ok && r3.value.recurring && r3.value.intervalMs === 7_200_000);
+    const r4 = parseSchedule("every 2 hours", BASE);
+    assert.ok(r4.ok && r4.value.recurring && r4.value.intervalMs === 7_200_000);
+  });
+
+  it("循环：30s 向上取整到 1m", () => {
+    const r = parseSchedule("30s", BASE);
+    assert.ok(r.ok && r.value.recurring && r.value.intervalMs === MIN_INTERVAL_MS);
+  });
+
+  it("一次性：in 30m", () => {
+    const r = parseSchedule("in 30m", BASE);
+    assert.ok(r.ok && !r.value.recurring && r.value.fireAtMs === BASE + 1_800_000);
+  });
+
+  it("一次性：at 15:00 今天未过 → 今天；at 09:00 已过 → 明天", () => {
+    const r1 = parseSchedule("at 15:00", BASE);
+    assert.ok(r1.ok && !r1.value.recurring && r1.value.fireAtMs === atMs(15, 0));
+    const r2 = parseSchedule("at 09:00", BASE);
+    assert.ok(r2.ok && !r2.value.recurring && r2.value.fireAtMs === atMs(9, 0, 1));
+  });
+
+  it("非法输入全部报错", () => {
+    for (const bad of ["", "abc", "every", "0m", "in", "in 30m extra", "at", "at 25:00", "at 15:00 extra", "5m extra"]) {
+      const r = parseSchedule(bad, BASE);
+      assert.ok(!r.ok, `"${bad}" 应解析失败`);
+    }
   });
 });

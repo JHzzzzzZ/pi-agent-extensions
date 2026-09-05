@@ -84,6 +84,10 @@ function createFakePi() {
     getArgumentCompletions?: (prefix: string) => unknown;
     handler: (args: string, ctx: unknown) => Promise<void> | void;
   }>();
+  const tools = new Map<string, {
+    name: string;
+    execute: (toolCallId: string, params: Record<string, unknown>, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => Promise<unknown>;
+  }>();
   const widgets = new Map<string, { id: string; content?: string[] }>();
   const sent: Array<{ message: Record<string, unknown>; options: Record<string, unknown> }> = [];
   const persisted: Array<{ type: string; data: unknown }> = [];
@@ -118,6 +122,7 @@ function createFakePi() {
 
   const api = {
     _commands: commands,
+    _tools: tools,
     _widgets: widgets,
     _sent: sent,
     _persisted: persisted,
@@ -135,6 +140,9 @@ function createFakePi() {
     },
     registerCommand: (name: string, opts: { description?: string; getArgumentCompletions?: (prefix: string) => unknown; handler: (args: string, ctx: unknown) => Promise<void> | void }) => {
       commands.set(name, opts);
+    },
+    registerTool: (tool: { name: string; execute: (toolCallId: string, params: Record<string, unknown>, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => Promise<unknown> }) => {
+      tools.set(tool.name, tool);
     },
     appendEntry: (type: string, data?: unknown) => {
       if (appendEntryThrows) throw new Error("disk full");
@@ -154,6 +162,11 @@ function createFakePi() {
       if (!cmd) throw new Error("no /loop command");
       await cmd.handler(args, ctx);
     },
+    runTool: async (name: string, params: Record<string, unknown>) => {
+      const tool = tools.get(name);
+      if (!tool) throw new Error(`no tool ${name}`);
+      return (await tool.execute("call1", params, undefined, undefined, ctx)) as ToolResult;
+    },
     lastNotification: () => notifications[notifications.length - 1],
     failNextAppendEntry: () => {
       appendEntryThrows = true;
@@ -161,6 +174,16 @@ function createFakePi() {
   };
 
   return api;
+}
+
+interface ToolResult {
+  content: Array<{ type: string; text: string }>;
+  details?: Record<string, unknown>;
+  isError?: boolean;
+}
+
+function toolText(result: ToolResult): string {
+  return result.content.map((c) => c.text).join("\n");
 }
 
 type FakePi = ReturnType<typeof createFakePi>;
@@ -517,5 +540,128 @@ describe("生命周期", () => {
     loopFactory(fake as never);
     await fake.fire("session_start");
     assert.equal(fake._persisted.length, 0);
+  });
+});
+
+// ---------- agent 工具 ----------
+
+describe("agent 工具注册", () => {
+  it("注册 loop_create / loop_list / loop_delete 三个工具", () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    for (const name of ["loop_create", "loop_list", "loop_delete"]) {
+      assert.ok(fake._tools.has(name), `missing tool ${name}`);
+    }
+  });
+});
+
+describe("loop_create 工具", () => {
+  it("创建循环任务：返回文本 + details.loopId + 落盘 + widget 刷新", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const result = await fake.runTool("loop_create", { task: "检查部署状态", schedule: "every 5m" });
+    assert.equal(result.isError, undefined);
+    assert.match(toolText(result), /已创建 loop/);
+    assert.match(toolText(result), /每 5m/);
+    assert.ok(typeof result.details?.loopId === "string");
+    assert.equal(fake._persisted.length, 1);
+    const data = fake._persisted[0]!.data as { tasks: LoopTask[] };
+    assert.equal(data.tasks[0]!.nextDueAt, BASE + 300_000);
+    assert.ok(fake._widgets.has("loop"));
+  });
+
+  it("创建一次性任务：in 30m 与 at 15:00", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const r1 = await fake.runTool("loop_create", { task: "取快递", schedule: "in 30m" });
+    assert.ok(typeof r1.details?.nextDueAt === "number" && r1.details.nextDueAt === BASE + 1_800_000);
+
+    const expectedAt = (() => {
+      const d = new Date(BASE);
+      d.setHours(15, 0, 0, 0);
+      return d.getTime() > BASE ? d.getTime() : (() => {
+        const d2 = new Date(BASE);
+        d2.setDate(d2.getDate() + 1);
+        d2.setHours(15, 0, 0, 0);
+        return d2.getTime();
+      })();
+    })();
+    const r2 = await fake.runTool("loop_create", { task: "发布版本", schedule: "at 15:00" });
+    assert.ok(typeof r2.details?.nextDueAt === "number" && r2.details.nextDueAt === expectedAt);
+    assert.equal(fake._persisted.length, 2);
+  });
+
+  it("非法调度 / 过长任务 / 达到上限 → isError", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const badSchedule = await fake.runTool("loop_create", { task: "x", schedule: "abc" });
+    assert.equal(badSchedule.isError, true);
+    assert.match(toolText(badSchedule), /无法识别调度/);
+
+    const tooLong = await fake.runTool("loop_create", { task: "x".repeat(2001), schedule: "every 5m" });
+    assert.equal(tooLong.isError, true);
+    assert.match(toolText(tooLong), /过长/);
+    assert.equal(fake._persisted.length, 0);
+
+    seedSnapshot(
+      fake,
+      Array.from({ length: 50 }, (_, i) => rawTask({ id: `c${String(i).padStart(2, "0")}`, recurring: true, nextDueAt: BASE + 60_000 })),
+    );
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    const atCap = await fake.runTool("loop_create", { task: "x", schedule: "every 5m" });
+    assert.equal(atCap.isError, true);
+    assert.match(toolText(atCap), /上限/);
+  });
+
+  it("工具创建的任务真实生效：到期触发 sendMessage", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    await fake.runTool("loop_create", { task: "工具创建的任务", schedule: "in 1s" });
+    fakeNow = BASE + 2_000;
+    fireTick();
+    assert.equal(fake._sent.length, 1);
+    assert.ok(String(fake._sent[0]!.message.content).includes("工具创建的任务"));
+  });
+});
+
+describe("loop_list / loop_delete 工具", () => {
+  it("list：空与非空", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const empty = await fake.runTool("loop_list", {});
+    assert.match(toolText(empty), /没有定时任务/);
+
+    await fake.runTool("loop_create", { task: "任务甲", schedule: "5m" });
+    await fake.runTool("loop_create", { task: "任务乙", schedule: "10m" });
+    const listed = await fake.runTool("loop_list", {});
+    assert.match(toolText(listed), /当前 2 个任务/);
+    assert.equal(listed.details?.count, 2);
+  });
+
+  it("delete：前缀删除成功、未找到报错", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    const created = await fake.runTool("loop_create", { task: "要删的任务", schedule: "every 10m" });
+    const loopId = String(created.details?.loopId);
+
+    const deleted = await fake.runTool("loop_delete", { id: loopId.slice(0, 4) });
+    assert.equal(deleted.isError, undefined);
+    assert.match(toolText(deleted), /已删除/);
+    assert.equal(deleted.details?.loopId, loopId);
+
+    const missing = await fake.runTool("loop_delete", { id: "zzzz" });
+    assert.equal(missing.isError, true);
+    assert.match(toolText(missing), /未找到/);
   });
 });

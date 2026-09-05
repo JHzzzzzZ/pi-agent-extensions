@@ -23,6 +23,7 @@ export interface LoopTask {
 }
 
 export const MAX_TASKS = 50;
+export const MAX_TASK_LEN = 2000;
 export const RECURRING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FALLBACK_INTERVAL_MS = 60_000;
 
@@ -42,6 +43,12 @@ export function createTask(
 ): { ok: true; task: LoopTask } | { ok: false; message: string } {
   if (tasks.length >= MAX_TASKS) {
     return { ok: false, message: `已达上限（每会话最多 ${MAX_TASKS} 个任务），请先用 /loop delete 清理` };
+  }
+  if (input.task.length > MAX_TASK_LEN) {
+    return { ok: false, message: `任务内容过长（最多 ${MAX_TASK_LEN} 字符）` };
+  }
+  if (input.recurring && (input.intervalMs === undefined || input.intervalMs <= 0)) {
+    return { ok: false, message: "循环任务必须提供正的间隔" };
   }
   const task: LoopTask = {
     id: genId(),

@@ -151,3 +151,44 @@ export function formatInterval(ms: number): string {
   if (ms % 60_000 === 0) return `${ms / 60_000}m`;
   return `${Math.round(ms / 1000)}s`;
 }
+
+export type ScheduleSpec = { recurring: true; intervalMs: number } | { recurring: false; fireAtMs: number };
+
+/**
+ * 供 agent 工具（loop_create）解析独立的调度描述，语法与 /loop 命令一致：
+ *   "every 5m" / "5m" / "2 hours"  → 循环
+ *   "in 30m"                       → 延时一次性
+ *   "at 15:00"                     → 本地时刻一次性（已过则排到明天）
+ * 整串必须恰好是一个调度描述（多余的词视为错误）。
+ */
+export function parseSchedule(raw: string, nowMs: number): ParseResult<ScheduleSpec> {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false, message: "缺少调度描述" };
+
+  const tokens = trimmed.split(/\s+/);
+  let hadEvery = false;
+  if (tokens[0]?.toLowerCase() === "every") {
+    hadEvery = true;
+    tokens.shift();
+  }
+
+  if (!hadEvery && tokens[0]?.toLowerCase() === "in") {
+    const taken = takeDuration(tokens.slice(1));
+    if (!taken || taken.rest.length > 0) return { ok: false, message: '无法识别延时，例如 "in 30m"' };
+    return { ok: true, value: { recurring: false, fireAtMs: nowMs + taken.durationMs } };
+  }
+
+  if (!hadEvery && tokens[0]?.toLowerCase() === "at") {
+    const at = tokens.length === 2 && tokens[1] !== undefined ? AT_RE.exec(tokens[1]) : null;
+    if (!at) return { ok: false, message: '无法识别时刻，例如 "15:00"（24 小时制）' };
+    const fireAtMs = resolveAtTime(Number(at[1]), Number(at[2]), nowMs);
+    if (fireAtMs === undefined) return { ok: false, message: `无效时间 "${tokens[1]}"，应为 HH:MM（24 小时制）` };
+    return { ok: true, value: { recurring: false, fireAtMs } };
+  }
+
+  const taken = takeDuration(tokens);
+  if (taken && taken.rest.length === 0) {
+    return { ok: true, value: { recurring: true, intervalMs: normalizeRecurringInterval(taken.durationMs) } };
+  }
+  return { ok: false, message: '无法识别调度，例如 "every 5m"、"in 30m"、"at 15:00"' };
+}
