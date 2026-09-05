@@ -64,11 +64,17 @@ function elapsedLabel(startedAtMs: number, nowMs: number): string {
   return mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
 }
 
-/** One-line bounded summary of a tool call (transcript display). */
-function toolEntryText(prefix: string, toolName: string, payload: unknown): string {
+/** One-line bounded summaries of tool calls/results (transcript display). */
+function toolCallText(toolName: string, payload: unknown): string {
   const single = (text: string): string => text.replace(/\s+/g, " ").trim();
   const payloadText = payload === undefined || payload === null ? "" : ` ${single(JSON.stringify(payload))}`;
-  const text = single(`${prefix}${toolName}${payloadText}`);
+  const text = single(`${toolName}${payloadText}`);
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+}
+
+function toolResultText(toolName: string, result: unknown): string {
+  const single = (text: string): string => text.replace(/\s+/g, " ").trim();
+  const text = single(`${toolName}${result === undefined || result === null ? "" : ` → ${result}`}`);
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
@@ -313,7 +319,7 @@ export class TeamRunCoordinator {
       }
       if (event.type === "tool_execution_start") {
         // Transcript keeps every leader tool call; progress only tracks dispatch.
-        recordTranscript("tool", toolEntryText("▶ ", event.toolName, event.args));
+        recordTranscript("tool", toolCallText(event.toolName, event.args));
         if (event.toolName !== "team_dispatch") return;
         const tasks = (event.args as { tasks?: Array<{ agent?: string; task?: string }> } | undefined)?.tasks;
         if (Array.isArray(tasks)) {
@@ -330,7 +336,7 @@ export class TeamRunCoordinator {
         return;
       }
       if (event.type === "tool_execution_end") {
-        recordTranscript("tool", toolEntryText("  ✓ ", event.toolName, event.text));
+        recordTranscript("tool", toolResultText(event.toolName, event.text));
         if (event.toolName !== "team_dispatch") return;
         const members = parseDispatchMemberResults(event.details);
         if (members) {

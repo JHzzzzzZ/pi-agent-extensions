@@ -1,27 +1,87 @@
 /**
- * agent-team — full-screen run transcript viewer
+ * agent-team — full-page run transcript viewer
  *
- * Renders per-actor run transcripts (leader + members) in a centered
- * overlay with keyboard navigation — the same idea as pi-subagents' fleet
- * inspector, fed by the run artifacts written by transcript.ts.
+ * Renders each actor (leader + members) as one bordered full-page chat
+ * transcript — a continuous chronological flow like the main agent's own
+ * conversation view, not per-message timestamp blocks. Fed by the run
+ * artifacts written by transcript.ts (same idea as pi-subagents' fleet
+ * inspector).
+ *
+ * The page is a complete box (title in the top border, key legend in the
+ * bottom border, side borders on every row) sized from the live terminal
+ * height (~82%), so it reads as a clearly separated surface over the main
+ * agent UI. Assistant text is rendered with the same Markdown component +
+ * theme the host uses for its own messages.
  *
  * All rendering and key handling is pure and unit-tested without pi-tui;
- * `TranscriptViewer` is the thin host component (pi-tui Component) and
- * `openTranscriptViewer` the thin host opener (ctx.ui.custom overlay).
+ * styling, Markdown, and terminal dimensions are injected ports.
+ * `TranscriptViewer` is the thin host component and `openTranscriptViewer`
+ * the thin host opener.
  */
 
-import type { Component } from "@earendil-works/pi-tui";
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { Markdown, type Component } from "@earendil-works/pi-tui";
+import { getMarkdownTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { type TranscriptEntry } from "./transcript.ts";
+
+// ---------------------------------------------------------------------------
+// Style port (identity in tests; theme-backed in the host)
+// ---------------------------------------------------------------------------
+
+/** Style functions used by the pure renderer. */
+export interface Styles {
+  dim: (text: string) => string;
+  border: (text: string) => string;
+  accent: (text: string) => string;
+  success: (text: string) => string;
+  error: (text: string) => string;
+  warning: (text: string) => string;
+  /** User-message bubble background (task entries). */
+  bubble: (text: string) => string;
+}
+
+/** Unstyled port (tests). */
+export function plainStyles(): Styles {
+  const identity = (text: string): string => text;
+  return {
+    dim: identity,
+    border: identity,
+    accent: identity,
+    success: identity,
+    error: identity,
+    warning: identity,
+    bubble: identity,
+  };
+}
+
+/** Theme-backed port (host). All lookups are exception-isolated. */
+export function themeStyles(theme: Theme): Styles {
+  const fg = (color: Parameters<Theme["fg"]>[0]) => (text: string): string => {
+    try {
+      return theme.fg(color, text);
+    } catch {
+      return text;
+    }
+  };
+  return {
+    dim: fg("dim"),
+    border: fg("border"),
+    accent: fg("accent"),
+    success: fg("success"),
+    error: fg("error"),
+    warning: fg("warning"),
+    bubble: (text: string): string => {
+      try {
+        return theme.bg("userMessageBg", text);
+      } catch {
+        return text;
+      }
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // View model
 // ---------------------------------------------------------------------------
-
-/** Visible transcript rows inside the frame (fixed so scrolling is deterministic). */
-export const VIEWER_BODY_HEIGHT = 22;
-/** Total frame height: header + tabs + rule + body + rule + footer. */
-export const VIEWER_FRAME_HEIGHT = VIEWER_BODY_HEIGHT + 5;
 
 /** One selectable transcript source in the viewer. */
 export interface ViewerActor {
@@ -60,23 +120,35 @@ export function initialViewerState(): ViewerState {
   return { actorIndex: 0, scroll: 0, follow: true, showTools: true };
 }
 
-const STATUS_ICONS: Record<string, string> = {
-  queued: "…",
-  running: "▶",
-  done: "✓",
-  completed: "✓",
-  failed: "✗",
-  aborted: "⊘",
-};
+type StatusStyle = "dim" | "accent" | "success" | "error" | "warning";
 
-function statusIcon(status: string | undefined): string {
-  if (!status) return "…";
-  return STATUS_ICONS[status] ?? "·";
+function statusDisplay(status: string | undefined): { icon: string; style: StatusStyle } {
+  switch (status) {
+    case "running":
+      return { icon: "▶", style: "accent" };
+    case "done":
+    case "completed":
+      return { icon: "✓", style: "success" };
+    case "failed":
+      return { icon: "✗", style: "error" };
+    case "aborted":
+      return { icon: "⊘", style: "warning" };
+    case "queued":
+      return { icon: "…", style: "dim" };
+    default:
+      return { icon: "·", style: "dim" };
+  }
+}
+
+function applyStyle(styles: Styles, name: StatusStyle, text: string): string {
+  return styles[name](text);
 }
 
 // ---------------------------------------------------------------------------
-// Pure text helpers (CJK-aware wrapping)
+// Width helpers (ANSI- and CJK-aware)
 // ---------------------------------------------------------------------------
+
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 /** Display width of one character (East Asian wide = 2, else 1). */
 export function charWidth(ch: string): number {
@@ -122,123 +194,247 @@ export function wrapText(text: string, width: number): string[] {
   return out.length > 0 ? out : [""];
 }
 
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, "");
+}
+
+/** Display width ignoring ANSI escape sequences. */
+export function visibleWidth(text: string): number {
+  let width = 0;
+  for (const ch of stripAnsi(text)) width += charWidth(ch);
+  return width;
+}
+
+/** Pads a (possibly styled) line with trailing spaces to the display width. */
+export function padLine(line: string, width: number): string {
+  const pad = width - visibleWidth(line);
+  return pad > 0 ? line + " ".repeat(pad) : line;
+}
+
+/** Truncates plain text to the display width with an ellipsis (chrome lines). */
+export function truncateVisible(text: string, width: number): string {
+  if (width < 1) return "";
+  let out = "";
+  let lineWidth = 0;
+  for (const ch of text) {
+    const w = charWidth(ch);
+    if (lineWidth + w > width - 1) return `${out}…`;
+    out += ch;
+    lineWidth += w;
+  }
+  return out;
+}
+
 function timestampOf(entry: TranscriptEntry): string {
   return entry.ts.length >= 19 ? entry.ts.slice(11, 19) : "";
 }
 
 // ---------------------------------------------------------------------------
-// Entry rendering
+// Block model: continuous chat flow, not per-message segments
 // ---------------------------------------------------------------------------
 
+type Block =
+  | { kind: "task"; text: string }
+  | { kind: "assistant"; text: string; ts: string }
+  | { kind: "tools"; lines: string[] }
+  | { kind: "error"; text: string; ts: string }
+  | { kind: "system"; text: string; ts: string };
+
+/** Old artifacts baked ▶/✓ icons into tool text; strip them for uniform styling. */
+function stripLegacyToolPrefix(text: string): string {
+  return text.replace(/^[▶✓\s]+/, "");
+}
+
 /**
- * Renders one transcript entry to display lines: assistant messages get a
- * timestamped rule line followed by their full wrapped text; other kinds
- * render as compact single blocks (wrapped).
+ * Groups entries into continuous blocks: consecutive tool rows merge into
+ * one block, every assistant message is its own block, task/error/system
+ * stand alone. The renderer separates blocks with a single blank line —
+ * one chronological flow per agent page.
  */
-export function entryLines(entry: TranscriptEntry, width: number): string[] {
-  const ts = timestampOf(entry);
-  if (entry.kind === "assistant") {
-    const rule = `─ ${ts} `;
-    const pad = Math.max(0, Math.min(width, 40) - rule.length);
-    return [`${rule}${"─".repeat(pad)}`, ...wrapText(entry.text, width)];
+export function buildBlocks(entries: TranscriptEntry[], showTools: boolean): Block[] {
+  const blocks: Block[] = [];
+  for (const entry of entries) {
+    if (entry.kind === "tool") {
+      if (!showTools) continue;
+      const line = stripLegacyToolPrefix(entry.text);
+      if (line.length === 0) continue;
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "tools") last.lines.push(line);
+      else blocks.push({ kind: "tools", lines: [line] });
+      continue;
+    }
+    if (entry.kind === "assistant") {
+      blocks.push({ kind: "assistant", text: entry.text, ts: timestampOf(entry) });
+    } else if (entry.kind === "task") {
+      blocks.push({ kind: "task", text: entry.text });
+    } else if (entry.kind === "error") {
+      blocks.push({ kind: "error", text: entry.text, ts: timestampOf(entry) });
+    } else if (entry.kind === "system") {
+      blocks.push({ kind: "system", text: entry.text, ts: timestampOf(entry) });
+    }
   }
-  const prefix = entry.kind === "task" ? "◆ 任务: " : entry.kind === "error" ? "✗ " : entry.kind === "system" ? "ℹ " : "";
-  const body = ts ? `${ts} ${prefix}${entry.text}` : `${prefix}${entry.text}`;
-  return wrapText(body, width);
+  return blocks;
 }
 
-/** Kinds hidden when tool rows are toggled off. */
-function entryVisible(entry: TranscriptEntry, showTools: boolean): boolean {
-  return showTools || entry.kind !== "tool";
+/** Renders one block to display lines (already width-fitted). */
+export function blockLines(
+  block: Block,
+  width: number,
+  styles: Styles,
+  renderMarkdown?: (text: string, width: number) => string[],
+): string[] {
+  switch (block.kind) {
+    case "task": {
+      const wrapped = wrapText(block.text, width - 2);
+      return wrapped.map((line, i) => styles.bubble(padLine(i === 0 ? `❯ ${line}` : `  ${line}`, width)));
+    }
+    case "assistant": {
+      const label = styles.dim(`▸ assistant${block.ts ? ` · ${block.ts}` : ""}`);
+      const body = renderMarkdown ? renderMarkdown(block.text, width - 2) : wrapText(block.text, width);
+      return [label, ...body];
+    }
+    case "tools":
+      return block.lines.map((line) => styles.dim(`· ${truncateVisible(line, width - 2)}`));
+    case "error":
+      return wrapText(`✗ ${block.text}`, width).map((line) => styles.error(line));
+    case "system":
+      return wrapText(`ℹ ${block.text}`, width).map((line) => styles.dim(line));
+  }
 }
 
-/** All body lines for one actor (filtered + styled; unwindowed). */
+/** All body lines for one actor (block-separated continuous flow). */
 export function bodyLines(
   entries: TranscriptEntry[],
   showTools: boolean,
   width: number,
-  dim: (text: string) => string,
+  styles: Styles,
+  renderMarkdown?: (text: string, width: number) => string[],
 ): string[] {
+  const blocks = buildBlocks(entries, showTools);
   const lines: string[] = [];
-  for (const entry of entries) {
-    if (!entryVisible(entry, showTools)) continue;
-    const rendered = entryLines(entry, width);
-    const isSpeech = entry.kind === "assistant" || entry.kind === "error";
-    for (const line of rendered) lines.push(isSpeech ? line : dim(line));
+  for (const block of blocks) {
+    if (lines.length > 0) lines.push("");
+    lines.push(...blockLines(block, width, styles, renderMarkdown));
+  }
+  if (lines.length === 0) {
+    lines.push(styles.dim("（暂无记录，等待子进程事件…）"));
   }
   return lines;
 }
 
 // ---------------------------------------------------------------------------
-// Frame rendering
+// Bordered frame (~82% of the terminal, clear separation from the main UI)
 // ---------------------------------------------------------------------------
 
-function tabsLine(actors: ViewerActor[], state: ViewerState, width: number): string {
-  const parts = actors.map((actor, index) => {
-    const marker = index === state.actorIndex ? "▸" : " ";
-    return `${marker}[${index + 1}] ${actor.label} ${statusIcon(actor.status)}`;
+/** Chrome rows of the frame: top border + member tabs + bottom border. */
+export const VIEWER_CHROME_ROWS = 3;
+
+/**
+ * Frame height for a terminal with `rows` rows: ~82% of the screen,
+ * at least 12 rows (very small terminals let the TUI clip).
+ */
+export function computeFrameHeight(rows: number): number {
+  if (!Number.isFinite(rows) || rows <= 0) return 24;
+  return Math.max(12, Math.min(Math.floor(rows * 0.82), rows - 2));
+}
+
+function topBorder(data: ViewerData, width: number, styles: Styles): string {
+  const status = data.elapsed ? `${data.runStatus} · ${data.elapsed}` : data.runStatus;
+  const title = `agent-team · team ${data.team} · ${status} · ${data.runId || "(no run)"}`;
+  const room = Math.max(4, width - 5);
+  const shown = truncateVisible(title, room);
+  const pad = Math.max(1, width - visibleWidth(`╭─ ${shown} `) - 1);
+  return styles.border(`╭─ `) + shown + styles.border(` ${"─".repeat(pad)}╮`);
+}
+
+function tabsRow(data: ViewerData, state: ViewerState, width: number, styles: Styles): string {
+  const parts = data.actors.map((actor, index) => {
+    const { icon, style } = statusDisplay(actor.status);
+    const iconText = applyStyle(styles, style, icon);
+    const current = index === state.actorIndex;
+    const base = `${index + 1} ${actor.label} `;
+    return current ? styles.accent(`▸${base}`) + iconText : styles.dim(base) + iconText;
   });
-  const line = parts.join("  ");
-  return line.length > width ? `${line.slice(0, Math.max(0, width - 1))}…` : line;
+  const position =
+    data.actors.length > 0 ? styles.dim(`成员 ${Math.min(state.actorIndex + 1, data.actors.length)}/${data.actors.length}`) : "";
+  const tabs = parts.join(styles.dim("  "));
+  const gap = width - visibleWidth(tabs) - visibleWidth(position) - 2;
+  return gap > 1 ? `${tabs}${" ".repeat(gap)}${position}` : tabs;
 }
 
-function emptyBodyHint(data: ViewerData, dim: (text: string) => string): string[] {
-  if (data.actors.length === 0) {
-    return [dim("当前没有可查看的 run 记录。用 /team:run <团队> <任务> 派单后即可查看成员会话记录。")];
+function bottomBorder(data: ViewerData, state: ViewerState, width: number, styles: Styles): string {
+  const legend = "↑↓ 滚动 · ←→/1-9 成员 · g/G 首末 · x 工具行 · q 关闭";
+  const hasPosition = data.actors.length > 0;
+  const position = hasPosition ? `成员 ${Math.min(state.actorIndex + 1, data.actors.length)}/${data.actors.length}` : "";
+  const segmentWidth = (legendText: string): number =>
+    3 + visibleWidth(legendText) + (hasPosition ? 3 + visibleWidth(position) + 1 : 1) + 1;
+  let shownLegend = legend;
+  if (segmentWidth(shownLegend) > width) {
+    shownLegend = truncateVisible(legend, Math.max(4, width - segmentWidth("") - 1));
   }
-  return [dim("（暂无记录，等待子进程事件…）")];
+  const pad = Math.max(1, width - segmentWidth(shownLegend));
+  return (
+    styles.border(`╰─ `) +
+    styles.dim(shownLegend) +
+    (hasPosition ? styles.border(` ─ `) + styles.dim(position) : styles.border(` `)) +
+    styles.border(` ${"─".repeat(pad)}╯`)
+  );
 }
 
-/** Clamps scroll/follow against the current body size. */
-export function clampViewerState(state: ViewerState, totalLines: number, bodyHeight: number): ViewerState {
-  const maxScroll = Math.max(0, totalLines - bodyHeight);
-  if (state.follow) return { ...state, scroll: maxScroll };
-  return { ...state, scroll: Math.min(Math.max(0, state.scroll), maxScroll) };
+/** Wraps a body/chrome line with the side borders, padding to full width. */
+function sideWrap(line: string, width: number, styles: Styles): string {
+  return styles.border("│ ") + padLine(line, width) + styles.border(" │");
 }
 
 /**
- * Renders the full viewer frame: header, actor tabs, rule, a fixed-height
- * transcript body window, rule, and the key legend. Always returns exactly
- * `bodyHeight + 5` lines regardless of content size.
+ * Renders the full bordered frame: title top border, member tabs, a
+ * fixed-height continuous-transcript body window, and the key-legend
+ * bottom border. Always returns exactly `bodyHeight + VIEWER_CHROME_ROWS`
+ * lines.
  */
 export function renderViewerFrame(
   data: ViewerData,
   state: ViewerState,
   width: number,
-  opts: { dim: (text: string) => string; bodyHeight?: number },
+  opts: {
+    styles: Styles;
+    bodyHeight: number;
+    renderMarkdown?: (text: string, width: number) => string[];
+  },
 ): string[] {
-  const dim = opts.dim;
-  const bodyHeight = opts.bodyHeight ?? VIEWER_BODY_HEIGHT;
-
-  const status = data.elapsed ? `${data.runStatus} · ${data.elapsed}` : data.runStatus;
-  const header = dim(` agent-team · team ${data.team} · ${status} · ${data.runId || "(no run)"}`);
-  const tabs = dim(tabsLine(data.actors, state, width));
-  const rule = dim("─".repeat(Math.max(0, width)));
+  const styles = opts.styles;
+  // Side borders take "│ " + " │" = 4 columns.
+  const inner = Math.max(10, width - 4);
 
   const actor = data.actors[state.actorIndex];
   const entries = actor ? (data.entries.get(actor.actor) ?? []) : [];
-  const lines = data.actors.length > 0 ? bodyLines(entries, state.showTools, width, dim) : emptyBodyHint(data, dim);
-  const clamped = clampViewerState(state, lines.length, bodyHeight);
-  const window = lines.slice(clamped.scroll, clamped.scroll + bodyHeight);
-  while (window.length < bodyHeight) window.push("");
+  const lines = bodyLines(entries, state.showTools, inner, styles, opts.renderMarkdown);
+  const clamped = clampViewerState(state, lines.length, opts.bodyHeight);
+  const window = lines.slice(clamped.scroll, clamped.scroll + opts.bodyHeight);
+  while (window.length < opts.bodyHeight) window.push("");
 
-  const position = data.actors.length > 0 ? dim(` 成员 ${Math.min(state.actorIndex + 1, data.actors.length)}/${data.actors.length}`) : "";
-  const footer = dim(" ↑↓滚动 · ←→/1-9 成员 · g/G首末 · x 工具行 · q/Esc 关闭");
-
-  return [header, tabs, rule, ...window, rule, footer + position];
+  return [
+    topBorder(data, width, styles),
+    sideWrap(tabsRow(data, state, inner, styles), inner, styles),
+    ...window.map((line) => sideWrap(line, inner, styles)),
+    bottomBorder(data, state, width, styles),
+  ];
 }
 
 /** Plain-text transcript dump for the team_transcript tool (no frame). */
 export function formatTranscriptText(
   data: ViewerData,
   actor: string,
-  opts: { dim?: (text: string) => string } = {},
+  opts: { styles?: Styles; renderMarkdown?: (text: string, width: number) => string[] } = {},
 ): string {
-  const dim = opts.dim ?? ((t: string) => t);
+  const styles = opts.styles ?? plainStyles();
   const target = data.actors.find((a) => a.actor === actor);
   if (!target) return `没有 "${actor}" 的会话记录。`;
   const entries = data.entries.get(target.actor) ?? [];
-  const lines = [`## ${target.label}（${target.status ?? "unknown"}）· run ${data.runId}`, ...bodyLines(entries, true, 100, dim)];
+  const lines = [
+    `## ${target.label}（${target.status ?? "unknown"}）· run ${data.runId}`,
+    ...bodyLines(entries, true, 100, styles, opts.renderMarkdown),
+  ];
   return lines.join("\n");
 }
 
@@ -339,15 +535,26 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
 // Host component + opener (thin; not unit-tested — repo convention)
 // ---------------------------------------------------------------------------
 
+/** Clamps scroll/follow against the current body size. */
+export function clampViewerState(state: ViewerState, totalLines: number, bodyHeight: number): ViewerState {
+  const maxScroll = Math.max(0, totalLines - bodyHeight);
+  if (state.follow) return { ...state, scroll: maxScroll };
+  return { ...state, scroll: Math.min(Math.max(0, state.scroll), maxScroll) };
+}
+
 export interface TranscriptViewerOptions {
   /** Reloads viewer data (run snapshot + transcripts) on each refresh tick. */
   load: () => ViewerData;
   /** Closes the overlay (ctx.ui.custom's done callback). */
   done: () => void;
-  dim: (text: string) => string;
-  requestRender: () => void;
+  styles: Styles;
+  /** Requests a repaint (host passes tui.requestRender). */
+  requestRender?: () => void;
+  /** Terminal rows provider (defaults to 30). Host passes tui.terminal.rows. */
+  rows?: () => number;
+  /** Assistant-text renderer; defaults to plain wrapping. Host passes Markdown. */
+  renderMarkdown?: (text: string, width: number) => string[];
   refreshMs?: number;
-  bodyHeight?: number;
 }
 
 /** pi-tui component wrapper: refresh timer + key handling + rendering. */
@@ -356,6 +563,7 @@ export class TranscriptViewer implements Component {
   private data: ViewerData;
   private state: ViewerState = initialViewerState();
   private lastTotalLines = 0;
+  private lastBodyHeight = 22;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: TranscriptViewerOptions) {
@@ -365,7 +573,7 @@ export class TranscriptViewer implements Component {
     this.timer = setInterval(() => {
       try {
         this.data = this.opts.load();
-        this.opts.requestRender();
+        this.requestRender();
       } catch {
         /* refresh failures never break the viewer */
       }
@@ -373,21 +581,39 @@ export class TranscriptViewer implements Component {
     if (typeof this.timer.unref === "function") this.timer.unref();
   }
 
+  private requestRender(): void {
+    if (!this.opts.requestRender) return;
+    try {
+      this.opts.requestRender();
+    } catch {
+      /* rendering is best-effort */
+    }
+  }
+
   render(width: number): string[] {
-    const bodyHeight = this.opts.bodyHeight ?? VIEWER_BODY_HEIGHT;
+    const rows = this.opts.rows?.() ?? 30;
+    const bodyHeight = computeFrameHeight(rows) - VIEWER_CHROME_ROWS;
+    this.lastBodyHeight = bodyHeight;
+    this.data = this.opts.load();
     const actor = this.data.actors[this.state.actorIndex];
     const entries = actor ? (this.data.entries.get(actor.actor) ?? []) : [];
-    const total = this.data.actors.length > 0 ? bodyLines(entries, this.state.showTools, width, this.opts.dim).length : 1;
-    this.lastTotalLines = total;
-    this.state = clampViewerState(this.state, total, bodyHeight);
-    return renderViewerFrame(this.data, this.state, width, { dim: this.opts.dim, bodyHeight });
+    this.lastTotalLines =
+      this.data.actors.length > 0
+        ? bodyLines(entries, this.state.showTools, Math.max(10, width - 4), this.opts.styles, this.opts.renderMarkdown).length
+        : 1;
+    this.state = clampViewerState(this.state, this.lastTotalLines, bodyHeight);
+    return renderViewerFrame(this.data, this.state, width, {
+      styles: this.opts.styles,
+      bodyHeight,
+      ...(this.opts.renderMarkdown ? { renderMarkdown: this.opts.renderMarkdown } : {}),
+    });
   }
 
   handleInput(data: string): void {
     const result = handleViewerKey(this.state, data, {
       totalLines: this.lastTotalLines,
       actorCount: this.data.actors.length,
-      bodyHeight: this.opts.bodyHeight ?? VIEWER_BODY_HEIGHT,
+      bodyHeight: this.lastBodyHeight,
     });
     if (result.type === "close") {
       this.dispose();
@@ -395,7 +621,7 @@ export class TranscriptViewer implements Component {
       return;
     }
     this.state = result.state;
-    this.opts.requestRender();
+    this.requestRender();
   }
 
   invalidate(): void {
@@ -412,26 +638,36 @@ export class TranscriptViewer implements Component {
 }
 
 /**
- * Opens the transcript viewer as a centered capturing overlay. Resolves
- * when the user closes it (q/Esc). Host failures are the caller's to guard
- * (index.ts checks hasUI/mode and exception-isolates).
+ * Assistant-text renderer matching the main agent: the host's Markdown
+ * component with the shared markdown theme. Returns undefined (plain
+ * wrapping) when the theme is unavailable.
+ */
+function markdownRenderer(): ((text: string, width: number) => string[]) | undefined {
+  try {
+    const mdTheme = getMarkdownTheme();
+    return (text: string, width: number) => new Markdown(text, 1, 0, mdTheme).render(width);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Opens the transcript viewer as a centered capturing overlay (~96% wide,
+ * ~82% of the terminal height with a full border). Resolves when the user
+ * closes it (q/Esc). Host failures are the caller's to guard (index.ts
+ * checks hasUI/mode and exception-isolates).
  */
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,
-  opts: { load: () => ViewerData; refreshMs?: number; bodyHeight?: number },
+  opts: { load: () => ViewerData; refreshMs?: number },
 ): Promise<void> {
+  const renderMarkdown = markdownRenderer();
   await ui.custom<void>(
     (tui, theme, _keybindings, done) =>
       new TranscriptViewer({
         load: opts.load,
         done,
-        dim: (text) => {
-          try {
-            return theme.fg("dim", text);
-          } catch {
-            return text;
-          }
-        },
+        styles: themeStyles(theme),
         requestRender: () => {
           try {
             tui.requestRender();
@@ -439,12 +675,19 @@ export async function openTranscriptViewer(
             /* rendering is best-effort */
           }
         },
+        rows: () => {
+          try {
+            return tui.terminal.rows;
+          } catch {
+            return 30;
+          }
+        },
+        ...(renderMarkdown ? { renderMarkdown } : {}),
         ...(opts.refreshMs !== undefined ? { refreshMs: opts.refreshMs } : {}),
-        ...(opts.bodyHeight !== undefined ? { bodyHeight: opts.bodyHeight } : {}),
       }),
     {
       overlay: true,
-      overlayOptions: { anchor: "center", width: "90%", maxHeight: VIEWER_FRAME_HEIGHT, margin: 1 },
+      overlayOptions: { anchor: "center", width: "96%" },
     },
   );
 }
