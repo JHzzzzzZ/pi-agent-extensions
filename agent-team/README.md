@@ -77,14 +77,14 @@ members:
 
 ### 4. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**居中全屏查看器**，实时查看本次 run 中 leader 与每个成员的完整会话历史——assistant 回复全文、工具调用与结果摘要、派发的子任务、错误与结束状态，内容随子进程事件流实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏边框页查看器**（约 82% 终端高、96% 宽，完整边框与主 agent 界面明确分割）。**每一页是一个 agent**（leader 或成员，`←→`/`1-9` 切换），页面内容是与主 agent 一致的连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，自上而下完整时间线实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
 | `↑`/`↓` 或 `j`/`k` | 逐行滚动（上滚自动退出跟随，滚到底自动恢复跟随最新） |
 | `PgUp`/`PgDn` | 翻页 |
 | `g`/`G`（或 `Home`/`End`） | 跳到顶部 / 跟随底部最新 |
-| `←`/`→`、`h`/`l`、`Tab` | 切换上/下一个成员 |
+| `←`/`→`、`h`/`l`、`Tab` | 切换上/下一个成员（换页） |
 | `1`–`9` | 直接跳到第 N 个成员 |
 | `x` | 显示/隐藏工具调用行 |
 | `q` / `Esc` | 关闭查看器 |
@@ -112,7 +112,7 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（80 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（85 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

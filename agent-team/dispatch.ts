@@ -272,9 +272,11 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       }
     };
 
-    /** One-line bounded summary of a tool call (transcript display). */
-    const toolEntryText = (prefix: string, toolName: string, payload: unknown): string =>
-      shortMessage(`${prefix}${toolName}${payload === undefined ? "" : ` ${JSON.stringify(payload)}`}`, 300);
+    /** One-line bounded summaries of tool calls/results (transcript display). */
+    const toolCallText = (toolName: string, args: unknown): string =>
+      shortMessage(`${toolName}${args === undefined ? "" : ` ${JSON.stringify(args)}`}`, 300);
+    const toolResultText = (toolName: string, text: unknown): string =>
+      shortMessage(`${toolName}${text === undefined ? "" : ` → ${text}`}`, 300);
 
     const setProgress = (name: string, status: MemberProgressStatus, note?: string, latest?: string) => {
       const previous = statuses.get(name);
@@ -378,11 +380,11 @@ export function createDispatchExecutor(deps: DispatchDeps) {
               return;
             }
             if (event.type === "tool_execution_start") {
-              record(name, "tool", toolEntryText("▶ ", event.toolName, event.args));
+              record(name, "tool", toolCallText(event.toolName, event.args));
               return;
             }
             if (event.type === "tool_execution_end") {
-              record(name, "tool", toolEntryText("  ✓ ", event.toolName, event.text));
+              record(name, "tool", toolResultText(event.toolName, event.text));
               return;
             }
             if (event.type === "error") {

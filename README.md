@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 355 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏会话记录查看器） | 80 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏会话记录查看器） | 85 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 模型提供商（OpenAI 兼容 + Anthropic API） | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 无 |
@@ -105,11 +105,11 @@ npm run demo       # 模拟 /workflows UI（无宿主）
 - **派单与复用** — `/team:run <团队> <任务>`、`/team:<团队> <任务>` 或 `team_run` 工具；同一团队反复使用；`/team:stop` 中止
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
 - **进度可视** — 运行期间 Widget 显示 leader/各成员实时状态（SIGTERM → SIGKILL 逐级中止）
-- **会话记录查看器** — `/team:view` 全屏实时查看每个成员/leader 的对话、工具调用与错误（run artifacts 落盘，run 结束后仍可查）；主 agent 可用 `team_transcript` 工具转述记录要点
+- **会话记录查看器** — `/team:view` 全屏边框页（≈82% 终端高），每个 agent 一页连续会话流（任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行），run artifacts 落盘、run 结束后仍可查；主 agent 可用 `team_transcript` 工具转述记录要点
 
 ```bash
 cd agent-team
-npm install && npm test        # 80 个测试（含真实 git worktree 用例）
+npm install && npm test        # 85 个测试（含真实 git worktree 用例）
 npm run typecheck
 ```
 
