@@ -1,0 +1,405 @@
+/**
+ * agent-team — extension entry
+ *
+ * One codebase, two modes:
+ *
+ * - **Leader mode** (env `PI_AGENT_TEAM_FILE` set): this process IS the
+ *   leader child spawned by the cockpit. Registers only the
+ *   `team_dispatch` tool so the leader model can delegate subtasks to
+ *   team members.
+ * - **Cockpit mode** (default, main pi session): registers the
+ *   conversation tools (`team_create`, `team_list`, `team_run`), the
+ *   `/team*` commands, the live progress widget, and run persistence.
+ *
+ * Install: copy this directory into `~/.pi/agent/extensions/` (or the
+ * project's `.pi/extensions/`), then `/reload`.
+ */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { discoverTeams, findTeam, parseTeamFile } from "./config.ts";
+import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
+import { registerManageTools, teamSummaryLines } from "./manage.ts";
+import { TeamRunCoordinator, type UiPort } from "./cockpit.ts";
+import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
+import {
+  LEADER_ENV_FILE,
+  LEADER_ENV_RUNID,
+  RUN_ENTRY_TYPE,
+  WIDGET_ID,
+  type TeamConfig,
+} from "./types.ts";
+
+function extensionEntryPath(): string | undefined {
+  try {
+    const entry = fileURLToPath(import.meta.url);
+    return fs.existsSync(entry) ? entry : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function worktreeRoot(): string {
+  return path.join(getAgentDir(), "teams", "worktrees");
+}
+
+/** Builds the guarded UI port over ctx.ui (repo TUI conventions). */
+function uiPortFrom(ctx: ExtensionContext): UiPort {
+  return {
+    setWidget: (lines) => {
+      if (!ctx.hasUI) return;
+      try {
+        ctx.ui.setWidget(WIDGET_ID, lines);
+      } catch {
+        /* widget failures never break the session */
+      }
+    },
+    notify: (text, level) => {
+      try {
+        ctx.ui.notify(text, level);
+      } catch {
+        /* notify failures never break the session */
+      }
+    },
+    dim: (text) => {
+      try {
+        return ctx.ui.theme.fg("dim", text);
+      } catch {
+        return text;
+      }
+    },
+  };
+}
+
+function clearWidget(ctx: ExtensionContext): void {
+  if (!ctx.hasUI) return;
+  try {
+    ctx.ui.setWidget(WIDGET_ID, undefined);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Leader mode (inside the leader child pi process)
+// ---------------------------------------------------------------------------
+
+function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
+  let content: string | null = null;
+  try {
+    content = fs.readFileSync(teamFile, "utf-8");
+  } catch {
+    content = null;
+  }
+  const parsed = content !== null ? parseTeamFile(content, { filePath: teamFile, source: "global" }) : undefined;
+  const runId = process.env[LEADER_ENV_RUNID] || `run-${Date.now()}`;
+
+  pi.registerTool({
+    name: "team_dispatch",
+    label: "Team Dispatch",
+    description:
+      "把子任务派发给团队成员（并行执行，结果按成员分节返回）。一次最多 8 个子任务；有依赖的子任务分多次调用。",
+    parameters: Type.Object({
+      tasks: Type.Array(
+        Type.Object({
+          agent: Type.String({ description: "成员名（见系统提示中的团队花名册）" }),
+          task: Type.String({ description: "自包含的子任务描述：目标、涉及文件/路径、约束、期望产出" }),
+        }),
+        { description: "要派发的子任务列表（1~8 个）", minItems: 1, maxItems: 8 },
+      ),
+    }),
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      if (!parsed || !parsed.ok) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `团队定义不可用（${teamFile}）：${parsed ? parsed.message : "文件无法读取"}`,
+            },
+          ],
+          details: { code: "INVALID_TEAM_FILE" },
+          isError: true,
+        };
+      }
+      const request = parseDispatchRequest(params);
+      if (!request.ok) {
+        return {
+          content: [{ type: "text" as const, text: request.message }],
+          details: { code: "INVALID_DISPATCH" },
+          isError: true,
+        };
+      }
+      if (signal?.aborted) {
+        return {
+          content: [{ type: "text" as const, text: "dispatch aborted" }],
+          details: { code: "AGENT_ABORTED" },
+          isError: true,
+        };
+      }
+      const executor = createDispatchExecutor({
+        team: parsed.value,
+        cwd: ctx.cwd,
+        worktreeRoot: worktreeRoot(),
+        runId,
+        killGraceMs: 5000,
+      });
+      const updateProxy = onUpdate
+        ? (update: { content: Array<{ type: "text"; text: string }>; details?: unknown }) => {
+            try {
+              onUpdate({ content: update.content, details: update.details ?? {} });
+            } catch {
+              /* progress failures never break the run */
+            }
+          }
+        : undefined;
+      const outcome = await executor(request.value, signal, updateProxy);
+      const totalUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+      for (const result of outcome.results) {
+        totalUsage.input += result.usage.input;
+        totalUsage.output += result.usage.output;
+        totalUsage.cost += result.usage.cost;
+      }
+      return {
+        content: [{ type: "text" as const, text: outcome.text }],
+        details: {
+          members: outcome.results.map((result) => ({
+            name: result.name,
+            ok: result.ok,
+            status: result.status,
+            ...(result.summary ? { summary: result.summary } : {}),
+            usage: result.usage,
+            ...(result.worktree ? { worktree: result.worktree } : {}),
+            ...(result.error ? { error: result.error } : {}),
+          })),
+          totalUsage,
+        },
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Cockpit mode (main pi session)
+// ---------------------------------------------------------------------------
+
+function registerCockpitMode(pi: ExtensionAPI): void {
+  const state: {
+    coordinator: TeamRunCoordinator;
+    cwd: string;
+    projectTrusted: boolean;
+  } = {
+    coordinator: new TeamRunCoordinator({
+      cwd: () => state.cwd,
+      worktreeRoot: worktreeRoot(),
+      extensionEntryPath: extensionEntryPath(),
+    }),
+    cwd: process.cwd(),
+    projectTrusted: false,
+  };
+
+  const resolveTeam = (name: string): { ok: true; value: TeamConfig } | { ok: false; message: string } => {
+    const found = findTeam({
+      cwd: state.cwd,
+      scope: state.projectTrusted ? "both" : "global",
+      name,
+    });
+    return found.ok ? { ok: true, value: found.value } : { ok: false, message: found.message };
+  };
+
+  /** Command-mode run flow: start, persist, notify, deliver report. */
+  const runFromCommand = async (ctx: ExtensionContext, teamName: string, task: string): Promise<void> => {
+    const ui = uiPortFrom(ctx);
+    const found = resolveTeam(teamName);
+    if (!found.ok) {
+      ui.notify(found.message, "error");
+      return;
+    }
+    ui.notify(`team ${teamName} 已启动（leader ${found.value.leader.model ?? "默认模型"}）`, "info");
+    const result = await state.coordinator.start({ team: found.value, task, ui });
+    if (!result.ok) {
+      ui.notify(result.message, "error");
+      return;
+    }
+    const record = result.value;
+    appendRunRecord(pi as unknown as SessionPort, record);
+    clearWidget(ctx);
+    if (record.status === "completed") {
+      const secs = Math.round((record.durationMs ?? 0) / 100) / 10;
+      ui.notify(`team ${teamName} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
+      deliverRunResult(pi as unknown as SessionPort, record.report ?? "(leader 未返回报告)");
+    } else {
+      ui.notify(
+        `team ${teamName} ${record.status}: ${record.error ?? "已中止"}`,
+        record.status === "aborted" ? "warning" : "error",
+      );
+    }
+  };
+
+  // -- Conversation tools -------------------------------------------------
+
+  registerManageTools(pi);
+
+  pi.registerTool({
+    name: "team_run",
+    label: "Run Agent Team",
+    description:
+      "把一个任务派给指定的 agent team：leader 会拆解任务并通过 team_dispatch 调度成员协同完成，返回最终报告。同一团队可反复派单复用。",
+    promptGuidelines: [
+      "派单前先用 team_list 确认团队存在且成员配置合适；不确定时先问用户。",
+      "task 要自包含：目标、范围、验收标准。成员和 leader 都看不到这段对话。",
+    ],
+    parameters: Type.Object({
+      team: Type.String({ description: "团队名（可用 team_list 查询）" }),
+      task: Type.String({ description: "任务描述（issue）" }),
+    }),
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      const found = resolveTeam(params.team);
+      if (!found.ok) {
+        return {
+          content: [{ type: "text" as const, text: found.message }],
+          details: { code: "TEAM_NOT_FOUND" },
+          isError: true,
+        };
+      }
+      const ui = uiPortFrom(ctx);
+      const result = await state.coordinator.start({
+        team: found.value,
+        task: params.task,
+        ui,
+        signal,
+        onProgress: (progress) => {
+          if (!onUpdate) return;
+          try {
+            const active = progress.members.filter((m) => m.status === "running").length;
+            onUpdate({
+              content: [
+                {
+                  type: "text" as const,
+                  text: `team ${progress.team} 运行中 · ${active}/${progress.members.length} 成员并行`,
+                },
+              ],
+              details: {},
+            });
+          } catch {
+            /* progress failures never break the run */
+          }
+        },
+      });
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: result.message }],
+          details: { code: result.code },
+          isError: true,
+        };
+      }
+      const record = result.value;
+      appendRunRecord(pi as unknown as SessionPort, record);
+      if (record.status !== "completed") {
+        return {
+          content: [{ type: "text" as const, text: `team run ${record.status}: ${record.error ?? "(no error detail)"}` }],
+          details: record,
+          isError: record.status === "failed",
+        };
+      }
+      return {
+        content: [{ type: "text" as const, text: record.report ?? "(leader 未返回报告)" }],
+        details: record,
+      };
+    },
+  });
+
+  // -- Commands -----------------------------------------------------------
+
+  pi.registerCommand("team", {
+    description: "列出所有 agent team（团队/成员/模型）",
+    handler: async (_args, ctx) => {
+      const ui = uiPortFrom(ctx);
+      const { teams, invalid } = discoverTeams({
+        cwd: state.cwd,
+        scope: state.projectTrusted ? "both" : "global",
+      });
+      if (teams.length === 0 && invalid.length === 0) {
+        ui.notify("没有任何团队定义。用 team_create 工具创建，或在 ~/.pi/agent/teams/ 放置团队 .md 文件。", "info");
+        return;
+      }
+      const lines: string[] = [];
+      for (const team of teams) lines.push(...teamSummaryLines(team), "");
+      for (const bad of invalid) lines.push(`⚠ ${bad.file} — ${bad.message}`);
+      ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("team:run", {
+    description: "派单：/team:run <团队名> <任务描述>",
+    handler: async (args, ctx) => {
+      const ui = uiPortFrom(ctx);
+      const trimmed = (args ?? "").trim();
+      const spaceIndex = trimmed.indexOf(" ");
+      if (spaceIndex <= 0 || trimmed.slice(spaceIndex + 1).trim().length === 0) {
+        ui.notify("用法：/team:run <团队名> <任务描述>", "warning");
+        return;
+      }
+      const teamName = trimmed.slice(0, spaceIndex);
+      const task = trimmed.slice(spaceIndex + 1).trim();
+      await runFromCommand(ctx, teamName, task);
+    },
+  });
+
+  pi.registerCommand("team:stop", {
+    description: "中止当前 team run（leader 与所有成员）",
+    handler: async (_args, ctx) => {
+      const ui = uiPortFrom(ctx);
+      if (state.coordinator.stop()) {
+        ui.notify("已发送中止信号（SIGTERM → SIGKILL）", "warning");
+      } else {
+        ui.notify("当前没有正在进行的 team run", "info");
+      }
+    },
+  });
+
+  // -- Session lifecycle --------------------------------------------------
+
+  pi.on("session_start", async (_event, ctx) => {
+    state.cwd = ctx.cwd;
+    state.projectTrusted = ctx.isProjectTrusted();
+    clearWidget(ctx);
+
+    // Dynamic per-team commands: /team:<name> <任务>（/reload 后新团队生效）
+    const { teams } = discoverTeams({ cwd: state.cwd, scope: state.projectTrusted ? "both" : "global" });
+    for (const team of teams) {
+      pi.registerCommand(`team:${team.name}`, {
+        description: `派单给 ${team.name}${team.description ? `（${team.description}）` : ""}：/team:${team.name} <任务>`,
+        handler: async (args, cmdCtx) => {
+          const task = (args ?? "").trim();
+          if (!task) {
+            uiPortFrom(cmdCtx).notify(`用法：/team:${team.name} <任务描述>`, "warning");
+            return;
+          }
+          await runFromCommand(cmdCtx, team.name, task);
+        },
+      });
+    }
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    state.coordinator.stop();
+    clearWidget(ctx);
+  });
+
+  // Run record entry card (collapsed one-liner, expanded detail).
+  pi.registerEntryRenderer(RUN_ENTRY_TYPE, createRunEntryRenderer());
+}
+
+// ---------------------------------------------------------------------------
+
+export default function agentTeamExtension(pi: ExtensionAPI): void {
+  const teamFile = process.env[LEADER_ENV_FILE];
+  if (teamFile) {
+    registerLeaderMode(pi, teamFile);
+    return;
+  }
+  registerCockpitMode(pi);
+}

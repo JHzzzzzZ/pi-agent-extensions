@@ -5,7 +5,7 @@
 Workspace of extensions for the Pi coding agent (docs/comments are Chinese; code is English). Extensions load by being copied into `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (trusted project), then `/reload` in Pi.
 
 - **`pwr/` — primary project.** PWR (Pi Workflow Runtime) v2.2.0: users write constrained ECMAScript workflow scripts; PWR validates them, shows an approval card, then runs them by spawning child `pi` processes as sub-agents (`PiAgentRunner`). Zero-build TypeScript ESM, executed directly by Node >= 22.18 native type-stripping.
-- **Satellites** (independent, same extension shape): `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `safe-git-autocommit/` (two-layer git safety + `safe_git_commit` tool), `run-timer/` (session/task/turn timer widget).
+- **Satellites** (independent, same extension shape): `agent-team/` (reusable multi-agent teams: independent leader child dispatches member children via `team_dispatch`), `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `safe-git-autocommit/` (two-layer git safety + `safe_git_commit` tool), `run-timer/` (session/task/turn timer widget).
 
 ## Architecture & Data Flow
 
@@ -31,7 +31,8 @@ PWR (`pwr/`) is layered, with `src/types.ts` as the shared contract hub (`Runtim
 - `pwr/src/` + `pwr/src/ui/` — orchestration contracts and TUI layer.
 - `pwr/test/`, `pwr/tests/`, `pwr/runtime/test/`, `pwr/runner/test/` — node:test suites (see Testing).
 - `pwr/vendor/` — vendored acorn 8.18.0 (`acorn.mjs` + hand-rolled `acorn.d.mts` + license); generated file, don't modify. Imported only by `engine/parser.ts` so PWR has zero runtime npm deps.
-- Satellites: `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `safe-git-autocommit/` (index.ts + sga-selftest.ts + package.json without `pi` field), `run-timer/` (index.ts + test, no package.json). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy.
+- Satellites: `agent-team/` (flat modules: types/config/runner/worktree/leader-prompt/dispatch/manage/cockpit/session/index + test/ + examples/), `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `safe-git-autocommit/` (index.ts + sga-selftest.ts + package.json without `pi` field), `run-timer/` (index.ts + test, no package.json). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy.
+- `agent-team/` specifics: team = persistent Markdown file (frontmatter `leader` + `members[]` with per-member `provider/model`, `tools`, `worktree`, block-scalar `prompt`) in `~/.pi/agent/teams/` or trusted-project `.pi/teams/` (project wins on name conflicts); discovery re-scans on every use (no cache). One codebase, two modes keyed on env `PI_AGENT_TEAM_FILE`: leader mode registers only the `team_dispatch` tool; cockpit mode registers `team_create`/`team_list`/`team_run` tools, `/team*` commands, widget, entry renderer (`agent-team-run-v1`). Member/leader children follow the same child-`pi` JSON-mode pattern as pwr's runner (`team-tmp://` prompt materialization, SIGTERM→SIGKILL), self-contained (no pwr imports). Result unions use `TeamErrorCodes`; caps: 8 tasks/dispatch, 4 concurrent members, 50KB result, 8KB summary.
 
 ## Development Commands
 
@@ -48,6 +49,7 @@ Satellites (not covered by pwr's script):
 
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 43 tests
+cd agent-team && npm install && npm test                                        # 45 tests (node --test test/*.test.ts)
 cd safe-git-autocommit && npm test                                              # npx tsx sga-selftest.ts (real-git selftest, writes sga-selftest.log)
 node --experimental-strip-types --test run-timer/run-timer.test.ts               # no package.json here
 ```
@@ -74,7 +76,7 @@ Other patterns:
 - **Security invariants** (PWR): no `vm`/`eval`; whitelist validation before execution; fail-closed defaults (missing engine/runner ⇒ typed error, no implicit fallback); script source/args never persisted; `pwr-tmp://` in-process only; no API keys stored; error messages are static templates.
 - **Typebox** for tool parameter schemas (`src/tools.ts` `registerPwrTools`, `safe-git-autocommit`).
 - **TUI conventions (satellites):** guard writes with `ctx.hasUI`, style via `theme.fg("dim", …)`, exception-isolate every `setStatus`/`setWidget` call, one status key per extension (`stream-token-speed`, `provider-quota`, `run-timer`).
-- Indentation: tabs in `pwr/`, 2 spaces in `run-timer/` and `stream-token-speed/`.
+- Indentation: tabs in `pwr/`, 2 spaces in `agent-team/`, `run-timer/` and `stream-token-speed/`.
 
 ## Important Files
 

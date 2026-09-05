@@ -1,10 +1,11 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加五个独立卫星扩展（模型提供商、额度查询、流式计量、运行计时、安全 Git 自动提交）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加六个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、安全 Git 自动提交）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 355 个（node:test） |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务 | 45 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 模型提供商（OpenAI 兼容 + Anthropic API） | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 无 |
@@ -69,6 +70,25 @@ npm run demo       # 模拟 /workflows UI（无宿主）
 - 错误信息为静态模板，不泄露文件内容/密钥/脚本源码
 - 会话 entry 只持久化运行元数据（不写脚本源码、args 原文、凭证）；`pwr-tmp://` 只在进程内展开
 - 项目范围保存/加载受信任门控；runner 不可用返回 `AGENT_RUNNER_UNAVAILABLE`，绝不隐式回退主 agent
+
+---
+
+## agent-team — 多 Agent 团队协作
+
+可复用、可对话创建的多 agent 团队（参考 Multica 的 squad/leader/dispatch 模式）。团队 = 1 个 leader + N 个成员，每个成员可指定独立后端模型（`provider/model`）与专属 system prompt。派单后由**独立 leader 子进程**自主拆解任务、通过 `team_dispatch` 工具并行调度成员子进程、审查结果并汇总报告交回主会话。
+
+- **对话式建团** — 主 agent 调 `team_create`/`team_list` 工具直接创建/查看团队；团队定义文件（`~/.pi/agent/teams/*.md` 或项目 `.pi/teams/*.md`）可随时手改，下一次派单即生效
+- **派单与复用** — `/team:run <团队> <任务>`、`/team:<团队> <任务>` 或 `team_run` 工具；同一团队反复使用；`/team:stop` 中止
+- **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
+- **进度可视** — 运行期间 Widget 显示 leader/各成员实时状态（SIGTERM → SIGKILL 逐级中止）
+
+```bash
+cd agent-team
+npm install && npm test        # 45 个测试（含真实 git worktree 用例）
+npm run typecheck
+```
+
+详见 [`agent-team/README.md`](agent-team/README.md)（团队文件格式与示例见 `agent-team/examples/dev-team.example.md`）。
 
 ---
 
