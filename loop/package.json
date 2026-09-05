@@ -1,0 +1,22 @@
+{
+  "name": "pi-extension-loop",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "loop — Pi 定时任务扩展（/loop：固定间隔循环 + 一次性提醒）",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}
