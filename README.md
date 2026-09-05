@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加五个独立卫星扩展（模型提供商、额度查询、流式计量、运行计时、安全 Git 自动提交）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加四个独立卫星扩展（模型提供商、额度查询、流式计量、运行计时）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -9,7 +9,6 @@
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 模型提供商（OpenAI 兼容 + Anthropic API） | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 无 |
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
-| [`safe-git-autocommit/`](#safe-git-autocommit) | 双层安全 Git 自动提交 | 真实 git 自测 |
 
 ## 安装
 
@@ -102,20 +101,6 @@ export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选
 
 ```bash
 node --experimental-strip-types --test run-timer/run-timer.test.ts
-```
-
-## safe-git-autocommit
-
-双层安全 Git 自动提交：
-
-- **Layer 1** — 只读诊断基线：自动采集变更、过滤（永不 git 写入），注册 `/safe-git` 命令查看基线
-- **Layer 2** — 显式提交工具：注册 `safe_git_commit` 供 agent 调用，完成判定恒为 unknown、提交规划、结构化通知
-
-调试命令 `/auto-commit-now` 手动触发自动提交。
-
-```bash
-cd safe-git-autocommit
-npx tsx sga-selftest.ts   # 真实 git 仓库自测
 ```
 
 ---
