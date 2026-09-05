@@ -24,7 +24,10 @@
  *  - chatanywhere POST https://api.chatanywhere.tech/v1/query/balance
  *                -> balanceTotal - balanceUsed（CA）
  *  - zhipu(GLM Coding Plan) GET {base}/api/monitor/usage/quota/limit
- *                -> data.limits[] 内 TOKENS_LIMIT / TIME_LIMIT 的 percentage
+ *                -> data.limits[] 内 TOKENS_LIMIT / TIME_LIMIT 的 percentage；
+ *                   响应带刷新时间戳时（实测字段 nextResetTime，毫秒 epoch，
+ *                   兼容 nextRefreshTime / next_refresh_time / resetTime / reset_time 变体）
+ *                   追加 `→ HH:mm (Xh Ym)` 下次刷新后缀
  *                （base 仅接受 https + 无端口 + 白名单主机 open.bigmodel.cn / dev.bigmodel.cn /
  *                 api.z.ai，取自 ANTHROPIC_BASE_URL；未设置 / 非法时回退到
  *                 https://open.bigmodel.cn/api/monitor/usage/quota/limit 默认地址。
@@ -104,7 +107,145 @@ function zhipuQuotaUrl(): string | null {
 	return `${base}/api/monitor/usage/quota/limit`;
 }
 
-const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
+// ---- 智谱下次刷新时间解析（纯函数，now 由调用方注入，便于固定时钟测试）----
+
+// 实测 open.bigmodel.cn quota-limit 返回 data.limits[].nextResetTime（毫秒 epoch）；
+// 其余为防御式兼容变体。
+const REFRESH_FIELD_NAMES = [
+	"nextResetTime",
+	"nextRefreshTime",
+	"next_refresh_time",
+	"resetTime",
+	"reset_time",
+] as const;
+
+// 数值时间戳阈值：>= 1e12 按毫秒，>= 1e9 按秒（1e9 秒 ≈ 2001 年）。
+const EPOCH_MS_THRESHOLD = 1e12;
+const EPOCH_SEC_THRESHOLD = 1e9;
+// 刷新时间早于 now-24h 视为过期垃圾值，不追加后缀。
+const STALE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+type ZhipuLimitEntry = Record<string, unknown>;
+
+function extractZhipuLimits(body: unknown): ZhipuLimitEntry[] {
+	const b = body as { data?: { limits?: unknown }; limits?: unknown } | null;
+	const raw = b?.data?.limits ?? b?.limits;
+	return Array.isArray(raw) ? (raw as ZhipuLimitEntry[]) : [];
+}
+
+function findZhipuLimit(
+	limits: ZhipuLimitEntry[],
+	type: string,
+): ZhipuLimitEntry | undefined {
+	return limits.find((i) => i?.type === type);
+}
+
+function toZhipuRefreshDate(value: unknown): Date | null {
+	if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+		if (value >= EPOCH_MS_THRESHOLD) return validDate(new Date(value));
+		if (value >= EPOCH_SEC_THRESHOLD) return validDate(new Date(value * 1000));
+		return null;
+	}
+	if (typeof value === "string" && value.trim()) {
+		return validDate(new Date(value)); // ISO 字符串
+	}
+	return null;
+}
+
+function validDate(d: Date): Date | null {
+	return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function readZhipuEntryRefreshTime(entry: ZhipuLimitEntry): Date | null {
+	if (!entry || typeof entry !== "object") return null;
+	for (const name of REFRESH_FIELD_NAMES) {
+		const parsed = toZhipuRefreshDate(entry[name]);
+		if (parsed) return parsed;
+	}
+	return null;
+}
+
+// 两个 limit 共用同一个刷新窗口，只显示一次：
+// 优先 TOKENS_LIMIT，其次 TIME_LIMIT，再次任意带可解析时间戳的条目。
+function pickZhipuRefreshTime(limits: ZhipuLimitEntry[]): Date | null {
+	for (const type of ["TOKENS_LIMIT", "TIME_LIMIT"]) {
+		const entry = findZhipuLimit(limits, type);
+		if (entry) {
+			const parsed = readZhipuEntryRefreshTime(entry);
+			if (parsed) return parsed;
+		}
+	}
+	for (const entry of limits) {
+		const parsed = readZhipuEntryRefreshTime(entry);
+		if (parsed) return parsed;
+	}
+	return null;
+}
+
+function pad2(n: number): string {
+	return n < 10 ? `0${n}` : String(n);
+}
+
+// 绝对时间：本地时区；与 now 同日显示 HH:mm，跨日显示 MM-dd HH:mm。
+function formatZhipuRefreshTime(d: Date, now: Date): string {
+	const hhmm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+	const sameDay =
+		d.getFullYear() === now.getFullYear() &&
+		d.getMonth() === now.getMonth() &&
+		d.getDate() === now.getDate();
+	return sameDay ? hhmm : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${hhmm}`;
+}
+
+// 倒计时：向下取整；不足 1 分钟显示 <1m。
+function formatZhipuCountdown(diffMs: number): string {
+	const totalMinutes = Math.floor(diffMs / 60_000);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	if (hours > 0) return `${hours}h${minutes}m`;
+	if (minutes > 0) return `${minutes}m`;
+	return "<1m";
+}
+
+// 后缀规则：
+//  - 刷新时间在未来 → `→ HH:mm (Xh Ym)`（跨日为 MM-dd HH:mm）
+//  - 过去但在 now-24h 内 → 只显示绝对时间（应对 footer 5 分钟轮询的短暂过期窗口）
+//  - 早于 now-24h / 无法解析 → null（输出与无时间字段时完全一致）
+function formatZhipuRefreshSuffix(
+	refresh: Date | null,
+	now: Date,
+): string | null {
+	if (!refresh) return null;
+	const diffMs = refresh.getTime() - now.getTime();
+	if (diffMs < -STALE_WINDOW_MS) return null;
+	const absolute = formatZhipuRefreshTime(refresh, now);
+	if (diffMs <= 0) return `→ ${absolute}`;
+	return `→ ${absolute} (${formatZhipuCountdown(diffMs)})`;
+}
+
+/**
+ * 解析智谱 quota-limit 响应为 footer 状态行文本。
+ *
+ * 输出 `GLM tok X% mcp Y%`，并在能解析出刷新时间时追加 `→ HH:mm (Xh Ym)`。
+ * 百分比与刷新时间都缺失时返回 null（沿用 GLM: - 路径）。
+ */
+export function parseZhipuQuotaLimit(body: unknown, now: Date): string | null {
+	const limits = extractZhipuLimits(body);
+	if (limits.length === 0) return null;
+
+	const tok = findZhipuLimit(limits, "TOKENS_LIMIT");
+	const time = findZhipuLimit(limits, "TIME_LIMIT");
+	const parts: string[] = [];
+	if (tok && typeof tok.percentage === "number")
+		parts.push(`tok ${tok.percentage}%`);
+	if (time && typeof time.percentage === "number")
+		parts.push(`mcp ${time.percentage}%`);
+
+	const suffix = formatZhipuRefreshSuffix(pickZhipuRefreshTime(limits), now);
+	if (!parts.length && !suffix) return null;
+	return `GLM ${[...parts, ...(suffix ? [suffix] : [])].join(" ")}`;
+}
+
+export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 	openrouter: {
 		url: "https://openrouter.ai/api/v1/credits",
 		parse: (b) => {
@@ -144,17 +285,8 @@ const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 		buildUrl: zhipuQuotaUrl,
 		auth: (token) => ({ Authorization: token }),
 		parse: (b) => {
-			const limits: any[] = b?.data?.limits ?? b?.limits ?? [];
-			if (!Array.isArray(limits) || limits.length === 0) return null;
-			const tok = limits.find((i: any) => i?.type === "TOKENS_LIMIT");
-			const time = limits.find((i: any) => i?.type === "TIME_LIMIT");
-			const parts: string[] = [];
-			if (tok && typeof tok.percentage === "number")
-				parts.push(`tok ${tok.percentage}%`);
-			if (time && typeof time.percentage === "number")
-				parts.push(`mcp ${time.percentage}%`);
-			if (!parts.length) return null;
-			return { text: `GLM ${parts.join(" ")}` };
+			const text = parseZhipuQuotaLimit(b, new Date());
+			return text ? { text } : null;
 		},
 	},
 };
