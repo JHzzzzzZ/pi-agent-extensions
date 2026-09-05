@@ -96,6 +96,27 @@ test("serializeTeam output round-trips through parseTeamFile", () => {
   assert.equal(back.notes?.trim(), "备注正文\n第二行");
 });
 
+test("team-level worktree flag round-trips (parse + serialize)", () => {
+  const withFlag = parseTeamFile(
+    "---\nname: t\nworktree: true\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n",
+    { filePath: "/x/t.md", source: "global" },
+  );
+  assert.ok(withFlag.ok);
+  assert.equal(withFlag.value?.worktree, true);
+  const withoutFlag = parseTeamFile(
+    "---\nname: t\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n",
+    { filePath: "/x/t.md", source: "global" },
+  );
+  assert.ok(withoutFlag.ok);
+  assert.equal(withoutFlag.value?.worktree, undefined);
+
+  const serialized = serializeTeam({ ...fixtureTeam({ worktree: true }) });
+  assert.match(serialized, /^worktree: true$/m);
+  const reparsed = parseTeamFile(serialized, { filePath: "/x", source: "global" });
+  assert.ok(reparsed.ok);
+  assert.equal(reparsed.value?.worktree, true);
+});
+
 test("serializeTeam keeps special characters and colons in prompts", () => {
   const team = fixtureTeam({
     members: [{ name: "qa", prompt: "校验 JSON: {\"a\": 1}\n缩进:  2 空格\n" }],

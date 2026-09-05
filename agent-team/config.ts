@@ -99,6 +99,9 @@ export function validateTeam(
     return invalid(`invalid leader.model "${leaderModel}": must not contain whitespace`);
   }
 
+  // Team-level shared worktree (opt-in; members can override with their own).
+  const worktree = rawMap.worktree === true;
+
   // Members
   if (!Array.isArray(rawMap.members) || rawMap.members.length === 0) {
     return invalid("members must be a non-empty YAML list");
@@ -149,6 +152,7 @@ export function validateTeam(
       prompt: leaderMap.prompt,
     },
     members,
+    ...(worktree ? { worktree: true } : {}),
     notes: meta.body && meta.body.trim().length > 0 ? meta.body : undefined,
     filePath: meta.filePath,
     source: meta.source,
@@ -303,6 +307,7 @@ function yamlStringList(key: string, values: string[], indent: string): string {
 export function serializeTeam(team: Omit<TeamConfig, "filePath" | "source" | "notes">, notes?: string): string {
   const lines: string[] = ["---", `name: ${yamlScalar(team.name)}`];
   if (team.description) lines.push(`description: ${yamlScalar(team.description)}`);
+  if (team.worktree) lines.push("worktree: true");
   lines.push("leader:");
   if (team.leader.model) lines.push(`  model: ${yamlScalar(team.leader.model)}`);
   if (team.leader.tools && team.leader.tools.length > 0) {
@@ -347,6 +352,7 @@ export function createTeamFile(options: { dir: string; team: TeamConfig; notes?:
 export function buildTeamFromToolInput(input: {
   name: string;
   description?: string;
+  worktree?: boolean;
   leader: { model?: string; tools?: string[]; prompt: string };
   members: Array<{
     name: string;
@@ -362,6 +368,7 @@ export function buildTeamFromToolInput(input: {
   const raw = {
     name: input.name,
     description: input.description ?? "",
+    ...(input.worktree ? { worktree: true } : {}),
     leader: { model: input.leader.model, tools: input.leader.tools, prompt: input.leader.prompt },
     members: input.members,
   };

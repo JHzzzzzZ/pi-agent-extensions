@@ -25,7 +25,11 @@ test("isGitRepo detects repositories and non-repositories", async () => {
   const plain = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-plain-"));
   const git = defaultGitRunner();
   assert.equal(await isGitRepo(git, repo), true);
-  assert.equal(await isGitRepo(git, plain), false);
+  // GIT_CEILING_DIRECTORIES stops git's upward discovery: the user's home
+  // (or any parent) must not make an arbitrary temp dir look like a repo.
+  // The ceiling must name the PARENT — git won't chdir up through it.
+  const ceilingGit = defaultGitRunner({ GIT_CEILING_DIRECTORIES: path.dirname(plain) });
+  assert.equal(await isGitRepo(ceilingGit, plain), false);
 });
 
 test("createWorktree + removeWorktree round trip on a real repo", async () => {
@@ -51,9 +55,9 @@ test("createWorktree + removeWorktree round trip on a real repo", async () => {
 
 test("createWorktree fails with WORKTREE_UNAVAILABLE outside a git repo", async () => {
   const plain = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-plain-"));
-  const git = defaultGitRunner();
+  const ceilingGit = defaultGitRunner({ GIT_CEILING_DIRECTORIES: path.dirname(plain) });
   const result = await createWorktree({
-    git,
+    git: ceilingGit,
     repoCwd: plain,
     worktreePath: path.join(plain, "wt"),
     branch: "team/x/y",

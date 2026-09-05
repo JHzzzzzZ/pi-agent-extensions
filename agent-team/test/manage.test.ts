@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { registerManageTools } from "../manage.ts";
+import { formatModelCatalog, registerManageTools } from "../manage.ts";
 import type { ToolResult } from "./tool-types.ts";
 
 function tmpDir(): string {
@@ -115,6 +115,75 @@ test("team_create project scope requires project trust", async () => {
   );
   assert.equal(trusted.isError, undefined);
   assert.equal(fs.existsSync(path.join(projectDir, ".pi", "teams", "proj-team.md")), true);
+});
+
+test("team_create persists a team-level shared worktree flag", async () => {
+  const globalDir = tmpDir();
+  const pi = fakePi();
+  registerManageTools(pi as never, { globalDir });
+  const tool = pi.tools.get("team_create");
+  assert.ok(tool);
+  const result = await tool.execute(
+    "id",
+    { ...CREATE_PARAMS, name: "wt-team", worktree: true },
+    undefined,
+    undefined,
+    fakeCtx("/repo"),
+  );
+  assert.equal(result.isError, undefined);
+  const content = fs.readFileSync(path.join(globalDir, "wt-team.md"), "utf-8");
+  assert.match(content, /^worktree: true$/m);
+  assert.match(result.content[0].text, /团队共享 git worktree/);
+});
+
+test("team_models lists configured providers and flags unconfigured ones", async () => {
+  const globalDir = tmpDir();
+  const pi = fakePi();
+  registerManageTools(pi as never, { globalDir });
+  const tool = pi.tools.get("team_models");
+  assert.ok(tool);
+  const ctx = {
+    cwd: "/repo",
+    hasUI: false,
+    isProjectTrusted: () => true,
+    ui: {},
+    modelRegistry: {
+      refresh: async () => {},
+      getAvailable: () => [
+        { provider: "zai-coding-cn", id: "glm-5.3-flash", name: "GLM", reasoning: true, contextWindow: 200000, cost: { input: 0.6, output: 2 } },
+        { provider: "chatanywhere", id: "gpt-5.6", name: "GPT", reasoning: false, contextWindow: 128000, cost: { input: 1, output: 3 } },
+      ],
+      getAll: () => [
+        { provider: "zai-coding-cn", id: "glm-5.3-flash", name: "GLM", reasoning: true, contextWindow: 200000 },
+        { provider: "chatanywhere", id: "gpt-5.6", name: "GPT", reasoning: false, contextWindow: 128000 },
+        { provider: "deepseek", id: "deepseek-chat", name: "DS", reasoning: false, contextWindow: 64000 },
+      ],
+      getProviderDisplayName: (provider: string) => (provider === "zai-coding-cn" ? "Z.ai Coding" : provider),
+    },
+  };
+  const result = await tool.execute("id", {}, undefined, undefined, ctx);
+  assert.equal(result.isError, undefined);
+  const text = result.content[0].text;
+  assert.match(text, /## zai-coding-cn（Z\.ai Coding）/);
+  assert.match(text, /\*\*zai-coding-cn\/glm-5\.3-flash\*\*（GLM，reasoning，200K ctx/);
+  assert.match(text, /\*\*chatanywhere\/gpt-5\.6\*\*/);
+  assert.match(text, /未配置鉴权的 provider（不可用）：deepseek/);
+});
+
+test("team_models without a registry reports a typed error", async () => {
+  const globalDir = tmpDir();
+  const pi = fakePi();
+  registerManageTools(pi as never, { globalDir });
+  const tool = pi.tools.get("team_models");
+  assert.ok(tool);
+  const result = await tool.execute("id", {}, undefined, undefined, { cwd: "/repo", hasUI: false, isProjectTrusted: () => true, ui: {} });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /model registry/);
+});
+
+test("formatModelCatalog explains when nothing is configured", () => {
+  const text = formatModelCatalog([], [], (p) => p);
+  assert.match(text, /没有任何已配置鉴权的模型/);
 });
 
 test("team_list lists discovered teams and flags invalid files", async () => {

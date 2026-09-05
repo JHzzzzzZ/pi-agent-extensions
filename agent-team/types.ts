@@ -21,6 +21,12 @@ export const MAX_TASKS_PER_DISPATCH = 8;
 /** Maximum member child processes running concurrently. */
 export const MAX_PARALLEL_MEMBERS = 4;
 
+/** Dispatch-call budget per run (leader loop guard — exceeded ⇒ wrap up). */
+export const MAX_DISPATCH_CALLS_PER_RUN = 12;
+
+/** Total member-run budget per run (leader loop guard). */
+export const MAX_MEMBER_RUNS_PER_RUN = 40;
+
 /** Grace period between SIGTERM and SIGKILL when aborting a child. */
 export const KILL_GRACE_MS = 5000;
 
@@ -73,6 +79,12 @@ export interface TeamConfig {
   description: string;
   leader: TeamLeaderConfig;
   members: TeamMemberConfig[];
+  /**
+   * Team-level shared worktree: the whole run (leader + all members without
+   * their own `worktree: true`) works in one per-run git worktree instead of
+   * the caller's working directory.
+   */
+  worktree?: boolean;
   /** Markdown body under the frontmatter (team-level notes for the leader). */
   notes?: string;
   /** Absolute path of the source definition file. */
@@ -95,6 +107,7 @@ export const TeamErrorCodes = {
   CHILD_FAILED: "CHILD_FAILED",
   AGENT_ABORTED: "AGENT_ABORTED",
   RUN_IN_PROGRESS: "RUN_IN_PROGRESS",
+  BUDGET_EXCEEDED: "BUDGET_EXCEEDED",
 } as const;
 
 export type TeamErrorCode = (typeof TeamErrorCodes)[keyof typeof TeamErrorCodes];
@@ -153,7 +166,15 @@ export type PiSpawn = (command: string, args: string[], opts: { cwd?: string; en
 
 /** Sanitized events parsed from a child's `--mode json` stdout stream. */
 export type ChildEvent =
-  | { type: "message_end"; role: string; stopReason?: string; usage?: AgentUsage; model?: string }
+  | {
+      type: "message_end";
+      role: string;
+      /** Single-line tail of the assistant text (progress display only). */
+      text?: string;
+      stopReason?: string;
+      usage?: AgentUsage;
+      model?: string;
+    }
   | { type: "tool_execution_start"; toolName: string; args?: unknown }
   | { type: "tool_execution_update"; toolName: string; text?: string; details?: unknown }
   | { type: "tool_execution_end"; toolName: string; text?: string; details?: unknown }
@@ -223,6 +244,8 @@ export interface TeamRunRecord {
   totalCost: number;
   totalTokens: number;
   durationMs?: number;
+  /** Team-level shared worktree of this run (when configured). */
+  worktree?: { path: string; branch: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +258,8 @@ export interface MemberProgress {
   name: string;
   status: MemberProgressStatus;
   note?: string;
+  /** Latest assistant activity tail (what the member is doing right now). */
+  latest?: string;
 }
 
 export interface RunProgress {
@@ -244,6 +269,8 @@ export interface RunProgress {
   startedAtMs: number;
   leaderModel?: string;
   leaderNote?: string;
+  /** Leader's latest activity tail (progress display only). */
+  leaderActivity?: string;
   members: MemberProgress[];
 }
 

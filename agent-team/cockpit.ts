@@ -1,15 +1,18 @@
 /**
  * agent-team — cockpit run coordinator (main session side)
  *
- * Owns the single active team run: spawns the leader child pi process with
- * the team's leader prompt + dispatch tool, tracks progress from the
- * leader's JSON event stream (its own turns + team_dispatch tool updates),
- * renders the widget, and produces the final TeamRunRecord.
+ * Owns the single active team run: pre-flights worktree requirements,
+ * spawns the leader child pi process with the team's leader prompt +
+ * dispatch tool, tracks progress from the leader's JSON event stream (its
+ * own turns/activity + team_dispatch tool updates), renders the widget,
+ * exposes a status snapshot, and produces the final TeamRunRecord.
  */
 
+import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
+import { createWorktree, defaultGitRunner, isGitRepo, type GitRunner } from "./worktree.ts";
 import {
   LEADER_ENV_FILE,
   LEADER_ENV_NAME,
@@ -17,6 +20,7 @@ import {
   MAX_RESULT_BYTES,
   truncateUtf8,
   type ChildEvent,
+  type MemberProgress,
   type PiSpawn,
   type RunProgress,
   type TeamConfig,
@@ -33,12 +37,13 @@ export interface UiPort {
 
 export interface CoordinatorDeps {
   cwd: () => string;
-  /** Root for member worktrees. */
+  /** Root for per-run worktrees. */
   worktreeRoot: string;
   /** Absolute path of this extension's index.ts (passed to leader via -e). */
   extensionEntryPath?: string;
   spawn?: PiSpawn;
   piCommand?: string;
+  gitRunner?: GitRunner;
   killGraceMs?: number;
   /** Test seams. */
   now?: () => string;
@@ -66,12 +71,76 @@ export function renderWidgetLines(progress: RunProgress, nowMs: number, dim: (te
   if (progress.leaderModel) leaderBits.push(progress.leaderModel);
   if (progress.leaderNote) leaderBits.push(progress.leaderNote);
   lines.push(dim(`leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`));
+  if (progress.leaderActivity) {
+    lines.push(dim(`  ↳ ${progress.leaderActivity}`));
+  }
   for (const member of progress.members) {
     const icon =
       member.status === "done" ? "✓" : member.status === "failed" ? "✗" : member.status === "aborted" ? "⊘" : "▶";
-    lines.push(dim(`${icon} ${member.name} ${member.status}${member.note ? ` — ${member.note}` : ""}`));
+    const bits = [`${icon} ${member.name} ${member.status}`];
+    if (member.note) bits.push(member.note);
+    if (member.latest) bits.push(member.latest);
+    lines.push(dim(bits.join(" — ")));
   }
   return lines;
+}
+
+/** Immutable snapshot of the current/most recent run (status queries). */
+export interface RunStatusSnapshot {
+  running: boolean;
+  progress: RunProgress | null;
+  lastRecord: TeamRunRecord | null;
+}
+
+/** Formats a status snapshot for /team:status and the team_status tool. */
+export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number, dim?: (t: string) => string): string {
+  const line = (t: string): string => (dim ? dim(t) : t);
+  const icon = (status: string): string =>
+    status === "done" || status === "completed" ? "✓" : status === "failed" ? "✗" : status === "aborted" ? "⊘" : status === "running" ? "▶" : "…";
+
+  if (snapshot.running && snapshot.progress) {
+    const p = snapshot.progress;
+    const lines = [
+      line(`当前 run：team ${p.team} ▶ running · ${elapsedLabel(p.startedAtMs, nowMs)}`),
+      line(`任务: ${p.task}`),
+    ];
+    const leaderBits: string[] = [];
+    if (p.leaderModel) leaderBits.push(p.leaderModel);
+    if (p.leaderNote) leaderBits.push(p.leaderNote);
+    lines.push(line(`leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`));
+    if (p.leaderActivity) lines.push(line(`  ↳ ${p.leaderActivity}`));
+    for (const member of p.members) {
+      const bits = [`${icon(member.status)} ${member.name} ${member.status}`];
+      if (member.note) bits.push(member.note);
+      if (member.latest) bits.push(member.latest);
+      lines.push(line(`  ${bits.join(" — ")}`));
+    }
+    return lines.join("\n");
+  }
+
+  const record = snapshot.lastRecord;
+  if (record) {
+    const secs = record.durationMs !== undefined ? ` · ${Math.round(record.durationMs / 100) / 10}s` : "";
+    const cost = record.totalCost > 0 ? ` · $${record.totalCost.toFixed(4)}` : "";
+    const lines = [
+      line(`最近一次 run：team ${record.team} ${icon(record.status)} ${record.status}${secs}${cost}`),
+      line(`任务: ${record.task}`),
+    ];
+    if (record.error) lines.push(line(`错误: ${record.error}`));
+    for (const member of record.members) {
+      const bits = [`${icon(member.status)} ${member.name} ${member.status}`];
+      if (member.model) bits.push(member.model);
+      if (member.usage) bits.push(`$${member.usage.cost.toFixed(4)}`);
+      if (member.summary) bits.push(member.summary.length > 80 ? `${member.summary.slice(0, 80)}…` : member.summary);
+      lines.push(line(`  ${bits.join(" — ")}`));
+    }
+    if (record.worktree) {
+      lines.push(line(`共享 worktree: \`${record.worktree.path}\`（分支 \`${record.worktree.branch}\`）`));
+    }
+    return lines.join("\n");
+  }
+
+  return "当前没有 team run 记录。用 /team:run <团队> <任务> 或 team_run 工具派单。";
 }
 
 /**
@@ -92,6 +161,8 @@ export async function runTeamTask(deps: {
 export class TeamRunCoordinator {
   private readonly deps: CoordinatorDeps;
   private active: AbortController | null = null;
+  private currentProgress: RunProgress | null = null;
+  private lastRecord: TeamRunRecord | null = null;
 
   constructor(deps: CoordinatorDeps) {
     this.deps = deps;
@@ -99,6 +170,18 @@ export class TeamRunCoordinator {
 
   isRunning(): boolean {
     return this.active !== null;
+  }
+
+  /** Current/most recent run snapshot (team_status tool + /team:status). */
+  getStatus(): RunStatusSnapshot {
+    return { running: this.active !== null, progress: this.currentProgress, lastRecord: this.lastRecord };
+  }
+
+  /** Restores the last record after a reload (session_start hydration). */
+  restoreLastRecord(record: TeamRunRecord): void {
+    if (!this.lastRecord || (record.startedAt ?? "") > (this.lastRecord.startedAt ?? "")) {
+      this.lastRecord = record;
+    }
   }
 
   /** Aborts the active run (leader + all member children). */
@@ -134,6 +217,35 @@ export class TeamRunCoordinator {
     const nowMs = this.deps.nowMs ?? (() => Date.now());
     const runId = `run-${nowMs()}`;
     const startedAtMs = nowMs();
+    const git = this.deps.gitRunner ?? defaultGitRunner();
+    const baseCwd = this.deps.cwd();
+
+    // Pre-flight: worktree requirements must be satisfiable BEFORE spawning
+    // anything (environmental errors are otherwise invisible mid-run).
+    const needsWorktree = team.worktree === true || team.members.some((m) => m.worktree === true);
+    let sharedWorktree: { path: string; branch: string } | undefined;
+    if (needsWorktree) {
+      if (!(await isGitRepo(git, baseCwd))) {
+        return {
+          ok: false,
+          code: "WORKTREE_UNAVAILABLE",
+          message: `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`,
+        };
+      }
+      if (team.worktree) {
+        const created = await createWorktree({
+          git,
+          repoCwd: baseCwd,
+          worktreePath: path.join(this.deps.worktreeRoot, runId, "team"),
+          branch: `team/${runId}`,
+        });
+        if (!created.ok) {
+          return { ok: false, code: created.code, message: `预检失败：创建团队共享 worktree 失败 — ${created.message}` };
+        }
+        sharedWorktree = created.value;
+      }
+    }
+
     const controller = new AbortController();
     this.active = controller;
     if (options.signal) {
@@ -148,6 +260,7 @@ export class TeamRunCoordinator {
       startedAtMs,
       members: team.members.map((m) => ({ name: m.name, status: "queued" as const })),
     };
+    this.currentProgress = progress;
 
     const render = () => {
       try {
@@ -166,6 +279,7 @@ export class TeamRunCoordinator {
       if (event.type === "message_end" && event.role === "assistant") {
         if (event.usage) progress.leaderNote = `turn ${event.usage.turns}`;
         if (event.model) progress.leaderModel = event.model;
+        if (event.text) progress.leaderActivity = event.text;
         render();
         return;
       }
@@ -188,7 +302,14 @@ export class TeamRunCoordinator {
           if (members) {
             for (const member of members) {
               const existing = progress.members.find((m) => m.name === member.name);
-              const next = { name: member.name, status: member.status, ...(member.error ? { note: member.error.code } : {}) };
+              const next: MemberProgress = {
+                name: member.name,
+                status: member.status,
+                ...(member.error ? { note: `${member.error.code}: ${member.error.message}` } : {}),
+                ...(member.latest ? { latest: member.latest } : {}),
+              };
+              // Bound the failure note so the widget stays readable.
+              if (next.note && next.note.length > 120) next.note = `${next.note.slice(0, 120)}…`;
               if (existing) Object.assign(existing, next);
               else progress.members.push(next);
             }
@@ -198,7 +319,7 @@ export class TeamRunCoordinator {
       }
     };
 
-    const leaderPrompt = buildLeaderSystemPrompt(team);
+    const leaderPrompt = buildLeaderSystemPrompt(team, sharedWorktree);
     const args: string[] = ["--mode", "json", "-p", "--no-session"];
     if (team.leader.model) args.push("--model", team.leader.model);
     if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
@@ -207,6 +328,7 @@ export class TeamRunCoordinator {
     args.push(`Task: ${task}`);
 
     const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
+    const leaderCwd = sharedWorktree?.path ?? baseCwd;
 
     // 1s elapsed-time ticker for the widget; never keeps the process alive.
     const ticker = setInterval(render, 1000);
@@ -216,7 +338,7 @@ export class TeamRunCoordinator {
       const outcome = await runChildPi({
         command: invocation.command,
         args: invocation.args,
-        cwd: this.deps.cwd(),
+        cwd: leaderCwd,
         env: {
           [LEADER_ENV_FILE]: team.filePath,
           [LEADER_ENV_NAME]: team.name,
@@ -244,6 +366,7 @@ export class TeamRunCoordinator {
           model: config?.model,
           status: member.status,
           ...(member.summary !== undefined ? { summary: member.summary } : {}),
+          ...(member.latest !== undefined ? { latest: member.latest } : {}),
           ...(member.usage ? { usage: member.usage } : {}),
           ...(member.worktree ? { worktree: member.worktree } : {}),
         };
@@ -269,7 +392,9 @@ export class TeamRunCoordinator {
         totalCost: outcome.usage.cost,
         totalTokens: outcome.usage.input + outcome.usage.output,
         durationMs: nowMs() - startedAtMs,
+        ...(sharedWorktree ? { worktree: sharedWorktree } : {}),
       };
+      this.lastRecord = record;
       return { ok: true, value: record };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

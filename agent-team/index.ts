@@ -23,7 +23,7 @@ import { Type } from "typebox";
 import { discoverTeams, findTeam, parseTeamFile } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
-import { TeamRunCoordinator, type UiPort } from "./cockpit.ts";
+import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
 import {
   LEADER_ENV_FILE,
@@ -31,6 +31,7 @@ import {
   RUN_ENTRY_TYPE,
   WIDGET_ID,
   type TeamConfig,
+  type TeamRunRecord,
 } from "./types.ts";
 
 function extensionEntryPath(): string | undefined {
@@ -97,11 +98,25 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
   const parsed = content !== null ? parseTeamFile(content, { filePath: teamFile, source: "global" }) : undefined;
   const runId = process.env[LEADER_ENV_RUNID] || `run-${Date.now()}`;
 
+  // One executor per leader process: it carries the per-run dispatch budget
+  // across calls. The leader child's process cwd IS the run cwd (the
+  // coordinator spawned us there — shared worktree or base directory).
+  const executor =
+    parsed && parsed.ok
+      ? createDispatchExecutor({
+          team: parsed.value,
+          cwd: process.cwd(),
+          worktreeRoot: worktreeRoot(),
+          runId,
+          killGraceMs: 5000,
+        })
+      : undefined;
+
   pi.registerTool({
     name: "team_dispatch",
     label: "Team Dispatch",
     description:
-      "把子任务派发给团队成员（并行执行，结果按成员分节返回）。一次最多 8 个子任务；有依赖的子任务分多次调用。",
+      "把子任务派发给团队成员（并行执行，结果按成员分节返回）。一次最多 8 个子任务；有依赖的子任务分多次调用。环境级失败重试无效；有派发预算上限。",
     parameters: Type.Object({
       tasks: Type.Array(
         Type.Object({
@@ -112,12 +127,12 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
       ),
     }),
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      if (!parsed || !parsed.ok) {
+      if (!parsed || !parsed.ok || !executor) {
         return {
           content: [
             {
               type: "text" as const,
-              text: `团队定义不可用（${teamFile}）：${parsed ? parsed.message : "文件无法读取"}`,
+              text: `团队定义不可用（${teamFile}）：${parsed && !parsed.ok ? parsed.message : "文件无法读取"}`,
             },
           ],
           details: { code: "INVALID_TEAM_FILE" },
@@ -139,13 +154,6 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
           isError: true,
         };
       }
-      const executor = createDispatchExecutor({
-        team: parsed.value,
-        cwd: ctx.cwd,
-        worktreeRoot: worktreeRoot(),
-        runId,
-        killGraceMs: 5000,
-      });
       const updateProxy = onUpdate
         ? (update: { content: Array<{ type: "text"; text: string }>; details?: unknown }) => {
             try {
@@ -155,7 +163,16 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
             }
           }
         : undefined;
-      const outcome = await executor(request.value, signal, updateProxy);
+      const executed = await executor(request.value, signal, updateProxy);
+      if (!executed.ok) {
+        // Budget exceeded (or other executor-level failure): force wrap-up.
+        return {
+          content: [{ type: "text" as const, text: executed.message }],
+          details: { code: executed.code },
+          isError: true,
+        };
+      }
+      const outcome = executed.value;
       const totalUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
       for (const result of outcome.results) {
         totalUsage.input += result.usage.input;
@@ -170,6 +187,7 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
             ok: result.ok,
             status: result.status,
             ...(result.summary ? { summary: result.summary } : {}),
+            ...(result.result && result.ok ? { latest: singleLineTail(result.result) } : {}),
             usage: result.usage,
             ...(result.worktree ? { worktree: result.worktree } : {}),
             ...(result.error ? { error: result.error } : {}),
@@ -179,6 +197,13 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
       };
     },
   });
+}
+
+/** Single-line tail helper for tool details (kept local; mirrors runner.textTail). */
+function singleLineTail(text: string, max = 160): string {
+  const single = text.replace(/\s+/g, " ").trim();
+  if (single.length <= max) return single;
+  return `…${single.slice(single.length - max)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,33 +234,41 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     return found.ok ? { ok: true, value: found.value } : { ok: false, message: found.message };
   };
 
-  /** Command-mode run flow: start, persist, notify, deliver report. */
-  const runFromCommand = async (ctx: ExtensionContext, teamName: string, task: string): Promise<void> => {
+  /** Command-mode run flow (runs in BACKGROUND): persist, notify, deliver. */
+  const runFromCommand = (ctx: ExtensionContext, teamName: string, task: string): void => {
     const ui = uiPortFrom(ctx);
     const found = resolveTeam(teamName);
     if (!found.ok) {
       ui.notify(found.message, "error");
       return;
     }
-    ui.notify(`team ${teamName} 已启动（leader ${found.value.leader.model ?? "默认模型"}）`, "info");
-    const result = await state.coordinator.start({ team: found.value, task, ui });
-    if (!result.ok) {
-      ui.notify(result.message, "error");
-      return;
-    }
-    const record = result.value;
-    appendRunRecord(pi as unknown as SessionPort, record);
-    clearWidget(ctx);
-    if (record.status === "completed") {
-      const secs = Math.round((record.durationMs ?? 0) / 100) / 10;
-      ui.notify(`team ${teamName} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
-      deliverRunResult(pi as unknown as SessionPort, record.report ?? "(leader 未返回报告)");
-    } else {
-      ui.notify(
-        `team ${teamName} ${record.status}: ${record.error ?? "已中止"}`,
-        record.status === "aborted" ? "warning" : "error",
-      );
-    }
+    ui.notify(`team ${teamName} 已在后台启动（/team:status 查看进度，/team:stop 中止）`, "info");
+    // Fire-and-forget: the command handler returns immediately so the user
+    // can keep talking to the main agent while the team works. Completion
+    // still persists the record and wakes the session with the report.
+    void state.coordinator
+      .start({ team: found.value, task, ui })
+      .then((result) => {
+        if (!result.ok) {
+          ui.notify(result.message, "error");
+          return;
+        }
+        const record = result.value;
+        appendRunRecord(pi as unknown as SessionPort, record);
+        if (record.status === "completed") {
+          const secs = Math.round((record.durationMs ?? 0) / 100) / 10;
+          ui.notify(`team ${teamName} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
+          deliverRunResult(pi as unknown as SessionPort, record.report ?? "(leader 未返回报告)");
+        } else {
+          ui.notify(
+            `team ${teamName} ${record.status}: ${record.error ?? "已中止"}`,
+            record.status === "aborted" ? "warning" : "error",
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
+      });
   };
 
   // -- Conversation tools -------------------------------------------------
@@ -311,7 +344,32 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     },
   });
 
+  // Status query tool: lets the MAIN agent answer "团队现在在干什么" at any
+  // time, including while a background run is in progress.
+  pi.registerTool({
+    name: "team_status",
+    label: "Agent Team Status",
+    description: "查看当前/最近一次 agent team run 的状态：各成员在做什么、轮次、费用、worktree。",
+    promptGuidelines: ["用户问团队进度时调用本工具并转述结果；后台 run 进行中也可以随时调用。"],
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
+      return {
+        content: [{ type: "text" as const, text: statusText(ctx) }],
+        details: {},
+      };
+    },
+  });
+
   // -- Commands -----------------------------------------------------------
+
+  const statusText = (ctx: ExtensionContext): string =>
+    formatStatusSnapshot(state.coordinator.getStatus(), Date.now(), (t) => {
+      try {
+        return ctx.hasUI ? ctx.ui.theme.fg("dim", t) : t;
+      } catch {
+        return t;
+      }
+    });
 
   pi.registerCommand("team", {
     description: "列出所有 agent team（团队/成员/模型）",
@@ -333,7 +391,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("team:run", {
-    description: "派单：/team:run <团队名> <任务描述>",
+    description: "派单（后台运行）：/team:run <团队名> <任务描述>",
     handler: async (args, ctx) => {
       const ui = uiPortFrom(ctx);
       const trimmed = (args ?? "").trim();
@@ -344,7 +402,14 @@ function registerCockpitMode(pi: ExtensionAPI): void {
       }
       const teamName = trimmed.slice(0, spaceIndex);
       const task = trimmed.slice(spaceIndex + 1).trim();
-      await runFromCommand(ctx, teamName, task);
+      runFromCommand(ctx, teamName, task);
+    },
+  });
+
+  pi.registerCommand("team:status", {
+    description: "查看当前/最近一次 team run 的状态（各成员在干什么）",
+    handler: async (_args, ctx) => {
+      uiPortFrom(ctx).notify(statusText(ctx), "info");
     },
   });
 
@@ -367,6 +432,21 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     state.projectTrusted = ctx.isProjectTrusted();
     clearWidget(ctx);
 
+    // Hydrate the most recent run record so /team:status works after reload.
+    try {
+      const entries = ctx.sessionManager.getEntries() as Array<{ type?: string; customType?: string; data?: unknown }>;
+      for (const entry of entries) {
+        if (entry.type === "custom" && entry.customType === RUN_ENTRY_TYPE && entry.data) {
+          const data = entry.data as { runId?: string; team?: string; task?: string; startedAt?: string; status?: string; members?: unknown[] };
+          if (typeof data.runId === "string" && typeof data.team === "string" && typeof data.task === "string") {
+            state.coordinator.restoreLastRecord(data as unknown as TeamRunRecord);
+          }
+        }
+      }
+    } catch {
+      /* hydration is best-effort */
+    }
+
     // Dynamic per-team commands: /team:<name> <任务>（/reload 后新团队生效）
     const { teams } = discoverTeams({ cwd: state.cwd, scope: state.projectTrusted ? "both" : "global" });
     for (const team of teams) {
@@ -378,7 +458,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
             uiPortFrom(cmdCtx).notify(`用法：/team:${team.name} <任务描述>`, "warning");
             return;
           }
-          await runFromCommand(cmdCtx, team.name, task);
+          runFromCommand(cmdCtx, team.name, task);
         },
       });
     }

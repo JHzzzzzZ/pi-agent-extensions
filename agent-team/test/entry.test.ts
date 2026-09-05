@@ -136,9 +136,11 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     agentTeamExtension(pi as never);
     assert.ok(pi.tools.has("team_create"));
     assert.ok(pi.tools.has("team_list"));
+    assert.ok(pi.tools.has("team_models"));
     assert.ok(pi.tools.has("team_run"));
+    assert.ok(pi.tools.has("team_status"));
     assert.ok(!pi.tools.has("team_dispatch"));
-    for (const name of ["team", "team:run", "team:stop"]) {
+    for (const name of ["team", "team:run", "team:status", "team:stop"]) {
       assert.ok(pi.commands.has(name), `command ${name} registered`);
     }
     assert.ok(pi.entryRenderers.has("agent-team-run-v1"));

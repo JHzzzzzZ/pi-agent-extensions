@@ -4,13 +4,20 @@
  * Runs inside the leader child pi process. Validates the leader's dispatch
  * request against the team roster, creates worktrees for isolated members,
  * runs member child pi processes with bounded concurrency, streams progress
- * snapshots via onUpdate, and returns a combined per-member report.
+ * snapshots (status + latest activity) via onUpdate, and returns a combined
+ * per-member report.
+ *
+ * The executor is created ONCE per leader process and carries the per-run
+ * dispatch budget: exceeding it makes further dispatches fail with an
+ * instruction to wrap up, so a confused leader cannot loop forever.
  */
 
 import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { createWorktree, defaultGitRunner, type GitRunner } from "./worktree.ts";
 import {
+  MAX_DISPATCH_CALLS_PER_RUN,
+  MAX_MEMBER_RUNS_PER_RUN,
   MAX_PARALLEL_MEMBERS,
   MAX_RESULT_BYTES,
   MAX_SUMMARY_BYTES,
@@ -36,6 +43,8 @@ export interface DispatchMemberDetail {
   ok: boolean;
   status: MemberProgressStatus;
   summary?: string;
+  /** Latest assistant activity tail (progress display only). */
+  latest?: string;
   usage?: AgentUsage;
   worktree?: { path: string; branch: string };
   error?: { code: string; message: string };
@@ -67,6 +76,11 @@ export interface ToolUpdatePayload {
 }
 
 export type OnUpdate = (update: ToolUpdatePayload) => void;
+
+/** Result of one executor invocation (budget exhaustion is a typed failure). */
+export type DispatchExecResult =
+  | { ok: true; value: DispatchOutcome }
+  | { ok: false; code: TeamErrorCode; message: string };
 
 interface PlannedMemberError {
   code: TeamErrorCode;
@@ -130,6 +144,22 @@ function worktreeLines(result: MemberRunResult): string[] {
   return ["", `> worktree: \`${result.worktree.path}\`（分支 \`${result.worktree.branch}\`，改动留在该分支，未合并）`];
 }
 
+/** Flattens a message to one line and bounds it (progress notes). */
+function shortMessage(text: string, max = 80): string {
+  const single = text.replace(/\s+/g, " ").trim();
+  return single.length > max ? `${single.slice(0, max)}…` : single;
+}
+
+/** Member result codes that are environmental — retrying cannot help. */
+const ENVIRONMENT_FAILURE_CODES = new Set<string>(["WORKTREE_UNAVAILABLE", "MEMBER_NOT_FOUND", "CHILD_FAILED"]);
+
+const FAILURE_GUIDANCE =
+  [
+    "⚠ 失败处理指令：",
+    "- 上面的失败若为环境级错误（worktree/git 不可用、成员/模型不存在、子进程启动失败），重试必然再次失败——**不要再次派发给失败的成员**。",
+    "- 调整方案（换成员、改任务、放弃该子任务）或直接输出最终报告，并在报告中如实说明失败原因。",
+  ].join("\n");
+
 /** Builds the combined markdown report returned to the leader. */
 export function buildDispatchReport(results: MemberRunResult[]): string {
   const sections = results.map((result) => {
@@ -137,7 +167,8 @@ export function buildDispatchReport(results: MemberRunResult[]): string {
     const body = result.ok ? result.result : `错误: ${result.error?.message ?? result.result}`;
     return [header, "", body, ...worktreeLines(result)].join("\n");
   });
-  return sections.join("\n\n");
+  const anyFailure = results.some((r) => !r.ok);
+  return anyFailure ? `${sections.join("\n\n")}\n\n${FAILURE_GUIDANCE}` : sections.join("\n\n");
 }
 
 /** Builds a compact progress snapshot text (used for onUpdate + widget). */
@@ -149,7 +180,14 @@ export function buildProgressText(members: MemberProgress[]): string {
     failed: "✗",
     aborted: "⊘",
   };
-  return members.map((m) => `${icon[m.status]} ${m.name} ${m.status}${m.note ? ` — ${m.note}` : ""}`).join("\n");
+  return members
+    .map((m) => {
+      const bits = [`${icon[m.status]} ${m.name} ${m.status}`];
+      if (m.note) bits.push(m.note);
+      if (m.latest) bits.push(m.latest);
+      return bits.join(" — ");
+    })
+    .join("\n");
 }
 
 /** Runs a bounded-concurrency map over items. */
@@ -176,18 +214,35 @@ function truncateMessage(text: string, max = 2000): string {
 }
 
 /**
- * Creates the dispatch executor. The returned function is the `execute`
- * body of the team_dispatch tool.
+ * Creates the dispatch executor. Created ONCE per leader process: the
+ * closure carries the per-run dispatch budget across calls.
  */
 export function createDispatchExecutor(deps: DispatchDeps) {
   const git = deps.gitRunner ?? defaultGitRunner();
   const spawn = deps.spawn ?? defaultSpawn();
+  let dispatchCalls = 0;
+  let memberRuns = 0;
 
   return async function executeDispatch(
     request: DispatchRequest,
     signal: AbortSignal | undefined,
     onUpdate: OnUpdate | undefined,
-  ): Promise<DispatchOutcome> {
+  ): Promise<DispatchExecResult> {
+    // Loop guard: a leader that keeps dispatching (e.g. retrying an
+    // environmental failure forever) is cut off and told to wrap up.
+    if (dispatchCalls >= MAX_DISPATCH_CALLS_PER_RUN || memberRuns >= MAX_MEMBER_RUNS_PER_RUN) {
+      return {
+        ok: false,
+        code: "BUDGET_EXCEEDED",
+        message: [
+          `已达本次 run 的派发预算上限（${dispatchCalls} 次 dispatch / ${memberRuns} 次成员运行）。`,
+          "不要再调用 team_dispatch。立即基于已收到的结果输出最终报告（含已完成部分与未完成原因）。",
+        ].join(""),
+      };
+    }
+    dispatchCalls++;
+    memberRuns += request.tasks.length;
+
     const statuses = new Map<string, MemberProgress>();
 
     const emitProgress = () => {
@@ -202,8 +257,14 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       }
     };
 
-    const setProgress = (name: string, status: MemberProgressStatus, note?: string) => {
-      statuses.set(name, { name, status, ...(note !== undefined ? { note } : {}) });
+    const setProgress = (name: string, status: MemberProgressStatus, note?: string, latest?: string) => {
+      const previous = statuses.get(name);
+      statuses.set(name, {
+        name,
+        status,
+        ...(note !== undefined ? { note } : previous?.note ? { note: previous.note } : {}),
+        ...(latest !== undefined ? { latest } : previous?.latest ? { latest: previous.latest } : {}),
+      });
       emitProgress();
     };
 
@@ -243,7 +304,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       statuses.set(name, {
         name,
         status: plan.preError ? "failed" : plan.worktree ? "running" : "queued",
-        ...(plan.preError ? { note: plan.preError.code } : {}),
+        ...(plan.preError ? { note: shortMessage(`${plan.preError.code}: ${plan.preError.message}`) } : {}),
       });
     }
     emitProgress();
@@ -285,8 +346,12 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           signal,
           killGraceMs: deps.killGraceMs,
           onEvent: (event) => {
-            if (event.type === "message_end" && event.role === "assistant" && event.usage) {
-              setProgress(name, "running", `turn ${event.usage.turns}`);
+            if (event.type === "message_end" && event.role === "assistant") {
+              if (event.usage) {
+                setProgress(name, "running", `turn ${event.usage.turns}`, event.text);
+              } else if (event.text) {
+                setProgress(name, "running", undefined, event.text);
+              }
             }
           },
         });
@@ -310,11 +375,16 @@ export function createDispatchExecutor(deps: DispatchDeps) {
             message: truncateMessage(outcome.errorMessage || outcome.stderr || `pi exited with code ${outcome.exitCode}`),
           };
         }
-        setProgress(name, result.status, result.ok ? `turn ${outcome.usage.turns}` : result.error?.code);
+        setProgress(
+          name,
+          result.status,
+          result.ok ? `turn ${outcome.usage.turns}` : shortMessage(`${result.error?.code}: ${result.error?.message}`),
+          result.ok ? shortMessage(rawText) : undefined,
+        );
         return result;
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        setProgress(name, "failed", "spawn failed");
+        setProgress(name, "failed", shortMessage(`CHILD_FAILED: ${message}`));
         const result: MemberRunResult = {
           name,
           ok: false,
@@ -339,13 +409,13 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       totalUsage.output += result.usage.output;
     }
 
-    return { results, text: buildDispatchReport(results) };
+    return { ok: true, value: { results, text: buildDispatchReport(results) } };
   };
 }
 
 /**
- * Extracts per-member dispatch results (status/summary/usage/worktree) from
- * a team_dispatch tool `details` payload as seen in the leader's JSON
+ * Extracts per-member dispatch results (status/summary/latest/usage/worktree)
+ * from a team_dispatch tool `details` payload as seen in the leader's JSON
  * event stream. Lenient: malformed shapes yield undefined.
  */
 export function parseDispatchMemberResults(details: unknown): DispatchMemberDetail[] | undefined {
@@ -362,6 +432,7 @@ export function parseDispatchMemberResults(details: unknown): DispatchMemberDeta
       ok: raw.ok === true,
       status: raw.status as MemberProgressStatus,
       ...(typeof raw.summary === "string" ? { summary: raw.summary } : {}),
+      ...(typeof raw.latest === "string" ? { latest: raw.latest } : {}),
       ...(raw.usage !== null && typeof raw.usage === "object" ? { usage: raw.usage as AgentUsage } : {}),
       ...(raw.worktree !== null && typeof raw.worktree === "object"
         ? { worktree: raw.worktree as { path: string; branch: string } }

@@ -141,6 +141,13 @@ function contentText(parts: Array<{ type?: string; text?: string }> | undefined)
   return texts.length > 0 ? texts.join("\n") : undefined;
 }
 
+/** Flattens text to a single line and keeps only the tail (progress display). */
+export function textTail(text: string, max = 160): string {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= max) return singleLine;
+  return `…${singleLine.slice(singleLine.length - max)}`;
+}
+
 /**
  * Runs one child pi process in JSON mode. Streams sanitized events to
  * `onEvent` as they arrive and resolves when the child exits. Abort kills
@@ -221,6 +228,7 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
         emit({
           type: "message_end",
           role,
+          ...(role === "assistant" && text ? { text: textTail(text) } : {}),
           ...(msg.stopReason ? { stopReason: msg.stopReason } : {}),
           ...(role === "assistant" && msg.usage ? { usage: { ...outcome.usage } } : {}),
           ...(msg.model ? { model: msg.model } : {}),

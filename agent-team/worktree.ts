@@ -19,15 +19,29 @@ export type GitRunner = (
   cwd?: string,
 ) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-/** Default git runner: non-throwing execFile wrapper. */
-export function defaultGitRunner(): GitRunner {
+/**
+ * Default git runner: non-throwing execFile wrapper. `extraEnv` is merged
+ * over process.env (tests use GIT_CEILING_DIRECTORIES to isolate from
+ * repositories in parent directories).
+ */
+export function defaultGitRunner(extraEnv?: NodeJS.ProcessEnv): GitRunner {
   return (args, cwd) =>
     new Promise((resolve) => {
-      execFile("git", args, { cwd, timeout: 30_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-        // exit code 128 covers "not a git repository" and worktree failures
-        const code = error && typeof (error as NodeJS.ErrnoException).code === "number" ? ((error as unknown as { code: number }).code) : error ? 1 : 0;
-        resolve({ code, stdout: String(stdout), stderr: String(stderr) });
-      });
+      execFile(
+        "git",
+        args,
+        { cwd, env: extraEnv ? { ...process.env, ...extraEnv } : undefined, timeout: 30_000, maxBuffer: 1024 * 1024 },
+        (error, stdout, stderr) => {
+          // exit code 128 covers "not a git repository" and worktree failures
+          const code =
+            error && typeof (error as NodeJS.ErrnoException).code === "number"
+              ? (error as unknown as { code: number }).code
+              : error
+                ? 1
+                : 0;
+          resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+        },
+      );
     });
 }
 

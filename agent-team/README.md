@@ -34,6 +34,7 @@ Member 子进程 ×N：pi --mode json -p --no-session --model <member.model> [--
 ---
 name: dev-team
 description: 全栈开发小队
+worktree: true              # 可选：整个团队在共享 git worktree 中工作（每次 run 独立分支）
 leader:
   model: anthropic/claude-opus-4-5
   prompt: |
@@ -48,7 +49,7 @@ members:
   - name: backend
     description: 后端开发
     model: anthropic/claude-sonnet-4-5
-    worktree: true          # 在独立 git worktree 中工作
+    worktree: true          # 覆盖团队共享：该成员用独立 git worktree
     prompt: |
       你是资深后端工程师……
 ---
@@ -59,34 +60,40 @@ members:
 要点：
 - **leader.prompt 是整个功能的核心入口**——你在这里教 leader 如何完成任务（拆解策略、派发规则、验收标准）。扩展会自动追加团队花名册、`team_dispatch` 用法与最终报告格式。
 - **leader 默认拥有全部内置工具**（读写文件、bash 等）。若要限制 leader 亲自动手（例如只让它拆解派发），在团队文件里设置 `leader.tools`（如 `tools: [read, grep, find, ls]`）。实测中 leader 可能会用编辑工具自行"降级代写"或修订团队配置——不希望如此就收紧它的工具。
-- `worktree: true` 的成员在 `~/.pi/agent/teams/worktrees/<runId>/<member>`（分支 `team/<runId>/<member>`）中工作，改动留在该分支**不自动合并**，结果中附路径与分支名，由 leader/用户决定整合；要求当前目录是 git 仓库。
+- **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team/<runId>`）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（`/reload` 后动态命令消失）。
 
 ### 3. 派单与复用
 
 | 方式 | 说明 |
 |---|---|
-| `/team:run <团队名> <任务>` | 后台运行，Widget 实时显示进度，完成后报告自动送入会话 |
+| `/team:run <团队名> <任务>` | **后台运行**：命令立即返回，主会话可继续对话；Widget 实时显示进度，完成后报告自动送入会话 |
 | `/team:<团队名> <任务>` | 等价快捷方式（`/reload` 后对新团队生效） |
 | `team_run` 工具 | 让主 agent 自主派单（同步等待，流式进度） |
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
 
-其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）。
+其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）。
+
+### 防失控与失败可见性
+
+- 每个成员的失败会显示**具体原因**（不只错误码），Widget、进度流和派发报告中都可见。
+- 派发报告对环境级失败（worktree/git 不可用、成员/模型不存在）附带指令：重试无效，不要再次派发同一成员。
+- **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
 
 ## 命令与工具一览
 
-- 主会话工具：`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）
-- leader 进程内工具：`team_dispatch`（派发子任务给成员）
-- 命令：`/team`、`/team:run`、`/team:stop`、动态 `/team:<name>`
-- Widget：运行期间显示 leader/各成员实时状态（仅 TUI 模式）
+- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态）
+- leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
+- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、动态 `/team:<name>`
+- Widget：运行期间显示 leader/各成员实时状态与最新动作（仅 TUI 模式）
 
 ## 开发与测试
 
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（45 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（55 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

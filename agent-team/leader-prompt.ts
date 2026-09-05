@@ -24,9 +24,13 @@ function rosterLines(team: TeamConfig): string[] {
 
 /**
  * Builds the full leader system prompt. Deterministic and pure — covered
- * by unit tests.
+ * by unit tests. `sharedWorktree` is set when the team runs in a team-level
+ * shared git worktree.
  */
-export function buildLeaderSystemPrompt(team: TeamConfig): string {
+export function buildLeaderSystemPrompt(
+  team: TeamConfig,
+  sharedWorktree?: { path: string; branch: string },
+): string {
   const sections: string[] = [];
 
   sections.push(team.leader.prompt.trim());
@@ -41,6 +45,9 @@ export function buildLeaderSystemPrompt(team: TeamConfig): string {
       `你负责的团队：**${team.name}**${team.description ? `（${team.description}）` : ""}。`,
       "",
       ...rosterLines(team),
+      sharedWorktree
+        ? `\n## 工作区\n\n本次运行在团队共享 git worktree 中进行：\`${sharedWorktree.path}\`（分支 \`${sharedWorktree.branch}\`）。你和所有未单独配置 worktree 的成员的全部文件改动都发生在这个 worktree 内，主工作目录不受影响；运行结束后由用户决定如何合并该分支。`
+        : "",
       team.notes ? `\n## 团队补充说明\n\n${team.notes.trim()}` : "",
     ].join("\n"),
   );
@@ -63,6 +70,8 @@ export function buildLeaderSystemPrompt(team: TeamConfig): string {
       "- task 描述必须自包含：成员看不到你们的对话历史，只看到这段文字。写清目标、涉及文件/路径、约束和期望产出。",
       `- agent 必须是花名册里的成员名，不能派发给团队之外的 agent。`,
       "- 成员结果会按成员分节返回给你。审查每份结果：不符合要求就再次派单返工（把问题点写具体）。",
+      "- 环境级失败（worktree/git 不可用、成员或模型不存在、子进程启动失败）重试必然再次失败：不要再次派发给失败的成员，调整方案或直接输出最终报告。",
+      `- 派发有预算上限（${"单次 run 最多 12 次 dispatch 调用 / 40 次成员运行"}）：接近或达到上限时，立即基于已有结果输出最终报告。`,
       "- 除琐碎的读写外，不要亲自完成本应派给成员的工作；你的职责是拆解、派发、审查、整合。",
       "",
     ].join("\n"),
