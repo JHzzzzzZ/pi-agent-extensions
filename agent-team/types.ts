@@ -30,6 +30,9 @@ export const MAX_MEMBER_RUNS_PER_RUN = 40;
 /** Grace period between SIGTERM and SIGKILL when aborting a child. */
 export const KILL_GRACE_MS = 5000;
 
+/** Per-message text captured in run transcripts (bytes, UTF-8). */
+export const MAX_TRANSCRIPT_MESSAGE_BYTES = 4 * 1024;
+
 /** Session entry type used to persist run records (metadata only). */
 export const RUN_ENTRY_TYPE = "agent-team-run-v1";
 
@@ -171,6 +174,8 @@ export type ChildEvent =
       role: string;
       /** Single-line tail of the assistant text (progress display only). */
       text?: string;
+      /** Bounded full text of the message (run transcripts; assistant only). */
+      fullText?: string;
       stopReason?: string;
       usage?: AgentUsage;
       model?: string;

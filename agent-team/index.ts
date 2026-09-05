@@ -26,10 +26,22 @@ import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
 import {
+  FileTranscriptSink,
+  LEADER_ACTOR,
+  listTranscriptActors,
+  pruneOldTranscripts,
+  readTranscript,
+  sanitizeActorName,
+  type TranscriptEntry,
+} from "./transcript.ts";
+import { formatTranscriptText, openTranscriptViewer, type ViewerActor, type ViewerData } from "./viewer.ts";
+import {
   LEADER_ENV_FILE,
   LEADER_ENV_RUNID,
+  MAX_RESULT_BYTES,
   RUN_ENTRY_TYPE,
   WIDGET_ID,
+  truncateUtf8,
   type TeamConfig,
   type TeamRunRecord,
 } from "./types.ts";
@@ -46,6 +58,17 @@ function extensionEntryPath(): string | undefined {
 function worktreeRoot(): string {
   return path.join(getAgentDir(), "teams", "worktrees");
 }
+
+/** Root of per-run transcript artifacts (leader + member JSONL files). */
+function transcriptRoot(): string {
+  return path.join(getAgentDir(), "teams", "runs");
+}
+
+/** Transcript directories older than this are pruned on session start. */
+const TRANSCRIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** /team:<name> dynamic registrations never shadow these built-ins. */
+const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view"]);
 
 /** Builds the guarded UI port over ctx.ui (repo TUI conventions). */
 function uiPortFrom(ctx: ExtensionContext): UiPort {
@@ -109,6 +132,7 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
           worktreeRoot: worktreeRoot(),
           runId,
           killGraceMs: 5000,
+          transcript: new FileTranscriptSink(transcriptRoot(), runId),
         })
       : undefined;
 
@@ -220,6 +244,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
       cwd: () => state.cwd,
       worktreeRoot: worktreeRoot(),
       extensionEntryPath: extensionEntryPath(),
+      transcriptRoot: transcriptRoot(),
     }),
     cwd: process.cwd(),
     projectTrusted: false,
@@ -232,6 +257,48 @@ function registerCockpitMode(pi: ExtensionAPI): void {
       name,
     });
     return found.ok ? { ok: true, value: found.value } : { ok: false, message: found.message };
+  };
+
+  /**
+   * Loads the viewer model for the current/most recent run: leader first,
+   * then members (status from live progress or the last record), then any
+   * extra transcript files. Transcripts are read per actor on each load —
+   * the viewer refreshes on a timer, so this stays live while a run works.
+   */
+  const buildViewerData = (): ViewerData => {
+    const snapshot = state.coordinator.getStatus();
+    const progress = snapshot.progress;
+    const lastRecord = snapshot.lastRecord;
+    const runId = progress?.runId ?? lastRecord?.runId ?? "";
+    const runStatus = progress ? "running" : (lastRecord?.status ?? "unknown");
+    const elapsed = progress
+      ? (() => {
+          const totalSecs = Math.max(0, Math.round((Date.now() - progress.startedAtMs) / 1000));
+          const mins = Math.floor(totalSecs / 60);
+          return mins > 0 ? `${mins}m${totalSecs % 60}s` : `${totalSecs}s`;
+        })()
+      : undefined;
+
+    const memberStatuses = new Map<string, string>();
+    if (progress) for (const member of progress.members) memberStatuses.set(member.name, member.status);
+    else if (lastRecord) for (const member of lastRecord.members) memberStatuses.set(member.name, member.status);
+
+    const actors: ViewerActor[] = [
+      { actor: LEADER_ACTOR, label: "leader", status: progress ? "running" : lastRecord?.status },
+    ];
+    for (const [name, status] of memberStatuses) {
+      actors.push({ actor: sanitizeActorName(name), label: name, status });
+    }
+    for (const fileActor of listTranscriptActors(transcriptRoot(), runId)) {
+      if (fileActor === LEADER_ACTOR) continue;
+      if (!actors.some((a) => a.actor === fileActor)) actors.push({ actor: fileActor, label: fileActor });
+    }
+
+    const entries = new Map<string, TranscriptEntry[]>();
+    if (runId) {
+      for (const actor of actors) entries.set(actor.actor, readTranscript(transcriptRoot(), runId, actor.actor));
+    }
+    return { team: progress?.team ?? lastRecord?.team ?? "(unknown)", runId, runStatus, elapsed, actors, entries };
   };
 
   /** Command-mode run flow (runs in BACKGROUND): persist, notify, deliver. */
@@ -360,6 +427,40 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     },
   });
 
+  // Transcript tool: the MAIN agent relays what a member actually did —
+  // its conversation, tool calls, and errors — from the run artifacts.
+  pi.registerTool({
+    name: "team_transcript",
+    label: "Team Member Transcript",
+    description:
+      "查看当前/最近一次 agent team run 中 leader 或指定成员的会话记录（对话、工具调用、错误）。用户想深入了解某个成员具体做了什么时调用。",
+    promptGuidelines: [
+      "member 传成员名；传 \"leader\" 查看 leader 的调度过程。可用成员名先看 team_status。",
+      "记录可能很长：转述要点而不是全文粘贴。",
+    ],
+    parameters: Type.Object({
+      member: Type.Optional(
+        Type.String({ description: "成员名（leader 表示主控）；省略则查看 leader" }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx: ExtensionContext) {
+      const data = buildViewerData();
+      if (!data.runId) {
+        return { content: [{ type: "text" as const, text: "当前没有 team run 记录。" }], details: {} };
+      }
+      const actor = params.member && params.member !== "leader" ? sanitizeActorName(params.member) : LEADER_ACTOR;
+      const text = formatTranscriptText(data, actor);
+      const body =
+        text.startsWith("没有 ") && data.actors.length > 0
+          ? `${text}\n可用的记录：${data.actors.map((a) => a.label).join("、")}`
+          : text;
+      return {
+        content: [{ type: "text" as const, text: truncateUtf8(body, MAX_RESULT_BYTES) }],
+        details: { actors: data.actors.map((a) => ({ actor: a.actor, label: a.label, status: a.status })) },
+      };
+    },
+  });
+
   // -- Commands -----------------------------------------------------------
 
   const statusText = (ctx: ExtensionContext): string =>
@@ -425,6 +526,27 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("team:view", {
+    description: "全屏查看当前/最近一次 run 的成员会话记录（实时）",
+    handler: async (_args, ctx) => {
+      const ui = uiPortFrom(ctx);
+      if (!ctx.hasUI || ctx.mode !== "tui") {
+        ui.notify("会话记录查看器仅在交互式 TUI 中可用。", "warning");
+        return;
+      }
+      const snapshot = state.coordinator.getStatus();
+      if (!snapshot.progress && !snapshot.lastRecord) {
+        ui.notify("当前没有 team run 记录。用 /team:run <团队> <任务> 派单后即可查看。", "info");
+        return;
+      }
+      try {
+        await openTranscriptViewer(ctx.ui, { load: buildViewerData });
+      } catch (e) {
+        ui.notify(`打开会话记录查看器失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
   // -- Session lifecycle --------------------------------------------------
 
   pi.on("session_start", async (_event, ctx) => {
@@ -447,9 +569,17 @@ function registerCockpitMode(pi: ExtensionAPI): void {
       /* hydration is best-effort */
     }
 
+    // Best-effort retention: drop transcript artifact dirs older than a week.
+    try {
+      pruneOldTranscripts(transcriptRoot(), Date.now(), TRANSCRIPT_RETENTION_MS);
+    } catch {
+      /* pruning is best-effort */
+    }
+
     // Dynamic per-team commands: /team:<name> <任务>（/reload 后新团队生效）
     const { teams } = discoverTeams({ cwd: state.cwd, scope: state.projectTrusted ? "both" : "global" });
     for (const team of teams) {
+      if (RESERVED_TEAM_COMMAND_NAMES.has(team.name)) continue; // built-ins win: run/status/stop/view
       pi.registerCommand(`team:${team.name}`, {
         description: `派单给 ${team.name}${team.description ? `（${team.description}）` : ""}：/team:${team.name} <任务>`,
         handler: async (args, cmdCtx) => {

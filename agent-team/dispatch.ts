@@ -14,6 +14,7 @@
 
 import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
+import { type TranscriptEntryKind, type TranscriptSink } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, type GitRunner } from "./worktree.ts";
 import {
   MAX_DISPATCH_CALLS_PER_RUN,
@@ -68,6 +69,8 @@ export interface DispatchDeps {
   gitRunner?: GitRunner;
   /** Test seam: SIGTERM→SIGKILL grace for member children. */
   killGraceMs?: number;
+  /** Run transcript writer (member activity artifacts for /team:view). */
+  transcript?: TranscriptSink;
 }
 
 export interface ToolUpdatePayload {
@@ -88,6 +91,8 @@ interface PlannedMemberError {
 }
 
 interface PlannedDispatch {
+  /** Requested agent name (the transcript actor even when unknown). */
+  agent: string;
   member?: TeamConfig["members"][number];
   task: string;
   worktree?: { path: string; branch: string };
@@ -257,6 +262,20 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       }
     };
 
+    /** Best-effort transcript write (observability data, never run-critical). */
+    const record = (actor: string, kind: TranscriptEntryKind, text: string): void => {
+      if (!deps.transcript) return;
+      try {
+        deps.transcript.append(actor, kind, text);
+      } catch {
+        /* transcript failures never break the run */
+      }
+    };
+
+    /** One-line bounded summary of a tool call (transcript display). */
+    const toolEntryText = (prefix: string, toolName: string, payload: unknown): string =>
+      shortMessage(`${prefix}${toolName}${payload === undefined ? "" : ` ${JSON.stringify(payload)}`}`, 300);
+
     const setProgress = (name: string, status: MemberProgressStatus, note?: string, latest?: string) => {
       const previous = statuses.get(name);
       statuses.set(name, {
@@ -274,6 +293,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       const member = deps.team.members.find((m) => m.name === item.agent);
       if (!member) {
         planned.push({
+          agent: item.agent,
           task: item.task,
           preError: {
             code: "MEMBER_NOT_FOUND",
@@ -282,7 +302,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
         });
         continue;
       }
-      planned.push({ member, task: item.task });
+      planned.push({ agent: member.name, member, task: item.task });
     }
 
     // Worktree setup (sequential — cheap git ops, avoids racing git index).
@@ -310,9 +330,10 @@ export function createDispatchExecutor(deps: DispatchDeps) {
     emitProgress();
 
     const runOne = async (plan: PlannedDispatch): Promise<MemberRunResult> => {
-      const name = plan.member?.name ?? "?";
+      const name = plan.member?.name ?? plan.agent;
       const startMs = Date.now();
       if (plan.preError || !plan.member) {
+        record(name, "error", `${plan.preError?.code ?? "CHILD_FAILED"}: ${plan.preError?.message ?? "unknown error"}`);
         return {
           name,
           ok: false,
@@ -336,6 +357,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
 
       const invocation = deps.piCommand ? { command: deps.piCommand, args } : getPiInvocation(args);
 
+      record(name, "task", plan.task);
       setProgress(name, "running");
       try {
         const outcome = await runChildPi({
@@ -347,11 +369,24 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           killGraceMs: deps.killGraceMs,
           onEvent: (event) => {
             if (event.type === "message_end" && event.role === "assistant") {
+              if (event.fullText) record(name, "assistant", event.fullText);
               if (event.usage) {
                 setProgress(name, "running", `turn ${event.usage.turns}`, event.text);
               } else if (event.text) {
                 setProgress(name, "running", undefined, event.text);
               }
+              return;
+            }
+            if (event.type === "tool_execution_start") {
+              record(name, "tool", toolEntryText("▶ ", event.toolName, event.args));
+              return;
+            }
+            if (event.type === "tool_execution_end") {
+              record(name, "tool", toolEntryText("  ✓ ", event.toolName, event.text));
+              return;
+            }
+            if (event.type === "error") {
+              record(name, "error", `${event.code}: ${event.message}`);
             }
           },
         });
@@ -381,10 +416,14 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           result.ok ? `turn ${outcome.usage.turns}` : shortMessage(`${result.error?.code}: ${result.error?.message}`),
           result.ok ? shortMessage(rawText) : undefined,
         );
+        const secs = Math.round(durationMs / 100) / 10;
+        record(name, "system", `${result.status} · ${secs}s · $${outcome.usage.cost.toFixed(4)} · ${outcome.usage.turns} turns`);
+        if (result.error) record(name, "error", `${result.error.code}: ${result.error.message}`);
         return result;
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         setProgress(name, "failed", shortMessage(`CHILD_FAILED: ${message}`));
+        record(name, "error", `CHILD_FAILED: failed to start pi subprocess: ${message}`);
         const result: MemberRunResult = {
           name,
           ok: false,

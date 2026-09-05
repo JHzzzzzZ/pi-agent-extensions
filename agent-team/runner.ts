@@ -16,7 +16,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   KILL_GRACE_MS,
+  MAX_TRANSCRIPT_MESSAGE_BYTES,
   emptyUsage,
+  truncateUtf8,
   type AgentUsage,
   type ChildEvent,
   type ChildOutcome,
@@ -229,6 +231,7 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
           type: "message_end",
           role,
           ...(role === "assistant" && text ? { text: textTail(text) } : {}),
+          ...(role === "assistant" && text ? { fullText: truncateUtf8(text, MAX_TRANSCRIPT_MESSAGE_BYTES) } : {}),
           ...(msg.stopReason ? { stopReason: msg.stopReason } : {}),
           ...(role === "assistant" && msg.usage ? { usage: { ...outcome.usage } } : {}),
           ...(msg.model ? { model: msg.model } : {}),

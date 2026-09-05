@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
+import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, type GitRunner } from "./worktree.ts";
 import {
   LEADER_ENV_FILE,
@@ -45,6 +46,8 @@ export interface CoordinatorDeps {
   piCommand?: string;
   gitRunner?: GitRunner;
   killGraceMs?: number;
+  /** Root for per-run transcript artifacts (leader activity for /team:view). */
+  transcriptRoot?: string;
   /** Test seams. */
   now?: () => string;
   nowMs?: () => number;
@@ -59,6 +62,14 @@ function elapsedLabel(startedAtMs: number, nowMs: number): string {
   const mins = Math.floor(totalSecs / 60);
   const secs = totalSecs % 60;
   return mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
+}
+
+/** One-line bounded summary of a tool call (transcript display). */
+function toolEntryText(prefix: string, toolName: string, payload: unknown): string {
+  const single = (text: string): string => text.replace(/\s+/g, " ").trim();
+  const payloadText = payload === undefined || payload === null ? "" : ` ${single(JSON.stringify(payload))}`;
+  const text = single(`${prefix}${toolName}${payloadText}`);
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
 /** Pure widget renderer (unit-tested). */
@@ -262,6 +273,22 @@ export class TeamRunCoordinator {
     };
     this.currentProgress = progress;
 
+    // Leader transcript artifacts (best-effort; read back by /team:view and
+    // the team_transcript tool). Member transcripts are written by the
+    // leader process itself — both sides share the run dir.
+    const transcript = this.deps.transcriptRoot
+      ? new FileTranscriptSink(this.deps.transcriptRoot, runId, now)
+      : undefined;
+    const recordTranscript = (kind: TranscriptEntryKind, text: string): void => {
+      if (!transcript) return;
+      try {
+        transcript.append(LEADER_ACTOR, kind, text);
+      } catch {
+        /* transcript failures never break the run */
+      }
+    };
+    recordTranscript("task", task);
+
     const render = () => {
       try {
         ui.setWidget(renderWidgetLines(progress, nowMs(), ui.dim));
@@ -277,45 +304,55 @@ export class TeamRunCoordinator {
 
     const onEvent = (event: ChildEvent) => {
       if (event.type === "message_end" && event.role === "assistant") {
+        if (event.fullText) recordTranscript("assistant", event.fullText);
         if (event.usage) progress.leaderNote = `turn ${event.usage.turns}`;
         if (event.model) progress.leaderModel = event.model;
         if (event.text) progress.leaderActivity = event.text;
         render();
         return;
       }
-      if (
-        event.type === "tool_execution_start" ||
-        event.type === "tool_execution_update" ||
-        event.type === "tool_execution_end"
-      ) {
+      if (event.type === "tool_execution_start") {
+        // Transcript keeps every leader tool call; progress only tracks dispatch.
+        recordTranscript("tool", toolEntryText("▶ ", event.toolName, event.args));
         if (event.toolName !== "team_dispatch") return;
-        if (event.type === "tool_execution_start") {
-          const tasks = (event.args as { tasks?: Array<{ agent?: string }> } | undefined)?.tasks;
-          if (Array.isArray(tasks)) {
-            const names = new Set(tasks.map((t) => t.agent).filter((a): a is string => typeof a === "string"));
-            for (const member of progress.members) {
-              if (names.has(member.name) && member.status === "queued") member.status = "running";
-            }
+        const tasks = (event.args as { tasks?: Array<{ agent?: string; task?: string }> } | undefined)?.tasks;
+        if (Array.isArray(tasks)) {
+          const names = new Set(tasks.map((t) => t.agent).filter((a): a is string => typeof a === "string"));
+          for (const member of progress.members) {
+            if (names.has(member.name) && member.status === "queued") member.status = "running";
           }
-        } else {
-          const members = parseDispatchMemberResults(event.details);
-          if (members) {
-            for (const member of members) {
-              const existing = progress.members.find((m) => m.name === member.name);
-              const next: MemberProgress = {
-                name: member.name,
-                status: member.status,
-                ...(member.error ? { note: `${member.error.code}: ${member.error.message}` } : {}),
-                ...(member.latest ? { latest: member.latest } : {}),
-              };
-              // Bound the failure note so the widget stays readable.
-              if (next.note && next.note.length > 120) next.note = `${next.note.slice(0, 120)}…`;
-              if (existing) Object.assign(existing, next);
-              else progress.members.push(next);
-            }
+          const dispatchLines = tasks
+            .map((t) => (typeof t?.agent === "string" ? `${t.agent}: ${typeof t?.task === "string" ? t.task : ""}` : null))
+            .filter((line): line is string => line !== null);
+          if (dispatchLines.length > 0) recordTranscript("tool", `team_dispatch 派发 →\n${dispatchLines.map((l) => `  - ${l}`).join("\n")}`);
+        }
+        render();
+        return;
+      }
+      if (event.type === "tool_execution_end") {
+        recordTranscript("tool", toolEntryText("  ✓ ", event.toolName, event.text));
+        if (event.toolName !== "team_dispatch") return;
+        const members = parseDispatchMemberResults(event.details);
+        if (members) {
+          for (const member of members) {
+            const existing = progress.members.find((m) => m.name === member.name);
+            const next: MemberProgress = {
+              name: member.name,
+              status: member.status,
+              ...(member.error ? { note: `${member.error.code}: ${member.error.message}` } : {}),
+              ...(member.latest ? { latest: member.latest } : {}),
+            };
+            // Bound the failure note so the widget stays readable.
+            if (next.note && next.note.length > 120) next.note = `${next.note.slice(0, 120)}…`;
+            if (existing) Object.assign(existing, next);
+            else progress.members.push(next);
           }
         }
         render();
+        return;
+      }
+      if (event.type === "error") {
+        recordTranscript("error", `${event.code}: ${event.message}`);
       }
     };
 
@@ -394,10 +431,14 @@ export class TeamRunCoordinator {
         durationMs: nowMs() - startedAtMs,
         ...(sharedWorktree ? { worktree: sharedWorktree } : {}),
       };
+      const runStatus = aborted ? "aborted" : failed ? "failed" : "completed";
+      recordTranscript("system", `run ${runStatus} · ${Math.round((record.durationMs ?? 0) / 100) / 10}s · $${record.totalCost.toFixed(4)}`);
+      if (record.error) recordTranscript("error", record.error);
       this.lastRecord = record;
       return { ok: true, value: record };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      recordTranscript("error", `CHILD_FAILED: failed to start leader process: ${message}`);
       return { ok: false, code: "CHILD_FAILED", message: `failed to start leader process: ${message}` };
     } finally {
       this.active = null;

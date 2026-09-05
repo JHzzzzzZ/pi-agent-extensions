@@ -73,7 +73,25 @@ members:
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
 
-其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）。
+其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）。
+
+### 4. 会话记录查看器（/team:view）与成员 transcript
+
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**居中全屏查看器**，实时查看本次 run 中 leader 与每个成员的完整会话历史——assistant 回复全文、工具调用与结果摘要、派发的子任务、错误与结束状态，内容随子进程事件流实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+
+| 按键 | 作用 |
+|---|---|
+| `↑`/`↓` 或 `j`/`k` | 逐行滚动（上滚自动退出跟随，滚到底自动恢复跟随最新） |
+| `PgUp`/`PgDn` | 翻页 |
+| `g`/`G`（或 `Home`/`End`） | 跳到顶部 / 跟随底部最新 |
+| `←`/`→`、`h`/`l`、`Tab` | 切换上/下一个成员 |
+| `1`–`9` | 直接跳到第 N 个成员 |
+| `x` | 显示/隐藏工具调用行 |
+| `q` / `Esc` | 关闭查看器 |
+
+实现机制（run artifacts）：每个 run 在 `~/.pi/agent/teams/runs/<runId>/` 下保留每个成员一份有界 JSONL 流水（leader 为 `_leader.jsonl`）——leader 侧事件由驾驶舱从 leader 子进程 JSON 流写入，成员侧由 leader 进程内的 dispatch 执行器实时写入，查看器与工具按需读取。单条记录封顶 4KB、单文件 2MB、目录保留 7 天（session 启动时自动清理）。全部落盘 best-effort，记录失败绝不影响 run 本身。
+
+对话内查看：主 agent 可调用 `team_transcript` 工具（`member` 参数指定成员名或 `leader`）读取同样的记录并转述要点；`team_status` 之外想深入某个成员"到底做了什么"时用它。动态命令 `/team:<name>` 不会覆盖内置的 `/team:run|status|stop|view`。
 
 ### 防失控与失败可见性
 
@@ -83,17 +101,18 @@ members:
 
 ## 命令与工具一览
 
-- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态）
+- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
-- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、动态 `/team:<name>`
+- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、动态 `/team:<name>`
 - Widget：运行期间显示 leader/各成员实时状态与最新动作（仅 TUI 模式）
+- `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
 
 ## 开发与测试
 
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（55 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（80 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
