@@ -118,7 +118,11 @@ export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选
 
 ## provider-quota
 
-查询当前 provider 的账户额度/余额并在终端状态行显示。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
+查询当前 provider 的账户额度/余额并在终端状态行显示。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行附带 5 小时窗口的下次刷新时间（`GLM tok X% mcp Y% → HH:mm (Xh Ym)`，跨日显示 `MM-dd HH:mm`，字段以实测 `nextResetTime` 为准）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
+
+```bash
+node --experimental-strip-types --test provider-quota/index.test.ts
+```
 
 ## run-timer
 
