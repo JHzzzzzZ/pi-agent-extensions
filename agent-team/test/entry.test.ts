@@ -9,7 +9,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { buildLeaderSystemPrompt } from "../leader-prompt.ts";
 import { serializeTeam } from "../config.ts";
-import agentTeamExtension from "../index.ts";
+import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { VALID_TEAM_MD, fixtureTeam } from "./fixtures.ts";
 
 test("leader prompt embeds the user strategy verbatim, then roster and tool rules", () => {
@@ -105,6 +105,7 @@ function withEnv(file: string | undefined, fn: () => void | Promise<void>): Prom
 }
 
 test("leader mode (env set) registers only the team_dispatch tool", async () => {
+  resetDoubleLoadGuardForTests();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-entry-"));
   const teamFile = path.join(dir, "dev-team.md");
   fs.writeFileSync(teamFile, VALID_TEAM_MD);
@@ -118,6 +119,7 @@ test("leader mode (env set) registers only the team_dispatch tool", async () => 
 });
 
 test("leader mode with an unreadable team file still registers a failing tool", async () => {
+  resetDoubleLoadGuardForTests();
   await withEnv(path.join(os.tmpdir(), "does-not-exist-team.md"), () => {
     const pi = fakePi();
     agentTeamExtension(pi as never);
@@ -126,6 +128,7 @@ test("leader mode with an unreadable team file still registers a failing tool", 
 });
 
 test("cockpit mode registers tools, commands and the entry renderer", async () => {
+  resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-cockpit-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
   const projTeam = fixtureTeam({ name: "proj-team", description: "项目团队", filePath: "", notes: undefined });
@@ -150,4 +153,15 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     assert.ok(pi.commands.has("team:proj-team"), "dynamic /team:<name> registered");
     assert.match(pi.commands.get("team:proj-team")?.description ?? "", /proj-team/);
   });
+});
+
+test("double load is a no-op (installed package + -e copy)", () => {
+  resetDoubleLoadGuardForTests();
+  const pi = fakePi();
+  agentTeamExtension(pi as never);
+  const toolsAfterFirst = pi.tools.size;
+  agentTeamExtension(pi as never);
+  assert.equal(pi.tools.size, toolsAfterFirst, "second instance registers nothing");
+  assert.equal(pi.commands.size, 4);
+  resetDoubleLoadGuardForTests();
 });

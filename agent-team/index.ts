@@ -475,11 +475,29 @@ function registerCockpitMode(pi: ExtensionAPI): void {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Double-load guard: the same extension can reach one process twice (e.g.
+ * installed as a git package AND passed via `-e`, which is exactly how the
+ * cockpit spawns the leader child). pi treats the copies as different
+ * extensions and fails on duplicate tool names, so the first instance wins
+ * and later ones become no-ops.
+ */
+const LOADER_FLAG = "__piAgentTeamExtensionLoaded";
+
 export default function agentTeamExtension(pi: ExtensionAPI): void {
+  const loader = globalThis as { [LOADER_FLAG]?: boolean };
+  if (loader[LOADER_FLAG]) return;
+  loader[LOADER_FLAG] = true;
+
   const teamFile = process.env[LEADER_ENV_FILE];
   if (teamFile) {
     registerLeaderMode(pi, teamFile);
     return;
   }
   registerCockpitMode(pi);
+}
+
+/** Test seam: clears the double-load guard (the flag lives on globalThis). */
+export function resetDoubleLoadGuardForTests(): void {
+  delete (globalThis as { [LOADER_FLAG]?: boolean })[LOADER_FLAG];
 }
