@@ -268,3 +268,171 @@ test("hydrateRegistryInto seeds every registry run", () => {
 	hydrateRegistryInto(store, registry, [a, b]);
 	assert.equal(store.listRuns().length, 2);
 });
+
+// ------------------------------------------------------------------
+// applyRuntimeView: full snapshot merge for the /workflows:view viewer (JHL-18)
+// ------------------------------------------------------------------
+
+function runtimeViewFixture(runId: string, opts: { cacheHitSecond?: boolean } = {}) {
+	return {
+		runId,
+		scriptId: "sc1",
+		scriptName: "renamed-flow",
+		status: "running" as const,
+		digest: "dd",
+		createdAt: "2026-08-05T12:00:00Z",
+		startedAt: "2026-08-05T12:00:01Z",
+		budget: {
+			agentCalls: 2,
+			pipelineCalls: 1,
+			parallelCalls: 0,
+			estimatedAgents: 2,
+			writeRisk: false,
+			warnLargeRun: false,
+			maxAgents: 1000,
+			concurrency: 4,
+		},
+		stages: [
+			{
+				stageId: "stage-1",
+				label: "discover",
+				kind: "agent" as const,
+				agentCount: 1,
+				dynamic: false,
+				writeRisk: false,
+				status: "completed" as const,
+				agentIds: ["t1"],
+				elapsedMs: 4_000,
+				usage: { input: 1_000, output: 2_000, cost: 0.05 },
+				createdAt: "2026-08-05T12:00:02Z",
+			},
+			{
+				stageId: "stage-2",
+				label: "verify",
+				kind: "pipeline" as const,
+				agentCount: 3,
+				dynamic: true,
+				writeRisk: true,
+				status: "running" as const,
+				agentIds: ["t2"],
+				elapsedMs: 8_000,
+				createdAt: "2026-08-05T12:00:10Z",
+			},
+		],
+		tasks: [
+			{
+				taskId: "t1",
+				stageId: "stage-1",
+				label: "discover",
+				inputDigest: "k1",
+				status: "completed" as const,
+				attempt: 1,
+				summary: "12 files",
+				usage: { input: 1_000, output: 2_000, cost: 0.05 },
+				startedAt: "2026-08-05T12:00:02Z",
+				endedAt: "2026-08-05T12:00:06Z",
+			},
+			{
+				taskId: "t2",
+				stageId: "stage-2",
+				label: "verify",
+				inputDigest: "k2",
+				status: opts.cacheHitSecond ? ("completed" as const) : ("running" as const),
+				attempt: 1,
+				...(opts.cacheHitSecond ? { summary: "cached result", cacheHit: true } : {}),
+				startedAt: "2026-08-05T12:00:10Z",
+			},
+		],
+	};
+}
+
+test("applyRuntimeView 全量合并：stages/tasks/usage/cacheHit，totals 重算不累计", () => {
+	const store = newStore();
+	const registry = new RunRegistry();
+	const runId = makeRun(registry, "src", "x");
+	const run = registry.getRun(runId)!;
+	store.hydrateRun(run, registry.getScript(runId)!, registry.getPlan(runId)!);
+	// 模拟事件通道先累计过一次 usage（feedEvent 路径）
+	store.feedEvent({ type: "usage", runId, tokens: 999, cost: 9, at: "2026-08-05T12:00:30Z" });
+
+	store.applyRuntimeView(runId, runtimeViewFixture(runId));
+
+	const detail = store.getDetail(runId)!;
+	assert.equal(detail.status, "running");
+	assert.equal(detail.scriptName, "renamed-flow");
+	assert.ok(detail.plan, "plan 在 runtime 合并后仍保留（结构图需要）");
+
+	const s1 = detail.stages.find((s) => s.stageId === "stage-1")!;
+	assert.equal(s1.status, "completed");
+	assert.equal(s1.tokens, 3_000, "usage {input,output} → tokens");
+	assert.equal(s1.elapsedMs, 4_000);
+	const s2 = detail.stages.find((s) => s.stageId === "stage-2")!;
+	assert.equal(s2.writeRisk, true);
+	assert.equal(s2.dynamic, true);
+
+	const t1 = detail.agents.find((a) => a.taskId === "t1")!;
+	assert.equal(t1.status, "completed");
+	assert.equal(t1.resultSummary, "12 files");
+	assert.equal(t1.tokens, 3_000);
+	assert.ok(Math.abs((t1.cost ?? 0) - 0.05) < 1e-9);
+	assert.equal(t1.elapsedMs, 4_000);
+	assert.equal(t1.cacheHit, undefined);
+
+	// totals 由 tasks 重算：3_000（t1）+ 0（t2 无 usage）＝ 3_000，事件通道的 999 不参与
+	assert.equal(detail.totalTokens, 3_000);
+	assert.ok(Math.abs((detail.totalCost ?? 0) - 0.05) < 1e-9);
+
+	// cache 命中标记落到 agent 行
+	store.applyRuntimeView(runId, runtimeViewFixture(runId, { cacheHitSecond: true }));
+	const t2 = store.getDetail(runId)!.agents.find((a) => a.taskId === "t2")!;
+	assert.equal(t2.status, "completed");
+	assert.equal(t2.cacheHit, true);
+	assert.equal(t2.resultSummary, "cached result");
+});
+
+test("applyRuntimeView 重复调用 totals 幂等（不随 tick 累加）", () => {
+	const store = newStore();
+	const registry = new RunRegistry();
+	const runId = makeRun(registry, "src", "x");
+	const run = registry.getRun(runId)!;
+	store.hydrateRun(run, registry.getScript(runId)!, registry.getPlan(runId)!);
+
+	store.applyRuntimeView(runId, runtimeViewFixture(runId));
+	store.applyRuntimeView(runId, runtimeViewFixture(runId));
+	store.applyRuntimeView(runId, runtimeViewFixture(runId));
+	assert.equal(store.getDetail(runId)!.totalTokens, 3_000, "三个 tick 后 totals 仍是单份");
+});
+
+test("applyRuntimeView 对未知 run 忽略", () => {
+	const store = newStore();
+	store.applyRuntimeView("nope", runtimeViewFixture("nope"));
+	assert.equal(store.listRuns().length, 0);
+});
+
+test("getDetail 暴露 plan（含结构树）供查看器使用", () => {
+	const store = newStore();
+	const registry = new RunRegistry();
+	const runId = makeRun(registry, "src", "x");
+	const run = registry.getRun(runId)!;
+	const plan = registry.getPlan(runId)!;
+	const withTree = { ...plan, tree: [{ label: "discover", kind: "agent" as const, agentCount: 1, writeRisk: false }] };
+	store.hydrateRun(run, registry.getScript(runId)!, withTree);
+	const detail = store.getDetail(runId)!;
+	assert.equal(detail.plan?.tree?.length, 1);
+	assert.equal(detail.plan?.tree?.[0]!.label, "discover");
+});
+
+test("hydrateEntries 恢复 cacheHit 标记", () => {
+	const store = newStore();
+	store.hydrateEntries([
+		{
+			runId: "r1",
+			scriptId: "s1",
+			digest: "dd",
+			status: "completed",
+			createdAt: "2026-08-05T11:00:00Z",
+			tasks: [{ taskId: "t1", stageId: "stage-1", label: "a", status: "completed", attempt: 1, cacheHit: true }],
+		},
+	]);
+	assert.equal(store.getDetail("r1")!.agents[0]!.cacheHit, true);
+});

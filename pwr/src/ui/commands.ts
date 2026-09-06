@@ -9,6 +9,7 @@
  *   /workflows <runId>             - run detail
  *   /workflows --filter <status>   - filtered list
  *   /workflows:list [status]       - list (optionally filtered)
+ *   /workflows:view [runId]        - full-screen live viewer (JHL-18)
  *   /workflows:open <runId>        - detail
  *   /workflows:pause <runId>
  *   /workflows:resume <runId>
@@ -93,6 +94,16 @@ export function resolveRunId(store: Pick<MemoryRunStore, "listRuns">, ref: strin
 	const matches = runs.filter((r) => r.runId.toLowerCase().startsWith(short));
 	if (matches.length === 1) return matches[0].runId;
 	return undefined;
+}
+
+/**
+ * Default run for /workflows:view with no argument: the most recent
+ * non-terminal run, else the most recent run overall (JHL-18).
+ */
+export function latestRunId(store: Pick<MemoryRunStore, "listRuns">): string | undefined {
+	const runs = store.listRuns(); // newest first (createdAt desc)
+	const active = runs.find((r) => r.status !== "completed" && r.status !== "failed" && r.status !== "cancelled");
+	return active?.runId ?? runs[0]?.runId;
 }
 
 export type ControlOutcome =
@@ -188,6 +199,7 @@ export function workflowsHelpText(): string {
 		"  /workflows <runId>             run detail",
 		"  /workflows --filter <status>   filtered list (draft|awaiting_approval|queued|running|paused|completed|failed|cancelled)",
 		"  /workflows:list [status]       list (optionally filtered)",
+		"  /workflows:view [runId]        full-screen live viewer (structure diagram + per-stage pages)",
 		"  /workflows:open <runId>        detail view",
 		"  /workflows:pause <runId>       pause run",
 		"  /workflows:resume <runId>      resume run",
