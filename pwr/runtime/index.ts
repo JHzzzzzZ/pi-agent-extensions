@@ -631,6 +631,7 @@ export class WorkflowRuntime implements RuntimeAdapter {
 			existing.status = "running";
 			existing.errorCode = undefined;
 			existing.errorMessage = undefined;
+			existing.cacheHit = undefined;
 			existing.endedAt = undefined;
 			existing.startedAt = this.nowFn();
 			this.attachToStage(state, stage, existing);
@@ -704,6 +705,9 @@ export class WorkflowRuntime implements RuntimeAdapter {
 		entry: CacheEntry,
 	): void {
 		if (existing) {
+			// Resume replay of a previously completed task: mark it as a
+			// cache-served completion (JHL-18 viewer shows ⚡).
+			existing.cacheHit = true;
 			if (existing.summary !== entry.summary || existing.usage !== entry.usage) {
 				existing.summary = entry.summary;
 				existing.usage = entry.usage;
@@ -720,6 +724,7 @@ export class WorkflowRuntime implements RuntimeAdapter {
 			attempt: 1,
 			summary: entry.summary,
 			usage: entry.usage,
+			cacheHit: true,
 			startedAt: entry.createdAt,
 			endedAt: entry.createdAt,
 		};
