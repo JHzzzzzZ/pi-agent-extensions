@@ -1,3 +1,20 @@
+# DELIVERY — PWR 合并交付包 v2.3.0（JHL-18：/workflows:view 全屏运行查看器 + 脚本结构图）
+
+> 在 v2.2.0 基础上新增 JHL-18「全屏运行状态查看器」：`/workflows:view [runId]` 以捕获式 overlay 打开全屏边框页——第一页是脚本结构树图（agent/pipeline/parallel 嵌套 + 实时状态叠加），随后每个运行时 stage 一页，末尾是最终结果页与脚本源码页。运行中每 800ms 拉取 `runtime.view()` 快照实时刷新；重启后 rehydrated 的 run 以纯 store 快照冻结可看。参考同工作区 agent-team 扩展的 `/team:view` 模式（手绘边框、Component 注入端口、纯函数 key reducer）。
+
+## 本版变更（v2.3.0）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| 全屏查看器（新功能） | `ctx.ui.custom` 捕获式 overlay（居中 96% 宽、约 82% 终端高、╭─╮│╰─╯ 手绘边框）；页面序列「结构 → 每 stage 一页 → 结果 → 脚本」；按键 h/l/←→/Tab 翻页、j/k/↑↓ 滚动（follow 贴底）、g/G 首末、1-9 直达、`[`/`]` 多 run 切换、q/Esc 关闭；800ms setInterval(unref) 刷新 + render 每帧重载快照 | `src/ui/viewer.ts` |
+| 脚本结构图（新功能） | `extractPlan` 增量构建结构树（span 包含关系：父 = 最小包含容器；扁平 stages 不变）；树形渲染 `├─ └─` + 状态图标（▶✓✗⊘⏸⋅）+ kind 徽标（pipeline ×N≈/✎write）+ 实时进度 n/m + ⚡cache；**按 label 精确关联** plan↔运行时 stage，synthesized 节点（未标注调用）只做静态展示、未匹配的运行时 stage 进「未标注/动态派发」尾部分组；容器状态由子节点 rollup（镜像 deriveStageStatus 优先级） | `src/plan.ts`、`src/types.ts`（PlanNode/WorkflowPlan.tree）、`src/ui/diagram.ts` |
+| 查看器供数 | `MemoryRunStore.applyRuntimeView()`：全量合并 runtime 富视图（stages 状态/耗时/usage、tasks 摘要/attempt/错误/⚡cacheHit），totals 按 tasks **重算**（事件通道与 apply 路径不双计）；`UiRuntimeAdapter` 增加可选 `view()/list()` 端口（结构化满足，无运行时环）；runtime 不可用或 run 未知（重启后）退化为 store 快照 | `src/ui/run-store.ts`、`src/ui/types.ts` |
+| cache 命中可见性 | `AgentTask.cacheHit` 标记：`recordCacheHit` 两个分支置 true（真实重派发时清除）；持久化 entry tasks 与 store 恢复均带该字段 | `runtime/types.ts`、`runtime/index.ts`、`src/ui/types.ts`、`src/ui/run-store.ts` |
+| 命令与菜单 | `/workflows:view [runId]`（默认 lastViewed ?? 最近非终态 run；TUI/custom overlay 不可用时 notify 降级）；`/workflows` 详情菜单首项「View live (full-screen)」；help 文本与详情 Actions 补充条目 | `src/ui/index.ts`、`src/ui/commands.ts`、`src/ui/views.ts` |
+| 测试（新增 24，共 380） | ui-diagram 7（树提取/合成 label/label 关联/rollup/平铺退化/渲染/未匹配桶）、ui-viewer 13（帧形状正则/页面装配/四类页面体/key reducer 全键/clamp）、ui-run-store +5（applyRuntimeView 合并与幂等/cacheHit 恢复/plan 暴露）、runtime cache 命中标记断言、entry 命令注册 | `tests/ui-*.test.ts`、`runtime/test/runtime.test.ts`、`test/entry.test.ts` |
+
+## v2.2.0 之前版本
+
 # DELIVERY — PWR 合并交付包 v2.2.0（三处用户反馈修复：默认模型 / 删除工作流 / 批准卡）
 
 > 在 v2.1.1（JHL-14 PiAgentRunner 适配层）基础上修复三处用户反馈：① workflow 默认模型不可设置/不可见；② 保存的工作流无法删除；③ 运行停在 awaiting_approval 但批准窗口不出现。

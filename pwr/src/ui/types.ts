@@ -18,7 +18,8 @@
  */
 
 import type { RuntimeAdapter } from "../types.ts";
-import type { BudgetEstimate, RunStatus, WorkflowMeta } from "../types.ts";
+import type { BudgetEstimate, RunStatus, WorkflowMeta, WorkflowPlan } from "../types.ts";
+import type { RuntimeRunView } from "../../runtime/types.ts";
 
 /** Run entry persisted by the extension (pi-workflow-run-v1). */
 export interface RunEntryData {
@@ -41,6 +42,7 @@ export interface RunEntryData {
 		errorCode?: string;
 		errorMessage?: string;
 		summary?: string;
+		cacheHit?: boolean;
 	}>;
 }
 
@@ -66,7 +68,19 @@ export interface WorkflowEventsSource {
 	onEvent(handler: (ev: RunEvent) => void): void;
 }
 
-export type UiRuntimeAdapter = RuntimeAdapter & Partial<WorkflowEventsSource>;
+/**
+ * Optional richer snapshot surface the runtime can serve for the live
+ * /workflows:view viewer (JHL-18): full stage/task detail computed at read
+ * time. The concrete WorkflowRuntime satisfies this structurally; when the
+ * port is absent (or the run is unknown — post-restart) the viewer degrades
+ * to the store-only snapshot.
+ */
+export interface RuntimeViewSource {
+	view(runId: string): RuntimeRunView;
+	list(): RuntimeRunView[];
+}
+
+export type UiRuntimeAdapter = RuntimeAdapter & Partial<WorkflowEventsSource & RuntimeViewSource>;
 
 /** One row of the `/workflows` run list (PRD 4.3). */
 export interface RunListEntry {
@@ -91,6 +105,8 @@ export interface StageView {
 	agentCount: number;
 	/** Fan-out size computed at runtime (not a literal array). */
 	dynamic?: boolean;
+	/** Stage dispatches with write tools (plan or runtime flag, JHL-18). */
+	writeRisk?: boolean;
 	tokens?: number;
 	elapsedMs?: number;
 }
@@ -107,8 +123,12 @@ export interface AgentView {
 	recentEvents: string[];
 	resultSummary?: string;
 	error?: string;
+	errorCode?: string;
 	tokens?: number;
+	cost?: number;
 	elapsedMs?: number;
+	/** Served from the private cache without spawning a child (JHL-18). */
+	cacheHit?: boolean;
 }
 
 /** Full run detail assembled by the store for the UI. */
@@ -124,6 +144,9 @@ export interface RunDetail {
 	startedAt?: string;
 	endedAt?: string;
 	budget?: BudgetEstimate;
+	/** Structure plan (with tree) for the viewer diagram; absent for runs
+	 * rehydrated from persisted entries (metadata only, JHL-18). */
+	plan?: WorkflowPlan;
 	stages: StageView[];
 	agents: AgentView[];
 	totalTokens?: number;
