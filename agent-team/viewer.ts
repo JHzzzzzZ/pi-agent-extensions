@@ -19,7 +19,7 @@
  * the thin host opener.
  */
 
-import { Markdown, type Component } from "@earendil-works/pi-tui";
+import { Markdown, truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { type TranscriptEntry } from "./transcript.ts";
 
@@ -290,7 +290,11 @@ export function blockLines(
     }
     case "assistant": {
       const label = styles.dim(`▸ assistant${block.ts ? ` · ${block.ts}` : ""}`);
-      const body = renderMarkdown ? renderMarkdown(block.text, width - 2) : wrapText(block.text, width);
+      // Host Markdown output is trusted to be readable but not strictly
+      // width-bounded — rewrap each line so nothing exceeds the pane.
+      const body = renderMarkdown
+        ? renderMarkdown(block.text, width - 2).flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width - 2)))
+        : wrapText(block.text, width);
       return [label, ...body];
     }
     case "tools":
@@ -387,6 +391,17 @@ function sideWrap(line: string, width: number, styles: Styles): string {
 }
 
 /**
+ * ANSI/CJK-aware clamp to an exact display width: truncate (ellipsis) then
+ * pad with spaces. Mirrors pi-subagents' fleet inspector `fit()` — every
+ * frame line is exactly `width` columns, so nothing bleeds past the border
+ * and the diff renderer sees stable line widths.
+ */
+export function fitLine(line: string, width: number): string {
+  const clipped = truncateToWidth(line, width, "…");
+  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+}
+
+/**
  * Renders the full bordered frame: title top border, member tabs, a
  * fixed-height continuous-transcript body window, and the key-legend
  * bottom border. Always returns exactly `bodyHeight + VIEWER_CHROME_ROWS`
@@ -418,7 +433,7 @@ export function renderViewerFrame(
     sideWrap(tabsRow(data, state, inner, styles), inner, styles),
     ...window.map((line) => sideWrap(line, inner, styles)),
     bottomBorder(data, state, width, styles),
-  ];
+  ].map((line) => fitLine(line, width));
 }
 
 /** Plain-text transcript dump for the team_transcript tool (no frame). */
