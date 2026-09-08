@@ -134,7 +134,7 @@ node e2e/run-e2e.mjs                                    # 真实 pi 进程端到
 
 ## chatanywhere-provider
 
-通过 [ChatAnywhere](https://docs.chatanywhere.tech) 的 OpenAI 兼容 API 与 Anthropic Messages API 接入模型：GPT-5.6/5.x/4.x 系列（含 CA 渠道）、DeepSeek、Qwen、Kimi、GLM、Claude、MiniMax、Gemini 等，内置模型 ID 去重与按 CA 币/1K 的定价（换算为 Pi 成本跟踪）。
+通过 [ChatAnywhere](https://docs.chatanywhere.tech) 的 OpenAI 兼容 API 与 Anthropic Messages API 接入模型：GPT-5.6 系列（含 CA 渠道）、DeepSeek、Kimi、GLM、MiniMax、Gemini、Claude 等，内置模型 ID 去重与按 CA 币/1K 的定价（换算为 Pi 成本跟踪）。
 
 ```bash
 # 设置 API Key（或 ~/.pi/agent/auth.json）
