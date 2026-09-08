@@ -109,7 +109,7 @@ npm run demo       # 模拟 /workflows UI（无宿主）
 - **对话式建团** — 主 agent 调 `team_create`/`team_list` 工具直接创建/查看团队；团队定义文件（`~/.pi/agent/teams/*.md` 或项目 `.pi/teams/*.md`）可随时手改，下一次派单即生效
 - **派单与复用** — `/team:run <团队> <任务>`、`/team:<团队> <任务>` 或 `team_run` 工具（默认后台，报告完成自动送达）；同一团队反复使用；`/team:stop` 中止
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
-- **进度可视（可选中亮块）** — 进度块显示在输入栏下方：平时暗色显示 leader/各成员实时状态，`alt+↓` 进入选中（`↑↓` 行光标、`enter` 直达查看器并定位到该行成员、`esc` 退出、其它键原样交还编辑器）；run 结束切终态行（`✓/✗ · 耗时 · 费用`），不再残留 running（SIGTERM → SIGKILL 逐级中止）
+- **进度可视（可选中亮块）** — 输入栏下方的紧凑亮块：暗色一行概要（团队/状态/耗时/并行成员数 + 任务），`alt+↓` 进入选中（`enter` 打开查看器看成员明细、`esc` 退出、其它键原样交还编辑器）；run 结束切终态行（`✓/✗ · 耗时 · 费用`），不再残留 running（SIGTERM → SIGKILL 逐级中止）
 - **会话记录查看器** — `/team:view` 全屏边框页（≈82% 终端高），每个 agent 一页连续会话流（任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行），run artifacts 落盘、run 结束后仍可查；主 agent 可用 `team_transcript` 工具转述记录要点
 
 ```bash

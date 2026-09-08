@@ -79,7 +79,7 @@ members:
 
 ### 4. 进度亮块（输入栏下方，可键盘选中）
 
-派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`）：平时暗色，显示 leader/各成员实时状态与最新动作；run 结束后切换为终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），不残留 "running" 字样，保留可查看。
+派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`），刻意保持**紧凑两行**：头行 `agent-team <团队> ▶ running · 耗时 · N/M 并行` + 任务行（44 字符截断）；leader 活动与各成员明细**不进亮块**——想看细节 `enter` 进查看器。run 结束后切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），失败附一条截断错误行，不残留 "running" 字样。
 
 裸 `↑`/`↓`/`enter` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的：
 
@@ -87,7 +87,7 @@ members:
 |---|---|
 | `alt+↓` / `alt+↑` | 进入选中：亮块高亮，出现行光标与按键提示行 |
 | `↑` / `↓` | 在行间移动光标（首末行钳位） |
-| `enter` | 打开 `/team:view` 查看器并定位到光标行的 agent（成员行→该成员，标题/leader 行→leader） |
+| `enter` | 打开 `/team:view` 查看器（定位 leader 页，`←→`/`1-9` 切成员） |
 | `esc` | 退出选中 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
@@ -122,7 +122,7 @@ members:
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
 - 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、动态 `/team:<name>`
-- Widget：输入栏下方可选中亮块——`alt+↓` 选中、`↑`/`↓` 行光标、`enter` 直达查看器并定位成员（仅 TUI 模式，详见 §4）
+- Widget：输入栏下方可选中亮块（紧凑两行概要）——`alt+↓` 选中、`enter` 直达查看器（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
 
 ## 开发与测试
