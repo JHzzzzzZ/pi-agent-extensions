@@ -5,7 +5,7 @@
 Workspace of extensions for the Pi coding agent (docs/comments are Chinese; code is English). Extensions load by being copied into `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (trusted project), then `/reload` in Pi.
 
 - **`pwr/` — primary project.** PWR (Pi Workflow Runtime) v2.2.0: users write constrained ECMAScript workflow scripts; PWR validates them, shows an approval card, then runs them by spawning child `pi` processes as sub-agents (`PiAgentRunner`). Zero-build TypeScript ESM, executed directly by Node >= 22.18 native type-stripping.
-- **Satellites** (independent, same extension shape): `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `run-timer/` (session/task/turn timer widget), `loop/` (`/loop` fixed-interval loops + daily-at-time loops + daily-window interval loops (v1.2.0) + one-shot reminders, followUp delivery + session-entry snapshot persistence, agent tools `loop_create/list/delete`), `goal/` (`/goal` session goal loop — agent auto-continues across turns until an independent LLM evaluator judges the condition met).
+- **Satellites** (independent, same extension shape): `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `run-timer/` (session/task/turn timer widget), `loop/` (`/loop` fixed-interval loops + daily-at-time loops + daily-window interval loops (v1.2.0) + one-shot reminders + `--bg` background-agent mode (v1.3.0: foreground followUp delivery OR spawning a resumable child `pi --mode json -p` process whose session id is captured and recoverable via `pi --session <id>`; `runner.ts`), followUp delivery + session-entry snapshot persistence, agent tools `loop_create/list/delete`), `goal/` (`/goal` session goal loop — agent auto-continues across turns until an independent LLM evaluator judges the condition met).
 
 ## Architecture & Data Flow
 
@@ -31,7 +31,7 @@ PWR (`pwr/`) is layered, with `src/types.ts` as the shared contract hub (`Runtim
 - `pwr/src/` + `pwr/src/ui/` — orchestration contracts and TUI layer.
 - `pwr/test/`, `pwr/tests/`, `pwr/runtime/test/`, `pwr/runner/test/` — node:test suites (see Testing).
 - `pwr/vendor/` — vendored acorn 8.18.0 (`acorn.mjs` + hand-rolled `acorn.d.mts` + license); generated file, don't modify. Imported only by `engine/parser.ts` so PWR has zero runtime npm deps.
-- Satellites: `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `run-timer/` (index.ts + test, no package.json), `loop/` (parse.ts + tasks.ts + tools.ts + index.ts + package.json with `pi.extensions` manifest + tsconfig), `goal/` (single file + test, no package.json: turn chaining via `agent_settled` + `pi.sendMessage({triggerTurn, deliverAs:"followUp"})`, state persisted as `goal-state-v1` entries, evaluator = one small `ctx.modelRegistry` + pi-ai `provider.stream` call). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy.
+- Satellites: `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `run-timer/` (index.ts + test, no package.json), `loop/` (parse.ts + tasks.ts + tools.ts + runner.ts + index.ts + package.json with `pi.extensions` manifest + tsconfig), `goal/` (single file + test, no package.json: turn chaining via `agent_settled` + `pi.sendMessage({triggerTurn, deliverAs:"followUp"})`, state persisted as `goal-state-v1` entries, evaluator = one small `ctx.modelRegistry` + pi-ai `provider.stream` call). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy.
 
 ## Development Commands
 
@@ -51,7 +51,7 @@ cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts  
 node --experimental-strip-types --test run-timer/run-timer.test.ts               # no package.json here
 node --experimental-strip-types --test goal/index.test.ts                        # 39 tests, no package.json here
 node --experimental-strip-types --test provider-quota/index.test.ts              # 15 tests, no package.json here
-cd loop && npm install && npm test                                               # 127 tests; also: npm run typecheck
+cd loop && npm install && npm test                                               # 169 tests; also: npm run typecheck
 ```
 
 No build step, no linter, no formatter configured.
@@ -103,7 +103,7 @@ Other patterns:
 - **Mocking = hand-written fakes at process boundaries:** fake `AgentRunner` (`makeFakeRunner`, `pwr/test/helpers.ts`), fake pi child (`FakeChild` + `makeFakeSpawn` + `waitForChild`, `pwr/runner/test/helpers.ts`), `RecordingStatusPort` (`stream-token-speed/test/fixtures.ts`). The real pi-tui is never instantiated in tests (structural fakes cast `as never`).
 - **Integration pattern:** wire real modules (`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`) with a mocked spawn, scripted child events, and polling `waitSettled` (10ms × 100) — see `pwr/runner/test/integration.test.ts` (happy path + `restart_agent` semantics; `handle.records.length` proves cache replay doesn't spawn).
 - **Perf gate:** `pwr/test/perf.test.ts` — `validateScript` on ~1500-agent / ~64KB scripts must finish < 300ms (wall clock).
-- **Counts (measured via grep):** pwr ≈ 335 tests across 30 `*.test.ts` files (test/ 98, tests/ 153, runtime/test/ 47, runner/test/ 37) — READMEs claim 346, DELIVERY.md 322; trust the measured count. stream-token-speed 43; run-timer 47; loop 127; goal 39; provider-quota 15.
+- **Counts (measured via grep):** pwr ≈ 335 tests across 30 `*.test.ts` files (test/ 98, tests/ 153, runtime/test/ 47, runner/test/ 37) — READMEs claim 346, DELIVERY.md 322; trust the measured count. stream-token-speed 43; run-timer 47; loop 169; goal 39; provider-quota 15.
 - **Coverage gaps:** `chatanywhere-provider` has zero tests. No TODO/skip/only markers anywhere.
 - **Determinism & hermeticity:** injected fixed clocks (`2026-08-05T12:00:00Z`), temp dirs via `os.tmpdir()` with cleanup, no network.
 - Quality bar per `pwr/DELIVERY.md`: full suite green + `npm run typecheck` zero errors before delivery.
