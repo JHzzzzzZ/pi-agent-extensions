@@ -9,7 +9,7 @@
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 模型提供商（OpenAI 兼容 + Anthropic API） | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
-| [`loop/`](#loop) | /loop 定时任务：固定间隔循环 + 一次性提醒 | 91 个（node:test） |
+| [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 | 127 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 39 个 |
 
 ## 安装
@@ -136,23 +136,27 @@ node --experimental-strip-types --test run-timer/run-timer.test.ts
 
 ## loop
 
-定时任务扩展（精简版，参考 Claude Code `/loop`）：固定间隔循环 + 一次性提醒。到期任务经 `deliverAs: "followUp"` 在回合间送达——agent 空闲则开新 turn，正在响应则排队到当前 turn 结束；错过的时间点不补跑。任务以全量快照持久化为会话条目（`loop-tasks-v1`，不进 LLM 上下文），随会话恢复；重复任务 7 天过期、每会话上限 50 个、widget 显示下次倒计时。
+定时任务扩展（精简版，参考 Claude Code `/loop`）：固定间隔循环 + 每天定时循环 + 每日时间窗口循环 + 一次性提醒。到期任务经 `deliverAs: "followUp"` 在回合间送达——agent 空闲则开新 turn，正在响应则排队到当前 turn 结束；错过的时间点不补跑。任务以全量快照持久化为会话条目（`loop-tasks-v1`，不进 LLM 上下文），随会话恢复；重复任务 7 天过期、每会话上限 50 个、widget 显示下次倒计时。
 
 | 命令 | 作用 |
 | --- | --- |
 | `/loop 5m <任务>` | 固定间隔循环（单位 `s/m/h/d`，最小 1m，秒向上取整；兼容 `every 2 hours` 分写） |
 | `/loop in 30m <任务>` | 一次性提醒（相对时间） |
 | `/loop at 15:00 <任务>` | 一次性提醒（本地时刻，已过则排到明天） |
+| `/loop daily at 09:00 <任务>` | 每天固定时刻循环（`every day at` 等价；首触发已过则排明天）（v1.2.0） |
+| `/loop every 1h from 00:00 to 09:00 <任务>` | 每日时间窗口 `[start, end]` **闭区间**内按间隔循环：网格锚定在窗口起点（如每小时 → 0:00, 1:00, …, 9:00），支持任意间隔（`every 90m`），要求 `start < end`，跨天用本地时区日 rollover（v1.2.0） |
 | `/loop list` | 查看全部任务 |
 | `/loop pause <id>` / `resume <id>` | 暂停/恢复（id 支持前缀匹配） |
 | `/loop delete <id>` / `clear` | 删除单个/全部任务 |
 
-**agent 工具**（v1.1.0）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"明天 9 点提醒我"这类自然语言请求由 agent 自行建任务。
+daily/window 调度与固定间隔共用同一套语义：错过的时间点不补跑（跨天/跨窗口只触发一次），暂停后恢复、会话恢复（hydrate）时错过的触发点直接重算到下一个未来时刻；旧格式快照（无 schedule 字段）零迁移兼容。
+
+**agent 工具**（v1.1.0，v1.2.0 起支持新调度语法）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"这类自然语言请求由 agent 自行建任务。
 
 ```bash
 cd loop
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
-npm test           # 91 个测试（node:test）
+npm test           # 127 个测试（node:test）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 
