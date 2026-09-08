@@ -1,132 +1,132 @@
-# Repository Guidelines
+# 仓库开发指南
 
-## Project Overview
+## 项目概览
 
-Workspace of extensions for the Pi coding agent (docs/comments are Chinese; code is English). Extensions load by being copied into `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (trusted project), then `/reload` in Pi.
+Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。扩展通过复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目）加载，然后在 Pi 中执行 `/reload` 生效。
 
-- **`pwr/` — primary project.** PWR (Pi Workflow Runtime) v2.4.0: users write constrained ECMAScript workflow scripts; PWR validates them, shows an approval card, then runs them by spawning child `pi` processes as sub-agents (`PiAgentRunner`). v2.4.0 adds a live per-step run trace (runner `onEvent` → runtime `task_event` → viewer agent rows), `/workflows:saved` listing, and schema-guided `key=value` args input for `/workflow:<name>` (JSON still accepted). Zero-build TypeScript ESM, executed directly by Node >= 22.18 native type-stripping.
-- **Satellites** (independent, same extension shape): `agent-team/` (reusable multi-agent teams: independent leader child dispatches member children via `team_dispatch`), `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `run-timer/` (session/task/turn timer widget), `loop/` (`/loop` fixed-interval loops + daily-at-time loops + daily-window interval loops (v1.2.0) + one-shot reminders + `--bg` background-agent mode (v1.3.0: foreground followUp delivery OR spawning a resumable child `pi --mode json -p` process whose session id is captured and recoverable via `pi --session <id>`; `runner.ts`), followUp delivery + session-entry snapshot persistence, agent tools `loop_create/list/delete`), `goal/` (`/goal` session goal loop — agent auto-continues across turns until an independent LLM evaluator judges the condition met), `opencode-bridge/` (spawns/reuses a local HTTP CONNECT → SOCKS5 bridge helper (`opencode-bridge-helper.mjs`, zero-dep standalone process) so Pi's `httpProxy` can route through a local SOCKS5 (v2rayN); `session_start` probes `127.0.0.1:<port>` first so multiple Pi/subagent instances share one bridge, spawns detached + unref'd (Pi never holds child resources), `/opencode-bridge` status command, env `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT`; helper survives socket errors/ECONNRESET, exits 0 on port-in-use).
+- **`pwr/` — 主项目。** PWR（Pi Workflow Runtime）v2.4.0：用户编写受约束的 ECMAScript 工作流脚本；PWR 校验后弹出批准卡，再通过派生子 `pi` 进程作为 sub-agent 执行（`PiAgentRunner`）。v2.4.0 新增逐步实时运行 trace（runner `onEvent` → runtime `task_event` → 查看器 agent 行）、`/workflows:saved` 列表，以及 `/workflow:<name>` 的 schema 引导 `key=value` 参数输入（仍兼容 JSON）。零构建 TypeScript ESM，由 Node ≥ 22.18 原生 type-stripping 直接执行。
+- **卫星扩展**（相互独立，扩展形态相同）：`agent-team/`（可复用多 agent 团队：独立 leader 子进程通过 `team_dispatch` 调度成员子进程）、`stream-token-speed/`（TTFT + 实时 tokens/s 状态）、`chatanywhere-provider/`（OpenAI 兼容 + Anthropic Messages provider 适配器）、`provider-quota/`（余额状态 + `/quota`）、`run-timer/`（会话/任务/回合计时 widget）、`loop/`（`/loop` 固定间隔循环 + 每天定时循环 + 每日窗口间隔循环（v1.2.0）+ 一次性提醒 + `--bg` 后台 agent 模式（v1.3.0：前台 followUp 送达，或拉起可恢复的子 `pi --mode json -p` 进程，其会话 id 会被捕获、可用 `pi --session <id>` 恢复；见 `runner.ts`），followUp 送达 + 会话条目快照持久化，agent 工具 `loop_create/list/delete`）、`goal/`（`/goal` 会话目标循环——agent 跨回合自动推进，直至独立 LLM 评估器判定条件达成）、`opencode-bridge/`（拉起/复用本地 HTTP CONNECT → SOCKS5 桥 helper（`opencode-bridge-helper.mjs`，零依赖独立进程），使 Pi 的 `httpProxy` 能经由本地 SOCKS5（v2rayN）转发；`session_start` 先探测 `127.0.0.1:<port>`，多 Pi/subagent 实例共享同一桥，detached + unref 派生（Pi 不持有子进程资源），`/opencode-bridge` 状态命令，环境变量 `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT`；helper 可在 socket 错误/ECONNRESET 下存活，端口被占用时以 0 退出）。
 
-## Requirement Intake → `todos/` Registration (Mandatory)
+## 需求受理 → `todos/` 登记（强制）
 
 所有需求入口（对话中提出的新需求、子代理/团队派单任务、bug/重构请求等）在动手实现前，必须先到 `todos/` 目录完成登记，规则如下：
 
 1. **定位对应文件** — `todos/` 下每个插件一份 `<插件名>-todo.md`（如 `todos/pwr-todo.md`、`todos/agent-team-todo.md`）。先判断需求归属哪个插件，打开对应文件；跨插件需求在涉及的各文件中分别登记。
 2. **领取或新建条目** — 文件内已有匹配的条目 → 直接领取该条；没有 → 在文件末尾追加一条 `- [ ] <需求描述>` 新建。
 3. **标注 processing（进行中）** — 领取或新建后立即把该条目标注为处理中：`- [ ] <需求描述>（processing）`；需求完成前始终保持此状态。未开始的条目保持 `- [ ]`，已完成条目为 `- [x] <需求描述>`。
-4. **完成后标注完成** — 需求全部完成（代码 + README/AGENTS/package.json 同步，见 Delivery 节）后，改为 `- [x] <需求描述>` 并去掉 processing 标注。
+4. **完成后标注完成** — 需求全部完成（代码 + README/AGENTS/package.json 同步，见交付节）后，改为 `- [x] <需求描述>` 并去掉 processing 标注。
 5. 取消/搁置的需求在条目上注明原因后还原为 `- [ ]` 或删除，`todos/` 始终反映真实状态。
 
-## Architecture & Data Flow
+## 架构与数据流
 
-PWR (`pwr/`) is layered, with `src/types.ts` as the shared contract hub (`RuntimeAdapter`, `ScriptEngine`, `WorkflowRun`, `PwrErrorResult`, entry/custom-message constants, caps). Not strictly layered — `runtime/` imports `src/plan.ts` and `src/ui/types.ts` (RunEvent); `engine/interpreter.ts` re-exports `runner/errors.ts` `RunnerError`.
+PWR（`pwr/`）分层组织，`src/types.ts` 是共享契约中枢（`RuntimeAdapter`、`ScriptEngine`、`WorkflowRun`、`PwrErrorResult`、entry/自定义消息常量、上限值）。并非严格分层——`runtime/` 引用 `src/plan.ts` 与 `src/ui/types.ts`（RunEvent）；`engine/interpreter.ts` 再导出 `runner/errors.ts` 的 `RunnerError`。
 
-1. **`engine/`** — standalone DSL: `vendor/acorn.mjs` (vendored acorn 8.18.0, parse-only) → `parser.ts` → `validator.ts` (`validateScript`/`validateScriptStrict`, `extractPlan`) → `interpreter.ts` (AST tree-walker, globals `meta/args/agent/pipeline/parallel/sleep/JSON`, semaphore ≤ 128, loop budget 100k, `plain.ts` sanitized snapshot boundaries) → `concurrency.ts`. Public API re-exported by `engine/index.ts`; `engine/spec.ts` is the DSL source of truth (whitelist, caps, `SCRIPT_VERSION = '1.1.2'`).
-2. **`runner/`** — `PiAgentRunner` (`runner/index.ts`): `discover.ts` (.md agent discovery, precedence user > project > builtin, trust-gated `agentScope`), `pi.ts` (child `pi --mode json -p --no-session`, line-JSON events, SIGTERM → SIGKILL after `KILL_GRACE_MS=5000`). Run contract `{ runId, agentId, prompt, label, tools, schema, signal }` → `{ result, summary, usage, events }`; result capped 50KB (`RESULT_TOO_LARGE`), summary 8KB. Tool intersection: readonly = read/grep/find/ls/glob, write = +bash/write/edit. v2.4.0: `pi.ts` also parses `tool_execution_start/update/end` (toolName + bounded args/output tails) and throttled assistant `message_update` tails, invoking an `onEvent` observer live (spec-injected via `AgentRunSpec.onEvent`, runtime-only); all trace text single-line + tail-truncated, never raw tool output.
-3. **`runtime/`** — `WorkflowRuntime` implements `RuntimeAdapter`: `state.ts` transition table, `scheduler.ts` FIFO queue, `cache.ts` `RunCache` (sha256 of digest + normalized input; cache hit replays without spawn or budget), `persist.ts` metadata-only entries. Module-level singleton `export default runtime`.
-4. **`src/`** — orchestration: `flow.ts` pure flows + `RunRegistry`, `approval.ts` `ApprovalStore` (keyed canonicalProjectPath|digest — script edit ⇒ mandatory re-approval, `APPROVAL_STALE`), `notify.ts` `RunNotifier`, `save.ts` save/load/invoke, `args/plan/intent/constraints/digest/errors.ts`, `model-config.ts` (`/pwr-model`), `engine.ts` adapter (fail-closed `ENGINE_UNAVAILABLE`).
-5. **`src/ui/`** — host-free TUI layer: `MemoryRunStore` (synchronous snapshots), `views.ts` pure text formatting, `commands.ts`, `save-flow.ts`, `approval-card.ts`, `renderer.ts` (only file importing `pi-tui` `Box/Text`). `ui/index.ts` `createWorkflowsUi` registers `/workflows`, shortcuts `ctrl+alt+z/x/r` (keys defined only in `pwr/src/ui/keybindings.ts`, the shortcut registry), entry renderer, widget/status.
+1. **`engine/`** — 独立 DSL：`vendor/acorn.mjs`（内置 acorn 8.18.0，仅解析）→ `parser.ts` → `validator.ts`（`validateScript`/`validateScriptStrict`、`extractPlan`）→ `interpreter.ts`（AST 树遍历解释器，全局 `meta/args/agent/pipeline/parallel/sleep/JSON`，信号量 ≤ 128，循环预算 100k，`plain.ts` 单次快照安全边界）→ `concurrency.ts`。公开 API 由 `engine/index.ts` 再导出；`engine/spec.ts` 是 DSL 唯一事实来源（白名单、上限、`SCRIPT_VERSION = '1.1.2'`）。
+2. **`runner/`** — `PiAgentRunner`（`runner/index.ts`）：`discover.ts`（.md agent 发现，优先级 用户 > 项目 > 内置，trust 门控 `agentScope`）、`pi.ts`（子 `pi --mode json -p --no-session`，按行 JSON 事件，SIGTERM → 5s 后 SIGKILL（`KILL_GRACE_MS=5000`））。运行契约 `{ runId, agentId, prompt, label, tools, schema, signal }` → `{ result, summary, usage, events }`；result 上限 50KB（`RESULT_TOO_LARGE`），summary 8KB。工具交集：readonly = read/grep/find/ls/glob，write = +bash/write/edit。v2.4.0：`pi.ts` 还解析 `tool_execution_start/update/end`（toolName + 截断的参数/输出尾部）与节流的 assistant `message_update` 尾部，实时调用 `onEvent` 观察者（经 `AgentRunSpec.onEvent` 注入，仅 runtime 使用）；所有 trace 文本单行 + 尾部截断，绝不透传原始工具输出。
+3. **`runtime/`** — `WorkflowRuntime` 实现 `RuntimeAdapter`：`state.ts` 迁移表、`scheduler.ts` FIFO 队列、`cache.ts` `RunCache`（digest + 规范化输入的 sha256；缓存命中直接回放，不派生进程、不占预算）、`persist.ts` 仅元数据条目。模块级单例 `export default runtime`。
+4. **`src/`** — 编排：`flow.ts` 纯流程 + `RunRegistry`、`approval.ts` `ApprovalStore`（键 = 项目 canonical path|digest——脚本被编辑后必须重新批准，`APPROVAL_STALE`）、`notify.ts` `RunNotifier`、`save.ts` 保存/加载/调用、`args/plan/intent/constraints/digest/errors.ts`、`model-config.ts`（`/pwr-model`）、`engine.ts` 适配器（fail-closed `ENGINE_UNAVAILABLE`）。
+5. **`src/ui/`** — 无宿主 TUI 层：`MemoryRunStore`（同步快照）、`views.ts` 纯文本格式化、`commands.ts`、`save-flow.ts`、`approval-card.ts`、`renderer.ts`（唯一引入 `pi-tui` `Box/Text` 的文件）。`ui/index.ts` `createWorkflowsUi` 注册 `/workflows`、快捷键 `ctrl+alt+z/x/r`（按键只在 `pwr/src/ui/keybindings.ts` 快捷键注册表中定义）、entry 渲染器、widget/status。
 
-**Run data flow:** `/workflow <task>` or `workflow:` prefix → `pwr-generation-request` custom message (`before_agent_start`) → main agent script calls `workflow_validate` → approval card on `tool_result` (once/remember/view script/reject; dismiss = still pending) → `workflow_start` (approval-gated) → `WorkflowRuntime.start` → scheduler → interpreter → dispatch (cache replay | budget vs `AGENT_LIMIT=1000` | `PiAgentRunner.run` child `pi`) → `RunCache` + `RunEvent` feed → `MemoryRunStore` → widget/entry renderer. Completion: `RunNotifier` (runId-scoped; cancelled runs never wake it) → `pi.sendMessage(pwr-workflow-result)`. Saved path: `/workflow:<name>` → `invokeSavedWorkflow` (project shadows user; re-validate; JSON args validated against schema; digest-gated approval).
+**运行数据流：** `/workflow <任务>` 或 `workflow:` 前缀 → `pwr-generation-request` 自定义消息（`before_agent_start`）→ 主 agent 调 `workflow_validate` → `tool_result` 上弹批准卡（once/remember/查看脚本/拒绝；关闭卡片仍是待批准）→ `workflow_start`（批准门控）→ `WorkflowRuntime.start` → 调度器 → 解释器 → 派发（缓存回放 | 预算 vs `AGENT_LIMIT=1000` | `PiAgentRunner.run` 子 `pi`）→ `RunCache` + `RunEvent` 流 → `MemoryRunStore` → widget/entry 渲染器。完成：`RunNotifier`（runId 作用域；被取消的运行不会唤醒它）→ `pi.sendMessage(pwr-workflow-result)`。已保存路径：`/workflow:<name>` → `invokeSavedWorkflow`（项目覆盖用户；重新校验；JSON args 按 schema 校验；digest 门控批准）。
 
-**Lifecycle:** no init/onLoad hook. Entry `index.ts` registers commands/hooks at load; `session_start` dynamically imports `runtime/` + `runner/` and hydrates persisted entries (`pwr-approval-v1`, `pi-workflow-run-v1`) from `ctx.sessionManager`. Missing runner ⇒ `AGENT_RUNNER_UNAVAILABLE` — never an implicit fallback. Persistence is metadata-only; script source/args are never written.
+**生命周期：** 无 init/onLoad 钩子。入口 `index.ts` 在加载时注册命令/钩子；`session_start` 动态 import `runtime/` + `runner/`，并从 `ctx.sessionManager` 水合持久化条目（`pwr-approval-v1`、`pi-workflow-run-v1`）。缺 runner ⇒ `AGENT_RUNNER_UNAVAILABLE`——绝不隐式回退。持久化仅元数据；脚本源码/args 永不写盘。
 
-**Known quirks:** no `agent_settled` handler in pwr (settle is runId-scoped via `onFinalResult`); `runtime.shutdown()` is never wired (no `session_shutdown` hook); engine↔runner mutually import; caps duplicated in `src/types.ts` / `engine/spec.ts` / `runtime/types.ts`; `engine/validate-tool.ts` `runWorkflowValidate` is consumed only by tests.
+**已知怪癖：** pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域处理）；`runtime.shutdown()` 从未接线（无 `session_shutdown` 钩子）；engine↔runner 相互引用；上限值在 `src/types.ts` / `engine/spec.ts` / `runtime/types.ts` 三处重复；`engine/validate-tool.ts` 的 `runWorkflowValidate` 仅被测试消费。
 
-## Key Directories
+## 关键目录
 
-- `pwr/engine/` — DSL parser/validator/interpreter; `spec.ts` is the DSL source of truth (whitelist, caps 128/1000/100k/256KB, `SCRIPT_VERSION`).
-- `pwr/runtime/` — run state machine, FIFO scheduler, run cache, metadata-only persistence.
-- `pwr/runner/` — child-`pi` process adapter, agent discovery.
-- `pwr/src/` + `pwr/src/ui/` — orchestration contracts and TUI layer.
-- `pwr/test/`, `pwr/tests/`, `pwr/runtime/test/`, `pwr/runner/test/` — node:test suites (see Testing).
-- `pwr/vendor/` — vendored acorn 8.18.0 (`acorn.mjs` + hand-rolled `acorn.d.mts` + license); generated file, don't modify. Imported only by `engine/parser.ts` so PWR has zero runtime npm deps.
-- Satellites: `agent-team/` (flat modules: types/config/runner/worktree/leader-prompt/dispatch/manage/cockpit/session/index + test/ + examples/), `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `run-timer/` (index.ts + test, no package.json), `loop/` (parse.ts + tasks.ts + tools.ts + runner.ts + index.ts + package.json with `pi.extensions` manifest + tsconfig), `goal/` (single file + test, no package.json: turn chaining via `agent_settled` + `pi.sendMessage({triggerTurn, deliverAs:"followUp"})`, state persisted as `goal-state-v1` entries, evaluator = one small `ctx.modelRegistry` + pi-ai `provider.stream` call), `opencode-bridge/` (index.ts + bridge.ts + opencode-bridge-helper.mjs + package.json with `pi.extensions` manifest + tsconfig + lockfile; probe/spawn/fs/sleep boundaries injected via `BridgeDeps` for deterministic tests). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy; the root `package.json` `pi.extensions` manifest registers every extension for `pi install`.
+- `pwr/engine/` — DSL 解析/校验/解释；`spec.ts` 是 DSL 唯一事实来源（白名单，上限 128/1000/100k/256KB，`SCRIPT_VERSION`）。
+- `pwr/runtime/` — 运行状态机、FIFO 调度器、运行缓存、仅元数据持久化。
+- `pwr/runner/` — 子 `pi` 进程适配器、agent 发现。
+- `pwr/src/` + `pwr/src/ui/` — 编排契约与 TUI 层。
+- `pwr/test/`、`pwr/tests/`、`pwr/runtime/test/`、`pwr/runner/test/` — node:test 套件（见"测试与 QA"）。
+- `pwr/vendor/` — 内置 acorn 8.18.0（`acorn.mjs` + 手写 `acorn.d.mts` + license）；生成文件，勿修改。仅被 `engine/parser.ts` 引入，使 PWR 运行时零 npm 依赖。
+- 卫星扩展：`agent-team/`（扁平模块：types/config/runner/worktree/leader-prompt/dispatch/manage/cockpit/session/index + test/ + examples/）、`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（index.ts + 带 `pi.extensions` 清单的 package.json）、`provider-quota/`（index.ts，无 package.json）、`run-timer/`（index.ts + test，无 package.json）、`loop/`（parse.ts + tasks.ts + tools.ts + runner.ts + index.ts + 带 `pi.extensions` 清单的 package.json + tsconfig）、`goal/`（单文件 + test，无 package.json：经 `agent_settled` + `pi.sendMessage({triggerTurn, deliverAs:"followUp"})` 链式续回合，状态持久化为 `goal-state-v1` 条目，评估器 = 一次小型 `ctx.modelRegistry` + pi-ai `provider.stream` 调用）、`opencode-bridge/`（index.ts + bridge.ts + opencode-bridge-helper.mjs + 带 `pi.extensions` 清单的 package.json + tsconfig + lockfile；探测/派生/fs/sleep 边界经 `BridgeDeps` 注入以便确定性测试）。每个扩展目录都以 `index.ts` 为入口，纯目录复制后 pi 自动发现（`extensions/*/index.ts`）即可加载；根 `package.json` 的 `pi.extensions` 清单为 `pi install` 注册全部扩展。
 
-## Development Commands
+## 开发命令
 
 ```bash
-cd pwr && npm install          # all deps are devDependencies (pi-ai/pi-coding-agent/pi-tui, typebox, typescript)
-npm test                       # node --test over test/, tests/, runtime/test/, runner/test/
+cd pwr && npm install          # 全部依赖均为 devDependencies（pi-ai/pi-coding-agent/pi-tui、typebox、typescript）
+npm test                       # node --test 覆盖 test/、tests/、runtime/test/、runner/test/
 npm run typecheck              # tsc -p tsconfig.json --noEmit
-# subsets:
+# 子集示例：
 node --test tests/ui-*.test.ts
 node --test runtime/test/scheduler.test.ts
 ```
 
-Satellites (not covered by pwr's script):
+卫星扩展（不在 pwr 脚本覆盖范围内）：
 
 ```bash
-cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 43 tests
-cd agent-team && npm install && npm test                                        # 85 tests (node --test test/*.test.ts)
-node --experimental-strip-types --test run-timer/run-timer.test.ts               # no package.json here
-node --experimental-strip-types --test goal/index.test.ts                        # 39 tests, no package.json here
-node --experimental-strip-types --test provider-quota/index.test.ts              # 15 tests, no package.json here
-cd loop && npm install && npm test                                               # 169 tests; also: npm run typecheck
-cd opencode-bridge && npm install && npm test                                    # 34 tests (helper integration tests spawn real helper + fake SOCKS5); also: npm run typecheck
+cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 43 个测试
+cd agent-team && npm install && npm test                                        # 85 个测试（node --test test/*.test.ts）
+node --experimental-strip-types --test run-timer/run-timer.test.ts               # 此目录无 package.json
+node --experimental-strip-types --test goal/index.test.ts                        # 39 个测试，此目录无 package.json
+node --experimental-strip-types --test provider-quota/index.test.ts              # 15 个测试，此目录无 package.json
+cd loop && npm install && npm test                                               # 169 个测试；另有 npm run typecheck
+cd opencode-bridge && npm install && npm test                                    # 34 个测试（helper 集成测试派生真实 helper + 手写 fake SOCKS5）；另有 npm run typecheck
 ```
 
-No build step, no linter, no formatter configured.
+无构建步骤、无 linter、无 formatter。
 
-## Code Conventions & Common Patterns
+## 代码约定与常见模式
 
-tsconfig (`pwr/tsconfig.json`) enforces the load-bearing rules — violations fail `npm run typecheck`:
+tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm run typecheck` 失败：
 
-- **ESM NodeNext, explicit `.ts` extensions** in every relative import: `import { ApprovalStore } from "./src/approval.ts";`
-- **`import type` required** for type-only imports (`verbatimModuleSyntax`): `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`
-- **No enums/namespaces/parameter properties** (`erasableSyntaxOnly`): error codes are `as const` objects — `export const ErrorCodes = { … } as const;` + `type ScriptErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];` (see `engine/errors.ts`).
-- `strict: true`, `noEmit`, `allowImportingTsExtensions`, `isolatedModules`, `noImplicitOverride`.
+- **ESM NodeNext，所有相对导入显式带 `.ts` 扩展名**：`import { ApprovalStore } from "./src/approval.ts";`
+- **类型导入必须用 `import type`**（`verbatimModuleSyntax`）：`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`
+- **禁用 enum/namespace/参数属性**（`erasableSyntaxOnly`）：错误码用 `as const` 对象——`export const ErrorCodes = { … } as const;` + `type ScriptErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];`（见 `engine/errors.ts`）。
+- `strict: true`、`noEmit`、`allowImportingTsExtensions`、`isolatedModules`、`noImplicitOverride`。
 
-Other patterns:
+其他模式：
 
-- **Result unions over exceptions:** `{ ok: true, value } | { ok: false, code, message }` everywhere; discriminated-union narrowing in callers (`if (r.ok) … else assert.equal(r.code, …)`). Each layer has its own code set: `src/errors.ts` (20 codes), `engine/errors.ts` (7), `runtime/errors.ts` (7), `runner/errors.ts` (5). Script failures carry source positions (`ScriptError`).
-- **Dependency injection via deps objects and injected ports:** `FlowDeps`, `ToolDeps`, `SaveAdapter`, `UiRuntimeAdapter`, `SaveFlowActions`, `RunPersister`; no mocking libraries, no globals.
-- **Injected clocks for determinism:** `now: () => string` / `nowMs` params instead of `Date.now()`; tests use a fixed `2026-08-05T12:00:00Z`.
-- **State management:** runtime uses an explicit transition table (`runtime/state.ts` `TRANSITIONS` + `ALLOWED_OPERATIONS`, `assertTransition` → `ILLEGAL_STATE_TRANSITION`); UI uses `MemoryRunStore` synchronous snapshots fed by `RunEvent`s.
-- **Exception isolation:** every UI/observer/persist call is try/caught — "persistence failures never break the session".
-- **File header comments** cite JHL ticket IDs + PRD sections (`* PWR - Pi Workflow Runtime extension entry (JHL-16 trigger/generation/approval + JHL-17 save/load & parameter commands)`). Keep them updated.
-- **Security invariants** (PWR): no `vm`/`eval`; whitelist validation before execution; fail-closed defaults (missing engine/runner ⇒ typed error, no implicit fallback); script source/args never persisted; `pwr-tmp://` in-process only; no API keys stored; error messages are static templates.
-- **Typebox** for tool parameter schemas (`src/tools.ts` `registerPwrTools`, `agent-team` `manage.ts`/`index.ts`).
-- **TUI conventions (satellites):** guard writes with `ctx.hasUI`, style via `theme.fg("dim", …)`, exception-isolate every `setStatus`/`setWidget` call, one status key per extension (`stream-token-speed`, `provider-quota`, `run-timer`, `agent-team`, `loop`, `goal`). `loop/` passes plain (unstyled) strings to `setWidget` — `ExtensionUIContext` has no `theme` field, so typed access to `ctx.ui.theme` does not compile.
-- Indentation: tabs in `pwr/`, 2 spaces in `agent-team/`, `run-timer/`, `stream-token-speed/`, `loop/`, `goal/`, and `opencode-bridge/`.
-- `agent-team/` specifics: team = persistent Markdown file (frontmatter `leader` + `members[]` with per-member `provider/model`, `tools`, `worktree`, block-scalar `prompt`) in `~/.pi/agent/teams/` or trusted-project `.pi/teams/` (project wins on name conflicts); discovery re-scans on every use (no cache). One codebase, two modes keyed on env `PI_AGENT_TEAM_FILE`: leader mode registers only the `team_dispatch` tool; cockpit mode registers `team_create`/`team_list`/`team_run` tools, `/team*` commands, widget, entry renderer (`agent-team-run-v1`). Member/leader children follow the same child-`pi` JSON-mode pattern as pwr's runner (`team-tmp://` prompt materialization, SIGTERM→SIGKILL), self-contained (no pwr imports). Result unions use `TeamErrorCodes`; caps: 8 tasks/dispatch, 4 concurrent members, 50KB result, 8KB summary.
+- **结果联合优先于异常：** 全代码库统一 `{ ok: true, value } | { ok: false, code, message }`；调用方用判别联合收窄（`if (r.ok) … else assert.equal(r.code, …)`）。每层有自己的错误码集：`src/errors.ts`（20 个）、`engine/errors.ts`（7 个）、`runtime/errors.ts`（7 个）、`runner/errors.ts`（5 个）。脚本失败携带源码位置（`ScriptError`）。
+- **依赖注入经 deps 对象与注入端口：** `FlowDeps`、`ToolDeps`、`SaveAdapter`、`UiRuntimeAdapter`、`SaveFlowActions`、`RunPersister`；不用 mock 库、无全局注入。
+- **注入时钟保证确定性：** 用 `now: () => string` / `nowMs` 参数而非 `Date.now()`；测试固定 `2026-08-05T12:00:00Z`。
+- **状态管理：** runtime 用显式迁移表（`runtime/state.ts` 的 `TRANSITIONS` + `ALLOWED_OPERATIONS`，`assertTransition` → `ILLEGAL_STATE_TRANSITION`）；UI 用 `RunEvent` 供数据给 `MemoryRunStore` 同步快照。
+- **异常隔离：** 每个 UI/观察者/持久化调用均 try/catch——"持久化失败绝不破坏会话"。
+- **文件头注释** 引用 JHL 工单号 + PRD 章节（`* PWR - Pi Workflow Runtime extension entry (JHL-16 trigger/generation/approval + JHL-17 save/load & parameter commands)`）。保持同步更新。
+- **安全不变量**（PWR）：无 `vm`/`eval`；执行前白名单校验；fail-closed 默认（缺 engine/runner ⇒ 类型化错误，无隐式回退）；脚本源码/args 永不持久化；`pwr-tmp://` 仅进程内；不存 API key；错误信息为静态模板。
+- **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
+- **TUI 约定（卫星扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键（`stream-token-speed`、`provider-quota`、`run-timer`、`agent-team`、`loop`、`goal`）。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
+- 缩进：`pwr/` 用 tab，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/` 用 2 空格。
+- `agent-team/` 细节：团队 = 持久化 Markdown 文件（frontmatter `leader` + `members[]`，含每成员 `provider/model`、`tools`、`worktree`、块标量 `prompt`），位于 `~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`（同名时项目优先）；每次使用时重新扫描（无缓存）。一套代码、两种模式，以环境变量 `PI_AGENT_TEAM_FILE` 区分：leader 模式只注册 `team_dispatch` 工具；cockpit 模式注册 `team_create`/`team_list`/`team_run` 工具、`/team*` 命令、widget、entry 渲染器（`agent-team-run-v1`）。成员/leader 子进程沿用与 pwr runner 相同的子 `pi` JSON 模式（`team-tmp://` prompt 物化，SIGTERM→SIGKILL），自包含（不引 pwr）。结果联合用 `TeamErrorCodes`；上限：每 dispatch 8 任务、4 并发成员、50KB 结果、8KB 摘要。
 
-## Delivery & Documentation Sync (Mandatory)
+## 交付与文档同步（强制）
 
-Every coding change is only complete when its docs and manifests are updated in the same change — never leave them stale for a follow-up:
+每次代码变更只有在其文档与清单在同一变更中同步更新后才算完成——绝不留到后续处理：
 
-- **README**: update the affected extension's section in the root `README.md` (and `pwr/README.md` / `pwr/DELIVERY.md` for PWR) — new/changed features, usage, and the measured test count.
-- **AGENTS.md**: update whenever architecture, file layout, conventions, commands, or measured test counts change (satellite descriptions in Project Overview / Key Directories, test counts in Development Commands and Testing & QA).
-- **`todos/`**: 每个插件必须对应一份 `todos/<插件名>-todo.md`，与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应；**新增插件时必须在同一变更里同步创建该 todo 文件**，缺失视为交付不完整。
-- **package.json**: bump `version` (and `description` if it names features) in every touched extension's `package.json`; also bump the root `package.json` `version` (kept aligned with the shipped feature version, e.g. loop v1.3.0 → root 1.3.0).
-- Docs/manifest updates ship as their own commit(s) in the same push (convention: `docs:` / `chore(pi):` prefixes).
+- **README**：更新根 `README.md` 中受影响扩展的章节（PWR 另有 `pwr/README.md` / `pwr/DELIVERY.md`）——新增/变更的功能、用法与实测测试数。
+- **AGENTS.md**：架构、文件布局、约定、命令或实测测试数变化时同步更新（项目概览/关键目录中的卫星描述，开发命令与测试 QA 中的测试数）。
+- **`todos/`**：每个插件必须对应一份 `todos/<插件名>-todo.md`，与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应；**新增插件时必须在同一变更里同步创建该 todo 文件**，缺失视为交付不完整。
+- **package.json**：每个被触及的扩展 `package.json` bump `version`（若 description 提及特性则一并更新）；根 `package.json` 的 `version` 同步 bump（与发布特性版本对齐，如 loop v1.3.0 → 根 1.3.0）。
+- 文档/清单更新在同一 push 中以独立 commit 提交（约定：`docs:` / `chore(pi):` 前缀）。
 
-## Important Files
+## 重要文件
 
-- `pwr/index.ts` — extension entry; `export default pwrExtension(pi: ExtensionAPI)`; commands (`/workflow`, `/pwr-model`, `/workflow-delete`, dynamic `/workflow:<name>`), hooks (`input`, `before_agent_start`, `session_start`, `model_select`, `tool_call`, `tool_result`), tools via `registerPwrTools` (`workflow_validate`, `workflow_start`, `workflow_control`, `workflow_save`), approval cards, entry renderer, runner injection.
-- `pwr/src/types.ts` — shared contract hub: cross-layer interfaces + message/entry constants (`pi-workflow-run-v1`, `pwr-approval-v1`, `pwr-generation-request`, `pwr-workflow-result`), caps (`AGENT_LIMIT=1000`, `CONCURRENCY_MAX=128`, `CONCURRENCY_DEFAULT=4`, `MAX_SCRIPT_SIZE=256*1024`, `MAX_FINAL_SUMMARY_SIZE=8*1024`).
-- `pwr/engine/spec.ts` — DSL source of truth (whitelist, limits, clamps, script version 1.1.2).
-- `pwr/DELIVERY.md` — authoritative architecture/security doc + version history (v2.0.0 → v2.4.0, JHL ticket mapping JHL-10..18). Note: contains corruption artifacts (dropped leading characters, a duplicated heading).
-- `pwr/README.md`, root `README.md` — Chinese feature/install docs.
-- `pwr/test/helpers.ts`, `pwr/runner/test/helpers.ts` — fake AgentRunner and fake pi-child process builders; reuse these in new tests.
-- `pwr/package.json`, `pwr/tsconfig.json` — scripts and enforced conventions.
+- `pwr/index.ts` — 扩展入口；`export default pwrExtension(pi: ExtensionAPI)`；命令（`/workflow`、`/pwr-model`、`/workflow-delete`、动态 `/workflow:<name>`）、钩子（`input`、`before_agent_start`、`session_start`、`model_select`、`tool_call`、`tool_result`）、工具经 `registerPwrTools`（`workflow_validate`、`workflow_start`、`workflow_control`、`workflow_save`）、批准卡、entry 渲染器、runner 注入。
+- `pwr/src/types.ts` — 共享契约中枢：跨层接口 + 消息/条目常量（`pi-workflow-run-v1`、`pwr-approval-v1`、`pwr-generation-request`、`pwr-workflow-result`）、上限（`AGENT_LIMIT=1000`、`CONCURRENCY_MAX=128`、`CONCURRENCY_DEFAULT=4`、`MAX_SCRIPT_SIZE=256*1024`、`MAX_FINAL_SUMMARY_SIZE=8*1024`）。
+- `pwr/engine/spec.ts` — DSL 唯一事实来源（白名单、限制、钳制、脚本版本 1.1.2）。
+- `pwr/DELIVERY.md` — 权威架构/安全文档 + 版本历史（v2.0.0 → v2.4.0，JHL 工单映射 JHL-10..18）。注：含损坏痕迹（行首字符丢失、重复标题）。
+- `pwr/README.md`、根 `README.md` — 中文功能/安装文档。
+- `pwr/test/helpers.ts`、`pwr/runner/test/helpers.ts` — fake AgentRunner 与 fake pi 子进程构建器；新测试请复用。
+- `pwr/package.json`、`pwr/tsconfig.json` — 脚本与强制约定。
 
-## Runtime/Tooling Preferences
+## 运行时/工具链偏好
 
-- **Node >= 22.18** (native type-stripping — `.ts` runs directly; verified on Node 22.23.1 / Windows). No Bun, no build step, no bundler.
-- **npm** (package-lock v3). Package manager is not Bun/pnpm.
-- TypeScript ^5.8 (5.9.3 resolved); `@earendil-works/pi-*` ^0.83.0 as devDependencies only — the host Pi environment resolves them at runtime.
-- Pi extension API surface used across the workspace: `pi.on` (`session_start`, `agent_start`, `agent_settled`, `turn_start/end`, `model_select`, `message_start/update/end`, `input`, `before_agent_start`, `tool_call`, `tool_result`), `pi.registerCommand`, `pi.registerTool`, `pi.registerProvider`, `pi.registerShortcut`, `pi.registerEntryRenderer`, `pi.appendEntry`, `pi.sendMessage`, `ctx.ui.setStatus/setWidget/notify`, `ctx.sessionManager.getEntries`.
-- Config via env vars (`CHATANYWHERE_API_KEY`, `CHATANYWHERE_BASE_URL`) or `~/.pi/agent/auth.json` keyed by provider id (provider-quota — explicitly not env vars).
-- Install shape: all extensions are directories with an `index.ts` entry point (chatanywhere-provider additionally declares `pi.extensions: ["./index.ts"]` in its package.json); copy the directory into `extensions/` and pi loads it automatically.
+- **Node ≥ 22.18**（原生 type-stripping——`.ts` 直接运行；已在 Node 22.23.1 / Windows 验证）。不用 Bun、无构建步骤、无 bundler。
+- **npm**（package-lock v3）。包管理器不是 Bun/pnpm。
+- TypeScript ^5.8（解析为 5.9.3）；`@earendil-works/pi-*` ^0.83.0 仅作 devDependencies——宿主 Pi 环境在运行时解析它们。
+- 工作区使用的 Pi 扩展 API 面：`pi.on`（`session_start`、`agent_start`、`agent_settled`、`turn_start/end`、`model_select`、`message_start/update/end`、`input`、`before_agent_start`、`tool_call`、`tool_result`）、`pi.registerCommand`、`pi.registerTool`、`pi.registerProvider`、`pi.registerShortcut`、`pi.registerEntryRenderer`、`pi.appendEntry`、`pi.sendMessage`、`ctx.ui.setStatus/setWidget/notify`、`ctx.sessionManager.getEntries`。
+- 配置经环境变量（`CHATANYWHERE_API_KEY`、`CHATANYWHERE_BASE_URL`）或 `~/.pi/agent/auth.json` 按 provider id 键（provider-quota——明确不用环境变量）。
+- 安装形态：所有扩展都是带 `index.ts` 入口的目录（chatanywhere-provider 另在 package.json 声明 `pi.extensions: ["./index.ts"]`）；目录复制进 `extensions/` 后 pi 自动加载。
 
-## Testing & QA
+## 测试与 QA
 
-- **Framework: `node:test` + `node:assert/strict`** — no vitest/jest; no mock libraries. Flat `test("name", fn)` naming in pwr, stream-token-speed, and goal (prose assertions, some Chinese names); `describe`/`it` in `run-timer.test.ts` (47 `it`s, with a `setInterval` mock via before/after hooks) and `loop/test/`. `*.test.ts` suffix everywhere.
-- **Mocking = hand-written fakes at process boundaries:** fake `AgentRunner` (`makeFakeRunner`, `pwr/test/helpers.ts`), fake pi child (`FakeChild` + `makeFakeSpawn` + `waitForChild`, `pwr/runner/test/helpers.ts`), `RecordingStatusPort` (`stream-token-speed/test/fixtures.ts`). The real pi-tui is never instantiated in tests (structural fakes cast `as never`).
-- **Integration pattern:** wire real modules (`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`) with a mocked spawn, scripted child events, and polling `waitSettled` (10ms × 100) — see `pwr/runner/test/integration.test.ts` (happy path + `restart_agent` semantics; `handle.records.length` proves cache replay doesn't spawn).
-- **Perf gate:** `pwr/test/perf.test.ts` — `validateScript` on ~1500-agent / ~64KB scripts must finish < 300ms (wall clock).
-- **Counts (measured via grep):** pwr 405 tests across 33 `*.test.ts` files (test/ 100, tests/ 204, runtime/test/ 56, runner/test/ 45); stream-token-speed 43; agent-team 85; run-timer 47; loop 169; goal 39; provider-quota 15; opencode-bridge 34.
-- **Coverage gaps:** `chatanywhere-provider` has zero tests. No TODO/skip/only markers anywhere.
-- **Determinism & hermeticity:** injected fixed clocks (`2026-08-05T12:00:00Z`), temp dirs via `os.tmpdir()` with cleanup, no network.
-- Quality bar per `pwr/DELIVERY.md`: full suite green + `npm run typecheck` zero errors before delivery.
+- **框架：`node:test` + `node:assert/strict`**——无 vitest/jest、无 mock 库。pwr、stream-token-speed、goal 用扁平 `test("名称", fn)` 命名（叙述式断言，部分中文名）；`run-timer.test.ts`（47 个 `it`，经 before/after 钩子 mock `setInterval`）与 `loop/test/` 用 `describe`/`it`。统一 `*.test.ts` 后缀。
+- **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）。测试中从不实例化真实 pi-tui（结构 fake 以 `as never` 断言）。
+- **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
+- **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
+- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 85；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 34。
+- **覆盖缺口：** `chatanywhere-provider` 零测试。全库无 TODO/skip/only 标记。
+- **确定性与封闭性：** 注入固定时钟（`2026-08-05T12:00:00Z`）、临时目录经 `os.tmpdir()` 并清理、无网络。
+- 质量标准见 `pwr/DELIVERY.md`：交付前全套测试绿 + `npm run typecheck` 零错误。
