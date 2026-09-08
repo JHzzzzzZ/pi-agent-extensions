@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加七个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加八个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -12,6 +12,7 @@
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式 | 169 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 39 个 |
+| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用） | 34 个 |
 
 ## 安装
 
@@ -201,9 +202,38 @@ node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
 
 ---
 
+## opencode-bridge — 本地代理桥（HTTP CONNECT → SOCKS5）
+
+背景：opencode-go 的 Muse Spark 等模型按出口 IP 限区，而 Pi 只支持 HTTP 代理（不认 `socks5://`）。本扩展随 Pi 启动确保一个**独立 helper 进程**在跑：它监听 `127.0.0.1:10899`，把 HTTP CONNECT 转成你本地 v2rayN 的 SOCKS5（默认 `127.0.0.1:10808`）。Pi 的 `settings.json` 配置 `"httpProxy": "http://127.0.0.1:10899"` 后，模型请求即可经此桥从允许地区出去。**扩展不会自动修改用户的 settings.json**。
+
+- **进程隔离** — 桥运行在独立进程（`opencode-bridge-helper.mjs`，零依赖 .mjs）中，任何 socket 异常/未捕获异常都不会影响 Pi 主进程；Pi 侧 spawn 后 `unref()`，不持有子进程资源
+- **多实例复用** — `session_start` 只做 TCP 探测：桥已在监听则直接复用（多个 Pi / subagent 共用一个桥），仅在必要时拉起 helper；端口被另一个桥占用时新 helper 以 0 退出（竞争安全）
+- **协议健壮性** — CONNECT 完成 SOCKS5 无认证握手（域名方式，分片应答按缓冲累积解析）后双向转发（含请求头部剩余数据）；普通 HTTP 返回 405；上游拒绝/握手失败返回 502；客户端中途断开只清理自身，桥继续服务后续请求
+- **受控退出** — SIGTERM/SIGINT 优雅退出；`GET /__bridge/shutdown`（仅本地可达）供测试/受控关闭
+
+前置条件：本地 SOCKS5 代理（如 v2rayN）已在 `PI_BRIDGE_SOCKS_HOST:PI_BRIDGE_SOCKS_PORT` 运行。
+
+| 命令/配置 | 作用 |
+| --- | --- |
+| `/opencode-bridge` | 查看状态（必要时尝试启动）：监听地址、上游 SOCKS5、所需 `httpProxy` 配置 |
+| `"httpProxy": "http://127.0.0.1:10899"` | 写入 Pi `settings.json`（手动，本扩展不改） |
+| `PI_BRIDGE_PORT` | 桥监听端口，默认 `10899`（仅绑定 127.0.0.1；需 1-65535 整数，非法启动时报静态错误） |
+| `PI_BRIDGE_SOCKS_HOST` | 上游 SOCKS5 主机，默认 `127.0.0.1` |
+| `PI_BRIDGE_SOCKS_PORT` | 上游 SOCKS5 端口，默认 `10808` |
+| `PI_BRIDGE_LOG` | helper 日志文件路径（默认与 helper 同目录的 `opencode-bridge.log`；单行/文件大小均有上限，不记录 payload） |
+
+```bash
+cd opencode-bridge
+npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型）
+npm test           # 34 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
+npm run typecheck  # tsc --noEmit（strict，0 错误）
+```
+
+---
+
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`pwr/vendor/acorn.mjs` 为生成文件，勿修改

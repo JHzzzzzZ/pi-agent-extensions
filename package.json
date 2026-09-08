@@ -1,9 +1,9 @@
 {
 	"name": "pi-agent-extensions",
-	"version": "2.4.0",
+	"version": "2.5.0",
 	"private": true,
 	"type": "module",
-	"description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal",
+	"description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge",
 	"keywords": ["pi-package"],
 	"engines": {
 		"node": ">=22.18"
@@ -17,7 +17,8 @@
 			"./provider-quota/index.ts",
 			"./run-timer/index.ts",
 			"./loop/index.ts",
-			"./goal/index.ts"
+			"./goal/index.ts",
+			"./opencode-bridge/index.ts"
 		]
 	}
 }
