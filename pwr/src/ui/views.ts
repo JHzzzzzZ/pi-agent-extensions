@@ -9,6 +9,7 @@
  */
 
 import type { RunStatus } from "../types.ts";
+import type { SavedWorkflowSummary } from "../save.ts";
 import { shortcutHint } from "./keybindings.ts";
 import type { AgentView, RunDetail, RunListEntry, StageView } from "./types.ts";
 import { COST_WARN_USD } from "./types.ts";
@@ -238,4 +239,24 @@ function safeJson(value: unknown): string {
 /** Human-readable threshold used in warnings copy. */
 export function costWarningText(): string {
 	return `cost over $${COST_WARN_USD.toFixed(2)}`;
+}
+
+/**
+ * Saved-workflow enumeration (/workflows:saved and the /workflow-delete
+ * no-arg listing). Project scope is listed first because it shadows the
+ * same-name user-scope file at invocation time.
+ */
+export function formatSavedWorkflows(summaries: SavedWorkflowSummary[]): string {
+	if (summaries.length === 0) {
+		return "No saved workflows yet — create one with /workflow <task>, then /workflows:save <runId>.";
+	}
+	const lines = [`Saved workflows (${summaries.length}):`];
+	for (const s of summaries) {
+		const scope = s.scope === "project" ? "project, shadows user" : "user";
+		const desc = s.description ? ` — ${s.description}` : "";
+		const args = s.argsHint ? ` · args: ${s.argsHint}` : "";
+		lines.push(`  /workflow:${s.name}  [${scope}]${desc}${args}`);
+	}
+	lines.push("Run: /workflow:<name> key=value ... (or a JSON value). Delete: /workflow-delete <name>.");
+	return lines.join("\n");
 }

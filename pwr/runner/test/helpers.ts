@@ -106,6 +106,42 @@ export function messageEndLine(role: string, overrides: Record<string, unknown> 
 	return JSON.stringify({ type: "message_end", message: msg });
 }
 
+/** JSON message_update event helper (partial assistant text). */
+export function messageUpdateLine(text: string): string {
+	return JSON.stringify({
+		type: "message_update",
+		message: { role: "assistant", content: [{ type: "text", text }] },
+	});
+}
+
+export function toolExecutionStartLine(toolName: string, args?: unknown): string {
+	return JSON.stringify({
+		type: "tool_execution_start",
+		toolCallId: "t1",
+		toolName,
+		...(args !== undefined ? { args } : {}),
+	});
+}
+
+export function toolExecutionUpdateLine(toolName: string, text: string): string {
+	return JSON.stringify({
+		type: "tool_execution_update",
+		toolCallId: "t1",
+		toolName,
+		partial: { content: [{ type: "text", text }] },
+	});
+}
+
+export function toolExecutionEndLine(toolName: string, text: string, isError = false): string {
+	return JSON.stringify({
+		type: "tool_execution_end",
+		toolCallId: "t1",
+		toolName,
+		result: { content: [{ type: "text", text }] },
+		isError,
+	});
+}
+
 export function toolResultEndLine(): string {
 	return JSON.stringify({ type: "tool_result_end", message: { role: "user", content: [] } });
 }

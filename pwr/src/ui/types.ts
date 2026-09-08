@@ -58,7 +58,7 @@ export type RunEvent =
 	| { type: "run_status"; runId: string; status: RunStatus; at: string }
 	| { type: "stage_status"; runId: string; stageId: string; status: StageStatus; agentCount?: number; tokens?: number; elapsedMs?: number; at: string }
 	| { type: "task_status"; runId: string; taskId: string; stageId?: string; status: TaskStatus; attempt?: number; at: string }
-	| { type: "task_event"; runId: string; taskId: string; event: string; at: string }
+	| { type: "task_event"; runId: string; taskId: string; event: string; tokens?: number; at: string }
 	| { type: "task_result"; runId: string; taskId: string; summary?: string; error?: string; tokens?: number; elapsedMs?: number; cost?: number; at: string }
 	| { type: "usage"; runId: string; tokens?: number; cost?: number; at: string }
 	| { type: "summary"; runId: string; summary: string; at: string };

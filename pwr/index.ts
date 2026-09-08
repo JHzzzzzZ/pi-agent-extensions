@@ -15,6 +15,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { argsSchemaHint } from "./src/args.ts";
 import { ApprovalStore } from "./src/approval.ts";
 import { canonicalProjectPath } from "./src/approval.ts";
 import { buildGenerationRequest } from "./src/constraints.ts";
@@ -26,13 +27,17 @@ import { RunNotifier } from "./src/notify.ts";
 import { RunRegistry, type SaveAdapter } from "./src/flow.ts";
 import { confirmApprovalCard, formatPlanText, registerPwrTools, type ApprovalCardInfo, type ToolDeps } from "./src/tools.ts";
 import { createWorkflowsUi } from "./src/ui/index.ts";
+import { formatSavedWorkflows } from "./src/ui/views.ts";
 import type { RunEntryData, UiRuntimeAdapter } from "./src/ui/types.ts";
 import {
 	defaultUserWorkflowsDir,
 	deleteSavedWorkflow,
+	describeSavedWorkflows,
 	invokeSavedWorkflow,
 	isPwrError,
 	listSavedWorkflows,
+	loadSavedWorkflow,
+	readMetaFromSource,
 	saveWorkflowCommand,
 	type ApprovalDecision,
 } from "./src/save.ts";
@@ -132,7 +137,7 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 	function registerSavedCommand(name: string): void {
 		if (registeredCommands.has(name)) return;
 		pi.registerCommand(`workflow:${name}`, {
-			description: `Run the saved PWR workflow "${name}" (loaded from ~/.pi/agent/workflows or .pi/workflows).`,
+			description: savedCommandDescription(name),
 			handler: async (args, ctx) => {
 				const result = await invokeSavedWorkflow(deps, { name, rawArgs: args ?? "" }, (info) => approveSavedCommand(ctx, info));
 				if (result && isPwrError(result)) {
@@ -145,6 +150,23 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 			},
 		});
 		registeredCommands.add(name);
+	}
+
+	/**
+	 * Static command description enriched with the saved script's args usage
+	 * hint (key=value forms, e.g. `files=string[] depth?=number`), so the
+	 * invocation syntax is discoverable from the command palette.
+	 */
+	function savedCommandDescription(name: string): string {
+		const base = `Run the saved PWR workflow "${name}" (loaded from ~/.pi/agent/workflows or .pi/workflows).`;
+		try {
+			const loaded = loadSavedWorkflow(deps, name);
+			if (isPwrError(loaded)) return base;
+			const hint = argsSchemaHint(readMetaFromSource(loaded.source)?.argsSchema);
+			return hint ? `${base} Args: ${hint} (key=value or JSON).` : `${base} Args: key=value or JSON.`;
+		} catch {
+			return base;
+		}
 	}
 
 	/** Bridges the saved-command approval card to the same UI loop as workflow_start. */
@@ -219,11 +241,12 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 	// registered /workflow:<name> command stays until /reload and reports
 	// WORKFLOW_NOT_FOUND on invocation (pi has no unregisterCommand API).
 	pi.registerCommand("workflow-delete", {
-		description: "Delete a saved PWR workflow: /workflow-delete <name> (project scope first, then user scope).",
+		description: "Delete a saved PWR workflow: /workflow-delete <name> (no name lists saved workflows).",
 		handler: async (args, ctx) => {
 			const name = (args ?? "").trim().split(/\s+/)[0] ?? "";
 			if (!name) {
-				ctx.ui.notify("Usage: /workflow-delete <name>", "error");
+				// No name: show what is saved instead of a bare usage line.
+				ctx.ui.notify(`${formatSavedWorkflows(describeSavedWorkflows(deps))}\n\nUsage: /workflow-delete <name>`, "info");
 				return;
 			}
 			const result = deleteSavedWorkflow(deps, name);

@@ -24,7 +24,8 @@ import { runSaveFlow, type SaveFlowActions } from "./save-flow.ts";
 import { MemoryRunStore } from "./run-store.ts";
 import { createRunEntryRenderer, refreshUiStatus, runCardSummaryLine } from "./renderer.ts";
 import type { RunEntryData, UiRuntimeAdapter } from "./types.ts";
-import { formatRunDetail, formatRunList, formatStatus } from "./views.ts";
+import { formatRunDetail, formatRunList, formatSavedWorkflows, formatStatus } from "./views.ts";
+import { describeSavedWorkflows } from "../save.ts";
 import { PWR_SHORTCUTS } from "./keybindings.ts";
 import { assembleViewerData, openRunViewer, type ViewerData } from "./viewer.ts";
 
@@ -335,6 +336,13 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 				return;
 			}
 			await saveFlow(ctx, ref);
+		},
+	});
+
+	pi.registerCommand("workflows:saved", {
+		description: "List saved PWR workflows (/workflow:<name> commands) with scope, description and args hint.",
+		handler: async (_args, ctx) => {
+			notify(ctx, formatSavedWorkflows(describeSavedWorkflows(deps)), "info");
 		},
 	});
 

@@ -196,6 +196,13 @@ export function stagePageLines(detail: RunDetail, stage: StageView, width: numbe
 		if (agent.tokens !== undefined) parts.push(`${formatTokens(agent.tokens)} tok`);
 		if (agent.elapsedMs !== undefined) parts.push(formatDuration(agent.elapsedMs));
 		lines.push(truncateVisible(parts.join(" · "), width));
+		// Live per-step trace: the latest sanitized child activity (tool
+		// steps / assistant text tails) under each running agent row.
+		if (agent.status === "running" && agent.recentEvents.length > 0) {
+			for (const ev of agent.recentEvents.slice(-2)) {
+				lines.push(truncateVisible(`  └ ${ev}`, width));
+			}
+		}
 	}
 
 	const failures = agents.filter((a) => a.status === "failed" || (a.error !== undefined && a.status !== "completed"));

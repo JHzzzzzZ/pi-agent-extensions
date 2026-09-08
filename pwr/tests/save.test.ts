@@ -18,10 +18,12 @@ import { RunRegistry, saveWorkflow, validateWorkflow } from "../src/flow.ts";
 import { getValidationEngine } from "../src/engine.ts";
 import {
 	deleteSavedWorkflow,
+	describeSavedWorkflows,
 	invokeSavedWorkflow,
 	isPwrError,
 	listSavedWorkflows,
 	loadSavedWorkflow,
+	readMetaFromSource,
 	saveWorkflowCommand,
 	type ApprovalDecision,
 	type SaveLibDeps,
@@ -456,11 +458,18 @@ test("invoke: invalid args and schema violations never create a run", async () =
 	await saveWorkflowCommand(h.deps, { runId: await createValidatedRun(h, WITH_ARGS_SCHEMA), scope: "user", name: "audit" });
 	const baselineRuns = h.createdRuns.length;
 
-	const badJson = await invokeSavedWorkflow(h.deps, { name: "audit", rawArgs: "not json" }, h.approve);
+	// v2.4: bare "not json" is now valid positional input (files=["not","json"]);
+	// unparseable JSON must at least look like JSON to take the JSON path.
+	const badJson = await invokeSavedWorkflow(h.deps, { name: "audit", rawArgs: "{not json" }, h.approve);
 	assert.ok(isPwrError(badJson));
 	if (isPwrError(badJson)) assert.equal(badJson.code, ErrorCode.ARGS_INVALID);
 	assert.equal(h.createdRuns.length, baselineRuns, "no run for unparseable args");
 	assert.equal(h.deps.runtime!.startCalls.length, 0);
+
+	const badKv = await invokeSavedWorkflow(h.deps, { name: "audit", rawArgs: "depth=not-a-number" }, h.approve);
+	assert.ok(isPwrError(badKv));
+	if (isPwrError(badKv)) assert.equal(badKv.code, ErrorCode.ARGS_INVALID, "non-numeric value on an integer property is rejected");
+	assert.equal(h.createdRuns.length, baselineRuns, "no run for uncoercible key=value args");
 
 	const violation = await invokeSavedWorkflow(h.deps, { name: "audit", rawArgs: '{"files":"not-an-array"}' }, h.approve);
 	assert.ok(isPwrError(violation));
@@ -566,3 +575,67 @@ test("invoke: no runtime -> AGENT_RUNNER_UNAVAILABLE, run marked failed (no fall
 
 
 
+
+// ---------- invoke with key=value args (v2.4) ----------
+
+test("invoke: key=value args are coerced by the schema and reach the runtime", async () => {
+	const h = await makeHarness();
+	const runId = await createValidatedRun(h, WITH_ARGS_SCHEMA);
+	const saved = await saveWorkflowCommand(h.deps, { runId, scope: "user", name: "audit" });
+	if (isPwrError(saved)) throw new Error("save failed");
+	h.deps.approvals.remember(h.projectPath, saved.digest, "2026-08-05T10:00:00Z");
+
+	const result = await invokeSavedWorkflow(h.deps, { name: "audit", rawArgs: "files=src/a.ts depth=2" }, h.approve);
+	assert.ok(!isPwrError(result));
+	if (isPwrError(result)) return;
+	const invokeRun = h.createdRuns.at(-1)!;
+	assert.deepEqual(invokeRun.args, { files: ["src/a.ts"], depth: 2 }, "key=value pairs coerce like the JSON form");
+	assert.equal(h.deps.runtime!.startCalls.length, 1);
+});
+
+test("invoke: invalid key=value input fails with ARGS_INVALID before any run is created", async () => {
+	const h = await makeHarness();
+	const runId = await createValidatedRun(h, WITH_ARGS_SCHEMA);
+	await saveWorkflowCommand(h.deps, { runId, scope: "user", name: "audit" });
+	const before = h.createdRuns.length;
+
+	const result = await invokeSavedWorkflow(h.deps, { name: "audit", rawArgs: "depth=not-a-number" }, h.approve);
+	assert.ok(isPwrError(result));
+	assert.equal(result.code, ErrorCode.ARGS_INVALID);
+	assert.equal(h.createdRuns.length, before, "invalid args never create a run");
+});
+
+// ---------- saved workflow listing (v2.4) ----------
+
+test("readMetaFromSource extracts the meta literal from saved files", async () => {
+	const h = await makeHarness();
+	const runId = await createValidatedRun(h, WITH_ARGS_SCHEMA);
+	await saveWorkflowCommand(h.deps, { runId, scope: "user", name: "audit" });
+	const source = fs.readFileSync(path.join(h.userDir, "audit.js"), "utf8");
+	const meta = readMetaFromSource(source);
+	assert.ok(meta, "meta literal is readable without the engine");
+	assert.equal(meta!.name, "audit");
+	assert.ok(meta!.argsSchema !== undefined);
+});
+
+test("describeSavedWorkflows lists scope (project first), description and args hint", async () => {
+	const h = await makeHarness({ trusted: true });
+	const projectRunId = await createValidatedRun(h, WITH_ARGS_SCHEMA);
+	await saveWorkflowCommand(h.deps, { runId: projectRunId, scope: "project", name: "audit" });
+	const userRunId = await createValidatedRun(h, MINIMAL_META);
+	await saveWorkflowCommand(h.deps, { runId: userRunId, scope: "user", name: "plain" });
+
+	const summaries = describeSavedWorkflows(h.deps);
+	assert.deepEqual(
+		summaries.map((s) => s.name),
+		["audit", "plain"],
+		"project scope (shadowing) is listed first",
+	);
+	const audit = summaries.find((s) => s.name === "audit")!;
+	assert.equal(audit.scope, "project");
+	assert.equal(audit.argsHint, "files=string[] depth?=integer");
+	assert.ok(audit.description && audit.description.length > 0, "meta auto-fill provides a description");
+	const plain = summaries.find((s) => s.name === "plain")!;
+	assert.equal(plain.scope, "user");
+	assert.equal(plain.argsHint, undefined, "no argsSchema → no hint");
+});

@@ -34,6 +34,7 @@ import {
 	type RunResult,
 } from "../engine/index.ts";
 import { RunnerError } from "../runner/errors.ts";
+import type { AgentEvent } from "../runner/types.ts";
 import type { RuntimeAdapter, WorkflowPlan, WorkflowRunView, WorkflowScript } from "../src/types.ts";
 import { extractPlan as extractStaticPlan } from "../src/plan.ts";
 import { truncateJsonSummary } from "../src/notify.ts";
@@ -109,6 +110,38 @@ function formatSummary(value: unknown): string {
 	} catch {
 		return String(value);
 	}
+}
+
+/**
+ * Formats one sanitized runner event into a single-line live trace row.
+ * The viewer renders these under the running agent row (JHL-18); texts are
+ * already bounded by the runner, this only picks the prefix icon.
+ */
+export function formatProgressLine(ev: AgentEvent): string {
+	switch (ev.type) {
+		case "tool_execution_start":
+			return ev.argsSummary ? `▶ ${ev.toolName}: ${ev.argsSummary}` : `▶ ${ev.toolName}`;
+		case "tool_execution_update":
+			return ev.text ? `⋯ ${ev.toolName} ${ev.text}` : `⋯ ${ev.toolName}`;
+		case "tool_execution_end":
+			if (ev.isError) return ev.text ? `✗ ${ev.toolName} ${ev.text}` : `✗ ${ev.toolName}`;
+			return ev.text ? `✓ ${ev.toolName} ${ev.text}` : `✓ ${ev.toolName}`;
+		case "message_update":
+			return `… ${ev.text}`;
+		case "message_end":
+			return ev.role === "assistant" && ev.text ? `› ${ev.text}` : "";
+		default:
+			return "";
+	}
+}
+
+/** Cumulative task tokens (input+output) when the event carries usage. */
+export function progressTokens(ev: AgentEvent): number | undefined {
+	if (ev.type !== "message_end" || !ev.usage) return undefined;
+	const input = typeof ev.usage.input === "number" ? ev.usage.input : 0;
+	const output = typeof ev.usage.output === "number" ? ev.usage.output : 0;
+	if (input === 0 && output === 0) return undefined;
+	return input + output;
 }
 
 function errorCodeOf(err: unknown): string {
@@ -343,6 +376,21 @@ export class WorkflowRuntime implements RuntimeAdapter {
 			stageId: task.stageId,
 			status: task.status,
 			attempt: task.attempt,
+			at: this.nowFn(),
+		});
+	}
+
+	/** Emits one live per-step trace row (tool step / assistant text tail / tokens). */
+	private emitTaskEvent(state: RuntimeRunState, taskId: string, ev: AgentEvent): void {
+		const line = formatProgressLine(ev);
+		if (!line) return;
+		const tokens = progressTokens(ev);
+		this.emit({
+			type: "task_event",
+			runId: state.run.runId,
+			taskId,
+			event: line,
+			...(tokens !== undefined ? { tokens } : {}),
 			at: this.nowFn(),
 		});
 	}
@@ -585,6 +633,13 @@ export class WorkflowRuntime implements RuntimeAdapter {
 				// definition pin > per-call option > PWR default resolver).
 				model: spec.model,
 				signal: spec.signal,
+				// Live per-step trace: forward sanitized child events to the
+				// UI event feed as task_event rows. Suppressed once this
+				// executor is superseded (pause/stop/restart generation).
+				onEvent: (ev) => {
+					if (state.generation !== generation) return;
+					this.emitTaskEvent(state, task.taskId, ev);
+				},
 			});
 			if (state.generation !== generation) {
 				// Superseded executor: its late result must not touch the

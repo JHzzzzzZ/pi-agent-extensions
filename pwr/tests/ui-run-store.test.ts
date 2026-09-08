@@ -436,3 +436,37 @@ test("hydrateEntries 恢复 cacheHit 标记", () => {
 	]);
 	assert.equal(store.getDetail("r1")!.agents[0]!.cacheHit, true);
 });
+
+// ------------------------------------------------------------------
+// live per-step trace (v2.4): task_event trace lines + live tokens
+// ------------------------------------------------------------------
+
+test("task_event appends live trace lines and updates live tokens", () => {
+	const store = newStore();
+	const registry = new RunRegistry();
+	const runId = makeRun(registry, "src", "x");
+	store.hydrateRun(registry.getRun(runId)!, registry.getScript(runId)!, registry.getPlan(runId)!);
+	store.feedEvent({ type: "task_status", runId, taskId: "t1", stageId: "s1", status: "running", attempt: 1, at: "2026-08-05T12:00:10Z" });
+	store.feedEvent({ type: "task_event", runId, taskId: "t1", event: "▶ bash: npm test", at: "2026-08-05T12:00:11Z" });
+	store.feedEvent({ type: "task_event", runId, taskId: "t1", event: "› done", tokens: 120, at: "2026-08-05T12:00:12Z" });
+
+	const agent = store.getDetail(runId)!.agents.find((a) => a.taskId === "t1")!;
+	assert.deepEqual(agent.recentEvents, ["▶ bash: npm test", "› done"]);
+	assert.equal(agent.tokens, 120, "tokens 搭载在 task_event 上实时更新");
+});
+
+test("applyRuntimeView keeps live tokens for a running task that has no usage yet", () => {
+	const store = newStore();
+	const registry = new RunRegistry();
+	const runId = makeRun(registry, "src", "x");
+	store.hydrateRun(registry.getRun(runId)!, registry.getScript(runId)!, registry.getPlan(runId)!);
+	store.feedEvent({ type: "task_status", runId, taskId: "t2", stageId: "stage-2", status: "running", attempt: 1, at: "2026-08-05T12:00:10Z" });
+	store.feedEvent({ type: "task_event", runId, taskId: "t2", event: "▶ bash: npm test", tokens: 120, at: "2026-08-05T12:00:11Z" });
+
+	// 视图刷新 tick：running 任务还没有 usage，不能把实时 tokens 清掉。
+	store.applyRuntimeView(runId, runtimeViewFixture(runId));
+	const agent = store.getDetail(runId)!.agents.find((a) => a.taskId === "t2")!;
+	assert.equal(agent.status, "running");
+	assert.equal(agent.tokens, 120, "实时 tokens 在视图刷新后保留");
+	assert.deepEqual(agent.recentEvents, ["▶ bash: npm test"]);
+});

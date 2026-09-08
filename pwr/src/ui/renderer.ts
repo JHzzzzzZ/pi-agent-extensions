@@ -52,9 +52,20 @@ export function runDetailText(runId: string, store: RunStore): string {
 	return runCardLines(detail).join("\n");
 }
 
+/** Latest live trace line from the most recently started running agent. */
+function latestActivity(store: RunStore, runId: string): string | undefined {
+	const detail = store.getDetail(runId);
+	if (!detail) return undefined;
+	const running = detail.agents.filter((a) => a.status === "running" && a.recentEvents.length > 0);
+	if (running.length === 0) return undefined;
+	const last = running[running.length - 1];
+	return last.recentEvents[last.recentEvents.length - 1];
+}
+
 /**
  * Compact widget lines (setWidget). Capped at `maxRuns` so the widget never
  * grows unbounded; refreshed only when the store emits (push, no polling).
+ * Running runs append their latest live activity line (JHL-18 trace).
  */
 export function runWidgetLines(store: RunStore, maxRuns = 5): string[] {
 	const lines: string[] = ["PWR runs:"];
@@ -68,6 +79,10 @@ export function runWidgetLines(store: RunStore, maxRuns = 5): string[] {
 		const run = entry.runId.slice(0, 8);
 		const warnings = entry.warnings.length > 0 ? ` [!${entry.warnings.length}]` : "";
 		lines.push(`  ${formatStatus(entry.status)} ${run} ${entry.scriptName} · ${formatDuration(entry.totalElapsedMs)} · ${formatCount(entry.completedAgents, entry.totalAgents)}${warnings}`);
+		if (entry.status === "running") {
+			const activity = latestActivity(store, entry.runId);
+			if (activity) lines.push(`    └ ${activity}`);
+		}
 	}
 	if (runs.length > maxRuns) lines.push(`  … and ${runs.length - maxRuns} more`);
 	return lines;

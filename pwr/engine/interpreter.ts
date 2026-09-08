@@ -22,6 +22,7 @@ import {
 	type ScriptPosition,
 } from "./errors.ts";
 import { RunnerError } from "../runner/errors.ts";
+import type { AgentEvent } from "../runner/types.ts";
 import { nodeEnd, nodeStart, parseScript, type AcornNode, type Program } from "./parser.ts";
 import { assertPlainData, isPlainObject, sanitizeHostValue } from "./plain.ts";
 import {
@@ -48,6 +49,12 @@ export interface AgentRunSpec {
 	/** Optional model override for this agent call (definition pin > this > PWR default). */
 	model?: string;
 	signal?: AbortSignal;
+	/**
+	 * Live sanitized progress observer (tool steps + throttled text tails),
+	 * attached by the RUNTIME at dispatch — never settable from scripts
+	 * (not part of the whitelisted agent() options).
+	 */
+	onEvent?: (event: AgentEvent) => void;
 }
 
 export interface AgentRunResult {

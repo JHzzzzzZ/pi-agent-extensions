@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ErrorCode } from "../src/errors.ts";
-import { parseCommandArgs, validateArgsAgainstSchema } from "../src/args.ts";
+import { argsSchemaHint, parseCommandArgs, parseCommandArgsSmart, validateArgsAgainstSchema } from "../src/args.ts";
 
 test("args: empty input is undefined (no args)", () => {
 	const r = parseCommandArgs("");
@@ -142,4 +142,111 @@ test("args schema: nested objects are validated recursively", () => {
 	const bad = validateArgsAgainstSchema({ run: { mode: "other" } }, schema);
 	assert.equal(bad.ok, false);
 	if (!bad.ok) assert.ok(bad.message.includes("$.run.mode"), "error points into the nested value");
+});
+
+// ------------------------------------------------------------------
+// parseCommandArgsSmart (v2.4): schema-guided key=value input, JSON unchanged
+// ------------------------------------------------------------------
+
+const FILES_SCHEMA = {
+	type: "object",
+	required: ["files"],
+	properties: {
+		files: { type: "array", items: { type: "string" } },
+		depth: { type: "integer", minimum: 1 },
+		verbose: { type: "boolean" },
+		note: { type: "string" },
+	},
+	additionalProperties: false,
+};
+
+test("smart args: empty stays undefined, JSON path unchanged", () => {
+	const empty = parseCommandArgsSmart("", FILES_SCHEMA);
+	assert.ok(empty.ok && empty.value === undefined);
+
+	const json = parseCommandArgsSmart('{"files":["a.ts"],"depth":2}', FILES_SCHEMA);
+	assert.ok(json.ok);
+	if (json.ok) assert.deepEqual(json.value, { files: ["a.ts"], depth: 2 });
+
+	const bad = parseCommandArgsSmart("{not json", FILES_SCHEMA);
+	assert.ok(!bad.ok && bad.code === ErrorCode.ARGS_INVALID);
+});
+
+test("smart args: key=value coerces numbers/booleans by schema", () => {
+	const r = parseCommandArgsSmart("files=src/a.ts depth=2 verbose=true", FILES_SCHEMA);
+	assert.ok(r.ok);
+	if (r.ok) assert.deepEqual(r.value, { files: ["src/a.ts"], depth: 2, verbose: true });
+
+	const badNumber = parseCommandArgsSmart("files=a depth=two", FILES_SCHEMA);
+	assert.ok(!badNumber.ok && badNumber.code === ErrorCode.ARGS_INVALID);
+
+	const badBoolean = parseCommandArgsSmart("files=a verbose=maybe", FILES_SCHEMA);
+	assert.ok(!badBoolean.ok);
+});
+
+test("smart args: repeated keys and comma lists accumulate arrays", () => {
+	const repeated = parseCommandArgsSmart("files=a.ts files=b.ts depth=1", FILES_SCHEMA);
+	assert.ok(repeated.ok);
+	if (repeated.ok) assert.deepEqual(repeated.value, { files: ["a.ts", "b.ts"], depth: 1 });
+
+	const comma = parseCommandArgsSmart('files="a b.ts",c.ts depth=3', FILES_SCHEMA);
+	assert.ok(comma.ok);
+	if (comma.ok) assert.deepEqual(comma.value, { files: ["a b.ts", "c.ts"], depth: 3 });
+});
+
+test("smart args: bare key means true on a boolean property; quoted values keep spaces", () => {
+	const flag = parseCommandArgsSmart("files=a.ts verbose note='hello world'", FILES_SCHEMA);
+	assert.ok(flag.ok);
+	if (flag.ok) assert.deepEqual(flag.value, { files: ["a.ts"], verbose: true, note: "hello world" });
+
+	const bare = parseCommandArgsSmart("files=a.ts note", FILES_SCHEMA);
+	assert.ok(!bare.ok, "bare non-boolean key is rejected");
+});
+
+test("smart args: positional input fills the single required property", () => {
+	const schema = {
+		type: "object",
+		required: ["query"],
+		properties: { query: { type: "string" } },
+	};
+	const pos = parseCommandArgsSmart("find all TODO comments", schema);
+	assert.ok(pos.ok);
+	if (pos.ok) assert.deepEqual(pos.value, { query: "find all TODO comments" });
+
+	const arraySchema = {
+		type: "object",
+		required: ["files"],
+		properties: { files: { type: "array", items: { type: "string" } } },
+	};
+	const split = parseCommandArgsSmart("src test docs", arraySchema);
+	assert.ok(split.ok);
+	if (split.ok) assert.deepEqual(split.value, { files: ["src", "test", "docs"] });
+
+	// FILES_SCHEMA's single required files (array<string>) DOES get positional
+	// sugar; a schema whose sole required property is not string/array does not.
+	const objectSchema = {
+		type: "object",
+		required: ["config"],
+		properties: { config: { type: "object" } },
+	};
+	const two = parseCommandArgsSmart("just text", objectSchema);
+	assert.ok(!two.ok);
+});
+
+test("smart args: additionalProperties=false rejects unknown keys; input is never echoed", () => {
+	const r = parseCommandArgsSmart("files=a.txt secret=password123", FILES_SCHEMA);
+	assert.ok(!r.ok && r.code === ErrorCode.ARGS_INVALID);
+	assert.ok(!r.message.includes("secret"), "static error template never echoes raw input");
+});
+
+test("smart args: no schema still accepts key=value string pairs", () => {
+	const r = parseCommandArgsSmart("foo=bar count=3", undefined);
+	assert.ok(r.ok);
+	if (r.ok) assert.deepEqual(r.value, { foo: "bar", count: "3" });
+});
+
+test("argsSchemaHint renders property=type with optional markers", () => {
+	assert.equal(argsSchemaHint(FILES_SCHEMA), "files=string[] depth?=integer verbose?=boolean note?=string");
+	assert.equal(argsSchemaHint(undefined), undefined);
+	assert.equal(argsSchemaHint({ type: "string" }), undefined);
 });

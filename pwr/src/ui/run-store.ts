@@ -272,6 +272,7 @@ export class MemoryRunStore implements RunStore {
 				const agent = run.agents.get(ev.taskId);
 				if (!agent) break;
 				agent.recentEvents.push(ev.event);
+				if (ev.tokens !== undefined) agent.tokens = ev.tokens;
 				if (agent.recentEvents.length > MAX_RECENT_EVENTS) {
 					agent.recentEvents = agent.recentEvents.slice(-MAX_RECENT_EVENTS);
 				}
@@ -372,6 +373,7 @@ export class MemoryRunStore implements RunStore {
 			const elapsedMs = Number.isFinite(startedAt)
 				? Math.max(0, (Number.isFinite(endedAt) ? endedAt : this.nowMs()) - startedAt)
 				: undefined;
+			const prev = run.agents.get(t.taskId);
 			const next: AgentView = {
 				taskId: t.taskId,
 				stageId: t.stageId,
@@ -381,11 +383,13 @@ export class MemoryRunStore implements RunStore {
 				resultSummary: t.summary,
 				error: t.errorMessage,
 				errorCode: t.errorCode,
-				tokens: t.usage ? usageTokens(t.usage) : undefined,
-				cost: t.usage ? usageCost(t.usage) : undefined,
+				// A running task has no usage yet — keep the live tokens
+				// streamed in via task_event instead of clobbering them.
+				tokens: t.usage ? usageTokens(t.usage) : prev?.tokens,
+				cost: t.usage ? usageCost(t.usage) : prev?.cost,
 				elapsedMs,
 				cacheHit: t.cacheHit,
-				recentEvents: run.agents.get(t.taskId)?.recentEvents ?? [],
+				recentEvents: prev?.recentEvents ?? [],
 			};
 			run.agents.set(t.taskId, next);
 		}

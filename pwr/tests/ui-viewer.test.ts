@@ -254,3 +254,44 @@ test("clampViewerState：follow 贴底、scroll/page 钳制", () => {
 	assert.equal(topClamped.pageIndex, 0);
 	assert.equal(topClamped.scroll, 0);
 });
+
+// ------------------------------------------------------------------
+// live per-step trace (v2.4): running agents render recent activity lines
+// ------------------------------------------------------------------
+
+test("stage 页：运行中 agent 行下渲染最近活动 trace 行，已完成 agent 不渲染", () => {
+	const runningDetail = makeDetail({
+		stages: [{ stageId: "stage-2", label: "build", kind: "pipeline", status: "running", agentCount: 1 }],
+		agents: [
+			{
+				taskId: "ffffffff-1111-2222-3333-444444444444",
+				stageId: "stage-2",
+				label: "build",
+				status: "running",
+				attempt: 1,
+				recentEvents: ["▶ bash: npm test", "… running tests"],
+			},
+		],
+	});
+	const page = stagePageLines(runningDetail, runningDetail.stages[0]!, 80);
+	const traceLines = page.filter((l) => l.includes("└"));
+	assert.equal(traceLines.length, 2, "最多渲染最近两条活动");
+	assert.ok(traceLines[0]!.includes("▶ bash: npm test"));
+	assert.ok(traceLines[1]!.includes("… running tests"));
+
+	const doneDetail = makeDetail({
+		stages: [{ stageId: "stage-1", label: "audit", kind: "agent", status: "completed", agentCount: 1 }],
+		agents: [
+			{
+				taskId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				stageId: "stage-1",
+				label: "audit",
+				status: "completed",
+				attempt: 1,
+				recentEvents: ["▶ bash: npm test"],
+			},
+		],
+	});
+	const donePage = stagePageLines(doneDetail, doneDetail.stages[0]!, 80);
+	assert.equal(donePage.filter((l) => l.includes("└")).length, 0, "非运行中 agent 不渲染 trace 行");
+});

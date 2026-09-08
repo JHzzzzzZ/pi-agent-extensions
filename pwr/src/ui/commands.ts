@@ -206,9 +206,10 @@ export function workflowsHelpText(): string {
 		"  /workflows:stop <runId> [taskId]  stop run (or one agent)",
 		"  /workflows:restart <runId> <taskId>  restart agent (completed cache unchanged)",
 		"  /workflows:save <runId>        save as command",
+		"  /workflows:saved               list saved workflows (scope, description, args hint)",
 		"  /workflows:script <runId>      view raw script (read-only)",
 		"  /workflows:approve <runId>     approve a run waiting for approval",
-		"  /workflow-delete <name>        delete a saved workflow",
+		"  /workflow-delete [name]        delete a saved workflow (no name = list them)",
 		"Keys (operate on the last viewed run):",
 		`  ${Object.values(PWR_SHORTCUTS)
 			.map((s) => `${s.key} ${s.action}`)

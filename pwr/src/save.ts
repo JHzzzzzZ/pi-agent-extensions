@@ -19,7 +19,7 @@
  */
 
 import { ApprovalStore, canonicalProjectPath } from "./approval.ts";
-import { parseCommandArgs, validateArgsAgainstSchema, type ArgsResult } from "./args.ts";
+import { argsSchemaHint, parseCommandArgsSmart, validateArgsAgainstSchema, type ArgsResult } from "./args.ts";
 import { computeDigest } from "./digest.ts";
 import { ErrorCode, PwrError } from "./errors.ts";
 import { RunRegistry, startWorkflow } from "./flow.ts";
@@ -281,6 +281,61 @@ export function listSavedWorkflows(deps: SaveLibDeps): string[] {
 	return [...names].sort();
 }
 
+/**
+ * Extracts the `meta` literal from saved source WITHOUT running the engine
+ * validator (best-effort, synchronous). Saved files carry `export const
+ * meta = {...}` as a JSON literal (withFilledMeta guarantees it; the engine
+ * only allows literal meta values), so a plain JSON.parse suffices.
+ */
+export function readMetaFromSource(source: string): WorkflowMeta | undefined {
+	const span = findMetaStatement(source);
+	if (!span) return undefined;
+	const statement = source.slice(span.start, span.end);
+	const eq = statement.indexOf("=");
+	if (eq < 0) return undefined;
+	const json = statement.slice(eq + 1).trim().replace(/;$/, "");
+	try {
+		const parsed = JSON.parse(json) as WorkflowMeta;
+		return parsed && typeof parsed === "object" ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** One row of the saved-workflow listing (/workflows:saved). */
+export interface SavedWorkflowSummary {
+	name: string;
+	scope: "user" | "project";
+	description?: string;
+	version?: number | string;
+	/** One-line args usage hint derived from meta.argsSchema (args.ts). */
+	argsHint?: string;
+}
+
+/**
+ * Rich saved-workflow enumeration: names from listSavedWorkflows enriched
+ * with scope (project shadows user), description and an args hint. Best
+ * effort — a file that fails to load or parse is skipped, never thrown.
+ */
+export function describeSavedWorkflows(deps: SaveLibDeps): SavedWorkflowSummary[] {
+	const summaries: SavedWorkflowSummary[] = [];
+	for (const name of listSavedWorkflows(deps)) {
+		const loaded = loadSavedWorkflow(deps, name);
+		if (isPwrError(loaded)) continue;
+		const meta = readMetaFromSource(loaded.source);
+		summaries.push({
+			name,
+			scope: loaded.scope,
+			description: meta?.description,
+			version: meta?.version,
+			argsHint: argsSchemaHint(meta?.argsSchema),
+		});
+	}
+	// Shadowing scope first so users see which name wins at invocation time.
+	summaries.sort((a, b) => (a.scope === b.scope ? a.name.localeCompare(b.name) : a.scope === "project" ? -1 : 1));
+	return summaries;
+}
+
 export interface DeleteSuccess {
 	deleted: true;
 	scope: "user" | "project";
@@ -370,7 +425,7 @@ export async function invokeSavedWorkflow(
 	};
 	if (validation.meta?.argsSchema !== undefined) meta.argsSchema = validation.meta.argsSchema;
 
-	const parsed: ArgsResult = parseCommandArgs(input.rawArgs);
+	const parsed: ArgsResult = parseCommandArgsSmart(input.rawArgs, meta.argsSchema);
 	if (!parsed.ok) return { code: parsed.code, message: parsed.message };
 
 	const args = parsed.value;

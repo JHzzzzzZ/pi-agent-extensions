@@ -675,3 +675,66 @@ test("failed agent records errorCode+errorMessage and broadcasts task_result", a
 	assert.ok(cached.errorMessage?.includes("boom detail"), "persisted task errorMessage carries the detail");
 });
 
+
+// ------------------------------------------------------------------
+// live per-step trace (v2.4): dispatch forwards runner events as task_event
+// ------------------------------------------------------------------
+
+test("dispatch attaches onEvent and forwards runner events as task_event rows with tokens", async () => {
+	const runner = new FakeRunner((spec) => {
+		// Simulate the PiAgentRunner streaming sanitized child events.
+		spec.onEvent?.({ type: "tool_execution_start", at: "2026-08-05T12:00:00.000Z", toolName: "bash", argsSummary: "npm test" });
+		spec.onEvent?.({ type: "message_update", at: "2026-08-05T12:00:01.000Z", text: "thinking out loud" });
+		spec.onEvent?.({
+			type: "message_end",
+			at: "2026-08-05T12:00:02.000Z",
+			role: "assistant",
+			text: "task finished",
+			usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.5, contextTokens: 120, turns: 1 },
+		});
+		spec.onEvent?.({ type: "message_end", at: "2026-08-05T12:00:03.000Z", role: "user" });
+		return { result: { ok: true }, summary: "result ok" };
+	});
+	const runtime = new WorkflowRuntime({ runner });
+	const events: Array<{ type: string; taskId?: string; event?: string; tokens?: number }> = [];
+	runtime.onEvent((ev) => events.push(ev));
+	await runtime.start({ runId: "r1", script: scriptOf(makeScript(`await agent("x")`)) });
+	await waitForTerminal(runtime, "r1");
+
+	const taskEvents = events.filter((e) => e.type === "task_event");
+	const lines = taskEvents.map((e) => e.event);
+	assert.deepEqual(lines, ["▶ bash: npm test", "… thinking out loud", "› task finished"]);
+	// tokens ride along on the message_end row (cumulative input+output).
+	const tokensRow = taskEvents.find((e) => e.tokens !== undefined);
+	assert.equal(tokensRow?.tokens, 120);
+	// events are scoped to the dispatched task.
+	assert.ok(taskEvents.every((e) => e.taskId === runtime.view("r1").tasks[0]?.taskId));
+});
+
+test("task_event forwarding stops once the executor is superseded (generation guard)", async () => {
+	let release: (() => void) | undefined;
+	let emitForRunner: ((ev: { type: string; at: string }) => void) | undefined;
+	const runner = new FakeRunner((spec) => {
+		return new Promise<AgentRunResult>((resolve) => {
+			emitForRunner = (ev) => spec.onEvent?.(ev as never);
+			release = () => resolve({ result: { ok: true }, summary: "result ok" });
+		});
+	});
+	const runtime = new WorkflowRuntime({ runner });
+	const events: Array<{ type: string; event?: string }> = [];
+	runtime.onEvent((ev) => events.push(ev));
+	await runtime.start({ runId: "r1", script: scriptOf(makeScript(`await agent("x")`)) });
+	await waitFor(() => runner.calls.length === 1);
+	emitForRunner?.({ type: "tool_execution_start", at: "2026-08-05T12:00:00.000Z" });
+	await waitFor(() => events.some((e) => e.type === "task_event"));
+
+	// Stop cancels the executor; a late runner event must not reach the feed.
+	await runtime.control({ runId: "r1", action: "stop" });
+	const before = events.filter((e) => e.type === "task_event").length;
+	emitForRunner?.({ type: "tool_execution_end", at: "2026-08-05T12:00:01.000Z" });
+	await new Promise((r) => setTimeout(r, 20));
+	const after = events.filter((e) => e.type === "task_event").length;
+	assert.equal(after, before, "superseded executor events are suppressed");
+	release?.();
+	await waitForTerminal(runtime, "r1");
+});

@@ -50,7 +50,7 @@ const MESSAGES: Record<ErrorCodeValue, string> = {
 	[ErrorCode.AGENT_RUNNER_UNAVAILABLE]: "Agent runner is unavailable; execution was not started.",
 	[ErrorCode.WORKFLOW_ALREADY_EXISTS]: "A workflow with this name is already registered.",
 	[ErrorCode.ENGINE_UNAVAILABLE]: "Script engine is unavailable; validation cannot run.",
-	[ErrorCode.ARGS_INVALID]: "Workflow arguments are not valid structured input (expected JSON, e.g. {\"files\": [\"src/a.ts\"]}).",
+	[ErrorCode.ARGS_INVALID]: "Workflow arguments are not valid structured input (expected key=value pairs, e.g. files=src depth=2, or a JSON value, e.g. {\"files\": [\"src/a.ts\"]}).",
 	[ErrorCode.ARGS_SCHEMA_VIOLATION]: "Workflow arguments do not conform to the declared args schema.",
 	[ErrorCode.WORKFLOW_NOT_FOUND]: "Saved workflow not found.",
 	[ErrorCode.SAVE_IO_ERROR]: "Failed to write the saved workflow file.",

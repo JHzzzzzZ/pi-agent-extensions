@@ -43,9 +43,33 @@ export interface RunnerUsage {
 	model?: string;
 }
 
-/** Lightweight sanitized event stream (PRD 5.4 `events`). Never raw tool output. */
+/** Upper bound for any single sanitized trace text (assistant tails, tool output tails). */
+export const MAX_TRACE_TEXT_CHARS = 200;
+
+/** Upper bound for the sanitized tool-args summary attached to tool_execution_start. */
+export const MAX_TRACE_ARGS_CHARS = 120;
+
+/**
+ * Lightweight sanitized event stream (PRD 5.4 `events`). Never raw tool
+ * output: every text is single-line and tail-truncated to the caps above.
+ * `message_update` exists only on the live onEvent channel (never
+ * accumulated into the post-hoc audit array).
+ */
 export type AgentEvent =
-	| { type: "message_end"; at: string; role: string; stopReason?: string; usage?: RunnerUsage; model?: string }
+	| {
+			type: "message_end";
+			at: string;
+			role: string;
+			/** Single-line tail of the assistant text (sanitized, live trace only). */
+			text?: string;
+			stopReason?: string;
+			usage?: RunnerUsage;
+			model?: string;
+	  }
+	| { type: "message_update"; at: string; text: string }
+	| { type: "tool_execution_start"; at: string; toolName: string; argsSummary?: string }
+	| { type: "tool_execution_update"; at: string; toolName: string; text?: string }
+	| { type: "tool_execution_end"; at: string; toolName: string; text?: string; isError?: boolean }
 	| { type: "tool_result_end"; at: string }
 	| { type: "error"; at: string; code: string; message: string }
 	| { type: "exit"; at: string; exitCode: number };

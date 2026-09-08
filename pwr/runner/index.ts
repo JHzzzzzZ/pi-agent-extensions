@@ -187,6 +187,7 @@ export class PiAgentRunner implements AgentRunner {
 		task: string,
 		signal: AbortSignal | undefined,
 		model: string | undefined,
+		onEvent: ((event: AgentEvent) => void) | undefined,
 	): Promise<PiChildOutcome> {
 		const { command, args } = this.resolveInvocation(this.buildArgs(agent, tools, task, model));
 		return runPiChild({
@@ -196,6 +197,7 @@ export class PiAgentRunner implements AgentRunner {
 			spawn: this.spawn,
 			signal,
 			now: this.now,
+			onEvent,
 		});
 	}
 
@@ -262,7 +264,7 @@ export class PiAgentRunner implements AgentRunner {
 
 		let outcome: PiChildOutcome;
 		try {
-			outcome = await this.launch(agent, tools, task, spec.signal, model);
+			outcome = await this.launch(agent, tools, task, spec.signal, model, spec.onEvent);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			throw new RunnerError(
