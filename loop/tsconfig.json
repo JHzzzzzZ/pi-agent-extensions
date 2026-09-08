@@ -16,5 +16,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "parse.ts", "tasks.ts", "test"]
+  "include": ["index.ts", "parse.ts", "tasks.ts", "runner.ts", "tools.ts", "test"]
 }
