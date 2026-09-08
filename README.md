@@ -4,7 +4,7 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 380 个（node:test） |
+| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 405 个（node:test） |
 | [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏会话记录查看器） | 85 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 模型提供商（OpenAI 兼容 + Anthropic API） | 无 |
@@ -54,25 +54,27 @@ pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
 
 ## pwr — Pi Workflow Runtime（主项目）
 
-本地工作流编排扩展（v2.3.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行。
+本地工作流编排扩展（v2.4.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行。
 
 ### 功能
 
 - **脚本引擎**（`engine/`）— acorn 解析 + 白名单校验（拒绝 `eval`/`vm`/反射/原型访问/动态代码）+ AST 解释器；单次快照安全边界，防宿主泄漏；脚本 ≤ 256KB、单运行 ≤ 1000 次 agent 调用、并发 ≤ 128
 - **运行编排**（`runtime/` + `runner/`）— FIFO 调度、运行缓存（digest 命中直接回放）、child `pi` 进程适配器（结果 50KB / 摘要 8KB 截断、abort 时 SIGTERM → 5s 后 SIGKILL）；agent 定义发现（用户 > 项目 > 内置 scout/planner/reviewer/worker 兜底）
+- **实时运行 trace**（v2.4.0）— 子 agent 的每一步（工具调用 + 参数摘要、长输出尾部、助手流式文本尾部约 1s 节流）实时显示在查看器对应 agent 行下方，tokens 随回合实时累计（单行截断、绝不透传原始工具输出）
 - **完整结果送达** — 最终 JSON ≤ 8KB 时全量内联进完成消息；**> 8KB 时完整 JSON 落盘 `~/.pi/agent/workflows/results/<runId>.json`**，消息携带 JSON 安全截断的预览（含 `"__pwr_truncated__": true` 标记）+ `完整结果: <路径>` 行，消息总预算 16KB；持久化会话条目同样 JSON 安全截断并带 `resultPath` 字段，可从会话文件恢复全量结果
 - **结果回传** — 运行成功或失败后以 `pwr-workflow-result` 消息自动唤起主 agent 汇报；用户主动取消不打扰
 - **批准记忆** — 批准键 = 项目 canonical path + 脚本 SHA-256 digest；脚本被编辑后必须重新批准
-- **保存/复用**（`workflow_save` + `/workflow:<name> <JSON参数>`）— 自动补齐 meta、落盘前强制重新校验、参数 JSON-schema 校验（`meta.argsSchema`）；保存位置：用户范围 `~/.pi/agent/workflows/<name>.js`、项目范围 `.pi/workflows/<name>.js`（仅可信项目）
-- **观察与控制**（`/workflows`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+p/x/r`
+- **保存/复用**（`workflow_save` + `/workflow:<name> <参数>`）— 自动补齐 meta、落盘前强制重新校验、参数 JSON-schema 校验（`meta.argsSchema`）；args 支持 **`key=value` 语法**（按 schema 自动转类型，重复键/逗号成数组，`{` 开头仍按 JSON 解析，v2.4.0）；保存位置：用户范围 `~/.pi/agent/workflows/<name>.js`、项目范围 `.pi/workflows/<name>.js`（仅可信项目）
+- **观察与控制**（`/workflows`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+p/x/r`；`/workflows:saved` 列出已保存工作流（scope/描述/参数提示），`/workflow-delete` 不带名称时同样先列出（v2.4.0）
 
 ### 命令
 
 | 命令 | 作用 |
 | --- | --- |
 | `/workflow <任务>` | 生成工作流（也支持 `workflow:` 前缀） |
-| `/workflow:<name> <args>` | 调用已保存的工作流（args 为合法 JSON） |
-| `/workflow-delete <name>` | 删除已保存的工作流（项目范围优先） |
+| `/workflow:<name> <args>` | 调用已保存的工作流（args 为 `key=value` 对或 JSON，如 `files=src depth=2`） |
+| `/workflow-delete [name]` | 删除已保存的工作流（项目范围优先；不带名称先列出全部） |
+| `/workflows:saved` | 列出已保存工作流（scope、描述、args 用法提示） |
 | `/workflows` | 运行列表/详情 UI |
 | `/workflows:view [runId]` | 全屏运行查看器（v2.3.0）：脚本结构图 + 每 stage 一页 + 结果/脚本页 |
 | `/workflows:approve <runId>` | 手动为 `awaiting_approval` 的运行弹批准卡 |
@@ -84,7 +86,7 @@ pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
 ```bash
 cd pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 380 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 405 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflows UI（无宿主）
 ```

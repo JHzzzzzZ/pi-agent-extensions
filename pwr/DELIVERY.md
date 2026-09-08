@@ -1,3 +1,21 @@
+# DELIVERY — PWR 合并交付包 v2.4.0（运行实时 trace + saved workflow 列表 + key=value 参数输入）
+
+> 三项用户反馈改进：① 运行时只能看到 agent 行却看不到"它在干什么"——子 `pi --mode json` 一直在 stdout 吐完整事件流（`tool_execution_*`、`message_update`），但 runner 只解析 `message_end`/`tool_result_end` 且无实时回调；② saved workflow 无法列出，只能线下找 .js 文件；③ `/workflow:<name>` 参数必须写 JSON。安全不变量不变：trace 全部单行截断、args 仅摘要、错误静态模板，绝不透传原始工具输出（PRD §6.1）。
+
+## 本版变更（v2.4.0）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| runner 事件解析（核心） | `processLine` 先按 `event.type` 分发：新增解析 `tool_execution_start`（toolName + args 摘要 ≤120 字符）、`tool_execution_update`/`end`（`partial.content`/`result.content` 文本尾部 ≤200 字符、isError）；`message_end` 附助手文本尾部；`message_update` 为 live-only 通道（800ms 节流、注入 `nowMs` 时钟、不进审计 events）；新增 `onEvent` 观察者（emit 时同步回调，try/catch 隔离）；`AgentEvent` 联合扩展 4 个变体（全部向后兼容） | `runner/pi.ts`、`runner/types.ts` |
+| spec 透传 | `AgentRunSpec.onEvent?`（engine→runner 既有互引环上加纯类型导入）；脚本 `agent()` 白名单参数不含 onEvent，只能由 runtime 注入（安全不变量）；`PiAgentRunner.launch` 透传 | `engine/interpreter.ts`、`runner/index.ts` |
+| runtime 转发 | `dispatch()` 构造 spec 时注入 onEvent → `formatProgressLine()` 纯函数格式化（`▶ bash: npm test` / `✓ tool 尾部` / `✗ 失败` / `… 文本尾部` / `› 助手尾部`）→ `task_event` 事件（`tokens` 搭载在 message_end 行，累计 input+output）；superseded executor（generation 变更）后抑制转发 | `runtime/index.ts`、`src/ui/types.ts` |
+| UI 消费 | store `task_event` 分支更新 `agent.tokens`；`applyRuntimeView` 对无 usage 的 running 任务**保留**实时 tokens（否则 800ms 刷新清掉）；viewer `stagePageLines` 在 running agent 行下渲染最近 2 条 `└ <trace>`；widget running 行追加最新活动；`formatRunDetail` 原有 events 渲染开始有数据 | `src/ui/run-store.ts`、`src/ui/viewer.ts`、`src/ui/renderer.ts` |
+| saved workflow 列表（新命令） | `describeSavedWorkflows()`：listSavedWorkflows + 逐个 load + `readMetaFromSource()`（JSON.parse meta 字面量，不跑引擎）→ `{ name, scope, description, version, argsHint }`（项目 scope 排前标注 shadows user）；`/workflows:saved` 命令；`/workflow-delete` 无参时列同一列表；`/workflow:<name>` 命令描述附 argsSchema 派生的静态参数提示（`files=string[] depth?=number`） | `src/save.ts`、`src/args.ts`（argsSchemaHint）、`src/ui/views.ts`、`src/ui/index.ts`、`index.ts` |
+| key=value 参数（新语法） | `parseCommandArgsSmart(raw, schema)`：空 → undefined；`{`/`[` 开头走原 JSON 路径（完全兼容）；否则引号感知分词解析 `key=value`——number/integer/boolean 按 schema 强转、重复键累积数组、array 属性接受 `key=a,b`、布尔属性裸键 = true、引号值保留空格；仅一个必填 string/array\<string\> 属性时整段文本位置填入；失败 → ARGS_INVALID（静态模板 + 语法示例，不回显原文，PRD §6.2）；结果仍走 `validateArgsAgainstSchema`，校验行为不变；ARGS_INVALID 文案更新为双语法示例 | `src/args.ts`、`src/save.ts`、`src/errors.ts` |
+| 测试（新增 25，共 405） | runner trace 8（工具事件解析/审计累积/节流注入时钟/message_end 尾部/观察者异常隔离/textTail/summarizeArgs/PiAgentRunner 透传）、runtime 2（dispatch 转发 task_event+tokens/generation 守卫）、store 2（task_event trace+实时 tokens/applyRuntimeView 保留）、viewer 1（running 行 trace 渲染）、args 8（smart 解析全路径/位置糖/hint）、save 4（kv 调用/非法输入不建 run/readMeta/describeSaved） | `runner/test/trace.test.ts`（新）、`runtime/test/runtime.test.ts`、`tests/ui-run-store.test.ts`、`tests/ui-viewer.test.ts`、`tests/args.test.ts`、`tests/save.test.ts` |
+
+## v2.3.0 及之前版本
+
 # DELIVERY — PWR 合并交付包 v2.3.0（JHL-18：/workflows:view 全屏运行查看器 + 脚本结构图）
 
 > 在 v2.2.0 基础上新增 JHL-18「全屏运行状态查看器」：`/workflows:view [runId]` 以捕获式 overlay 打开全屏边框页——第一页是脚本结构树图（agent/pipeline/parallel 嵌套 + 实时状态叠加），随后每个运行时 stage 一页，末尾是最终结果页与脚本源码页。运行中每 800ms 拉取 `runtime.view()` 快照实时刷新；重启后 rehydrated 的 run 以纯 store 快照冻结可看。参考同工作区 agent-team 扩展的 `/team:view` 模式（手绘边框、Component 注入端口、纯函数 key reducer）。

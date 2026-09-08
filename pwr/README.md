@@ -2,7 +2,7 @@
 
 PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P0，Stage 3）：**PiAgentRunner 适配层**（PRD §5.4、§9 子任务 3），并内含全部既有模块。
 
-> 版本：**v2.2.0**（2026-08-06，在 v2.1.1 上修复三处用户反馈：workflow 默认模型、保存命令删除、批准卡缺失）
+> 版本：**v2.4.0**（2026-09-08：运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
 >
 > 依赖说明：本包是 JHL-16 交付（`src/` 触发/批准层）的延续，内置 JHL-12 引擎 v1.1.2（`engine/` + `vendor/`，单次快照安全边界已收敛）。Runtime 未注入 runner 时，保存/加载/参数校验/批准全部可用，仅实际启动返回 `AGENT_RUNNER_UNAVAILABLE`（不隐式回退）。JHL-14 起入口在 session_start 自动构造 PiAgentRunner 注入 runtime。
 
@@ -15,6 +15,7 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 - `tools: 'readonly'` 剥离写工具（bash/write/edit），`write` 保留；与 agent 定义声明取交集
 - `schema` 注入结构化输出指令，最终文本尽力解析为 JSON（容忍 ```json 围栏）
 - 结果 50KB / 摘要 8KB 截断；usage 归一化为数字计数；events 为脱敏事件流（不含原始工具输出）
+- **实时 trace（v2.4.0）**：`onEvent` 观察者随解析即时回调——解析子进程的 `tool_execution_start/update/end`（工具名 + 参数摘要/输出尾部，单行截断 ≤200 字符）与助手 `message_update` 流式文本尾部（800ms 节流）；runtime 把事件转为 `task_event` 行喂给 UI，**运行中的 agent 行下方实时滚动显示每一步**，tokens 随回合累计
 - AbortSignal → SIGTERM → 5s 后 SIGKILL；适配器无状态，重启/attempt 审计由 Runtime 负责
 - 降级：child 无法启动 → `AGENT_RUNNER_UNAVAILABLE`，绝不隐式回退主 agent
 
@@ -31,7 +32,7 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 
 ### 加载与参数（`/workflow:<name> <args>`）
 - 加载顺序：项目脚本优先于同名全局脚本（可信项目）；未受信任项目跳过项目目录、回退全局
-- 参数解析：空参数 → `args` 为 `undefined`；非空参数必须是合法 JSON（对象/数组/标量），否则 `ARGS_INVALID` 且**不启动**
+- 参数解析（v2.4.0 双语法）：空参数 → `args` 为 `undefined`；`{`/`[` 开头按 JSON 解析（对象/数组/标量）；其余按 **`key=value`** 解析——数字/布尔按 schema 自动转类型、重复键或逗号分隔累积为数组、布尔属性裸键为 `true`、引号保留空格；仅一个必填 string/array 属性时整段文本按位置填入；两种语法都失败 → `ARGS_INVALID`（静态模板，不回显原文）且**不启动**
 - 脚本通过 `meta.argsSchema` 声明参数 schema（JSON-schema 子集：type/properties/required/items/enum/min/max），非法参数返回 `ARGS_SCHEMA_VIOLATION` 且**不创建运行**
 - 每次调用都会重新加载文件并重新校验（文件被改动后不再通过校验则拒绝运行）
 
@@ -57,6 +58,10 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 - **模型优先级**：agent 定义 frontmatter 的 `model:` > 脚本 `agent(..., { model })` 逐调用覆盖 > `/pwr-model` 默认 > 子 pi 自身配置（settings.json）
 - 内置 scout/planner/reviewer/worker 定义了 model 钉住（claude-haiku-4-5 / claude-sonnet-4-5），故默认模型对它们不生效；用户自己的 agent 无 model frontmatter 时默认模型生效
 
+### 已保存工作流列表（`/workflows:saved`，v2.4.0）
+- 列出全部已保存工作流：`/workflow:<name> [scope] — 描述 · args: <用法提示>`（项目范围排前并标注 shadows user）；args 提示由 `meta.argsSchema` 派生（如 `files=string[] depth?=integer`）
+- `/workflow-delete` **不带名称**时输出同一列表 + 用法行
+
 ### 删除保存的工作流（`/workflow-delete <name>`）
 - 删除顺序与加载一致：项目范围文件优先（仅可信项目），否则用户范围；返回 `Deleted workflow "<name>" (project|user scope)`
 - 文件不存在或名字非法 → `WORKFLOW_NOT_FOUND`；文件系统错误 → `DELETE_IO_ERROR`
@@ -70,7 +75,7 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 ### 全屏运行查看器（`/workflows:view [runId]`）
 - 以全屏边框页（捕获式 overlay，约 82% 终端高度）实时查看一个流程的运行状态；不传 runId 时默认查看最近查看过 / 最近活跃的运行
 - **第一页「结构」是脚本结构图**：`agent / pipeline / parallel` 调用树（├─ └─ 连接符）+ 每个节点实时状态（▶ 运行 ✓ 完成 ✗ 失败 ⊘ 排队 ⋅ 未开始）+ 进度 `n/m` + 耗时/tokens；带 `label` 的调用与运行时 stage 精确关联，未标注调用静态展示、其实际派发进「未标注/动态派发」分组
-- 之后**每个 stage 一页**：任务表（状态 · taskId · attempt · ⚡cache 命中 · tokens · 耗时 · 错误码）+ 失败详情 + 最近结果摘要；末两页为**最终结果**与**脚本源码**（只读；历史会话的 run 不保留源码）
+- 之后**每个 stage 一页**：任务表（状态 · taskId · attempt · ⚡cache 命中 · tokens · 耗时 · 错误码）+ 失败详情 + 最近结果摘要；**运行中 agent 行下方实时滚动最近活动 trace**（工具步骤/文本尾部，v2.4.0）；末两页为**最终结果**与**脚本源码**（只读；历史会话的 run 不保留源码）
 - 按键：`←→/h/l/Tab` 翻页 · `↑↓/j/k` 滚动（贴底自动跟随）· `g/G` 首末 · `1-9` 直达页 · `[ ]` 切换 run · `q/Esc` 关闭
 - 运行中每 800ms 拉取 runtime 快照实时刷新；运行结束或重启后仍可查看（冻结快照；重启后的 run 只有元数据，结构图退化为 stage 平铺）
 
@@ -91,7 +96,7 @@ pwr/
 ├── runtime/               # JHL-13 Runtime（state/scheduler/cache/persist/index；setRunner 注入点）
 ├── src/
 │   ├── approval.ts        # 批准存储（记住/同一项目 canonical path+digest/APPROVAL_STALE）
-│   ├── args.ts            # JHL-17：参数解析（JSON）与 JSON-schema 子集校验
+│   ├── args.ts            # 参数解析（JSON + key=value，schema 引导转类型）与 JSON-schema 子集校验
 │   ├── constraints.ts     # 脚本生成约束注入文本
 │   ├── digest.ts          # SHA-256 digest（CRLF 归一化）
 │   ├── engine.ts          # JHL-12 引擎适配器（validateScript + 位置/astVersion 映射；保留 argsSchema）
@@ -119,7 +124,7 @@ pwr/
 ```powershell
 cd pwr
 npm install        # 仅开发依赖（typescript、@types/node、typebox、pi 宿主类型）
-npm test           # 380 个单测（test/ 100 + tests/ 189 + runtime/test/ 54 + runner/test/ 37）
+npm test           # 405 个单测（test/ 100 + tests/ 204 + runtime/test/ 56 + runner/test/ 45）
 npm run typecheck  # tsc --noEmit（strict）
 ```
 
@@ -132,8 +137,12 @@ npm run typecheck  # tsc --noEmit（strict）
 workflow_save { runId, scope: 'user', name: 'audit-routes' }
 → Saved as /workflow:audit-routes (user)
 
-# 调用（args 为 JSON；脚本内以 args 全局读取）
+# 调用（key=value 或 JSON；脚本内以 args 全局读取）
+/workflow:audit-routes files=src/routes depth=2
 /workflow:audit-routes {"files": ["src/routes"], "depth": 2}
+
+# 查看已保存的工作流
+/workflows:saved
 
 # 重名保存需确认
 workflow_save { runId, scope: 'project', name: 'audit-routes' }   # NAME_CONFLICT
@@ -170,7 +179,7 @@ export const meta = {
 | --- | --- | --- |
 | `SaveAdapter.save({ runId, scope, name, overwrite? })` | `src/flow.ts` | 由 index.ts 接 `saveWorkflowCommand`（自动补齐 meta + 校验 + 注册命令） |
 | `invokeSavedWorkflow(deps, { name, rawArgs }, approve)` | `src/save.ts` | `/workflow:<name>` 调用编排；approve 回调由 index.ts 接批准卡 |
-| `listSavedWorkflows(deps)` | `src/save.ts` | session_start 扫描注册命令 |
+| `listSavedWorkflows(deps)` / `describeSavedWorkflows(deps)` | `src/save.ts` | session_start 扫描注册命令；`/workflows:saved` 列表（scope/描述/args 提示） |
 | `RuntimeAdapter.start({ runId, script, args?, onFinalResult })` | `src/types.ts` | args 经 run 传入解释器 `args` 全局 |
 | `ApprovalStore`（canonical path + digest） | `src/approval.ts` | 保存命令复用同一批准记忆 |
 
