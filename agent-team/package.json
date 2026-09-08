@@ -1,0 +1,22 @@
+{
+  "name": "pi-extension-agent-team",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "agent-team — 可复用的多 agent 团队：独立 leader 子进程调度成员（各自 provider/model + 专有 prompt）协同完成任务",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "@earendil-works/pi-tui": "^0.83.0",
+    "@types/node": "^22.0.0",
+    "typebox": "^1.3.10",
+    "typescript": "^5.8.0"
+  }
+}

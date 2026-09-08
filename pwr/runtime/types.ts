@@ -99,6 +99,9 @@ export interface AgentTask {
 	errorMessage?: string;
 	startedAt?: string;
 	endedAt?: string;
+	/** True when the recorded completion was served from the private cache
+	 * (no child process spawned; JHL-18 viewer marks these with ⚡). */
+	cacheHit?: boolean;
 }
 
 /** Execution stage aggregated from agent/pipeline/parallel labels. */

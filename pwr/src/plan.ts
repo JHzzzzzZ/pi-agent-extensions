@@ -16,6 +16,7 @@ import {
 	AGENT_LIMIT,
 	PIPELINE_FANOUT_ESTIMATE,
 	type BudgetEstimate,
+	type PlanNode,
 	type StagePlan,
 	type WorkflowPlan,
 } from "./types.ts";
@@ -32,6 +33,8 @@ interface CallSite {
 	/** pipeline/parallel fan-out driven by a runtime value (not a literal array). */
 	dynamic?: boolean;
 	writeRisk: boolean;
+	/** True when the label was synthesized (ordinal or parent-scoped). */
+	synth?: boolean;
 }
 
 interface AstNode {
@@ -167,6 +170,7 @@ export function extractPlan(source: string): WorkflowPlan {
 	const ordered = [...directAgents, ...pipelines, ...parallels].sort((a, b) => a.start - b.start);
 	for (const call of ordered) {
 		if (!call.label) {
+			call.synth = true;
 			if (call.kind === "agent") call.label = `agent #${++agentOrdinal}`;
 			else if (call.kind === "pipeline") call.label = `pipeline #${++pipelineOrdinal}`;
 			else call.label = `parallel #${++parallelOrdinal}`;
@@ -193,6 +197,8 @@ export function extractPlan(source: string): WorkflowPlan {
 		stages.push({ stageId: `stage-${++idx}`, label, kind, agentCount: count, writeRisk, dynamic: dynamic || undefined });
 	}
 
+	const tree = buildTree(calls, containers, stages, nestedInContainer);
+
 	// RAW estimate — intentionally not clamped: the hard-cap check in the
 	// validate flow relies on the true count to reject over-budget scripts.
 	const estimatedAgents =
@@ -201,6 +207,7 @@ export function extractPlan(source: string): WorkflowPlan {
 
 	return {
 		stages,
+		tree,
 		budget: {
 			agentCalls: directAgents.length,
 			pipelineCalls: pipelines.length,
@@ -210,4 +217,69 @@ export function extractPlan(source: string): WorkflowPlan {
 			warnLargeRun: estimatedAgents > 25,
 		} satisfies BudgetEstimate,
 	};
+}
+
+/**
+ * Builds the structure tree for the /workflows:view diagram (JHL-18):
+ * a call's parent is the smallest pipeline/parallel whose source span
+ * strictly contains it; roots are the top-level calls in source order.
+ *
+ * Labels: direct calls and containers reuse the flat-stage labels (so the
+ * diagram can correlate live runtime stages by label); nested unlabeled
+ * agent calls get a parent-scoped synthesized label ("<parent>/agent-N")
+ * that intentionally never matches a runtime label — their real dispatches
+ * surface in the viewer's "未标注派发" section instead.
+ */
+function buildTree(calls: CallSite[], containers: CallSite[], stages: StagePlan[], nestedInContainer: (call: CallSite) => boolean): PlanNode[] {
+	// Smallest containing span first, so find() yields the closest container.
+	const sortedContainers = [...containers].sort((a, b) => a.end - a.start - (b.end - b.start));
+	const parentOf = (call: CallSite): CallSite | undefined =>
+		sortedContainers.find((c) => c !== call && call.start > c.start && call.end < c.end);
+
+	// Parent-scoped labels for nested unlabeled agents (after containers and
+	// direct calls got their labels in the ordinal pass above).
+	let nestedCounter = 0;
+	for (const call of calls) {
+		if (call.label || call.kind !== "agent" || !nestedInContainer(call)) continue;
+		const parent = parentOf(call);
+		// Nested containers are already labeled by the ordinal pass; only
+		// agents can still be unlabeled here and always have a container parent.
+		call.label = `${parent?.label ?? "agent"}/agent-${++nestedCounter}`;
+		call.synth = true;
+	}
+
+	const childrenByParent = new Map<CallSite, CallSite[]>();
+	const roots: CallSite[] = [];
+	for (const call of calls) {
+		const parent = parentOf(call);
+		if (parent) {
+			const list = childrenByParent.get(parent);
+			if (list) list.push(call);
+			else childrenByParent.set(parent, [call]);
+		} else {
+			roots.push(call);
+		}
+	}
+
+	const stageIdByLabel = new Map(stages.map((s) => [s.label, s.stageId]));
+	const toNode = (call: CallSite): PlanNode => {
+		const children = (childrenByParent.get(call) ?? [])
+			.sort((a, b) => a.start - b.start)
+			.map(toNode);
+		// Flat stages exist for every direct call and container; only nested
+		// agent calls are tree-only.
+		const nestedAgent = call.kind === "agent" && nestedInContainer(call);
+		const node: PlanNode = {
+			label: call.label!,
+			kind: call.kind,
+			agentCount: call.kind === "agent" ? 1 : PIPELINE_FANOUT_ESTIMATE,
+			writeRisk: call.writeRisk,
+		};
+		if (!nestedAgent) node.stageId = stageIdByLabel.get(call.label!);
+		if (call.dynamic) node.dynamic = true;
+		if (call.synth) node.synthesized = true;
+		if (children.length > 0) node.children = children;
+		return node;
+	};
+	return roots.sort((a, b) => a.start - b.start).map(toNode);
 }

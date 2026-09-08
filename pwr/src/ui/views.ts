@@ -203,6 +203,7 @@ export function formatRunDetail(detail: RunDetail): string {
 
 	lines.push("");
 	lines.push("Actions (commands + keys):");
+	lines.push(`  /workflows:view ${detail.runId.slice(0, 8)}    full-screen live viewer`);
 	lines.push(`  /workflows:pause ${detail.runId.slice(0, 8)}    ${shortcutHint("pause")}  pause run`);
 	lines.push(`  /workflows:resume ${detail.runId.slice(0, 8)}                 resume run`);
 	lines.push(`  /workflows:stop ${detail.runId.slice(0, 8)}      ${shortcutHint("stop")}  stop run (or one agent)`);

@@ -214,7 +214,7 @@ test("same-session re-run with identical script replays cache (no re-execution)"
 	const runner = new FakeRunner();
 	const runtime = new WorkflowRuntime({ runner });
 	await runtime.start({ runId: "r1", script: scriptOf(SEQ_SCRIPT) });
-	await waitForTerminal(runtime, "r1");
+	const view1 = await waitForTerminal(runtime, "r1");
 	assert.equal(runner.calls.length, 3);
 
 	await runtime.start({ runId: "r2", script: scriptOf(SEQ_SCRIPT) });
@@ -224,6 +224,8 @@ test("same-session re-run with identical script replays cache (no re-execution)"
 	assert.equal(view2.budget.agentCalls, 0, "cache hits do not consume the agent budget");
 	assert.equal(view2.tasks.length, 3, "cache-hit tasks are still visible per run");
 	assert.ok(view2.tasks.every((t) => t.status === "completed" && t.attempt === 1));
+	assert.ok(view2.tasks.every((t) => t.cacheHit === true), "cache-replayed tasks carry the cacheHit flag (JHL-18)");
+	assert.ok(view1.tasks.every((t) => t.cacheHit === undefined), "real executions are not marked as cache hits");
 });
 
 test("different script digest → no cache reuse", async () => {

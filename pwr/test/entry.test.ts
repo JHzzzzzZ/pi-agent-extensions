@@ -89,6 +89,7 @@ test("merged entry registers /workflow + /workflows UI commands, shortcuts and t
 		"pwr-model",
 		"workflows",
 		"workflows:list",
+		"workflows:view",
 		"workflows:open",
 		"workflows:pause",
 		"workflows:resume",

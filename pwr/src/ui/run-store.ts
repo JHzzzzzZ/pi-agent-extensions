@@ -12,6 +12,9 @@
  *    every stage/agent/usage transition.
  *  - `applyControlView()` - merged with the `{ run }` view returned by
  *    `workflow_control`.
+ *  - `applyRuntimeView()` - full snapshot merge from the runtime's rich view
+ *    (stages + tasks + usage), pulled on every /workflows:view refresh tick
+ *    (JHL-18).
  *
  * All reads are synchronous from memory so commands/widgets render without
  * blocking main input (PRD 7: refresh never blocks main input).
@@ -19,6 +22,7 @@
 
 import type { RunRegistry } from "../flow.ts";
 import type { BudgetEstimate, WorkflowPlan, WorkflowRunView, WorkflowScript, WorkflowRun } from "../types.ts";
+import type { RuntimeRunView } from "../../runtime/types.ts";
 import {
 	COST_WARN_USD,
 	LARGE_RUN_AGENTS,
@@ -49,6 +53,8 @@ interface InternalRun {
 	startedAt?: string;
 	endedAt?: string;
 	budget?: BudgetEstimate;
+	/** Structure plan (with tree) for the viewer diagram (JHL-18). */
+	plan?: WorkflowPlan;
 	stages: Map<string, StageView>;
 	agents: Map<string, AgentView>;
 	totalTokens: number;
@@ -91,6 +97,19 @@ function taskStatusForRun(runStatus: string): TaskStatus {
 	}
 }
 
+/** Tokens from a runner usage record ({input, output, ...}; JHL-14 shape). */
+function usageTokens(usage: Record<string, number>): number | undefined {
+	const input = typeof usage.input === "number" ? usage.input : 0;
+	const output = typeof usage.output === "number" ? usage.output : 0;
+	if (input === 0 && output === 0) return undefined;
+	return input + output;
+}
+
+/** Cost from a runner usage record ({cost: number}). */
+function usageCost(usage: Record<string, number>): number | undefined {
+	return typeof usage.cost === "number" && usage.cost > 0 ? usage.cost : undefined;
+}
+
 export class MemoryRunStore implements RunStore {
 	private runs = new Map<string, InternalRun>();
 	private listeners = new Set<() => void>();
@@ -113,6 +132,7 @@ export class MemoryRunStore implements RunStore {
 				status: seedStatus,
 				agentCount: s.agentCount,
 				dynamic: s.dynamic,
+				writeRisk: s.writeRisk,
 			});
 		}
 		this.runs.set(run.runId, {
@@ -127,6 +147,7 @@ export class MemoryRunStore implements RunStore {
 			startedAt: run.startedAt,
 			endedAt: run.endedAt,
 			budget: plan.budget,
+			plan,
 			stages,
 			agents: new Map(),
 			totalTokens: 0,
@@ -175,8 +196,10 @@ export class MemoryRunStore implements RunStore {
 					label: t.stageId ? `${t.stageId}/${t.taskId.slice(0, 8)}` : t.taskId.slice(0, 8),
 					status: t.status,
 					attempt: t.attempt,
+					errorCode: t.errorCode,
 					error: t.errorMessage,
 					resultSummary: t.summary,
+					cacheHit: t.cacheHit,
 					recentEvents: [],
 				});
 			}
@@ -292,6 +315,7 @@ export class MemoryRunStore implements RunStore {
 				stage.agentCount = s.agentCount;
 				stage.kind = s.kind;
 				stage.label = s.label;
+				stage.writeRisk = s.writeRisk;
 			} else {
 				run.stages.set(s.stageId, {
 					stageId: s.stageId,
@@ -299,9 +323,82 @@ export class MemoryRunStore implements RunStore {
 					kind: s.kind,
 					status: stageStatusForRun(view.status),
 					agentCount: s.agentCount,
+					writeRisk: s.writeRisk,
 				});
 			}
 		}
+		run.lastEventAt = this.nowMs();
+		this.emit();
+	}
+
+	/**
+	 * Full snapshot merge from the runtime's rich view (JHL-18): replaces
+	 * stage/task rows with the read-time-derived runtime state (statuses,
+	 * elapsed, usage, summaries, cache hits). Totals are RECOMPUTED from the
+	 * task rows — the success path never emits `task_result` events, so this
+	 * is the only source of per-task tokens/cost and it must not accumulate.
+	 */
+	applyRuntimeView(runId: string, view: RuntimeRunView): void {
+		const run = this.runs.get(runId);
+		if (!run) return;
+		run.status = view.status;
+		run.digest = view.digest;
+		run.scriptName = view.scriptName;
+		run.budget = view.budget;
+		run.startedAt = view.startedAt ?? run.startedAt;
+		run.endedAt = view.endedAt ?? run.endedAt;
+		if (view.summary !== undefined) run.finalSummary = view.summary;
+		run.errorCode = view.errorCode;
+		run.errorMessage = view.errorMessage;
+
+		for (const s of view.stages) {
+			const tokens = s.usage ? usageTokens(s.usage) : undefined;
+			run.stages.set(s.stageId, {
+				stageId: s.stageId,
+				label: s.label,
+				kind: s.kind,
+				status: s.status,
+				agentCount: s.agentCount,
+				dynamic: s.dynamic,
+				writeRisk: s.writeRisk,
+				tokens,
+				elapsedMs: s.elapsedMs,
+			});
+		}
+
+		for (const t of view.tasks) {
+			const startedAt = t.startedAt !== undefined ? Date.parse(t.startedAt) : NaN;
+			const endedAt = t.endedAt !== undefined ? Date.parse(t.endedAt) : NaN;
+			const elapsedMs = Number.isFinite(startedAt)
+				? Math.max(0, (Number.isFinite(endedAt) ? endedAt : this.nowMs()) - startedAt)
+				: undefined;
+			const next: AgentView = {
+				taskId: t.taskId,
+				stageId: t.stageId,
+				label: t.label,
+				status: t.status,
+				attempt: t.attempt,
+				resultSummary: t.summary,
+				error: t.errorMessage,
+				errorCode: t.errorCode,
+				tokens: t.usage ? usageTokens(t.usage) : undefined,
+				cost: t.usage ? usageCost(t.usage) : undefined,
+				elapsedMs,
+				cacheHit: t.cacheHit,
+				recentEvents: run.agents.get(t.taskId)?.recentEvents ?? [],
+			};
+			run.agents.set(t.taskId, next);
+		}
+
+		let totalTokens = 0;
+		let totalCost = 0;
+		for (const agent of run.agents.values()) {
+			if (agent.tokens !== undefined) totalTokens += agent.tokens;
+			if (agent.cost !== undefined) totalCost += agent.cost;
+		}
+		run.totalTokens = totalTokens;
+		run.totalCost = totalCost;
+
 		run.lastEventAt = this.nowMs();
 		this.emit();
 	}
@@ -346,6 +443,7 @@ export class MemoryRunStore implements RunStore {
 			startedAt: run.startedAt,
 			endedAt: run.endedAt,
 			budget: run.budget,
+			plan: run.plan,
 			stages: [...run.stages.values()],
 			agents: [...run.agents.values()],
 			totalTokens: run.totalTokens || undefined,

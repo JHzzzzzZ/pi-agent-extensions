@@ -92,9 +92,34 @@ export interface BudgetEstimate {
 	warnLargeRun: boolean;
 }
 
+/**
+ * One node of the script structure tree (JHL-18 viewer diagram). Top-level
+ * calls (direct agents + containers) mirror the flat `stages` entries via
+ * `stageId`; calls nested inside a container callback exist only in the tree
+ * (the flat stages count them as fan-out, not as separate stages).
+ */
+export interface PlanNode {
+	/** Matches the flat stage of the same label; absent for nested calls. */
+	stageId?: string;
+	label: string;
+	kind: "agent" | "pipeline" | "parallel";
+	/** Static estimate (containers use the fan-out estimate, nested agents 1). */
+	agentCount: number;
+	/** Fan-out size not statically visible (runtime value). */
+	dynamic?: boolean;
+	writeRisk: boolean;
+	/** True when the label was synthesized ("agent #1", "parent/agent-2"). */
+	synthesized?: boolean;
+	/** Nested call sites inside this container (source-span containment). */
+	children?: PlanNode[];
+}
+
 export interface WorkflowPlan {
 	stages: StagePlan[];
 	budget: BudgetEstimate;
+	/** Structure tree for the /workflows:view diagram (JHL-18); optional so
+	 * older persisted plans and the parse-failure fallback stay valid. */
+	tree?: PlanNode[];
 }
 
 export interface ApprovalRecord {

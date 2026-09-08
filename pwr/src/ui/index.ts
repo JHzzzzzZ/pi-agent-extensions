@@ -12,6 +12,7 @@ import type { ToolDeps } from "../tools.ts";
 import type { RunStatus, WorkflowPlan, WorkflowScript, WorkflowRun } from "../types.ts";
 import { PWR_RUN_ENTRY } from "../types.ts";
 import {
+	latestRunId,
 	parseControlArgs,
 	parseWorkflowsArgs,
 	resolveRunId,
@@ -25,6 +26,7 @@ import { createRunEntryRenderer, refreshUiStatus, runCardSummaryLine } from "./r
 import type { RunEntryData, UiRuntimeAdapter } from "./types.ts";
 import { formatRunDetail, formatRunList, formatStatus } from "./views.ts";
 import { PWR_SHORTCUTS } from "./keybindings.ts";
+import { assembleViewerData, openRunViewer, type ViewerData } from "./viewer.ts";
 
 export interface WorkflowsUi {
 	store: MemoryRunStore;
@@ -54,6 +56,54 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		ctx.ui.notify(text, type);
 	};
 
+	// ----- full-screen live viewer (JHL-18) -----
+	/**
+	 * One viewer refresh tick: pull the runtime's rich view snapshot into the
+	 * store (when the runtime knows the run — post-restart runs fall back to
+	 * the store-only snapshot), then assemble the pure viewer data.
+	 */
+	function viewerLoad(runId: string): ViewerData {
+		const runtime = getRuntime();
+		if (runtime?.view) {
+			try {
+				store.applyRuntimeView(runId, runtime.view(runId));
+			} catch {
+				// Unknown to the runtime (e.g. rehydrated run) — store-only.
+			}
+		}
+		const detail = store.getDetail(runId);
+		let scriptSource: string | undefined;
+		try {
+			scriptSource = deps.registry.getScript(runId)?.source;
+		} catch {
+			scriptSource = undefined;
+		}
+		const runs = store.listRuns().map((r) => ({ runId: r.runId, scriptName: r.scriptName, status: r.status }));
+		return assembleViewerData(detail, scriptSource, runs);
+	}
+
+	async function openViewer(ctx: ExtensionCommandContext, ref: string): Promise<void> {
+		if (!ctx.hasUI || ctx.mode !== "tui") {
+			notify(ctx, "The live viewer needs the interactive TUI (unavailable in headless modes).", "warning");
+			return;
+		}
+		if (typeof ctx.ui.custom !== "function") {
+			notify(ctx, "This host does not support custom overlays.", "warning");
+			return;
+		}
+		const runId = ref ? resolveRunId(store, ref) : (lastViewedRunId ?? latestRunId(store));
+		if (!runId) {
+			notify(ctx, "No PWR runs yet — create one with /workflow <task> first.", "warning");
+			return;
+		}
+		lastViewedRunId = runId;
+		try {
+			await openRunViewer(ctx.ui, { load: viewerLoad, initialRunId: runId });
+		} catch (err) {
+			notify(ctx, `Viewer failed: ${err instanceof Error ? err.message : String(err)}`, "warning");
+		}
+	}
+
 	// ----- run list / detail -----
 	function showList(ctx: ExtensionCommandContext, status?: string): void {
 		const entries = store.listRuns().filter((e) => !status || e.status === status);
@@ -80,10 +130,25 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		if (!ctx.hasUI) return;
 		const detail = store.getDetail(runId);
 		if (!detail) return;
-		const actions = ["Refresh", "Pause", "Resume", "Stop run", "Stop agent", "Restart agent", "Save as command", "View script", "Back"];
+		const actions = [
+			"View live (full-screen)",
+			"Refresh",
+			"Pause",
+			"Resume",
+			"Stop run",
+			"Stop agent",
+			"Restart agent",
+			"Save as command",
+			"View script",
+			"Back",
+		];
 		const choice = await ctx.ui.select(`PWR run ${runId.slice(0, 8)} — ${detail.scriptName}`, actions);
 		if (!choice || choice === "Back") return;
 		switch (choice) {
+			case "View live (full-screen)": {
+				await openViewer(ctx, runId);
+				break;
+			}
 			case "Refresh": {
 				const fresh = store.getDetail(runId);
 				notify(ctx, formatRunDetail(fresh ?? detail), "info");
@@ -191,6 +256,13 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		handler: async (args, ctx) => {
 			const status = (args ?? "").trim();
 			showList(ctx, status === "" ? undefined : status);
+		},
+	});
+
+	pi.registerCommand("workflows:view", {
+		description: "Open the full-screen live run viewer: structure diagram + per-stage pages (/workflows:view [runId]).",
+		handler: async (args, ctx) => {
+			await openViewer(ctx, (args ?? "").trim());
 		},
 	});
 
