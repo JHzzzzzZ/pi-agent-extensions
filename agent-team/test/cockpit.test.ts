@@ -18,11 +18,8 @@ import {
   waitForChild,
 } from "./helpers.ts";
 
-function fakeUi(): UiPort & { widgets: Array<string[] | undefined> } {
-  const widgets: Array<string[] | undefined> = [];
+function fakeUi(): UiPort {
   return {
-    widgets,
-    setWidget: (lines) => widgets.push(lines),
     notify: () => {},
     dim: (text) => text,
   };
@@ -108,11 +105,6 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   assert.equal(run.members[0].summary, "前端做完");
   assert.equal(run.members[1].worktree?.branch, "team/r/backend");
   assert.equal(run.members[1].model, "anthropic/claude-sonnet-4-5");
-  assert.ok(ui.widgets.length > 0, "widget rendered");
-  // Leader activity + member latest surface in the widget lines.
-  const flattened = ui.widgets.flat().join("\n");
-  assert.match(flattened, /拆解成两个子任务/);
-  assert.match(flattened, /前端完成/);
   assert.ok(progressUpdates.length > 0, "onProgress fired");
   assert.equal(coordinator.isRunning(), false);
   // Status snapshot: run over, last record available.

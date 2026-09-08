@@ -9,7 +9,8 @@
  *   team members.
  * - **Cockpit mode** (default, main pi session): registers the
  *   conversation tools (`team_create`, `team_list`, `team_run`), the
- *   `/team*` commands, the live progress widget, and run persistence.
+ *   `/team*` commands, the selectable below-editor run widget, and run
+ *   persistence.
  *
  * Install: copy this directory into `~/.pi/agent/extensions/` (or the
  * project's `.pi/extensions/`), then `/reload`.
@@ -25,6 +26,8 @@ import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
+import { TeamRunWidget } from "./widget.ts";
+import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData } from "./viewer.ts";
 import {
   FileTranscriptSink,
   LEADER_ACTOR,
@@ -34,7 +37,6 @@ import {
   sanitizeActorName,
   type TranscriptEntry,
 } from "./transcript.ts";
-import { formatTranscriptText, openTranscriptViewer, type ViewerActor, type ViewerData } from "./viewer.ts";
 import {
   LEADER_ENV_FILE,
   LEADER_ENV_RUNID,
@@ -73,14 +75,6 @@ const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view"]);
 /** Builds the guarded UI port over ctx.ui (repo TUI conventions). */
 function uiPortFrom(ctx: ExtensionContext): UiPort {
   return {
-    setWidget: (lines) => {
-      if (!ctx.hasUI) return;
-      try {
-        ctx.ui.setWidget(WIDGET_ID, lines);
-      } catch {
-        /* widget failures never break the session */
-      }
-    },
     notify: (text, level) => {
       try {
         ctx.ui.notify(text, level);
@@ -239,6 +233,10 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     coordinator: TeamRunCoordinator;
     cwd: string;
     projectTrusted: boolean;
+    /** Below-editor run widget mounted once per session. */
+    widgetMounted: boolean;
+    /** True while the transcript viewer overlay is open (widget key gate). */
+    viewerOpen: boolean;
   } = {
     coordinator: new TeamRunCoordinator({
       cwd: () => state.cwd,
@@ -248,6 +246,8 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     }),
     cwd: process.cwd(),
     projectTrusted: false,
+    widgetMounted: false,
+    viewerOpen: false,
   };
 
   const resolveTeam = (name: string): { ok: true; value: TeamConfig } | { ok: false; message: string } => {
@@ -301,6 +301,58 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     return { team: progress?.team ?? lastRecord?.team ?? "(unknown)", runId, runStatus, elapsed, actors, entries };
   };
 
+  /** Opens the transcript viewer overlay (gates the widget's key handling). */
+  const openViewer = async (ctx: ExtensionContext, initialActor?: string): Promise<void> => {
+    state.viewerOpen = true;
+    try {
+      await openTranscriptViewer(ctx.ui, {
+        load: buildViewerData,
+        ...(initialActor !== undefined ? { initialActor } : {}),
+      });
+    } finally {
+      state.viewerOpen = false;
+    }
+  };
+
+  /**
+   * Mounts the below-editor run widget (idempotent per session). The widget
+   * pulls getStatus() on its own repaint ticks, so mounting once is enough
+   * for both live runs and the hydrated/finished last record.
+   */
+  const ensureRunWidget = (ctx: ExtensionContext): void => {
+    if (state.widgetMounted || !ctx.hasUI || ctx.mode !== "tui") return;
+    try {
+      ctx.ui.setWidget(
+        WIDGET_ID,
+        (tui, theme) =>
+          new TeamRunWidget(
+            {
+              load: () => state.coordinator.getStatus(),
+              styles: themeStyles(theme),
+              requestRender: () => {
+                try {
+                  tui.requestRender();
+                } catch {
+                  /* rendering is best-effort */
+                }
+              },
+              onConfirm: (actor) => {
+                void openViewer(ctx, actor).catch(() => {
+                  /* opening failures never break the session */
+                });
+              },
+              gate: () => state.viewerOpen,
+            },
+            tui,
+          ),
+        { placement: "belowEditor" },
+      );
+      state.widgetMounted = true;
+    } catch {
+      /* widget failures never break the session */
+    }
+  };
+
   /** Command-mode run flow (runs in BACKGROUND): persist, notify, deliver. */
   const runFromCommand = (ctx: ExtensionContext, teamName: string, task: string): void => {
     const ui = uiPortFrom(ctx);
@@ -309,6 +361,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
       ui.notify(found.message, "error");
       return;
     }
+    ensureRunWidget(ctx);
     ui.notify(`team ${teamName} 已在后台启动（/team:status 查看进度，/team:stop 中止）`, "info");
     // Fire-and-forget: the command handler returns immediately so the user
     // can keep talking to the main agent while the team works. Completion
@@ -365,6 +418,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
         };
       }
       const ui = uiPortFrom(ctx);
+      ensureRunWidget(ctx);
       const result = await state.coordinator.start({
         team: found.value,
         task: params.task,
@@ -540,7 +594,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
         return;
       }
       try {
-        await openTranscriptViewer(ctx.ui, { load: buildViewerData });
+        await openViewer(ctx);
       } catch (e) {
         ui.notify(`打开会话记录查看器失败: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
@@ -552,7 +606,9 @@ function registerCockpitMode(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     state.cwd = ctx.cwd;
     state.projectTrusted = ctx.isProjectTrusted();
-    clearWidget(ctx);
+    state.viewerOpen = false;
+    clearWidget(ctx); // disposes the previous session's widget component
+    state.widgetMounted = false;
 
     // Hydrate the most recent run record so /team:status works after reload.
     try {
@@ -568,6 +624,11 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     } catch {
       /* hydration is best-effort */
     }
+
+    // Below-editor run widget: mount right away when hydration found a run
+    // (finished record still shows for review); otherwise at first dispatch.
+    const snapshot = state.coordinator.getStatus();
+    if (snapshot.running || snapshot.lastRecord) ensureRunWidget(ctx);
 
     // Best-effort retention: drop transcript artifact dirs older than a week.
     try {

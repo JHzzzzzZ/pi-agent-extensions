@@ -548,6 +548,8 @@ export interface TranscriptViewerOptions {
   /** Closes the overlay (ctx.ui.custom's done callback). */
   done: () => void;
   styles: Styles;
+  /** Opens on this actor (transcript id) instead of the first one. */
+  initialActor?: string;
   /** Requests a repaint (host passes tui.requestRender). */
   requestRender?: () => void;
   /** Terminal rows provider (defaults to 30). Host passes tui.terminal.rows. */
@@ -569,6 +571,10 @@ export class TranscriptViewer implements Component {
   constructor(opts: TranscriptViewerOptions) {
     this.opts = opts;
     this.data = opts.load();
+    if (opts.initialActor !== undefined) {
+      const index = this.data.actors.findIndex((a) => a.actor === opts.initialActor);
+      if (index >= 0) this.state.actorIndex = index;
+    }
     const refreshMs = opts.refreshMs ?? 800;
     this.timer = setInterval(() => {
       try {
@@ -659,7 +665,7 @@ function markdownRenderer(): ((text: string, width: number) => string[]) | undef
  */
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,
-  opts: { load: () => ViewerData; refreshMs?: number },
+  opts: { load: () => ViewerData; refreshMs?: number; initialActor?: string },
 ): Promise<void> {
   const renderMarkdown = markdownRenderer();
   await ui.custom<void>(
@@ -668,6 +674,7 @@ export async function openTranscriptViewer(
         load: opts.load,
         done,
         styles: themeStyles(theme),
+        ...(opts.initialActor !== undefined ? { initialActor: opts.initialActor } : {}),
         requestRender: () => {
           try {
             tui.requestRender();

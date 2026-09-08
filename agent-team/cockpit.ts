@@ -4,15 +4,16 @@
  * Owns the single active team run: pre-flights worktree requirements,
  * spawns the leader child pi process with the team's leader prompt +
  * dispatch tool, tracks progress from the leader's JSON event stream (its
- * own turns/activity + team_dispatch tool updates), renders the widget,
- * exposes a status snapshot, and produces the final TeamRunRecord.
+ * own turns/activity + team_dispatch tool updates), exposes a status
+ * snapshot (pulled by the below-editor widget and status queries), and
+ * produces the final TeamRunRecord.
  */
 
 import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
-import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
+import { FileTranscriptSink, LEADER_ACTOR, sanitizeActorName, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, type GitRunner } from "./worktree.ts";
 import {
   LEADER_ENV_FILE,
@@ -31,7 +32,6 @@ import {
 
 /** UI surface used by the coordinator (implemented over ctx.ui, guarded). */
 export interface UiPort {
-  setWidget: (lines: string[] | undefined) => void;
   notify: (text: string, level: "info" | "warning" | "error") => void;
   dim: (text: string) => string;
 }
@@ -78,18 +78,28 @@ function toolResultText(toolName: string, result: unknown): string {
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
-/** Pure widget renderer (unit-tested). */
-export function renderWidgetLines(progress: RunProgress, nowMs: number, dim: (text: string) => string): string[] {
-  const lines: string[] = [];
-  lines.push(dim(`agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}`));
+/** One widget row plus the transcript actor it opens in the viewer on enter. */
+export interface WidgetRowSpec {
+  text: string;
+  actor: string;
+}
+
+/**
+ * Live-progress widget rows (plain text; styling applied by the renderer).
+ * Single source of truth for the live format — `renderWidgetLines` and the
+ * below-editor widget both build on it (unit-tested).
+ */
+export function widgetRowSpecs(progress: RunProgress, nowMs: number): WidgetRowSpec[] {
+  const rows: WidgetRowSpec[] = [];
+  rows.push({ text: `agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}`, actor: LEADER_ACTOR });
   const task = progress.task.length > 44 ? `${progress.task.slice(0, 44)}…` : progress.task;
-  lines.push(dim(`任务: ${task}`));
+  rows.push({ text: `任务: ${task}`, actor: LEADER_ACTOR });
   const leaderBits: string[] = [];
   if (progress.leaderModel) leaderBits.push(progress.leaderModel);
   if (progress.leaderNote) leaderBits.push(progress.leaderNote);
-  lines.push(dim(`leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`));
+  rows.push({ text: `leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`, actor: LEADER_ACTOR });
   if (progress.leaderActivity) {
-    lines.push(dim(`  ↳ ${progress.leaderActivity}`));
+    rows.push({ text: `  ↳ ${progress.leaderActivity}`, actor: LEADER_ACTOR });
   }
   for (const member of progress.members) {
     const icon =
@@ -97,9 +107,14 @@ export function renderWidgetLines(progress: RunProgress, nowMs: number, dim: (te
     const bits = [`${icon} ${member.name} ${member.status}`];
     if (member.note) bits.push(member.note);
     if (member.latest) bits.push(member.latest);
-    lines.push(dim(bits.join(" — ")));
+    rows.push({ text: bits.join(" — "), actor: sanitizeActorName(member.name) });
   }
-  return lines;
+  return rows;
+}
+
+/** Dimmed live widget lines (kept for /team:status-style plain consumers). */
+export function renderWidgetLines(progress: RunProgress, nowMs: number, dim: (text: string) => string): string[] {
+  return widgetRowSpecs(progress, nowMs).map((row) => dim(row.text));
 }
 
 /** Immutable snapshot of the current/most recent run (status queries). */
@@ -210,10 +225,11 @@ export class TeamRunCoordinator {
 
   /**
    * Starts a team run. Resolves when the leader child finishes; progress
-   * flows through `ui.setWidget` and `onProgress` while it runs. A run that
-   * fails at the child level still resolves (status failed/aborted). An
-   * optional external `signal` (e.g. the calling tool's abort signal) is
-   * bridged to the run controller.
+   * flows through `onProgress` (and the below-editor widget, which pulls
+   * getStatus() on its own repaint ticks) while it runs. A run that fails
+   * at the child level still resolves (status failed/aborted). An optional
+   * external `signal` (e.g. the calling tool's abort signal) is bridged to
+   * the run controller.
    */
   async start(options: {
     team: TeamConfig;
@@ -229,7 +245,7 @@ export class TeamRunCoordinator {
         message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。",
       };
     }
-    const { team, task, ui } = options;
+    const { team, task } = options;
     const now = this.deps.now ?? (() => new Date().toISOString());
     const nowMs = this.deps.nowMs ?? (() => Date.now());
     const runId = `run-${nowMs()}`;
@@ -296,11 +312,6 @@ export class TeamRunCoordinator {
     recordTranscript("task", task);
 
     const render = () => {
-      try {
-        ui.setWidget(renderWidgetLines(progress, nowMs(), ui.dim));
-      } catch {
-        /* widget failures never break the run */
-      }
       try {
         options.onProgress?.(progress);
       } catch {
@@ -373,7 +384,8 @@ export class TeamRunCoordinator {
     const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
     const leaderCwd = sharedWorktree?.path ?? baseCwd;
 
-    // 1s elapsed-time ticker for the widget; never keeps the process alive.
+    // 1s progress ticker (onProgress observers; the widget repaints on its
+    // own tick). Never keeps the process alive.
     const ticker = setInterval(render, 1000);
     if (typeof ticker.unref === "function") ticker.unref();
 
