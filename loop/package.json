@@ -1,9 +1,9 @@
 {
   "name": "pi-extension-loop",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
-  "description": "loop — Pi 定时任务扩展（/loop：固定间隔循环 + 一次性提醒 + agent 工具）",
+  "description": "loop — Pi 定时任务扩展（/loop：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + agent 工具）",
   "engines": {
     "node": ">=22.18"
   },

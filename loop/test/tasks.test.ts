@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { RecurringSchedule } from "../parse.ts";
 import {
   MAX_TASKS,
   MAX_TASK_LEN,
@@ -7,9 +8,11 @@ import {
   clearTasks,
   createTask,
   deleteTask,
+  describeRecurrence,
   formatCountdown,
   formatClock,
   formatTaskLines,
+  formatTimeOfDay,
   hydrateTasks,
   pauseTask,
   pollDue,
@@ -335,5 +338,189 @@ describe("格式化", () => {
     const line = formatTaskLines(tasks, BASE)[0]!;
     assert.ok(line.length < 100);
     assert.match(line, /…$/);
+  });
+});
+
+describe("daily/window 调度（v1.2）", () => {
+  // 本地时区日期构造（2026-09-05 起），与 nextDailyOccurrence 的本地 Date 语义一致
+  const D = (day: number, h: number, min: number): number => new Date(2026, 8, day, h, min, 0, 0).getTime();
+  const DAY = 86_400_000;
+
+  function makeDaily(nextDueAt: number, overrides: Partial<LoopTask> = {}): LoopTask {
+    const t = makeTask({ intervalMs: undefined, nextDueAt, ...overrides });
+    t.schedule = overrides.schedule ?? { kind: "daily", atMs: 9 * 3_600_000 };
+    return t;
+  }
+
+  function makeWindow(nextDueAt: number, overrides: Partial<LoopTask> = {}): LoopTask {
+    const t = makeTask({ intervalMs: undefined, nextDueAt, ...overrides });
+    t.schedule = overrides.schedule ?? { kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: 9 * 3_600_000 };
+    return t;
+  }
+
+  it("createTask 创建 daily/window 任务：schedule 落到任务上，intervalMs 可缺省", () => {
+    const tasks: LoopTask[] = [];
+    const r1 = createTask(
+      tasks,
+      { task: "晨会", recurring: true, schedule: { kind: "daily", atMs: 9 * 3_600_000 }, fireAtMs: D(6, 9, 0), nowMs: D(5, 10, 0) },
+      genId,
+    );
+    assert.ok(r1.ok);
+    assert.deepEqual(r1.ok ? r1.task.schedule : null, { kind: "daily", atMs: 9 * 3_600_000 });
+    assert.equal(r1.ok ? r1.task.intervalMs : null, undefined);
+
+    const r2 = createTask(
+      tasks,
+      { task: "巡检", recurring: true, schedule: { kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: 9 * 3_600_000 }, fireAtMs: D(6, 0, 0), nowMs: D(5, 10, 0) },
+      genId,
+    );
+    assert.ok(r2.ok);
+    assert.ok(r2.ok ? r2.task.schedule?.kind === "window" : false);
+    assert.equal(tasks.length, 2);
+  });
+
+  it("createTask 校验非法 schedule", () => {
+    const bad: RecurringSchedule[] = [
+      { kind: "daily", atMs: -1 },
+      { kind: "daily", atMs: DAY },
+      { kind: "daily", atMs: 3_600_000 + 1 },
+      { kind: "window", intervalMs: 0, startMs: 0, endMs: 3_600_000 },
+      { kind: "window", intervalMs: 3_600_000, startMs: 9 * 3_600_000, endMs: 9 * 3_600_000 },
+      { kind: "window", intervalMs: 3_600_000, startMs: 10 * 3_600_000, endMs: 9 * 3_600_000 },
+      { kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: DAY },
+    ];
+    for (const schedule of bad) {
+      const tasks: LoopTask[] = [];
+      const r = createTask(tasks, { task: "x", recurring: true, schedule, fireAtMs: D(6, 0, 0), nowMs: D(5, 10, 0) }, genId);
+      assert.ok(!r.ok, JSON.stringify(schedule));
+      assert.match(r.message, /无效/);
+      assert.equal(tasks.length, 0);
+    }
+  });
+
+  it("pollDue daily：到期触发一次，推进到明天同一时刻", () => {
+    const t = makeDaily(D(5, 9, 0), { createdAt: D(5, 8, 0) });
+    const r = pollDue([t], D(5, 9, 1));
+    assert.deepEqual(r.due.map((x) => x.id), [t.id]);
+    assert.equal(t.nextDueAt, D(6, 9, 0));
+  });
+
+  it("pollDue daily：跨多天错过只触发一次，推进到下一个未来触发点", () => {
+    const t = makeDaily(D(3, 9, 0), { createdAt: D(3, 8, 0) });
+    const r = pollDue([t], D(5, 10, 0));
+    assert.equal(r.due.length, 1);
+    assert.equal(t.nextDueAt, D(6, 9, 0));
+  });
+
+  it("pollDue daily：未到期不触发", () => {
+    const t = makeDaily(D(5, 9, 0), { createdAt: D(5, 8, 0) });
+    const r = pollDue([t], D(5, 8, 30));
+    assert.equal(r.due.length, 0);
+    assert.equal(t.nextDueAt, D(5, 9, 0));
+  });
+
+  it("pollDue window：窗口内推进到下一个网格点", () => {
+    const t = makeWindow(D(5, 3, 0), { createdAt: D(5, 0, 0) });
+    const r = pollDue([t], D(5, 3, 30));
+    assert.equal(r.due.length, 1);
+    assert.equal(t.nextDueAt, D(5, 4, 0));
+  });
+
+  it("pollDue window：窗口末尾（闭区间）触发后跳到明天窗口起点", () => {
+    const t = makeWindow(D(5, 9, 0), { createdAt: D(5, 0, 0) });
+    const r = pollDue([t], D(5, 9, 30));
+    assert.equal(r.due.length, 1);
+    assert.equal(t.nextDueAt, D(6, 0, 0));
+  });
+
+  it("pollDue window：非整点间隔网格对齐窗口起点（every 90m from 00:00）", () => {
+    // 网格点：00:00、01:30、03:00……种子落在 01:30，01:30:01 触发后推进到 03:00
+    const t = makeWindow(D(5, 1, 30), {
+      createdAt: D(5, 0, 0),
+      schedule: { kind: "window", intervalMs: 90 * 60_000, startMs: 0, endMs: 9 * 3_600_000 },
+    });
+    const r = pollDue([t], D(5, 1, 31));
+    assert.equal(r.due.length, 1);
+    assert.equal(t.nextDueAt, D(5, 3, 0));
+  });
+
+  it("resume daily：错过的排到下一个触发点", () => {
+    const t = makeDaily(D(5, 9, 0), { createdAt: D(5, 8, 0), paused: true });
+    const tasks = [t];
+    const r = resumeTask(tasks, t.id, D(5, 10, 0));
+    assert.ok(r.ok);
+    assert.equal(t.nextDueAt, D(6, 9, 0));
+  });
+
+  it("hydrate daily：错过的推进到下一个触发点（不补跑）", () => {
+    const snapshot = {
+      tasks: [{
+        id: "daily001", task: "晨会", recurring: true, intervalMs: undefined,
+        schedule: { kind: "daily", atMs: 9 * 3_600_000 },
+        nextDueAt: D(5, 9, 0), createdAt: D(5, 8, 0), paused: false,
+      }],
+    };
+    const restored = hydrateTasks(snapshot, D(5, 10, 0));
+    assert.equal(restored.length, 1);
+    assert.deepEqual(restored[0]!.schedule, { kind: "daily", atMs: 9 * 3_600_000 });
+    assert.equal(restored[0]!.nextDueAt, D(6, 9, 0));
+  });
+
+  it("hydrate 旧快照（无 schedule 字段）兼容：按固定间隔推进", () => {
+    const restored = hydrateTasks({ tasks: [makeRecurring(BASE - 600_000)] }, BASE);
+    assert.equal(restored.length, 1);
+    assert.equal(restored[0]!.schedule, undefined);
+    assert.equal(restored[0]!.nextDueAt, BASE + 60_000);
+  });
+
+  it("sanitize 丢弃非法 schedule 条目，保留合法的", () => {
+    const snapshot = {
+      tasks: [
+        { id: "badwin01", task: "窗口终点越界", recurring: true,
+          schedule: { kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: DAY },
+          nextDueAt: BASE + 60_000, createdAt: BASE, paused: false },
+        { id: "badday1", task: "时刻越界", recurring: true,
+          schedule: { kind: "daily", atMs: DAY },
+          nextDueAt: BASE + 60_000, createdAt: BASE, paused: false },
+        { id: "goodwin1", task: "合法窗口", recurring: true,
+          schedule: { kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: 9 * 3_600_000 },
+          nextDueAt: BASE + 60_000, createdAt: BASE, paused: false },
+      ],
+    };
+    const restored = hydrateTasks(snapshot, BASE);
+    assert.deepEqual(restored.map((t) => t.id), ["goodwin1"]);
+  });
+
+  it("serialize → hydrate 往返保留 schedule", () => {
+    const tasks = [
+      makeDaily(D(6, 9, 0), { createdAt: D(5, 8, 0) }),
+      makeWindow(D(6, 0, 0), { createdAt: D(5, 8, 0) }),
+    ];
+    const json = JSON.stringify(serializeTasks(tasks));
+    const restored = hydrateTasks(JSON.parse(json), D(5, 10, 0));
+    assert.deepEqual(restored, tasks);
+  });
+
+  it("describeRecurrence / formatTimeOfDay", () => {
+    assert.equal(describeRecurrence({ recurring: false }), "一次性");
+    assert.equal(describeRecurrence({ recurring: true, intervalMs: 300_000 }), "每 5m");
+    assert.equal(describeRecurrence({ recurring: true, schedule: { kind: "daily", atMs: 9 * 3_600_000 } }), "每天 09:00");
+    assert.equal(
+      describeRecurrence({ recurring: true, schedule: { kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: 9 * 3_600_000 } }),
+      "每天 00:00–09:00 每 1h",
+    );
+    assert.equal(formatTimeOfDay(0), "00:00");
+    assert.equal(formatTimeOfDay(9 * 3_600_000), "09:00");
+    assert.equal(formatTimeOfDay(23 * 3_600_000 + 59 * 60_000), "23:59");
+  });
+
+  it("formatTaskLines 展示 daily/window 调度描述", () => {
+    const tasks = [
+      makeDaily(D(6, 9, 0), { id: "daily001", createdAt: D(5, 8, 0), task: "晨会" }),
+      makeWindow(D(6, 0, 0), { id: "window01", createdAt: D(5, 8, 0), task: "巡检" }),
+    ];
+    const lines = formatTaskLines(tasks, D(5, 10, 0));
+    assert.match(lines[0]!, /每天 00:00–09:00 每 1h/);
+    assert.match(lines[1]!, /每天 09:00/);
   });
 });

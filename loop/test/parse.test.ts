@@ -222,3 +222,157 @@ describe("parseSchedule（agent 工具用）", () => {
     }
   });
 });
+
+describe("parseLoopCommand — daily / 每日时间窗口（v1.2）", () => {
+  const localAt = (dayOffset: number, hh: number, mm: number): number => {
+    const d = new Date(BASE);
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(hh, mm, 0, 0);
+    return d.getTime();
+  };
+
+  it("daily at 15:00 今天未过 → 今天 15:00，schedule.daily", () => {
+    const r = parseLoopCommand("daily at 15:00 晨会", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.equal(spec.recurring, true);
+    assert.deepEqual(spec.schedule, { kind: "daily", atMs: 15 * 3_600_000 });
+    assert.equal(spec.fireAtMs, localAt(0, 15, 0));
+    assert.equal(spec.task, "晨会");
+  });
+
+  it("daily at 09:00 已过 → 明天 09:00", () => {
+    const r = parseLoopCommand("daily at 09:00 晨会", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.equal(spec.fireAtMs, localAt(1, 9, 0));
+  });
+
+  it("every day at 09:00 等价 daily at", () => {
+    const r = parseLoopCommand("every day at 09:00 早报", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.deepEqual(spec.schedule, { kind: "daily", atMs: 9 * 3_600_000 });
+    assert.equal(spec.fireAtMs, localAt(1, 9, 0));
+  });
+
+  it("大小写不敏感：Daily AT 09:00", () => {
+    const r = parseLoopCommand("Daily AT 09:00 早报", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.deepEqual(spec.schedule, { kind: "daily", atMs: 9 * 3_600_000 });
+  });
+
+  it("daily 缺 at → 报错", () => {
+    const r = parseLoopCommand("daily 09:00 早报", BASE);
+    assert.ok(!r.ok);
+    assert.match(r.message, /用法/);
+  });
+
+  it("daily at 25:00 → 报错", () => {
+    const r = parseLoopCommand("daily at 25:00 x", BASE);
+    assert.ok(!r.ok);
+    assert.match(r.message, /无效时间/);
+  });
+
+  it("daily 缺任务 → 报错", () => {
+    const r = parseLoopCommand("daily at 09:00", BASE);
+    assert.ok(!r.ok);
+    assert.match(r.message, /任务内容/);
+  });
+
+  it("every 1h from 00:00 to 09:00：窗口闭区间，BASE 已过窗口 → 明天 00:00", () => {
+    const r = parseLoopCommand("every 1h from 00:00 to 09:00 夜间巡检", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.deepEqual(spec.schedule, {
+      kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: 9 * 3_600_000,
+    });
+    assert.equal(spec.fireAtMs, localAt(1, 0, 0));
+    assert.equal(spec.task, "夜间巡检");
+  });
+
+  it("窗口内首触发取下一个网格点：BASE 10:00，from 08:00 to 22:00 every 2h → 今天 12:00", () => {
+    const r = parseLoopCommand("every 2h from 08:00 to 22:00 patrol", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.equal(spec.fireAtMs, localAt(0, 12, 0));
+  });
+
+  it("窗口间隔秒向上取整：every 30s → 1m", () => {
+    const r = parseLoopCommand("every 30s from 00:00 to 09:00 x", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.ok(spec.schedule?.kind === "window");
+    assert.equal(spec.schedule.intervalMs, MIN_INTERVAL_MS);
+  });
+
+  it("start >= end → 报错", () => {
+    const r1 = parseLoopCommand("every 1h from 09:00 to 09:00 x", BASE);
+    assert.ok(!r1.ok);
+    assert.match(r1.message, /起点需早于终点/);
+    const r2 = parseLoopCommand("every 1h from 10:00 to 09:00 x", BASE);
+    assert.ok(!r2.ok);
+    assert.match(r2.message, /起点需早于终点/);
+  });
+
+  it("窗口时刻非法 → 报错", () => {
+    const r = parseLoopCommand("every 1h from 25:00 to 09:00 x", BASE);
+    assert.ok(!r.ok);
+    assert.match(r.message, /无效时间/);
+  });
+
+  it("窗口缺任务 → 报错", () => {
+    const r = parseLoopCommand("every 1h from 00:00 to 09:00", BASE);
+    assert.ok(!r.ok);
+    assert.match(r.message, /任务内容/);
+  });
+
+  it("非窗口语法的 from 开头任务文本仍按固定间隔解析", () => {
+    const r = parseLoopCommand("5m from the deploy logs", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.equal(spec.intervalMs, 300_000);
+    assert.equal(spec.schedule, undefined);
+    assert.equal(spec.task, "from the deploy logs");
+  });
+});
+
+describe("parseSchedule — daily / 时间窗口（v1.2）", () => {
+  const localAt = (dayOffset: number, hh: number, mm: number): number => {
+    const d = new Date(BASE);
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(hh, mm, 0, 0);
+    return d.getTime();
+  };
+
+  it("daily at 09:00 / every day at 09:00", () => {
+    const r1 = parseSchedule("daily at 09:00", BASE);
+    assert.ok(r1.ok && r1.value.recurring && r1.value.schedule?.kind === "daily");
+    assert.equal(r1.ok ? r1.value.fireAtMs : 0, localAt(1, 9, 0));
+    const r2 = parseSchedule("every day at 09:00", BASE);
+    assert.ok(r2.ok && r2.value.recurring && r2.value.schedule?.kind === "daily");
+  });
+
+  it("every 1h from 00:00 to 09:00（省略 every 前缀同样支持）", () => {
+    const r1 = parseSchedule("every 1h from 00:00 to 09:00", BASE);
+    assert.ok(r1.ok && r1.value.recurring);
+    assert.deepEqual(r1.ok ? r1.value.schedule : null, {
+      kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: 9 * 3_600_000,
+    });
+    assert.equal(r1.ok ? r1.value.fireAtMs : 0, localAt(1, 0, 0));
+    const r2 = parseSchedule("1h from 0:00 to 9:00", BASE);
+    assert.ok(r2.ok && r2.value.recurring && r2.value.schedule?.kind === "window");
+  });
+
+  it("非法输入全部报错", () => {
+    for (const bad of [
+      "daily", "daily 09:00", "daily at", "daily at 09:00 extra", "daily at 25:00",
+      "every day", "every day 09:00", "every 1h from 00:00", "every 1h from 00:00 to 09:00 extra",
+      "from 00:00 to 09:00", "every 1h from 25:00 to 09:00", "every 1h from 09:00 to 09:00",
+    ]) {
+      const r = parseSchedule(bad, BASE);
+      assert.ok(!r.ok, `"${bad}" 应解析失败`);
+    }
+  });
+});

@@ -64,9 +64,10 @@ function rawTask(opts: {
   nextDueAt: number;
   createdAt?: number;
   paused?: boolean;
+  schedule?: { kind: "daily"; atMs: number } | { kind: "window"; intervalMs: number; startMs: number; endMs: number };
 }) {
-  // 字段顺序与 serializeTasks 输出一致，保证 JSON 快照可比
-  return {
+  // 字段顺序与 serializeTasks 输出一致，保证 JSON 快照可比（schedule 追加在末尾）
+  const base = {
     id: opts.id,
     task: opts.task ?? "种子任务",
     recurring: opts.recurring ?? false,
@@ -75,6 +76,7 @@ function rawTask(opts: {
     createdAt: opts.createdAt ?? BASE,
     paused: opts.paused ?? false,
   };
+  return opts.schedule !== undefined ? { ...base, schedule: opts.schedule } : base;
 }
 
 function createFakePi() {
@@ -208,6 +210,8 @@ describe("命令注册", () => {
     assert.ok(cmd!.description && cmd!.description.length > 0);
     const items = cmd!.getArgumentCompletions?.("de") as Array<{ value: string }>;
     assert.deepEqual(items, [{ value: "delete ", label: "delete" }]);
+    const dailyItems = cmd!.getArgumentCompletions?.("daily") as Array<{ value: string }>;
+    assert.deepEqual(dailyItems, [{ value: "daily ", label: "daily" }]);
   });
 });
 
@@ -380,6 +384,110 @@ describe("到期触发", () => {
     fakeNow = BASE + 2_000;
     fireTick();
     assert.equal(fake._sent.length, 1);
+  });
+});
+
+// ---------- daily / 时间窗口任务（v1.2） ----------
+
+describe("daily / 时间窗口任务（v1.2）", () => {
+  it("命令创建 daily 任务：通知含调度描述与触发时刻", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    await fake.runCommand("daily at 09:00 晨会");
+    const note = fake.lastNotification();
+    assert.match(note!.message, /已创建 loop/);
+    assert.match(note!.message, /每天 09:00/);
+    const data = fake._persisted[0]!.data as { tasks: LoopTask[] };
+    assert.deepEqual(data.tasks[0]!.schedule, { kind: "daily", atMs: 9 * 3_600_000 });
+  });
+
+  it("daily 任务到期触发一次并推进到明天同一时刻", async () => {
+    const fake = createFakePi();
+    const atMs = 9 * 3_600_000;
+    const today0900 = new Date(2026, 8, 5, 9, 0, 0, 0).getTime();
+    const tomorrow0900 = new Date(2026, 8, 6, 9, 0, 0, 0).getTime();
+    fakeNow = new Date(2026, 8, 5, 8, 0, 0, 0).getTime(); // 会话开始于当天 08:00
+    seedSnapshot(fake, [
+      rawTask({ id: "daily001", recurring: true, schedule: { kind: "daily", atMs }, nextDueAt: today0900, createdAt: fakeNow - 3_600_000 }),
+    ]);
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    fireTick();
+    assert.equal(fake._sent.length, 0, "未到点不触发");
+
+    fakeNow = today0900 + 30_000;
+    fireTick();
+    assert.equal(fake._sent.length, 1, "09:00 到点触发");
+    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(last.tasks[0]!.nextDueAt, tomorrow0900);
+
+    fireTick();
+    assert.equal(fake._sent.length, 1, "同一天不重复触发");
+  });
+
+  it("每日窗口任务：恢复不补跑，窗口内逐小时触发，末尾闭区间后跳明天", async () => {
+    const fake = createFakePi();
+    const atMsOf = (day: number, h: number) => new Date(2026, 8, day, h, 0, 0, 0).getTime();
+    fakeNow = atMsOf(5, 2) + 30_000; // 02:00:30，02:00 的触发点刚过
+    seedSnapshot(fake, [
+      rawTask({
+        id: "win00001",
+        recurring: true,
+        schedule: { kind: "window", intervalMs: 3_600_000, startMs: 0, endMs: 9 * 3_600_000 },
+        nextDueAt: atMsOf(5, 2),
+        createdAt: fakeNow - 86_400_000,
+      }),
+    ]);
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    assert.equal(fake._sent.length, 0, "恢复时错过的 02:00 不补跑");
+    const afterStart = fake._persisted[0]!.data as { tasks: LoopTask[] };
+    assert.equal(afterStart.tasks[0]!.nextDueAt, atMsOf(5, 3), "hydrate 推进到 03:00");
+
+    fakeNow = atMsOf(5, 3) + 1_000;
+    fireTick();
+    assert.equal(fake._sent.length, 1, "03:00 触发");
+
+    fakeNow = atMsOf(5, 9) + 1_000;
+    fireTick();
+    assert.equal(fake._sent.length, 2, "09:00 窗口末尾触发（闭区间）");
+    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(last.tasks[0]!.nextDueAt, atMsOf(6, 0), "越界后排到明天窗口起点");
+  });
+
+  it("loop_create 支持 daily 与窗口调度", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const expected0900 = (() => {
+      const d = new Date(BASE);
+      d.setHours(9, 0, 0, 0);
+      if (d.getTime() <= BASE) d.setDate(d.getDate() + 1);
+      return d.getTime();
+    })();
+    const r1 = await fake.runTool("loop_create", { task: "晨会提醒", schedule: "daily at 09:00" });
+    assert.equal(r1.isError, undefined);
+    assert.match(toolText(r1), /每天 09:00/);
+    assert.equal(r1.details?.nextDueAt, expected0900);
+
+    // BASE 已过 09:00 → 明天 00:00；否则今天窗口内下一个整点
+    const expectedWindow = (() => {
+      const d = new Date(BASE);
+      d.setHours(0, 0, 0, 0);
+      const day0 = d.getTime();
+      let t = day0;
+      if (t <= BASE) t += (Math.floor((BASE - t) / 3_600_000) + 1) * 3_600_000;
+      if (t <= day0 + 9 * 3_600_000) return t;
+      d.setDate(d.getDate() + 1);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    })();
+    const r2 = await fake.runTool("loop_create", { task: "夜间巡检", schedule: "every 1h from 00:00 to 09:00" });
+    assert.equal(r2.isError, undefined);
+    assert.match(toolText(r2), /每天 00:00–09:00 每 1h/);
+    assert.equal(r2.details?.nextDueAt, expectedWindow);
   });
 });
 

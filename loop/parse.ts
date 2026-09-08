@@ -5,17 +5,26 @@
  *   /loop 5m <任务>            固定间隔循环（单位 s/m/h/d，最小 1 分钟，秒向上取整）
  *   /loop in 30m <任务>        一次性提醒（相对时间）
  *   /loop at 15:00 <任务>      一次性提醒（本地时刻，已过则排到明天）
+ *   /loop daily at 09:00 <任务>                每天固定时刻循环（= every day at）
+ *   /loop every 1h from 00:00 to 09:00 <任务>  每日时间窗口 [start, end] 闭区间内按间隔循环
  *   /loop list | pause <id> | resume <id> | delete <id> | clear
  */
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
+/** v1.2 新增调度：每天固定时刻 / 每日时间窗口内按间隔（时刻均为距本地午夜的毫秒数） */
+export type RecurringSchedule =
+  | { kind: "daily"; atMs: number }
+  | { kind: "window"; intervalMs: number; startMs: number; endMs: number };
+
 export interface CreateSpec {
   recurring: boolean;
-  /** 循环间隔（recurring 时必有，已归一化到 >= 1 分钟） */
+  /** 循环间隔（interval 模式 recurring 时必有，已归一化到 >= 1 分钟） */
   intervalMs?: number;
-  /** 一次性任务的触发时刻（epoch ms） */
+  /** 一次性任务的触发时刻 / daily・window 模式的首次触发时刻（epoch ms） */
   fireAtMs?: number;
+  /** daily・window 调度描述（存在时优先于 intervalMs） */
+  schedule?: RecurringSchedule;
   task: string;
 }
 
@@ -29,12 +38,13 @@ export type LoopCommand =
   | { kind: "usage" };
 
 export const MIN_INTERVAL_MS = 60_000;
+export const DAY_MS = 86_400_000;
 
 const UNIT_MS: Record<string, number> = {
   s: 1_000, sec: 1_000, secs: 1_000, second: 1_000, seconds: 1_000,
   m: 60_000, min: 60_000, mins: 60_000, minute: 60_000, minutes: 60_000,
   h: 3_600_000, hr: 3_600_000, hrs: 3_600_000, hour: 3_600_000, hours: 3_600_000,
-  d: 86_400_000, day: 86_400_000, days: 86_400_000,
+  d: DAY_MS, day: DAY_MS, days: DAY_MS,
 };
 
 // 注意 alternation 顺序：长词在前，避免 "min" 被 "m" 截走
@@ -67,12 +77,48 @@ function normalizeRecurringInterval(ms: number): number {
   return Math.max(Math.ceil(ms / 60_000) * 60_000, MIN_INTERVAL_MS);
 }
 
-function resolveAtTime(hh: number, mm: number, nowMs: number): number | undefined {
-  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh > 23 || mm > 59) return undefined;
+/** "HH:MM" → 距本地午夜的毫秒数；非法返回 undefined */
+export function parseTimeOfDayMs(token: string): number | undefined {
+  const m = AT_RE.exec(token);
+  if (!m) return undefined;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return undefined;
+  return (hh * 60 + mm) * 60_000;
+}
+
+/** 本地 atMs 时刻在 nowMs 之后（严格大于）的下一次出现；当天已过则排到明天 */
+export function nextDailyOccurrence(atMs: number, nowMs: number): number {
   const d = new Date(nowMs);
-  d.setHours(hh, mm, 0, 0);
+  d.setHours(Math.floor(atMs / 3_600_000), Math.floor((atMs % 3_600_000) / 60_000), 0, 0);
   if (d.getTime() <= nowMs) d.setDate(d.getDate() + 1);
   return d.getTime();
+}
+
+/**
+ * 每日窗口 [startMs, endMs]（闭区间）内、锚定在窗口起点的间隔网格上，
+ * nowMs 之后（严格大于）的下一个触发点；当天网格走完则排到明天窗口起点。
+ * start < end 由创建/清洗校验保证，明天起点必然命中，两轮足够。
+ */
+export function nextWindowOccurrence(
+  intervalMs: number,
+  startMs: number,
+  endMs: number,
+  nowMs: number,
+): number {
+  const d = new Date(nowMs);
+  d.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 2; i++) {
+    const dayStart = d.getTime();
+    let candidate = dayStart + startMs;
+    if (candidate <= nowMs) {
+      candidate += (Math.floor((nowMs - candidate) / intervalMs) + 1) * intervalMs;
+    }
+    if (candidate <= dayStart + endMs) return candidate;
+    d.setDate(d.getDate() + 1);
+    d.setHours(0, 0, 0, 0);
+  }
+  return d.getTime() + startMs;
 }
 
 export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopCommand> {
@@ -113,10 +159,9 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
 
   // at HH:MM <任务>
   if (!hadEvery && rest[0]?.toLowerCase() === "at") {
-    const at = rest[1] !== undefined ? AT_RE.exec(rest[1]) : null;
-    if (!at) return { ok: false, message: `无效时间 "${rest[1] ?? ""}"，应为 HH:MM（24 小时制）` };
-    const fireAtMs = resolveAtTime(Number(at[1]), Number(at[2]), nowMs);
-    if (fireAtMs === undefined) return { ok: false, message: `无效时间 "${rest[1]}"，应为 HH:MM（24 小时制）` };
+    const atMs = parseTimeOfDayMs(rest[1] ?? "");
+    if (atMs === undefined) return { ok: false, message: `无效时间 "${rest[1] ?? ""}"，应为 HH:MM（24 小时制）` };
+    const fireAtMs = nextDailyOccurrence(atMs, nowMs);
     const task = rest.slice(2).join(" ");
     if (!task) return { ok: false, message: "请提供任务内容，例如：/loop at 15:00 发布版本" };
     return {
@@ -125,9 +170,55 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
     };
   }
 
-  // [every] <时长> <任务>
+  // daily at HH:MM <任务> / every day at HH:MM <任务>：每天固定时刻循环
+  const head = rest[0]?.toLowerCase();
+  const dailyAt = hadEvery
+    ? head === "day" && rest[1]?.toLowerCase() === "at"
+    : head === "daily" && rest[1]?.toLowerCase() === "at";
+  if (dailyAt) {
+    const atMs = parseTimeOfDayMs(rest[2] ?? "");
+    if (atMs === undefined) return { ok: false, message: `无效时间 "${rest[2] ?? ""}"，应为 HH:MM（24 小时制）` };
+    const task = rest.slice(3).join(" ");
+    if (!task) return { ok: false, message: "请提供任务内容，例如：/loop daily at 09:00 晨会提醒" };
+    return {
+      ok: true,
+      value: {
+        kind: "create",
+        spec: { recurring: true, schedule: { kind: "daily", atMs }, fireAtMs: nextDailyOccurrence(atMs, nowMs), task },
+      },
+    };
+  }
+  if (head === "daily" || (hadEvery && head === "day")) {
+    return { ok: false, message: "用法：/loop daily at 09:00 <任务>（每天固定时刻循环）" };
+  }
+
+  // [every] <时长> <任务> / [every] <时长> from HH:MM to HH:MM <任务>
   if (rest[0] !== undefined) {
     const taken = takeDuration(rest);
+    if (taken && taken.rest[0]?.toLowerCase() === "from" && taken.rest[2]?.toLowerCase() === "to") {
+      const startTok = taken.rest[1];
+      const endTok = taken.rest[3];
+      const startMs = startTok !== undefined ? parseTimeOfDayMs(startTok) : undefined;
+      if (startMs === undefined) return { ok: false, message: `无效时间 "${startTok ?? ""}"，应为 HH:MM（24 小时制）` };
+      const endMs = endTok !== undefined ? parseTimeOfDayMs(endTok) : undefined;
+      if (endMs === undefined) return { ok: false, message: `无效时间 "${endTok ?? ""}"，应为 HH:MM（24 小时制）` };
+      if (startMs >= endMs) return { ok: false, message: "窗口起点需早于终点，例如 from 00:00 to 09:00" };
+      const task = taken.rest.slice(4).join(" ");
+      if (!task) return { ok: false, message: "请提供任务内容，例如：/loop every 1h from 00:00 to 09:00 服务巡检" };
+      const intervalMs = normalizeRecurringInterval(taken.durationMs);
+      return {
+        ok: true,
+        value: {
+          kind: "create",
+          spec: {
+            recurring: true,
+            schedule: { kind: "window", intervalMs, startMs, endMs },
+            fireAtMs: nextWindowOccurrence(intervalMs, startMs, endMs, nowMs),
+            task,
+          },
+        },
+      };
+    }
     if (taken) {
       const task = taken.rest.join(" ");
       if (!task) return { ok: false, message: "请提供任务内容，例如：/loop 5m 检查部署状态" };
@@ -146,21 +237,31 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
 }
 
 export function formatInterval(ms: number): string {
-  if (ms % 86_400_000 === 0) return `${ms / 86_400_000}d`;
+  if (ms % DAY_MS === 0) return `${ms / DAY_MS}d`;
   if (ms % 3_600_000 === 0) return `${ms / 3_600_000}h`;
   if (ms % 60_000 === 0) return `${ms / 60_000}m`;
   return `${Math.round(ms / 1000)}s`;
 }
 
-export type ScheduleSpec = { recurring: true; intervalMs: number } | { recurring: false; fireAtMs: number };
-
 /**
  * 供 agent 工具（loop_create）解析独立的调度描述，语法与 /loop 命令一致：
- *   "every 5m" / "5m" / "2 hours"  → 循环
- *   "in 30m"                       → 延时一次性
- *   "at 15:00"                     → 本地时刻一次性（已过则排到明天）
+ *   "every 5m" / "5m" / "2 hours"           → 固定间隔循环
+ *   "daily at 09:00" / "every day at 09:00" → 每天固定时刻循环
+ *   "every 1h from 00:00 to 09:00"          → 每日时间窗口内按间隔循环（闭区间）
+ *   "in 30m"                                → 延时一次性
+ *   "at 15:00"                              → 本地时刻一次性（已过则排到明天）
  * 整串必须恰好是一个调度描述（多余的词视为错误）。
  */
+export type ScheduleSpec = {
+  recurring: boolean;
+  /** interval 模式的间隔（daily/window 模式缺省） */
+  intervalMs?: number;
+  /** daily/window 调度描述 */
+  schedule?: RecurringSchedule;
+  /** 首次触发时刻（epoch ms） */
+  fireAtMs: number;
+};
+
 export function parseSchedule(raw: string, nowMs: number): ParseResult<ScheduleSpec> {
   const trimmed = raw.trim();
   if (!trimmed) return { ok: false, message: "缺少调度描述" };
@@ -181,14 +282,56 @@ export function parseSchedule(raw: string, nowMs: number): ParseResult<ScheduleS
   if (!hadEvery && tokens[0]?.toLowerCase() === "at") {
     const at = tokens.length === 2 && tokens[1] !== undefined ? AT_RE.exec(tokens[1]) : null;
     if (!at) return { ok: false, message: '无法识别时刻，例如 "15:00"（24 小时制）' };
-    const fireAtMs = resolveAtTime(Number(at[1]), Number(at[2]), nowMs);
-    if (fireAtMs === undefined) return { ok: false, message: `无效时间 "${tokens[1]}"，应为 HH:MM（24 小时制）` };
-    return { ok: true, value: { recurring: false, fireAtMs } };
+    const atMs = parseTimeOfDayMs(tokens[1]!);
+    if (atMs === undefined) return { ok: false, message: `无效时间 "${tokens[1]}"，应为 HH:MM（24 小时制）` };
+    return { ok: true, value: { recurring: false, fireAtMs: nextDailyOccurrence(atMs, nowMs) } };
   }
 
-  const taken = takeDuration(tokens);
-  if (taken && taken.rest.length === 0) {
-    return { ok: true, value: { recurring: true, intervalMs: normalizeRecurringInterval(taken.durationMs) } };
+  // daily at HH:MM / every day at HH:MM
+  const head = tokens[0]?.toLowerCase();
+  const dailyAt = hadEvery
+    ? head === "day" && tokens[1]?.toLowerCase() === "at"
+    : head === "daily" && tokens[1]?.toLowerCase() === "at";
+  if (dailyAt) {
+    if (tokens.length !== 3) return { ok: false, message: '无法识别调度，例如 "daily at 09:00"' };
+    const atMs = parseTimeOfDayMs(tokens[2] ?? "");
+    if (atMs === undefined) return { ok: false, message: `无效时间 "${tokens[2] ?? ""}"，应为 HH:MM（24 小时制）` };
+    return {
+      ok: true,
+      value: { recurring: true, schedule: { kind: "daily", atMs }, fireAtMs: nextDailyOccurrence(atMs, nowMs) },
+    };
   }
-  return { ok: false, message: '无法识别调度，例如 "every 5m"、"in 30m"、"at 15:00"' };
+  if (head === "daily" || (hadEvery && head === "day")) {
+    return { ok: false, message: '无法识别调度，例如 "daily at 09:00"' };
+  }
+
+  // [every] <时长> from HH:MM to HH:MM
+  const taken = takeDuration(tokens);
+  if (taken && taken.rest[0]?.toLowerCase() === "from") {
+    const startTok = taken.rest[1];
+    const endTok = taken.rest[3];
+    if (taken.rest.length !== 4 || taken.rest[2]?.toLowerCase() !== "to" || startTok === undefined || endTok === undefined) {
+      return { ok: false, message: '无法识别调度，例如 "every 1h from 00:00 to 09:00"' };
+    }
+    const startMs = parseTimeOfDayMs(startTok);
+    if (startMs === undefined) return { ok: false, message: `无效时间 "${startTok}"，应为 HH:MM（24 小时制）` };
+    const endMs = parseTimeOfDayMs(endTok);
+    if (endMs === undefined) return { ok: false, message: `无效时间 "${endTok}"，应为 HH:MM（24 小时制）` };
+    if (startMs >= endMs) return { ok: false, message: "窗口起点需早于终点，例如 from 00:00 to 09:00" };
+    const intervalMs = normalizeRecurringInterval(taken.durationMs);
+    return {
+      ok: true,
+      value: {
+        recurring: true,
+        schedule: { kind: "window", intervalMs, startMs, endMs },
+        fireAtMs: nextWindowOccurrence(intervalMs, startMs, endMs, nowMs),
+      },
+    };
+  }
+
+  if (taken && taken.rest.length === 0) {
+    const intervalMs = normalizeRecurringInterval(taken.durationMs);
+    return { ok: true, value: { recurring: true, intervalMs, fireAtMs: nowMs + intervalMs } };
+  }
+  return { ok: false, message: '无法识别调度，例如 "every 5m"、"daily at 09:00"、"in 30m"、"at 15:00"' };
 }

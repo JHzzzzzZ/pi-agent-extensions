@@ -9,8 +9,16 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { parseSchedule, formatInterval } from "./parse.ts";
-import { createTask, deleteTask, formatClock, formatTaskLines, MAX_TASK_LEN, type LoopTask } from "./tasks.ts";
+import { parseSchedule } from "./parse.ts";
+import {
+  createTask,
+  deleteTask,
+  describeRecurrence,
+  formatClock,
+  formatTaskLines,
+  MAX_TASK_LEN,
+  type LoopTask,
+} from "./tasks.ts";
 
 export interface LoopToolDeps {
   tasks: LoopTask[];
@@ -20,7 +28,7 @@ export interface LoopToolDeps {
 }
 
 const SCHEDULE_HINT =
-  '调度描述："every 5m" / "5m" / "2 hours"（循环，最小 1 分钟）或 "in 30m"（延时一次性）或 "at 15:00"（本地时刻一次性，已过则排到明天）';
+  '调度描述："every 5m" / "5m" / "2 hours"（固定间隔循环，最小 1 分钟）、"daily at 09:00"（每天固定时刻循环）、"every 1h from 00:00 to 09:00"（每日时间窗口 [start, end] 闭区间内按间隔循环）、"in 30m"（延时一次性）或 "at 15:00"（本地时刻一次性，已过则排到明天）';
 
 export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
   pi.registerTool({
@@ -29,7 +37,7 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
     description: [
       "创建一个定时任务（本会话内有效）：到时把任务内容作为消息注入当前会话，由主 agent 执行。",
       `task 为到期后要执行的内容；schedule 描述触发时机。${SCHEDULE_HINT}。`,
-      "适合\"每 N 分钟检查一次 X\"、\"30 分钟后提醒我\"、\"明天 9 点做 X\"这类请求。",
+      '适合"每 N 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"、"30 分钟后提醒我"这类请求。',
     ].join(" "),
     parameters: Type.Object({
       task: Type.String({ description: "到期后要执行的任务描述", minLength: 1, maxLength: MAX_TASK_LEN }),
@@ -46,8 +54,9 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
         {
           task: params.task,
           recurring: spec.recurring,
-          intervalMs: spec.recurring ? spec.intervalMs : undefined,
-          fireAtMs: spec.recurring ? Date.now() + spec.intervalMs : spec.fireAtMs,
+          intervalMs: spec.intervalMs,
+          schedule: spec.schedule,
+          fireAtMs: spec.fireAtMs,
           nowMs: Date.now(),
         },
         deps.genId,
@@ -58,9 +67,8 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
       deps.persist();
       deps.refreshWidget();
       const t = result.task;
-      const when = t.recurring ? `每 ${formatInterval(t.intervalMs ?? 0)}` : "一次性";
       return {
-        content: [{ type: "text", text: `已创建 loop ${t.id}：${when} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}` }],
+        content: [{ type: "text", text: `已创建 loop ${t.id}：${describeRecurrence(t)} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}` }],
         details: { loopId: t.id, recurring: t.recurring, nextDueAt: t.nextDueAt },
       };
     },

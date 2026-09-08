@@ -3,6 +3,8 @@
  *   /loop 5m <任务>        固定间隔循环
  *   /loop in 30m <任务>    一次性提醒（相对时间）
  *   /loop at 15:00 <任务>  一次性提醒（本地时刻）
+ *   /loop daily at 09:00 <任务>                每天固定时刻循环
+ *   /loop every 1h from 00:00 to 09:00 <任务>  每日时间窗口内按间隔循环（闭区间）
  *   /loop list | pause <id> | resume <id> | delete <id> | clear
  *
  * agent 工具（tools.ts）：loop_create / loop_list / loop_delete，
@@ -17,12 +19,13 @@
  * session_shutdown 清理；模块级 dispose 防 /reload 双实例叠加（同 run-timer）。
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { parseLoopCommand, formatInterval, type CreateSpec } from "./parse.ts";
+import { parseLoopCommand } from "./parse.ts";
 import { registerLoopTools } from "./tools.ts";
 import {
   clearTasks,
   createTask,
   deleteTask,
+  describeRecurrence,
   formatClock,
   formatCountdown,
   formatTaskLines,
@@ -44,6 +47,8 @@ const USAGE = [
   "  /loop 5m <任务>        固定间隔循环（单位 s/m/h/d，最小 1m）",
   "  /loop in 30m <任务>    一次性提醒（相对时间）",
   "  /loop at 15:00 <任务>  一次性提醒（本地时刻，已过则排到明天）",
+  "  /loop daily at 09:00 <任务>  每天固定时刻循环",
+  "  /loop every 1h from 00:00 to 09:00 <任务>  每日窗口内按间隔循环（闭区间）",
   "  /loop list             查看全部任务",
   "  /loop pause <id>       暂停任务",
   "  /loop resume <id>      恢复任务",
@@ -145,10 +150,6 @@ export default function (pi: ExtensionAPI) {
     refreshWidget();
   }
 
-  function describeSpec(spec: CreateSpec): string {
-    return spec.recurring ? `每 ${formatInterval(spec.intervalMs ?? 0)}` : "一次性";
-  }
-
   function runCommand(args: string, ctx: ExtensionCommandContext): void {
     const parsed = parseLoopCommand(args, Date.now());
     if (!parsed.ok) {
@@ -169,14 +170,16 @@ export default function (pi: ExtensionAPI) {
       }
       case "create": {
         const spec = cmd.spec;
+        const now = Date.now();
         const result = createTask(
           tasks,
           {
             task: spec.task,
             recurring: spec.recurring,
             intervalMs: spec.intervalMs,
-            fireAtMs: spec.recurring ? Date.now() + (spec.intervalMs ?? 0) : (spec.fireAtMs ?? Date.now()),
-            nowMs: Date.now(),
+            schedule: spec.schedule,
+            fireAtMs: spec.fireAtMs ?? (spec.recurring ? now + (spec.intervalMs ?? 0) : now),
+            nowMs: now,
           },
           genId,
         );
@@ -187,7 +190,7 @@ export default function (pi: ExtensionAPI) {
         persist();
         refreshWidget();
         const t = result.task;
-        notify(ctx, `已创建 loop ${t.id}：${describeSpec(spec)} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`);
+        notify(ctx, `已创建 loop ${t.id}：${describeRecurrence(spec)} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`);
         return;
       }
       case "pause": {
@@ -234,9 +237,9 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("loop", {
-    description: "定时循环任务：固定间隔循环 + 一次性提醒（list/pause/resume/delete/clear 管理）",
+    description: "定时循环任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒（list/pause/resume/delete/clear 管理）",
     getArgumentCompletions: (prefix) => {
-      const items = ["list", "pause ", "resume ", "delete ", "clear", "in ", "at "];
+      const items = ["list", "pause ", "resume ", "delete ", "clear", "in ", "at ", "daily ", "every day ", "every 1h from "];
       return items
         .filter((s) => s.startsWith(prefix))
         .map((s) => ({ value: s, label: s.trim() }));

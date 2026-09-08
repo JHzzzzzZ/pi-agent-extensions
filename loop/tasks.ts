@@ -6,15 +6,25 @@
  *   - 一次性任务触发后自删
  *   - 重复任务创建 7 天后过期（到期则最后触发一次再删除）
  *   - 暂停的任务不触发；恢复时错过的循环间隔直接跳过
+ *   - v1.2：daily（每天固定时刻）/ window（每日时间窗口闭区间内按间隔循环）调度，
+ *     推进按"now 之后（严格大于）的下一个触发点"计算，跨天用本地 Date rollover
  */
-import { formatInterval } from "./parse.ts";
+import {
+  DAY_MS,
+  formatInterval,
+  nextDailyOccurrence,
+  nextWindowOccurrence,
+  type RecurringSchedule,
+} from "./parse.ts";
 
 export interface LoopTask {
   id: string;
   task: string;
   recurring: boolean;
-  /** 循环间隔（recurring 时必有） */
+  /** 循环间隔（interval 模式 recurring 时必有） */
   intervalMs?: number;
+  /** v1.2：daily/window 调度（存在时优先于 intervalMs；缺省即固定间隔模式，兼容旧快照） */
+  schedule?: RecurringSchedule;
   /** 下次触发时刻（epoch ms） */
   nextDueAt: number;
   /** 创建时刻（epoch ms），7 天过期的起算点 */
@@ -31,10 +41,33 @@ export type CreateTaskInput = {
   task: string;
   recurring: boolean;
   intervalMs?: number;
+  /** v1.2：daily/window 调度（存在时可省略 intervalMs） */
+  schedule?: RecurringSchedule;
   /** 首次触发时刻（epoch ms） */
   fireAtMs: number;
   nowMs: number;
 };
+
+/** createTask 入参校验：返回错误消息或 undefined（合法） */
+function validateSchedule(schedule: RecurringSchedule | undefined): string | undefined {
+  if (schedule === undefined) return undefined;
+  const alignedMinute = (v: number) => v % 60_000 === 0;
+  if (schedule.kind === "daily") {
+    if (!Number.isFinite(schedule.atMs) || schedule.atMs < 0 || schedule.atMs >= DAY_MS || !alignedMinute(schedule.atMs)) {
+      return "每天调度的时刻无效（应为当日 0:00–24:00 内的整分钟）";
+    }
+    return undefined;
+  }
+  if (
+    !Number.isFinite(schedule.intervalMs) || schedule.intervalMs <= 0 ||
+    !Number.isFinite(schedule.startMs) || !Number.isFinite(schedule.endMs) ||
+    schedule.startMs < 0 || schedule.endMs >= DAY_MS || schedule.startMs >= schedule.endMs ||
+    !alignedMinute(schedule.startMs) || !alignedMinute(schedule.endMs)
+  ) {
+    return "时间窗口调度无效（起点需早于终点，且均为当日 0:00–24:00 内的整分钟）";
+  }
+  return undefined;
+}
 
 export function createTask(
   tasks: LoopTask[],
@@ -47,9 +80,11 @@ export function createTask(
   if (input.task.length > MAX_TASK_LEN) {
     return { ok: false, message: `任务内容过长（最多 ${MAX_TASK_LEN} 字符）` };
   }
-  if (input.recurring && (input.intervalMs === undefined || input.intervalMs <= 0)) {
+  if (input.recurring && input.schedule === undefined && (input.intervalMs === undefined || input.intervalMs <= 0)) {
     return { ok: false, message: "循环任务必须提供正的间隔" };
   }
+  const badSchedule = input.recurring ? validateSchedule(input.schedule) : undefined;
+  if (badSchedule) return { ok: false, message: badSchedule };
   const task: LoopTask = {
     id: genId(),
     task: input.task,
@@ -59,6 +94,8 @@ export function createTask(
     createdAt: input.nowMs,
     paused: false,
   };
+  // schedule 追加在末尾，保证键顺序与 sanitizeTask 一致（快照 JSON 稳定可比）
+  if (input.schedule !== undefined) task.schedule = input.schedule;
   tasks.push(task);
   return { ok: true, task };
 }
@@ -99,6 +136,14 @@ export function pauseTask(
   return { ok: true, task: r.task };
 }
 
+/** daily/window：nowMs 之后（严格大于）的下一个触发点；固定间隔模式返回 undefined 由调用方处理 */
+function nextScheduledOccurrence(t: LoopTask, nowMs: number): number | undefined {
+  const s = t.schedule;
+  if (s?.kind === "daily") return nextDailyOccurrence(s.atMs, nowMs);
+  if (s?.kind === "window") return nextWindowOccurrence(s.intervalMs, s.startMs, s.endMs, nowMs);
+  return undefined;
+}
+
 export function resumeTask(
   tasks: LoopTask[],
   idOrPrefix: string,
@@ -107,9 +152,10 @@ export function resumeTask(
   const r = resolveOrMessage(tasks, idOrPrefix);
   if (!r.ok) return r;
   r.task.paused = false;
-  // 循环任务错过的间隔不补跑：暂停期间到期的直接排到下一个间隔之后
+  // 循环任务错过的间隔不补跑：暂停期间到期的直接排到下一个触发点
   if (r.task.recurring && r.task.nextDueAt <= nowMs) {
-    r.task.nextDueAt = nowMs + (r.task.intervalMs ?? FALLBACK_INTERVAL_MS);
+    r.task.nextDueAt = nextScheduledOccurrence(r.task, nowMs)
+      ?? nowMs + (r.task.intervalMs ?? FALLBACK_INTERVAL_MS);
   }
   return { ok: true, task: r.task };
 }
@@ -153,9 +199,15 @@ export function pollDue(tasks: LoopTask[], nowMs: number): PollResult {
     due.push(t);
     changed = true;
     if (t.recurring) {
-      const interval = t.intervalMs ?? FALLBACK_INTERVAL_MS;
-      const missed = Math.floor((nowMs - t.nextDueAt) / interval) + 1;
-      t.nextDueAt += missed * interval;
+      const next = nextScheduledOccurrence(t, nowMs);
+      if (next !== undefined) {
+        // daily/window：跳过错过的触发点，推进到 now 之后的下一个触发点（不补跑）
+        t.nextDueAt = next;
+      } else {
+        const interval = t.intervalMs ?? FALLBACK_INTERVAL_MS;
+        const missed = Math.floor((nowMs - t.nextDueAt) / interval) + 1;
+        t.nextDueAt += missed * interval;
+      }
     } else {
       tasks.splice(i, 1);
     }
@@ -182,13 +234,39 @@ export function hydrateTasks(data: unknown, nowMs: number): LoopTask[] {
     if (!t) continue;
     if (t.recurring) {
       if (nowMs >= t.createdAt + RECURRING_TTL_MS) continue;
-      if (t.nextDueAt <= nowMs) t.nextDueAt = nowMs + (t.intervalMs ?? FALLBACK_INTERVAL_MS);
+      if (t.nextDueAt <= nowMs) {
+        t.nextDueAt = nextScheduledOccurrence(t, nowMs)
+          ?? nowMs + (t.intervalMs ?? FALLBACK_INTERVAL_MS);
+      }
     } else if (t.nextDueAt <= nowMs) {
       continue;
     }
     out.push(t);
   }
   return out;
+}
+
+/** 防御式清洗调度描述：未知形态/越界/非整分钟一律返回 undefined */
+function sanitizeSchedule(raw: unknown): RecurringSchedule | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const alignedMinute = (v: unknown): v is number =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 && v < DAY_MS && v % 60_000 === 0;
+  if (r.kind === "daily") {
+    return alignedMinute(r.atMs) ? { kind: "daily", atMs: r.atMs } : undefined;
+  }
+  if (r.kind === "window") {
+    const intervalMs = r.intervalMs;
+    if (
+      typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0 ||
+      !alignedMinute(r.startMs) || !alignedMinute(r.endMs) ||
+      (r.startMs as number) >= (r.endMs as number)
+    ) {
+      return undefined;
+    }
+    return { kind: "window", intervalMs, startMs: r.startMs as number, endMs: r.endMs as number };
+  }
+  return undefined;
 }
 
 function sanitizeTask(raw: unknown): LoopTask | undefined {
@@ -203,8 +281,9 @@ function sanitizeTask(raw: unknown): LoopTask | undefined {
     typeof r.intervalMs === "number" && Number.isFinite(r.intervalMs) && r.intervalMs > 0
       ? r.intervalMs
       : undefined;
-  if (recurring && intervalMs === undefined) return undefined;
-  return {
+  const schedule = recurring ? sanitizeSchedule(r.schedule) : undefined;
+  if (recurring && intervalMs === undefined && schedule === undefined) return undefined;
+  const t: LoopTask = {
     id: r.id,
     task: r.task,
     recurring,
@@ -213,6 +292,9 @@ function sanitizeTask(raw: unknown): LoopTask | undefined {
     createdAt: r.createdAt,
     paused: r.paused === true,
   };
+  // 追加在末尾，与 createTask 的键顺序一致（快照 JSON 稳定可比）
+  if (schedule !== undefined) t.schedule = schedule;
+  return t;
 }
 
 export function formatCountdown(ms: number): string {
@@ -232,15 +314,33 @@ export function formatClock(ms: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+/** 距本地午夜的毫秒数 → "HH:MM" */
+export function formatTimeOfDay(msOfDay: number): string {
+  const totalMin = Math.floor(msOfDay / 60_000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(Math.floor(totalMin / 60) % 24)}:${p(totalMin % 60)}`;
+}
+
+/** 任务调度的人类描述（创建回执、/loop list、loop_create 返回共用） */
+export function describeRecurrence(t: {
+  recurring: boolean;
+  intervalMs?: number;
+  schedule?: RecurringSchedule;
+}): string {
+  if (!t.recurring) return "一次性";
+  const s = t.schedule;
+  if (s?.kind === "daily") return `每天 ${formatTimeOfDay(s.atMs)}`;
+  if (s?.kind === "window") {
+    return `每天 ${formatTimeOfDay(s.startMs)}–${formatTimeOfDay(s.endMs)} 每 ${formatInterval(s.intervalMs)}`;
+  }
+  return `每 ${formatInterval(t.intervalMs ?? FALLBACK_INTERVAL_MS)}`;
+}
+
 /** /loop list 与裸 /loop 的任务列表行，按触发先后排序 */
 export function formatTaskLines(tasks: LoopTask[], nowMs: number): string[] {
   const sorted = [...tasks].sort((a, b) => a.nextDueAt - b.nextDueAt);
   return sorted.map((t) => {
-    const schedule = t.paused
-      ? "⏸ 已暂停"
-      : t.recurring
-        ? `每 ${formatInterval(t.intervalMs ?? FALLBACK_INTERVAL_MS)}`
-        : "一次性";
+    const schedule = t.paused ? "⏸ 已暂停" : describeRecurrence(t);
     const next = t.paused ? "—" : formatClock(t.nextDueAt);
     const taskText = t.task.length > 40 ? `${t.task.slice(0, 39)}…` : t.task;
     return `${t.id}  ${schedule}  ${next}  ${taskText}`;
