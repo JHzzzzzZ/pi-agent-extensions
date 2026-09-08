@@ -33,6 +33,13 @@
  *                 https://open.bigmodel.cn/api/monitor/usage/quota/limit 默认地址。
  *                 quota-limit 不附时间窗 query；鉴权用 ZHIPU_API_TOKEN 原始 token，非 Bearer。
  *                 实现参考 zai-coding-plugins/glm-plan-usage）
+ *  - opencode-go(OpenCode Go 订阅) GET https://opencode.ai/zen/go/v1/usage
+ *                -> usage.rolling/weekly/monthly 的 percent（5 小时滚动窗口/周/月，
+ *                   resetsAt 为 ISO 字符串）；追加 `→ HH:mm (Xh Ym)` 下次重置后缀：
+ *                   哪个窗口 status != "ok"（达到限额）后缀就显示哪个的 resetsAt，
+ *                   都未限额时依次回退 rolling/weekly/monthly；跨日显示 MM-dd HH:mm，
+ *                   同 zhipu 规则）。
+ *                鉴权 Bearer sk-…，即 auth.json 里 opencode-go 条目的 key（实测 2026-09）。
  *
  * 不在内置列表的 provider（如 anthropic / openai 直连）会静默不显示状态行。
  * 要支持更多 provider，在 QUOTA_ENDPOINTS 里加一条即可。
@@ -70,6 +77,14 @@ const PROVIDER_ALIASES: Record<string, string> = {
 	"zai-coding-cn": "zhipu",
 	zhipuai: "zhipu",
 	"chatanywhere-claude": "chatanywhere",
+	opencode: "opencode-go",
+	"opencode-zen": "opencode-go",
+	zen: "opencode-go",
+};
+
+// provider id 与 auth.json 条目名不一致时的 key 回退候选（按序尝试）。
+const AUTH_ID_FALLBACK: Record<string, string[]> = {
+	"opencode-go": ["opencode", "opencode-zen", "zen"],
 };
 
 // 智谱原始 token 仅允许发往这些 HTTPS、无显式端口的白名单主机。
@@ -222,6 +237,56 @@ function formatZhipuRefreshSuffix(
 	return `→ ${absolute} (${formatZhipuCountdown(diffMs)})`;
 }
 
+// ---- OpenCode Go usage 解析（实测端点 https://opencode.ai/zen/go/v1/usage，2026-09）----
+
+// 响应结构：
+// {"usage":{"rolling":{"status":"ok","percent":14,"resetsAt":"2026-09-08T19:41:10.080Z"},
+//            "weekly":{"status":"ok","percent":5,"resetsAt":"2026-09-14T00:00:00.080Z"},
+//            "monthly":{"status":"ok","percent":2,"resetsAt":"2026-10-08T14:35:13.080Z"}}}
+// rolling 为 5 小时滚动窗口。输出 `GO 5h X% 周 Y% 月 Z%`，并追加 `→ HH:mm (Xh Ym)`
+// 下次重置后缀（复用智谱的刷新时间格式化）。后缀时间取自哪个窗口：
+//  - 某窗口 status != "ok"（达到限额）→ 显示该窗口的 resetsAt（多窗口同时限额取
+//    rolling > weekly > monthly 顺位第一个）
+//  - 都未限额 → 依次回退 rolling/weekly/monthly 的 resetsAt（默认展示 5h 窗口重置时间）
+const GO_WINDOW_LABELS = [
+	["rolling", "5h"],
+	["weekly", "周"],
+	["monthly", "月"],
+] as const;
+const GO_OK_STATUS = "ok";
+
+export function parseOpencodeGoUsage(body: unknown, now: Date): string | null {
+	const usage = (body as { usage?: unknown } | null)?.usage;
+	if (!usage || typeof usage !== "object") return null;
+	const windows = usage as Record<string, unknown>;
+	const parts: string[] = [];
+	let defaultRefresh: Date | null = null;
+	let limitedRefresh: Date | null = null;
+	for (const [name, label] of GO_WINDOW_LABELS) {
+		const entry = windows[name] as
+			| { status?: unknown; percent?: unknown; resetsAt?: unknown }
+			| undefined;
+		if (!entry || typeof entry !== "object") continue;
+		if (typeof entry.percent === "number" && Number.isFinite(entry.percent)) {
+			parts.push(`${label} ${entry.percent}%`);
+		}
+		const parsed = toZhipuRefreshDate(entry.resetsAt);
+		if (!parsed) continue;
+		const limited =
+			typeof entry.status === "string" && entry.status !== GO_OK_STATUS;
+		if (limited) {
+			if (!limitedRefresh) limitedRefresh = parsed;
+		} else if (!defaultRefresh) {
+			defaultRefresh = parsed;
+		}
+	}
+	// 达到限额的窗口优先：哪个窗口 status != "ok"，后缀就显示哪个的重置时间；
+	// 都未限额时依次回退 rolling/weekly/monthly（默认展示 5h 窗口）。
+	const suffix = formatZhipuRefreshSuffix(limitedRefresh ?? defaultRefresh, now);
+	if (!parts.length && !suffix) return null;
+	return `GO ${[...parts, ...(suffix ? [suffix] : [])].join(" ")}`;
+}
+
 /**
  * 解析智谱 quota-limit 响应为 footer 状态行文本。
  *
@@ -289,6 +354,13 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 			return text ? { text } : null;
 		},
 	},
+	"opencode-go": {
+		url: "https://opencode.ai/zen/go/v1/usage",
+		parse: (b) => {
+			const text = parseOpencodeGoUsage(b, new Date());
+			return text ? { text } : null;
+		},
+	},
 };
 
 const STATUS_ID = "provider-quota";
@@ -298,6 +370,14 @@ const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500;
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
+
+async function readApiKeyFor(ids: readonly string[]): Promise<string | undefined> {
+	for (const id of ids) {
+		const key = await readApiKey(id);
+		if (key) return key;
+	}
+	return undefined;
+}
 
 async function readApiKey(providerId: string): Promise<string | undefined> {
 	let contents: string;
@@ -427,6 +507,7 @@ export default function (pi: ExtensionAPI) {
 		providerId: string,
 		adapter: QuotaAdapter,
 		sessionSignal: AbortSignal | undefined,
+		authIds: readonly string[],
 	): Promise<void> {
 		// 绑定本次刷新所属的 session；任何写状态前先确认该 session 未被中止，
 		// 保证 session_shutdown 之后未完成请求不会回写已清除的 footer 状态。
@@ -438,7 +519,7 @@ export default function (pi: ExtensionAPI) {
 			);
 		};
 
-		const apiKey = await readApiKey(providerId);
+		const apiKey = await readApiKeyFor(authIds);
 		if (!apiKey) {
 			write(`${providerId}: no key`);
 			return;
@@ -482,9 +563,10 @@ export default function (pi: ExtensionAPI) {
 			if (!sessionSignal?.aborted) ctx.ui.setStatus(STATUS_ID, undefined);
 			return;
 		}
+		const authIds = [...new Set([providerId, ...(AUTH_ID_FALLBACK[key] ?? [])])];
 		const existing = inFlight.get(providerId);
 		if (existing) return existing;
-		const p = doRefresh(ctx, providerId, adapter, sessionSignal).finally(
+		const p = doRefresh(ctx, providerId, adapter, sessionSignal, authIds).finally(
 			() => inFlight.delete(providerId),
 		);
 		inFlight.set(providerId, p);

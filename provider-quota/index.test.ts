@@ -11,7 +11,11 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { QUOTA_ENDPOINTS, parseZhipuQuotaLimit } from "./index.ts";
+import {
+	QUOTA_ENDPOINTS,
+	parseZhipuQuotaLimit,
+	parseOpencodeGoUsage,
+} from "./index.ts";
 
 // 固定本地时钟：2026-08-05 11:47:00 本地时间
 const NOW = new Date(2026, 7, 5, 11, 47, 0);
@@ -288,4 +292,151 @@ test("zhipu adapter: parse 委托 parseZhipuQuotaLimit", () => {
 		"GLM tok 32% mcp 5%",
 	);
 	assert.equal(QUOTA_ENDPOINTS.zhipu.parse(null), null);
+});
+
+// ---- opencode-go：实测响应 https://opencode.ai/zen/go/v1/usage（2026-09）----
+
+function goBody(rolling: unknown, weekly: unknown, monthly: unknown): unknown {
+	return { usage: { rolling, weekly, monthly } };
+}
+
+// rolling 重置时刻固定为本地 2026-09-08 19:41:10，now 比它早 2h28m；
+// resetsAt 用 ISO 字符串，跨时区解析回同一时刻后按本地字段格式化。
+test("opencode-go: 实测响应，输出 5h/周/月百分比 + rolling 下次重置后缀", () => {
+	const resets = new Date(2026, 8, 8, 19, 41, 10);
+	const now = new Date(2026, 8, 8, 17, 13, 10);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody(
+				{ status: "ok", percent: 14, resetsAt: resets.toISOString() },
+				{ status: "ok", percent: 5, resetsAt: "2026-09-14T00:00:00.080Z" },
+				{ status: "ok", percent: 2, resetsAt: "2026-10-08T14:35:13.080Z" },
+			),
+			now,
+		),
+		"GO 5h 14% 周 5% 月 2% → 19:41 (2h28m)",
+	);
+});
+
+test("opencode-go: 跨日重置时间显示 MM-dd HH:mm（同 zhipu 规则）", () => {
+	const resets = new Date(2026, 8, 9, 0, 30, 0);
+	const now = new Date(2026, 8, 8, 22, 0, 0);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody({ percent: 90, resetsAt: resets.toISOString() }, undefined, undefined),
+			now,
+		),
+		"GO 5h 90% → 09-09 00:30 (2h30m)",
+	);
+});
+
+test("opencode-go: rolling 缺 resetsAt 时后缀回退 weekly，再回退 monthly", () => {
+	const now = new Date(2026, 8, 8, 17, 13, 10);
+	const weekly = new Date(2026, 8, 9, 10, 0, 0);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody(
+				{ percent: 1 },
+				{ percent: 2, resetsAt: weekly.toISOString() },
+				{ percent: 3, resetsAt: new Date(2026, 8, 10, 10, 0, 0).toISOString() },
+			),
+			now,
+		),
+		"GO 5h 1% 周 2% 月 3% → 09-09 10:00 (16h46m)",
+	);
+});
+
+test("opencode-go: 百分比非数字的窗口跳过，全部缺失返回 null", () => {
+	const now = new Date(2026, 8, 8, 17, 13, 10);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody({ percent: "x" }, { resetsAt: "2026-09-14T00:00:00.080Z" }, undefined),
+			now,
+		),
+		"GO → 09-14 08:00 (134h46m)",
+	);
+	assert.equal(parseOpencodeGoUsage(goBody({}, {}, {}), now), null);
+	assert.equal(parseOpencodeGoUsage({ usage: null }, now), null);
+	assert.equal(parseOpencodeGoUsage(null, now), null);
+	assert.equal(parseOpencodeGoUsage({}, now), null);
+});
+
+test("opencode-go: rolling 达到限额时，后缀显示 5h 窗口重置时间（优先于未限额窗口）", () => {
+	// rolling 已限额但重置更晚、weekly 未限额且重置更早 → 仍取 rolling 的重置时间
+	const rollingReset = new Date(2026, 8, 8, 21, 0, 0);
+	const weeklyReset = new Date(2026, 8, 8, 18, 0, 0);
+	const now = new Date(2026, 8, 8, 17, 0, 0);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody(
+				{ status: "limited", percent: 100, resetsAt: rollingReset.toISOString() },
+				{ status: "ok", percent: 5, resetsAt: weeklyReset.toISOString() },
+				{ status: "ok", percent: 2, resetsAt: "2026-10-08T14:35:13.080Z" },
+			),
+			now,
+		),
+		"GO 5h 100% 周 5% 月 2% → 21:00 (4h0m)",
+	);
+});
+
+test("opencode-go: weekly 达到限额时后缀显示周重置时间，rolling 未限额不抢占", () => {
+	const weeklyReset = new Date(2026, 8, 14, 8, 0, 0);
+	const rollingReset = new Date(2026, 8, 8, 18, 30, 0);
+	const now = new Date(2026, 8, 8, 17, 0, 0);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody(
+				{ status: "ok", percent: 40, resetsAt: rollingReset.toISOString() },
+				{ status: "limited", percent: 100, resetsAt: weeklyReset.toISOString() },
+				{ status: "ok", percent: 3, resetsAt: "2026-10-08T14:35:13.080Z" },
+			),
+			now,
+		),
+		"GO 5h 40% 周 100% 月 3% → 09-14 08:00 (135h0m)",
+	);
+});
+
+test("opencode-go: monthly 达到限额（rolling/weekly 未限额）时后缀显示月重置时间", () => {
+	const monthlyReset = new Date(2026, 9, 1, 0, 0, 0);
+	const rollingReset = new Date(2026, 8, 8, 18, 30, 0);
+	const now = new Date(2026, 8, 8, 17, 0, 0);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody(
+				{ status: "ok", percent: 10, resetsAt: rollingReset.toISOString() },
+				{ status: "ok", percent: 4 },
+				{ status: "exceeded", percent: 100, resetsAt: monthlyReset.toISOString() },
+			),
+			now,
+		),
+		"GO 5h 10% 周 4% 月 100% → 10-01 00:00 (535h0m)",
+	);
+});
+
+test("opencode-go: 多窗口同时限额按 rolling > weekly > monthly 取第一个", () => {
+	const now = new Date(2026, 8, 8, 17, 0, 0);
+	const monthlyReset = new Date(2026, 9, 1, 0, 0, 0);
+	const rollingReset = new Date(2026, 8, 8, 19, 0, 0);
+	assert.equal(
+		parseOpencodeGoUsage(
+			goBody(
+				{ status: "limited", percent: 100, resetsAt: rollingReset.toISOString() },
+				undefined,
+				{ status: "limited", percent: 100, resetsAt: monthlyReset.toISOString() },
+			),
+			now,
+		),
+		"GO 5h 100% 月 100% → 19:00 (2h0m)",
+	);
+});
+
+test("opencode-go adapter: parse 委托 parseOpencodeGoUsage（走 adapter 默认 Bearer 鉴权）", () => {
+	assert.equal(
+		QUOTA_ENDPOINTS["opencode-go"].parse({
+			usage: { rolling: { percent: 7, resetsAt: "2020-01-01T00:00:00.000Z" } },
+		})?.text,
+		"GO 5h 7%",
+	);
+	assert.equal(QUOTA_ENDPOINTS["opencode-go"].parse(null), null);
+	assert.equal(QUOTA_ENDPOINTS["opencode-go"].url, "https://opencode.ai/zen/go/v1/usage");
 });
