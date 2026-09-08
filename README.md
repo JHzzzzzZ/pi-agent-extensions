@@ -200,7 +200,7 @@ export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选
 
 ## provider-quota
 
-查询当前 provider 的账户额度/余额并在终端状态行显示。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行附带 5 小时窗口的下次刷新时间（`GLM tok X% mcp Y% → HH:mm (Xh Ym)`，跨日显示 `MM-dd HH:mm`，字段以实测 `nextResetTime` 为准）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
+查询当前 provider 的账户额度/余额并在终端状态行显示。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行附带 5 小时窗口的下次刷新时间（`GLM tok X% mcp Y% → HH:mm (Xh Ym)`，跨日显示 `MM-dd HH:mm`，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）显示 5 小时/周/月三个窗口的用量百分比，后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
 
 效果示意（终端状态行，实测格式）：
 
@@ -209,6 +209,7 @@ OR $4.58 (used $5.42)                ← OpenRouter：剩余额度（已用）
 DS 102.50 CNY                        ← DeepSeek：余额
 CA 186.40                            ← ChatAnywhere：余额
 GLM tok 72% mcp 40% → 14:30 (2h 5m)  ← 智谱：token/MCP 窗口占用 + 下次刷新倒计时
+GO 5h 15% 周 6% 月 3% → 03:41 (2h14m) ← OpenCode Go：5h/周/月窗口 + 命中限额窗口的重置时间
 ```
 
 ```bash

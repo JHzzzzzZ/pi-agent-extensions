@@ -1,2 +1,2 @@
 - [x] 根 README 为每个插件增加效果示意图
-- [ ] 增加 opencode go（Muse Spark 等模型）的额度显示适配器
+- [x] 增加 opencode go（Muse Spark 等模型）的额度显示适配器（实测端点 /zen/go/v1/usage；限额窗口重置时间跟随命中限额的窗口）
