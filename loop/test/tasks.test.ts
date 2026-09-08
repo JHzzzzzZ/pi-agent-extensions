@@ -4,11 +4,14 @@ import type { RecurringSchedule } from "../parse.ts";
 import {
   MAX_TASKS,
   MAX_TASK_LEN,
+  MAX_BG_SUMMARY_LEN,
   RECURRING_TTL_MS,
   clearTasks,
   createTask,
   deleteTask,
   describeRecurrence,
+  formatBgRunLine,
+  formatBgRunStatus,
   formatCountdown,
   formatClock,
   formatTaskLines,
@@ -522,5 +525,114 @@ describe("daily/window 调度（v1.2）", () => {
     const lines = formatTaskLines(tasks, D(5, 10, 0));
     assert.match(lines[0]!, /每天 00:00–09:00 每 1h/);
     assert.match(lines[1]!, /每天 09:00/);
+  });
+});
+
+describe("后台任务模型（v1.3）", () => {
+  it("createTask 标记 background，键序追加在末尾（快照 JSON 稳定）", () => {
+    const tasks: LoopTask[] = [];
+    const r = createTask(
+      tasks,
+      { task: "巡检", recurring: true, intervalMs: 60_000, background: true, fireAtMs: BASE + 60_000, nowMs: BASE },
+      genId,
+    );
+    assert.ok(r.ok);
+    assert.equal(r.ok ? r.task.background : null, true);
+    const json = JSON.stringify(serializeTasks(tasks));
+    assert.match(json, /"paused":false,"background":true\}/);
+  });
+
+  it("前台任务快照不含 background / lastRun 字段", () => {
+    const tasks: LoopTask[] = [];
+    createTask(tasks, { task: "x", recurring: false, fireAtMs: BASE + 1000, nowMs: BASE }, genId);
+    const json = JSON.stringify(serializeTasks(tasks));
+    assert.ok(!json.includes("background"));
+    assert.ok(!json.includes("lastRun"));
+  });
+
+  it("serialize → hydrate 往返保留 background 与 lastRun", () => {
+    const t = makeRecurring(BASE + 60_000, {
+      background: true,
+      lastRun: { startedAt: BASE - 5000, finishedAt: BASE - 1000, status: "done", sessionId: "s1", sessionPath: "/p/s.jsonl", summary: "完成" },
+    });
+    const json = JSON.stringify(serializeTasks([t]));
+    const restored = hydrateTasks(JSON.parse(json), BASE);
+    assert.deepEqual(restored, [t]);
+  });
+
+  it("sanitize：恢复时 running → interrupted；非法 status / 缺 startedAt / 非对象丢弃 lastRun", () => {
+    const base = {
+      id: "bg00001", task: "巡检", recurring: true, intervalMs: 60_000, background: true,
+      nextDueAt: BASE + 60_000, createdAt: BASE, paused: false,
+    };
+    const restored = hydrateTasks(
+      {
+        tasks: [
+          { ...base, lastRun: { startedAt: BASE, status: "running" } },
+          { ...base, id: "bg00002", lastRun: { startedAt: BASE, status: "exploded" } },
+          { ...base, id: "bg00003", lastRun: { status: "done" } },
+          { ...base, id: "bg00004", lastRun: "not-an-object" },
+        ],
+      },
+      BASE,
+    );
+    assert.equal(restored.length, 4);
+    assert.equal(restored[0]!.lastRun!.status, "interrupted");
+    assert.equal(restored[1]!.lastRun, undefined);
+    assert.equal(restored[2]!.lastRun, undefined);
+    assert.equal(restored[3]!.lastRun, undefined);
+  });
+
+  it("sanitize：summary 截断到 MAX_BG_SUMMARY_LEN；类型非法的字段丢弃", () => {
+    const base = {
+      id: "bg00001", task: "巡检", recurring: true, intervalMs: 60_000, background: true,
+      nextDueAt: BASE + 60_000, createdAt: BASE, paused: false,
+    };
+    const restored = hydrateTasks(
+      { tasks: [{ ...base, lastRun: { startedAt: BASE, status: "done", sessionId: 123, summary: "y".repeat(999) } }] },
+      BASE,
+    );
+    const run = restored[0]!.lastRun!;
+    assert.equal(run.sessionId, undefined);
+    assert.equal(run.summary?.length, MAX_BG_SUMMARY_LEN);
+  });
+
+  it("formatTaskLines：[后台] 徽标 + 上次运行行；前台任务不受影响", () => {
+    const bg = makeRecurring(BASE + 60_000, {
+      id: "bgline1",
+      background: true,
+      lastRun: { startedAt: BASE - 5000, finishedAt: BASE, status: "done", sessionId: "sess-abcd", summary: "一切正常" },
+    });
+    const fg = makeRecurring(BASE + 120_000, { id: "fgline1" });
+    const lines = formatTaskLines([fg, bg], BASE);
+    assert.equal(lines.length, 3);
+    assert.match(lines[0]!, /\[后台\]/);
+    assert.match(lines[1]!, /└ 上次后台：完成 · 会话 sess-abcd · 一切正常/);
+    assert.doesNotMatch(lines[2]!, /\[后台\]/);
+  });
+
+  it("formatBgRunStatus 全状态；超长/多行摘要截断压平", () => {
+    assert.equal(formatBgRunStatus("running"), "运行中");
+    assert.equal(formatBgRunStatus("done"), "完成");
+    assert.equal(formatBgRunStatus("failed"), "失败");
+    assert.equal(formatBgRunStatus("timeout"), "超时");
+    assert.equal(formatBgRunStatus("interrupted"), "中断");
+    const t = makeRecurring(BASE + 60_000, {
+      id: "bglong1",
+      background: true,
+      lastRun: { startedAt: BASE, status: "failed", summary: "z".repeat(50) },
+    });
+    const line = formatBgRunLine(t)!;
+    assert.ok(line.length < 60);
+    assert.match(line, /…$/);
+  });
+
+  it("缺 lastRun 的后台任务只有单行", () => {
+    const t = makeRecurring(BASE + 60_000, { id: "bgtext1", background: true, task: "x".repeat(100) });
+    const lines = formatTaskLines([t], BASE);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]!, /\[后台\]/);
+    assert.match(lines[0]!, /…$/);
+    assert.equal(formatBgRunLine(t), undefined);
   });
 });

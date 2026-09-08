@@ -5,6 +5,7 @@
  *   /loop at 15:00 <任务>  一次性提醒（本地时刻）
  *   /loop daily at 09:00 <任务>                每天固定时刻循环
  *   /loop every 1h from 00:00 to 09:00 <任务>  每日时间窗口内按间隔循环（闭区间）
+ *   /loop --bg <上述任意创建形态>  v1.3：后台模式
  *   /loop list | pause <id> | resume <id> | delete <id> | clear
  *
  * agent 工具（tools.ts）：loop_create / loop_list / loop_delete，
@@ -15,11 +16,18 @@
  * 任务以全量快照持久化为自定义会话条目（loop-tasks-v1），随会话恢复；
  * 自定义条目不进入 LLM 上下文。
  *
+ * v1.3 后台模式（--bg / loop_create mode="background"）：到期不注入当前会话，
+ * 而是拉起独立子 pi 进程执行（runner.ts：pi --mode json -p --name loop-<id>，
+ * 不带 --no-session，会话落盘）；会话 id 从 JSON 输出头部捕获记入任务状态，
+ * 用 pi --session <id> 可恢复后台对话记录。同一任务上一轮未跑完则本次跳过；
+ * 会话关闭/重载时终止在途子进程并标记 interrupted。
+ *
  * 计时器生命周期：session_start 启动（无论有无 UI——调度不能依赖界面）、
  * session_shutdown 清理；模块级 dispose 防 /reload 双实例叠加（同 run-timer）。
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseLoopCommand } from "./parse.ts";
+import { runBgAgent, type BgRunOutcome } from "./runner.ts";
 import { registerLoopTools } from "./tools.ts";
 import {
   clearTasks,
@@ -34,6 +42,7 @@ import {
   pollDue,
   resumeTask,
   serializeTasks,
+  MAX_BG_SUMMARY_LEN,
   type LoopTask,
 } from "./tasks.ts";
 
@@ -49,6 +58,7 @@ const USAGE = [
   "  /loop at 15:00 <任务>  一次性提醒（本地时刻，已过则排到明天）",
   "  /loop daily at 09:00 <任务>  每天固定时刻循环",
   "  /loop every 1h from 00:00 to 09:00 <任务>  每日窗口内按间隔循环（闭区间）",
+  "  /loop --bg 5m <任务>   后台模式：拉起独立 pi 进程执行，会话可用 pi --session <id> 恢复",
   "  /loop list             查看全部任务",
   "  /loop pause <id>       暂停任务",
   "  /loop resume <id>      恢复任务",
@@ -56,14 +66,27 @@ const USAGE = [
   "  /loop clear            删除全部任务",
 ].join("\n");
 
+/** 后台运行注入点：测试替换为假实现；默认拉起真实子 pi 进程（runner.ts） */
+export interface LoopBgOverrides {
+  runBg?: (opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal }) => Promise<BgRunOutcome>;
+}
+
+interface BgEntry {
+  controller: AbortController;
+  startedAt: number;
+  aborted: boolean;
+}
+
 let dispose: (() => void) | undefined;
 
-export default function (pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
   dispose?.();
 
   const ownDispose = () => stopSession();
 
   const tasks: LoopTask[] = [];
+  const bgEntries = new Map<string, BgEntry>();
+  const runBg = overrides?.runBg ?? ((opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal }) => runBgAgent(opts));
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let savedCtx: ExtensionContext | undefined;
 
@@ -77,12 +100,21 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info"): void {
-    if (!ctx.hasUI) return;
+  function notify(ctx: ExtensionContext | undefined, message: string, level: "info" | "warning" | "error" = "info"): void {
+    if (!ctx?.hasUI) return;
     try {
       ctx.ui.notify(message, level);
     } catch {
       // 通知失败不影响任务状态
+    }
+  }
+
+  /** 宿主会话工作目录：后台子 pi 的 cwd，保证会话落在该项目、pi -r 选择器可见 */
+  function safeCwd(): string | undefined {
+    try {
+      return savedCtx?.sessionManager.getCwd();
+    } catch {
+      return undefined;
     }
   }
 
@@ -101,6 +133,7 @@ export default function (pi: ExtensionAPI) {
         const nextAt = Math.min(...active.map((t) => t.nextDueAt));
         line += ` · 下次 ${formatCountdown(nextAt - Date.now())}`;
       }
+      if (bgEntries.size > 0) line += ` · 后台运行 ${bgEntries.size}`;
       savedCtx.ui.setWidget(WIDGET_ID, [line]);
     } catch {
       // widget 失败不影响调度
@@ -111,6 +144,26 @@ export default function (pi: ExtensionAPI) {
     if (tickTimer) {
       clearInterval(tickTimer);
       tickTimer = undefined;
+    }
+    // v1.3：终止在途后台子进程，任务标记 interrupted（子进程的会话文件仍在，可 resume 查看）
+    if (bgEntries.size > 0) {
+      for (const [id, entry] of bgEntries) {
+        entry.aborted = true;
+        const live = tasks.find((t) => t.id === id);
+        if (live) {
+          live.lastRun = {
+            startedAt: entry.startedAt,
+            finishedAt: Date.now(),
+            status: "interrupted",
+            ...(live.lastRun?.sessionId ? { sessionId: live.lastRun.sessionId } : {}),
+            ...(live.lastRun?.sessionPath ? { sessionPath: live.lastRun.sessionPath } : {}),
+            summary: "会话结束，后台任务被终止",
+          };
+        }
+        entry.controller.abort();
+      }
+      bgEntries.clear();
+      persist();
     }
     if (savedCtx?.hasUI) {
       try {
@@ -124,6 +177,10 @@ export default function (pi: ExtensionAPI) {
   function deliver(due: LoopTask[]): void {
     for (const t of due) {
       try {
+        if (t.background) {
+          startBgRun(t);
+          continue;
+        }
         pi.sendMessage(
           {
             customType: LOOP_DUE_CUSTOM_TYPE,
@@ -137,6 +194,68 @@ export default function (pi: ExtensionAPI) {
         // 单条送达失败不影响其余任务
       }
     }
+  }
+
+  function bgDoneMessage(id: string, outcome: BgRunOutcome): string {
+    const session = outcome.sessionId
+      ? `会话 ${outcome.sessionId}（pi --session ${outcome.sessionId} 恢复查看）`
+      : "（未捕获会话 id）";
+    const summary = outcome.summary.length > 200 ? `${outcome.summary.slice(0, 199)}…` : outcome.summary;
+    if (outcome.status === "done") return `loop ${id} 后台完成 · ${session}\n结果：${summary}`;
+    if (outcome.status === "timeout") return `loop ${id} 后台运行超时被终止 · ${session}\n部分结果：${summary}`;
+    return `loop ${id} 后台运行失败（退出码 ${outcome.exitCode ?? "?"}）· ${session}\n输出：${summary}`;
+  }
+
+  function startBgRun(t: LoopTask): void {
+    if (bgEntries.has(t.id)) {
+      notify(savedCtx, `loop ${t.id} 上一轮后台仍在运行，本次触发跳过`, "warning");
+      return;
+    }
+    const startedAt = Date.now();
+    t.lastRun = { startedAt, status: "running" };
+    persist();
+    const entry: BgEntry = { controller: new AbortController(), startedAt, aborted: false };
+    bgEntries.set(t.id, entry);
+    refreshWidget();
+    notify(savedCtx, `loop ${t.id} 已转后台执行，完成后通知（会话可用 pi --session 恢复查看）`);
+    runBg({ taskId: t.id, prompt: t.task, cwd: safeCwd(), signal: entry.controller.signal })
+      .then((outcome) => finishBgRun(t.id, entry, outcome))
+      .catch((err) => {
+        bgEntries.delete(t.id);
+        const live = tasks.find((x) => x.id === t.id);
+        if (live && !entry.aborted) {
+          live.lastRun = {
+            startedAt: entry.startedAt,
+            finishedAt: Date.now(),
+            status: "failed",
+            summary: String(err).slice(0, MAX_BG_SUMMARY_LEN),
+          };
+          persist();
+        }
+        if (!entry.aborted) {
+          notify(savedCtx, `loop ${t.id} 后台运行异常：${err instanceof Error ? err.message : String(err)}`, "error");
+        }
+      });
+  }
+
+  function finishBgRun(id: string, entry: BgEntry, outcome: BgRunOutcome): void {
+    bgEntries.delete(id);
+    const live = tasks.find((x) => x.id === id);
+    // aborted 的记录已由 stopSession 写为 interrupted；被删除/过期清除的任务只剩通知
+    if (live && !entry.aborted) {
+      live.lastRun = {
+        startedAt: entry.startedAt,
+        finishedAt: Date.now(),
+        status: outcome.status,
+        ...(outcome.sessionId ? { sessionId: outcome.sessionId } : {}),
+        ...(outcome.sessionPath ? { sessionPath: outcome.sessionPath } : {}),
+        summary: outcome.summary,
+      };
+      persist();
+      refreshWidget();
+    }
+    if (entry.aborted) return;
+    notify(savedCtx, bgDoneMessage(id, outcome), outcome.status === "done" ? "info" : "warning");
   }
 
   function tick(): void {
@@ -178,6 +297,7 @@ export default function (pi: ExtensionAPI) {
             recurring: spec.recurring,
             intervalMs: spec.intervalMs,
             schedule: spec.schedule,
+            background: spec.background,
             fireAtMs: spec.fireAtMs ?? (spec.recurring ? now + (spec.intervalMs ?? 0) : now),
             nowMs: now,
           },
@@ -190,7 +310,10 @@ export default function (pi: ExtensionAPI) {
         persist();
         refreshWidget();
         const t = result.task;
-        notify(ctx, `已创建 loop ${t.id}：${describeRecurrence(spec)} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`);
+        notify(
+          ctx,
+          `已创建 loop ${t.id}：${describeRecurrence(spec)}${spec.background ? " · 后台执行" : ""} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`,
+        );
         return;
       }
       case "pause": {
@@ -237,9 +360,9 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("loop", {
-    description: "定时循环任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒（list/pause/resume/delete/clear 管理）",
+    description: "定时循环任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒；--bg 后台模式拉起独立 pi 进程（list/pause/resume/delete/clear 管理）",
     getArgumentCompletions: (prefix) => {
-      const items = ["list", "pause ", "resume ", "delete ", "clear", "in ", "at ", "daily ", "every day ", "every 1h from "];
+      const items = ["list", "pause ", "resume ", "delete ", "clear", "in ", "at ", "daily ", "every day ", "every 1h from ", "--bg "];
       return items
         .filter((s) => s.startsWith(prefix))
         .map((s) => ({ value: s, label: s.trim() }));

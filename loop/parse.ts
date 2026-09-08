@@ -7,6 +7,7 @@
  *   /loop at 15:00 <任务>      一次性提醒（本地时刻，已过则排到明天）
  *   /loop daily at 09:00 <任务>                每天固定时刻循环（= every day at）
  *   /loop every 1h from 00:00 to 09:00 <任务>  每日时间窗口 [start, end] 闭区间内按间隔循环
+ *   /loop --bg <上述任意创建形态>  v1.3：后台模式——到期拉起独立子 pi 进程执行（会话可 resume）
  *   /loop list | pause <id> | resume <id> | delete <id> | clear
  */
 
@@ -25,6 +26,8 @@ export interface CreateSpec {
   fireAtMs?: number;
   /** daily・window 调度描述（存在时优先于 intervalMs） */
   schedule?: RecurringSchedule;
+  /** v1.3：后台模式（缺省 = 前台注入当前会话） */
+  background?: boolean;
   task: string;
 }
 
@@ -121,13 +124,24 @@ export function nextWindowOccurrence(
   return d.getTime() + startMs;
 }
 
+/** v1.3：--bg 前缀标志（大小写不敏感）——本次任务走后台 agent */
+function takeBackgroundFlag(tokens: string[]): { background: boolean; rest: string[] } {
+  if (tokens[0]?.toLowerCase() === "--bg") return { background: true, rest: tokens.slice(1) };
+  return { background: false, rest: tokens };
+}
+
+function specWithBackground(spec: CreateSpec, background: boolean): CreateSpec {
+  return background ? { ...spec, background: true } : spec;
+}
+
 export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopCommand> {
   const trimmed = args.trim();
   if (!trimmed) return { ok: true, value: { kind: "usage" } };
 
   const tokens = trimmed.split(/\s+/);
 
-  // 子命令仅在整体形态完全匹配时生效，避免与任务文本冲突（如 "5m list pods"）
+  // 子命令仅在整体形态完全匹配时生效，避免与任务文本冲突（如 "5m list pods"）；
+  // --bg 不参与子命令（管理操作始终在当前会话内进行）
   if (tokens.length === 1) {
     if (tokens[0] === "list") return { ok: true, value: { kind: "list" } };
     if (tokens[0] === "clear") return { ok: true, value: { kind: "clear" } };
@@ -136,7 +150,8 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
     return { ok: true, value: { kind: tokens[0], id: tokens[1]! } };
   }
 
-  let rest = tokens;
+  const bg = takeBackgroundFlag(tokens);
+  let rest = bg.rest;
   let hadEvery = false;
   if (rest[0]?.toLowerCase() === "every") {
     hadEvery = true;
@@ -153,7 +168,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
     if (!task) return { ok: false, message: "请提供任务内容，例如：/loop in 30m 检查部署状态" };
     return {
       ok: true,
-      value: { kind: "create", spec: { recurring: false, fireAtMs: nowMs + taken.durationMs, task } },
+      value: { kind: "create", spec: specWithBackground({ recurring: false, fireAtMs: nowMs + taken.durationMs, task }, bg.background) },
     };
   }
 
@@ -166,7 +181,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
     if (!task) return { ok: false, message: "请提供任务内容，例如：/loop at 15:00 发布版本" };
     return {
       ok: true,
-      value: { kind: "create", spec: { recurring: false, fireAtMs, task } },
+      value: { kind: "create", spec: specWithBackground({ recurring: false, fireAtMs, task }, bg.background) },
     };
   }
 
@@ -184,7 +199,10 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
       ok: true,
       value: {
         kind: "create",
-        spec: { recurring: true, schedule: { kind: "daily", atMs }, fireAtMs: nextDailyOccurrence(atMs, nowMs), task },
+        spec: specWithBackground(
+          { recurring: true, schedule: { kind: "daily", atMs }, fireAtMs: nextDailyOccurrence(atMs, nowMs), task },
+          bg.background,
+        ),
       },
     };
   }
@@ -210,12 +228,15 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
         ok: true,
         value: {
           kind: "create",
-          spec: {
-            recurring: true,
-            schedule: { kind: "window", intervalMs, startMs, endMs },
-            fireAtMs: nextWindowOccurrence(intervalMs, startMs, endMs, nowMs),
-            task,
-          },
+          spec: specWithBackground(
+            {
+              recurring: true,
+              schedule: { kind: "window", intervalMs, startMs, endMs },
+              fireAtMs: nextWindowOccurrence(intervalMs, startMs, endMs, nowMs),
+              task,
+            },
+            bg.background,
+          ),
         },
       };
     }
@@ -226,7 +247,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
         ok: true,
         value: {
           kind: "create",
-          spec: { recurring: true, intervalMs: normalizeRecurringInterval(taken.durationMs), task },
+          spec: specWithBackground({ recurring: true, intervalMs: normalizeRecurringInterval(taken.durationMs), task }, bg.background),
         },
       };
     }

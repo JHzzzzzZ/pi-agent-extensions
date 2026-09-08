@@ -8,6 +8,8 @@
  *   - 暂停的任务不触发；恢复时错过的循环间隔直接跳过
  *   - v1.2：daily（每天固定时刻）/ window（每日时间窗口闭区间内按间隔循环）调度，
  *     推进按"now 之后（严格大于）的下一个触发点"计算，跨天用本地 Date rollover
+ *   - v1.3：后台模式（background / lastRun）——到期拉起独立子 pi 进程（见 runner.ts），
+ *     会话落盘可用 pi --session 恢复；运行记录随任务快照持久化
  */
 import {
   DAY_MS,
@@ -30,7 +32,32 @@ export interface LoopTask {
   /** 创建时刻（epoch ms），7 天过期的起算点 */
   createdAt: number;
   paused: boolean;
+  /** v1.3：后台模式——到期拉起独立子 pi 进程执行（会话落盘可 resume），不注入当前会话 */
+  background?: boolean;
+  /** v1.3：后台任务最近一次运行记录 */
+  lastRun?: BgRunRecord;
 }
+
+/** v1.3：后台任务最近一次运行的状态 */
+export type BgRunStatus = "running" | "done" | "failed" | "timeout" | "interrupted";
+
+const BG_RUN_STATUSES: readonly BgRunStatus[] = ["running", "done", "failed", "timeout", "interrupted"];
+
+export interface BgRunRecord {
+  /** 本次后台运行启动时刻（epoch ms） */
+  startedAt: number;
+  finishedAt?: number;
+  status: BgRunStatus;
+  /** 子 pi 会话 id（pi --session <id> 可恢复对话记录） */
+  sessionId?: string;
+  /** 会话文件绝对路径（best-effort 定位） */
+  sessionPath?: string;
+  /** 结果摘要：最后一条 assistant 文本（截断） */
+  summary?: string;
+}
+
+/** 后台运行摘要的持久化上限（超出截断） */
+export const MAX_BG_SUMMARY_LEN = 500;
 
 export const MAX_TASKS = 50;
 export const MAX_TASK_LEN = 2000;
@@ -43,6 +70,8 @@ export type CreateTaskInput = {
   intervalMs?: number;
   /** v1.2：daily/window 调度（存在时可省略 intervalMs） */
   schedule?: RecurringSchedule;
+  /** v1.3：后台模式（缺省 = 前台注入当前会话） */
+  background?: boolean;
   /** 首次触发时刻（epoch ms） */
   fireAtMs: number;
   nowMs: number;
@@ -94,8 +123,9 @@ export function createTask(
     createdAt: input.nowMs,
     paused: false,
   };
-  // schedule 追加在末尾，保证键顺序与 sanitizeTask 一致（快照 JSON 稳定可比）
+  // schedule/background/lastRun 依序追加在末尾，保证键顺序与 sanitizeTask 一致（快照 JSON 稳定可比）
   if (input.schedule !== undefined) task.schedule = input.schedule;
+  if (input.background === true) task.background = true;
   tasks.push(task);
   return { ok: true, task };
 }
@@ -269,6 +299,23 @@ function sanitizeSchedule(raw: unknown): RecurringSchedule | undefined {
   return undefined;
 }
 
+/** 防御式清洗后台运行记录：字段非法/越界一律丢弃或截断；恢复时 running 视为 interrupted（宿主中途退出） */
+function sanitizeLastRun(raw: unknown): BgRunRecord | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.startedAt !== "number" || !Number.isFinite(r.startedAt)) return undefined;
+  if (typeof r.status !== "string" || !BG_RUN_STATUSES.includes(r.status as BgRunStatus)) return undefined;
+  const rec: BgRunRecord = {
+    startedAt: r.startedAt,
+    status: r.status === "running" ? "interrupted" : (r.status as BgRunStatus),
+  };
+  if (typeof r.finishedAt === "number" && Number.isFinite(r.finishedAt)) rec.finishedAt = r.finishedAt;
+  if (typeof r.sessionId === "string" && r.sessionId) rec.sessionId = r.sessionId;
+  if (typeof r.sessionPath === "string" && r.sessionPath) rec.sessionPath = r.sessionPath;
+  if (typeof r.summary === "string" && r.summary) rec.summary = r.summary.slice(0, MAX_BG_SUMMARY_LEN);
+  return rec;
+}
+
 function sanitizeTask(raw: unknown): LoopTask | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
@@ -292,8 +339,11 @@ function sanitizeTask(raw: unknown): LoopTask | undefined {
     createdAt: r.createdAt,
     paused: r.paused === true,
   };
-  // 追加在末尾，与 createTask 的键顺序一致（快照 JSON 稳定可比）
+  // 依序追加在末尾，与 createTask 的键顺序一致（快照 JSON 稳定可比）
   if (schedule !== undefined) t.schedule = schedule;
+  if (r.background === true) t.background = true;
+  const lastRun = sanitizeLastRun(r.lastRun);
+  if (lastRun !== undefined) t.lastRun = lastRun;
   return t;
 }
 
@@ -336,13 +386,45 @@ export function describeRecurrence(t: {
   return `每 ${formatInterval(t.intervalMs ?? FALLBACK_INTERVAL_MS)}`;
 }
 
+/** 后台运行状态的人类描述（/loop list 上次运行行共用） */
+export function formatBgRunStatus(status: BgRunStatus): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "done":
+      return "完成";
+    case "failed":
+      return "失败";
+    case "timeout":
+      return "超时";
+    case "interrupted":
+      return "中断";
+  }
+}
+
+/** 后台任务的上次运行详情行（缺记录 / 非后台任务返回 undefined） */
+export function formatBgRunLine(t: LoopTask): string | undefined {
+  const run = t.lastRun;
+  if (!run) return undefined;
+  const parts = [`└ 上次后台：${formatBgRunStatus(run.status)}`];
+  if (run.sessionId) parts.push(`会话 ${run.sessionId}`);
+  if (run.summary) {
+    const s = run.summary.replace(/\s+/g, " ");
+    parts.push(s.length > 30 ? `${s.slice(0, 29)}…` : s);
+  }
+  return parts.join(" · ");
+}
+
 /** /loop list 与裸 /loop 的任务列表行，按触发先后排序 */
 export function formatTaskLines(tasks: LoopTask[], nowMs: number): string[] {
   const sorted = [...tasks].sort((a, b) => a.nextDueAt - b.nextDueAt);
-  return sorted.map((t) => {
+  return sorted.flatMap((t) => {
     const schedule = t.paused ? "⏸ 已暂停" : describeRecurrence(t);
     const next = t.paused ? "—" : formatClock(t.nextDueAt);
     const taskText = t.task.length > 40 ? `${t.task.slice(0, 39)}…` : t.task;
-    return `${t.id}  ${schedule}  ${next}  ${taskText}`;
+    const badge = t.background ? "[后台] " : "";
+    const line = `${t.id}  ${badge}${schedule}  ${next}  ${taskText}`;
+    const runLine = t.background ? formatBgRunLine(t) : undefined;
+    return runLine ? [line, runLine] : [line];
   });
 }

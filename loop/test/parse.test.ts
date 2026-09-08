@@ -338,6 +338,68 @@ describe("parseLoopCommand — daily / 每日时间窗口（v1.2）", () => {
   });
 });
 
+describe("parseLoopCommand — --bg 后台模式（v1.3）", () => {
+  it("--bg 5m + 任务 → background 标记", () => {
+    const r = parseLoopCommand("--bg 5m check the deploy", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.equal(spec.background, true);
+    assert.equal(spec.recurring, true);
+    assert.equal(spec.intervalMs, 300_000);
+    assert.equal(spec.task, "check the deploy");
+  });
+
+  it("--bg in 30m / --bg at 22:00 一次性", () => {
+    const r1 = parseLoopCommand("--bg in 30m push release", BASE);
+    assert.ok(r1.ok);
+    const s1 = createSpec(r1.ok ? r1.value : null);
+    assert.equal(s1.background, true);
+    assert.equal(s1.fireAtMs, BASE + 1_800_000);
+    assert.equal(s1.task, "push release");
+
+    const r2 = parseLoopCommand("--bg at 22:00 发布版本", BASE);
+    assert.ok(r2.ok);
+    const s2 = createSpec(r2.ok ? r2.value : null);
+    assert.equal(s2.background, true);
+    assert.equal(s2.fireAtMs, new Date(2026, 8, 5, 22, 0, 0).getTime());
+  });
+
+  it("--bg daily at 09:00", () => {
+    const r = parseLoopCommand("--bg daily at 09:00 晨报", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.equal(spec.background, true);
+    assert.deepEqual(spec.schedule, { kind: "daily", atMs: 9 * 3_600_000 });
+  });
+
+  it("--bg every 30m from 09:00 to 17:00 窗口", () => {
+    const r = parseLoopCommand("--bg every 30m from 09:00 to 17:00 巡检", BASE);
+    assert.ok(r.ok);
+    const spec = createSpec(r.ok ? r.value : null);
+    assert.equal(spec.background, true);
+    assert.ok(spec.schedule?.kind === "window");
+  });
+
+  it("大小写不敏感：--BG", () => {
+    const r = parseLoopCommand("--BG 5m x", BASE);
+    assert.ok(r.ok);
+    assert.equal(createSpec(r.ok ? r.value : null).background, true);
+  });
+
+  it("无 --bg 的形态不带 background 字段（保持既有语义兼容）", () => {
+    const r = parseLoopCommand("5m check the deploy", BASE);
+    assert.ok(r.ok);
+    assert.equal(createSpec(r.ok ? r.value : null).background, undefined);
+  });
+
+  it("--bg 单独出现 → usage；--bg 不劫持管理子命令（--bg list → usage）", () => {
+    const r1 = parseLoopCommand("--bg", BASE);
+    assert.ok(r1.ok && r1.value.kind === "usage");
+    const r2 = parseLoopCommand("--bg list", BASE);
+    assert.ok(r2.ok && r2.value.kind === "usage");
+  });
+});
+
 describe("parseSchedule — daily / 时间窗口（v1.2）", () => {
   const localAt = (dayOffset: number, hh: number, mm: number): number => {
     const d = new Date(BASE);

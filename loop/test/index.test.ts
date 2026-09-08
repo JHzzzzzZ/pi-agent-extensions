@@ -1,6 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import loopFactory from "../index.ts";
+import type { BgRunOutcome } from "../runner.ts";
 import type { LoopTask } from "../tasks.ts";
 
 const LOOP_TASKS_ENTRY = "loop-tasks-v1";
@@ -65,8 +66,17 @@ function rawTask(opts: {
   createdAt?: number;
   paused?: boolean;
   schedule?: { kind: "daily"; atMs: number } | { kind: "window"; intervalMs: number; startMs: number; endMs: number };
+  background?: boolean;
+  lastRun?: {
+    startedAt: number;
+    finishedAt?: number;
+    status: string;
+    sessionId?: string;
+    sessionPath?: string;
+    summary?: string;
+  };
 }) {
-  // 字段顺序与 serializeTasks 输出一致，保证 JSON 快照可比（schedule 追加在末尾）
+  // 字段顺序与 serializeTasks 输出一致，保证 JSON 快照可比（schedule/background/lastRun 依序追加在末尾）
   const base = {
     id: opts.id,
     task: opts.task ?? "种子任务",
@@ -76,7 +86,10 @@ function rawTask(opts: {
     createdAt: opts.createdAt ?? BASE,
     paused: opts.paused ?? false,
   };
-  return opts.schedule !== undefined ? { ...base, schedule: opts.schedule } : base;
+  const out: Record<string, unknown> = opts.schedule !== undefined ? { ...base, schedule: opts.schedule } : { ...base };
+  if (opts.background) out.background = true;
+  if (opts.lastRun) out.lastRun = opts.lastRun;
+  return out;
 }
 
 function createFakePi() {
@@ -119,6 +132,7 @@ function createFakePi() {
     },
     sessionManager: {
       getEntries: () => sessionEntries.slice(),
+      getCwd: () => "C:\\fake\\proj",
     },
   };
 
@@ -771,5 +785,270 @@ describe("loop_list / loop_delete 工具", () => {
     const missing = await fake.runTool("loop_delete", { id: "zzzz" });
     assert.equal(missing.isError, true);
     assert.match(toolText(missing), /未找到/);
+  });
+});
+
+// ---------- 后台模式（v1.3） ----------
+
+type RunBgCall = { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal };
+const flush = () => new Promise((r) => setTimeout(r, 0));
+const bgDone: BgRunOutcome = { status: "done", exitCode: 0, summary: "全部通过", stderr: "" };
+
+/** 后台模式公共脚手架：假 runBg 收集调用并返回手工 resolve 的 deferred */
+function makeBgHarness() {
+  const calls: RunBgCall[] = [];
+  const resolvers: Array<(v: BgRunOutcome) => void> = [];
+  const runBg = (opts: RunBgCall): Promise<BgRunOutcome> => {
+    calls.push(opts);
+    return new Promise<BgRunOutcome>((resolve) => resolvers.push(resolve));
+  };
+  return {
+    calls,
+    resolvers,
+    runBg,
+    resolveNext(outcome: BgRunOutcome): void {
+      resolvers.shift()!(outcome);
+    },
+  };
+}
+
+describe("后台模式（v1.3）— 创建", () => {
+  it("--bg 命令创建后台任务：通知与快照标记 background，未到期不拉起", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 5m 巡检服务");
+    assert.match(fake.lastNotification()!.message, /已创建 loop/);
+    assert.match(fake.lastNotification()!.message, /后台执行/);
+    const data = fake._persisted[0]!.data as { tasks: LoopTask[] };
+    assert.equal(data.tasks[0]!.background, true);
+    assert.equal(bg.calls.length, 0, "创建时不拉起，到期才拉起");
+  });
+
+  it("loop_create mode=background：任务标记后台并在 details 标注；缺省 mode 为前台", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const bgResult = await fake.runTool("loop_create", { task: "后台任务", schedule: "5m", mode: "background" });
+    assert.equal(bgResult.isError, undefined);
+    assert.match(toolText(bgResult), /后台执行/);
+    assert.equal(bgResult.details?.background, true);
+
+    const fgResult = await fake.runTool("loop_create", { task: "前台任务", schedule: "5m" });
+    assert.equal(fgResult.details?.background, undefined);
+    assert.doesNotMatch(toolText(fgResult), /后台执行/);
+
+    const data = fake._persisted[0]!.data as { tasks: LoopTask[] };
+    assert.equal(data.tasks[0]!.background, true);
+    const data2 = fake._persisted[1]!.data as { tasks: LoopTask[] };
+    assert.equal(data2.tasks[1]!.background, undefined);
+  });
+
+  it("/loop list：后台徽标与上次运行行", async () => {
+    const fake = createFakePi();
+    seedSnapshot(fake, [
+      rawTask({
+        id: "bgseed1",
+        recurring: true,
+        nextDueAt: BASE + 60_000,
+        background: true,
+        lastRun: { startedAt: BASE - 5000, finishedAt: BASE - 1000, status: "done", sessionId: "sess-7f2a", summary: "一切\n正常 很好" },
+      }),
+      rawTask({ id: "fgseed1", nextDueAt: BASE + 120_000 }),
+    ]);
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    await fake.runCommand("list");
+    const msg = fake.lastNotification()!.message;
+    assert.match(msg, /\[后台\]/);
+    assert.match(msg, /└ 上次后台：完成 · 会话 sess-7f2a · 一切 正常 很好/);
+  });
+});
+
+describe("后台模式（v1.3）— 触发与完成", () => {
+  it("后台一次性任务到期：不注入消息、拉起运行（带 cwd/prompt）；完成后通知恢复提示", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg in 1s 后台跑一遍检查");
+    const id = (fake._persisted[0]!.data as { tasks: LoopTask[] }).tasks[0]!.id;
+
+    fakeNow = BASE + 2_000;
+    fireTick();
+    assert.equal(fake._sent.length, 0, "后台任务不注入当前会话");
+    assert.equal(bg.calls.length, 1);
+    assert.equal(bg.calls[0]!.taskId, id);
+    assert.match(bg.calls[0]!.prompt, /后台跑一遍检查/);
+    assert.equal(bg.calls[0]!.cwd, "C:\\fake\\proj");
+    assert.match(fake.lastNotification()!.message, /已转后台执行/);
+
+    bg.resolveNext({ status: "done", exitCode: 0, sessionId: "sess-42", summary: "检查全部通过", stderr: "" });
+    await flush();
+    const afterDone = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(afterDone.tasks.length, 0, "一次性任务触发即自删，完成不复活");
+
+    const note = fake.lastNotification()!;
+    assert.match(note.message, /后台完成/);
+    assert.match(note.message, /pi --session sess-42/);
+    assert.match(note.message, /检查全部通过/);
+    assert.ok(!fake._widgets.has("loop"), "任务自删后 widget 移除");
+  });
+
+  it("循环后台任务完成：lastRun 记录会话 id 并落盘", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 巡检服务");
+    fakeNow = BASE + 61_000;
+    fireTick();
+    assert.equal(bg.calls.length, 1);
+    assert.match(fake._widgets.get("loop")!.content![0]!, /后台运行 1/);
+
+    bg.resolveNext({ status: "done", exitCode: 0, sessionId: "sess-9abc", summary: "OK", stderr: "" });
+    await flush();
+    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(last.tasks.length, 1);
+    assert.equal(last.tasks[0]!.lastRun!.status, "done");
+    assert.equal(last.tasks[0]!.lastRun!.sessionId, "sess-9abc");
+    assert.match(fake.lastNotification()!.message, /pi --session sess-9abc/);
+  });
+
+  it("后台失败/超时：警告通知带退出码或超时标记", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 会失败的任务");
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    bg.resolveNext({ status: "failed", exitCode: 2, summary: "boom", stderr: "boom" });
+    await flush();
+    let note = fake.lastNotification()!;
+    assert.equal(note.level, "warning");
+    assert.match(note.message, /后台运行失败/);
+    assert.match(note.message, /退出码 2/);
+
+    fakeNow = BASE + 121_000;
+    fireTick();
+    bg.resolveNext({ status: "timeout", exitCode: null, sessionId: "sess-t1", summary: "part", stderr: "" });
+    await flush();
+    note = fake.lastNotification()!;
+    assert.equal(note.level, "warning");
+    assert.match(note.message, /超时被终止/);
+    assert.match(note.message, /pi --session sess-t1/);
+  });
+
+  it("上一轮后台仍在运行：下次到期跳过并警告，不叠加拉起", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 慢任务");
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    assert.equal(bg.calls.length, 1);
+
+    fakeNow = BASE + 121_000;
+    fireTick();
+    assert.equal(bg.calls.length, 1, "在途时不二次拉起");
+    const note = fake.lastNotification()!;
+    assert.equal(note.level, "warning");
+    assert.match(note.message, /仍在运行，本次触发跳过/);
+
+    bg.resolveNext({ ...bgDone, sessionId: "sess-slow" });
+    await flush();
+    assert.match(fake.lastNotification()!.message, /sess-slow/);
+  });
+
+  it("后台运行中任务被删除：完成仅通知、不复活任务", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 要被删的任务");
+    const id = (fake._persisted[0]!.data as { tasks: LoopTask[] }).tasks[0]!.id;
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    await fake.runCommand(`delete ${id.slice(0, 4)}`);
+
+    bg.resolveNext({ ...bgDone, sessionId: "sess-gone" });
+    await flush();
+    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(last.tasks.length, 0, "删除不被完成回调复活");
+    assert.match(fake.lastNotification()!.message, /pi --session sess-gone/);
+  });
+
+  it("后台运行抛异常：错误通知且任务标记 failed", async () => {
+    const fake = createFakePi();
+    let failWith: ((e: unknown) => void) | undefined;
+    const runBg = (): Promise<BgRunOutcome> =>
+      new Promise((_resolve, reject) => {
+        failWith = reject;
+      });
+    loopFactory(fake as never, { runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 会抛异常的任务");
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    failWith!(new Error("调度器崩溃"));
+    await flush();
+    const note = fake.lastNotification()!;
+    assert.equal(note.level, "error");
+    assert.match(note.message, /后台运行异常/);
+    assert.match(note.message, /调度器崩溃/);
+    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(last.tasks[0]!.lastRun!.status, "failed");
+  });
+});
+
+describe("后台模式（v1.3）— 生命周期", () => {
+  it("session_shutdown：在途后台任务标记 interrupted 并 abort，完成回调不再打扰", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 跨会话任务");
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    assert.equal(bg.calls.length, 1);
+    assert.equal(bg.calls[0]!.signal?.aborted, false);
+
+    await fake.fire("session_shutdown");
+    assert.equal(bg.calls[0]!.signal?.aborted, true, "shutdown 中止在途子进程");
+    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(last.tasks[0]!.lastRun!.status, "interrupted");
+
+    const notesBefore = fake._notifications.length;
+    bg.resolveNext({ ...bgDone, sessionId: "sess-late" });
+    await flush();
+    assert.equal(fake._notifications.length, notesBefore, "关闭后不再通知");
+    const final = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
+    assert.equal(final.tasks[0]!.lastRun!.status, "interrupted", "不被完成回调覆盖");
+  });
+
+  it("恢复快照时 running 的 lastRun 显示为 interrupted", async () => {
+    const fake = createFakePi();
+    seedSnapshot(fake, [
+      rawTask({
+        id: "orph0001",
+        recurring: true,
+        nextDueAt: BASE + 60_000,
+        background: true,
+        lastRun: { startedAt: BASE - 600_000, status: "running" },
+      }),
+    ]);
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    await fake.runCommand("list");
+    assert.match(fake.lastNotification()!.message, /上次后台：中断/);
   });
 });
