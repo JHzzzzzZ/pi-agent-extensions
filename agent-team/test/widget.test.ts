@@ -7,8 +7,9 @@
 
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildWidgetRows, handleWidgetKey, initialWidgetKeyState } from "../widget.ts";
+import { buildWidgetRows, handleWidgetKey, initialWidgetKeyState, renderWidgetView } from "../widget.ts";
 import type { RunStatusSnapshot } from "../cockpit.ts";
+import { plainStyles, visibleWidth } from "../viewer.ts";
 
 const ACTIVATE_CSI = "\x1b[1;3B"; // alt+down, modified-arrow CSI encoding
 const ACTIVATE_LEGACY = "\x1b\x1b[B"; // alt+down, legacy xterm ESC-prefix encoding
@@ -59,32 +60,30 @@ function doneSnapshot(): RunStatusSnapshot {
   };
 }
 
-test("buildWidgetRows live: renderWidgetLines format with leader/member actor mapping", () => {
+test("buildWidgetRows live: compact header (status/elapsed/parallel count) + task, all leader rows", () => {
   const rows = buildWidgetRows(liveSnapshot(), 65000);
-  assert.match(rows[0].text, /agent-team dev-team ▶ running · 1m5s/);
+  assert.equal(rows.length, 2, "compact: header + task only, no member detail");
+  assert.match(rows[0].text, /agent-team dev-team ▶ running · 1m5s · 1\/2 并行/);
   assert.match(rows[1].text, /任务: 修复登录 bug/);
-  assert.match(rows[2].text, /leader: m1 · turn 2/);
-  assert.match(rows[3].text, /↳ 正在审查成员结果/);
-  assert.match(rows[4].text, /▶ frontend running — turn 1 — 正在编辑 login\.tsx/);
-  assert.match(rows[5].text, /✓ backend done/);
   assert.deepEqual(
     rows.map((row) => row.actor),
-    ["_leader", "_leader", "_leader", "_leader", "frontend", "backend"],
+    ["_leader", "_leader"],
   );
 });
 
 test("buildWidgetRows terminal: status, duration, cost from the last record", () => {
   const rows = buildWidgetRows(doneSnapshot(), 0);
+  assert.equal(rows.length, 2);
   assert.match(rows[0].text, /agent-team dev-team ✓ completed · 12s · \$0\.0500/);
   assert.match(rows[1].text, /任务: 修复 bug/);
-  assert.match(rows[2].text, /✓ frontend done — m — \$0\.0100/);
-  assert.equal(rows[2].actor, "frontend");
+  assert.deepEqual(rows.map((row) => row.actor), ["_leader", "_leader"]);
 });
 
-test("buildWidgetRows terminal failed record surfaces the error row", () => {
+test("buildWidgetRows terminal failed record keeps one bounded error row", () => {
   const snapshot = doneSnapshot();
   snapshot.lastRecord = { ...snapshot.lastRecord!, status: "failed", error: "模型超时，任务中断" };
   const rows = buildWidgetRows(snapshot, 0);
+  assert.equal(rows.length, 3);
   assert.match(rows[0].text, /agent-team dev-team ✗ failed · 12s/);
   assert.match(rows[2].text, /✗ 模型超时，任务中断/);
   assert.equal(rows[2].actor, "_leader");
@@ -160,4 +159,32 @@ test("key reducer: re-activation keeps the previous cursor position", () => {
   const state = deselected.type === "update" ? deselected.state : initialWidgetKeyState();
   const reactivated = handleWidgetKey(state, ACTIVATE_CSI, 3, actors);
   assert.ok(reactivated.type === "update" && reactivated.state.selected && reactivated.state.cursor === 2);
+});
+
+test("renderWidgetView truncates every line to terminal width (CJK-heavy rows)", () => {
+  // Regression: the host TUI crashes when a component line renders wider
+  // than the terminal; rows are bounded by char count only, so CJK-heavy
+  // text (44-char task = up to 88 columns) must be width-fitted here.
+  const snapshot = liveSnapshot();
+  snapshot.progress!.task = "实现一个摄影教学网页产出完整的页面结构与文案与样式与脚本内容超长截断示例";
+  const rows = buildWidgetRows(snapshot, 65000);
+  const styles = plainStyles();
+
+  for (const width of [270, 120, 40, 20]) {
+    for (const selected of [false, true]) {
+      const lines = renderWidgetView(rows, { selected, cursor: 1 }, width, styles);
+      assert.ok(lines.length > 0);
+      for (const line of lines) {
+        assert.ok(
+          visibleWidth(line) <= width,
+          `selected=${selected} width=${width}: line renders ${visibleWidth(line)} > ${width}`,
+        );
+      }
+    }
+  }
+
+  // Selection gutter counts toward the budget, cursor marker still visible.
+  const selected = renderWidgetView(rows, { selected: true, cursor: 1 }, 270, styles);
+  assert.match(selected[1], /^▸ /);
+  assert.match(selected[selected.length - 1], /↑↓ 选择/);
 });

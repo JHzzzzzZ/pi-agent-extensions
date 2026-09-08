@@ -19,14 +19,16 @@
  */
 
 import { matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
-import { widgetRowSpecs, type RunStatusSnapshot, type WidgetRowSpec } from "./cockpit.ts";
-import { LEADER_ACTOR, sanitizeActorName } from "./transcript.ts";
-import type { Styles } from "./viewer.ts";
+import { elapsedLabel, type RunStatusSnapshot } from "./cockpit.ts";
+import { LEADER_ACTOR } from "./transcript.ts";
+import { truncateVisible, type Styles } from "./viewer.ts";
 import { WIDGET_TICK_MS } from "./types.ts";
 
-// ---------------------------------------------------------------------------
-// Row building (pure)
-// ---------------------------------------------------------------------------
+/** One widget row plus the transcript actor its enter opens in the viewer. */
+export interface WidgetRowSpec {
+  text: string;
+  actor: string;
+}
 
 function recordIcon(status: string): string {
   return status === "completed" || status === "done"
@@ -43,31 +45,31 @@ function truncateTask(text: string): string {
 }
 
 /**
- * Widget rows for a run snapshot: live progress rows (via widgetRowSpecs,
- * same format the old above-editor widget used) or, after the run ends,
- * terminal rows from the last record — the block stays open for review
- * instead of freezing on "▶ running". Empty when there is nothing to show.
+ * Compact widget rows for a run snapshot: a header line (team, status,
+ * elapsed, live parallel-member count) plus the bounded task line — member
+ * detail lives in the transcript viewer, not here. A failed/aborted run
+ * keeps one bounded error row. Empty when there is nothing to show.
  */
 export function buildWidgetRows(snapshot: RunStatusSnapshot, nowMs: number): WidgetRowSpec[] {
+  const rows: WidgetRowSpec[] = [];
   if (snapshot.running && snapshot.progress) {
-    return widgetRowSpecs(snapshot.progress, nowMs);
+    const progress = snapshot.progress;
+    const running = progress.members.filter((member) => member.status === "running").length;
+    const counts = progress.members.length > 0 ? ` · ${running}/${progress.members.length} 并行` : "";
+    rows.push({
+      text: `agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}`,
+      actor: LEADER_ACTOR,
+    });
+    rows.push({ text: `任务: ${truncateTask(progress.task)}`, actor: LEADER_ACTOR });
+    return rows;
   }
   const record = snapshot.lastRecord;
   if (!record) return [];
-
-  const rows: WidgetRowSpec[] = [];
   const secs = record.durationMs !== undefined ? ` · ${Math.round(record.durationMs / 100) / 10}s` : "";
   const cost = record.totalCost > 0 ? ` · $${record.totalCost.toFixed(4)}` : "";
   rows.push({ text: `agent-team ${record.team} ${recordIcon(record.status)} ${record.status}${secs}${cost}`, actor: LEADER_ACTOR });
   rows.push({ text: `任务: ${truncateTask(record.task)}`, actor: LEADER_ACTOR });
   if (record.error) rows.push({ text: `✗ ${truncateTask(record.error)}`, actor: LEADER_ACTOR });
-  for (const member of record.members) {
-    const bits = [`${recordIcon(member.status)} ${member.name} ${member.status}`];
-    if (member.model) bits.push(member.model);
-    if (member.usage) bits.push(`$${member.usage.cost.toFixed(4)}`);
-    if (member.summary) bits.push(member.summary.length > 60 ? `${member.summary.slice(0, 60)}…` : member.summary);
-    rows.push({ text: bits.join(" — "), actor: sanitizeActorName(member.name) });
-  }
   return rows;
 }
 
@@ -136,6 +138,36 @@ export function handleWidgetKey(
     return { type: "update", state: { selected: false, cursor: state.cursor } };
   }
   return { type: "passthrough", state: { selected: false, cursor: state.cursor } };
+}
+
+// ---------------------------------------------------------------------------
+// Rendering (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Width-fitted, styled widget lines. Truncation happens on the PLAIN text
+ * before styling (ANSI codes would break width measurement); the host TUI
+ * crashes on component lines wider than the terminal, and row texts are
+ * bounded by char count only — CJK-heavy rows render up to 2× wider.
+ */
+export function renderWidgetView(
+  rows: WidgetRowSpec[],
+  state: WidgetKeyState,
+  width: number,
+  styles: Styles,
+): string[] {
+  if (rows.length === 0) return [];
+  const usable = Math.max(8, width);
+  if (!state.selected) {
+    return rows.map((row) => styles.dim(truncateVisible(row.text, usable)));
+  }
+  const inner = Math.max(8, usable - 2); // "▸ " / "  " gutter
+  const lines = rows.map((row, index) => {
+    const text = truncateVisible(row.text, inner);
+    return index === state.cursor ? styles.accent(`▸ ${text}`) : styles.dim(`  ${text}`);
+  });
+  lines.push(styles.dim(truncateVisible("↑↓ 选择 · enter 查看 · esc 退出", usable)));
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +240,7 @@ export class TeamRunWidget implements Component {
     }
   }
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
     let snapshot: RunStatusSnapshot;
     try {
       snapshot = this.opts.load();
@@ -216,18 +248,8 @@ export class TeamRunWidget implements Component {
       return [];
     }
     this.rows = buildWidgetRows(snapshot, this.opts.nowMs?.() ?? Date.now());
-    if (this.rows.length === 0) return [];
-    if (this.state.cursor > this.rows.length - 1) this.state.cursor = this.rows.length - 1;
-
-    const styles = this.opts.styles;
-    if (!this.state.selected) {
-      return this.rows.map((row) => styles.dim(row.text));
-    }
-    const lines = this.rows.map((row, index) =>
-      index === this.state.cursor ? styles.accent(`▸ ${row.text}`) : styles.dim(`  ${row.text}`),
-    );
-    lines.push(styles.dim("↑↓ 选择 · enter 查看 · esc 退出"));
-    return lines;
+    if (this.state.cursor > this.rows.length - 1) this.state.cursor = Math.max(0, this.rows.length - 1);
+    return renderWidgetView(this.rows, this.state, width, this.opts.styles);
   }
 
   invalidate(): void {

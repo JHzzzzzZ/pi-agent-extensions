@@ -13,7 +13,7 @@ import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
-import { FileTranscriptSink, LEADER_ACTOR, sanitizeActorName, type TranscriptEntryKind } from "./transcript.ts";
+import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, type GitRunner } from "./worktree.ts";
 import {
   LEADER_ENV_FILE,
@@ -57,7 +57,8 @@ export type StartRunResult =
   | { ok: true; value: TeamRunRecord }
   | { ok: false; code: TeamErrorCode; message: string };
 
-function elapsedLabel(startedAtMs: number, nowMs: number): string {
+/** Elapsed label for live runs: "45s" / "3m12s". */
+export function elapsedLabel(startedAtMs: number, nowMs: number): string {
   const totalSecs = Math.max(0, Math.round((nowMs - startedAtMs) / 1000));
   const mins = Math.floor(totalSecs / 60);
   const secs = totalSecs % 60;
@@ -76,45 +77,6 @@ function toolResultText(toolName: string, result: unknown): string {
   const single = (text: string): string => text.replace(/\s+/g, " ").trim();
   const text = single(`${toolName}${result === undefined || result === null ? "" : ` → ${result}`}`);
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
-}
-
-/** One widget row plus the transcript actor it opens in the viewer on enter. */
-export interface WidgetRowSpec {
-  text: string;
-  actor: string;
-}
-
-/**
- * Live-progress widget rows (plain text; styling applied by the renderer).
- * Single source of truth for the live format — `renderWidgetLines` and the
- * below-editor widget both build on it (unit-tested).
- */
-export function widgetRowSpecs(progress: RunProgress, nowMs: number): WidgetRowSpec[] {
-  const rows: WidgetRowSpec[] = [];
-  rows.push({ text: `agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}`, actor: LEADER_ACTOR });
-  const task = progress.task.length > 44 ? `${progress.task.slice(0, 44)}…` : progress.task;
-  rows.push({ text: `任务: ${task}`, actor: LEADER_ACTOR });
-  const leaderBits: string[] = [];
-  if (progress.leaderModel) leaderBits.push(progress.leaderModel);
-  if (progress.leaderNote) leaderBits.push(progress.leaderNote);
-  rows.push({ text: `leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`, actor: LEADER_ACTOR });
-  if (progress.leaderActivity) {
-    rows.push({ text: `  ↳ ${progress.leaderActivity}`, actor: LEADER_ACTOR });
-  }
-  for (const member of progress.members) {
-    const icon =
-      member.status === "done" ? "✓" : member.status === "failed" ? "✗" : member.status === "aborted" ? "⊘" : "▶";
-    const bits = [`${icon} ${member.name} ${member.status}`];
-    if (member.note) bits.push(member.note);
-    if (member.latest) bits.push(member.latest);
-    rows.push({ text: bits.join(" — "), actor: sanitizeActorName(member.name) });
-  }
-  return rows;
-}
-
-/** Dimmed live widget lines (kept for /team:status-style plain consumers). */
-export function renderWidgetLines(progress: RunProgress, nowMs: number, dim: (text: string) => string): string[] {
-  return widgetRowSpecs(progress, nowMs).map((row) => dim(row.text));
 }
 
 /** Immutable snapshot of the current/most recent run (status queries). */

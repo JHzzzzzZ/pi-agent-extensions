@@ -8,7 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { formatStatusSnapshot, renderWidgetLines, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
+import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import {
   makeFakeSpawn,
@@ -111,33 +111,6 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   const status = coordinator.getStatus();
   assert.equal(status.running, false);
   assert.equal(status.lastRecord?.runId, run.runId);
-});
-
-test("widget renderer shows team, task, leader activity and member lines", () => {
-  const lines = renderWidgetLines(
-    {
-      runId: "r",
-      team: "dev-team",
-      task:
-        "一个比较长的任务描述超过四十四个字符会被截断省略号结尾一个比较长的任务描述超过四十四个字符省略",
-      startedAtMs: 0,
-      leaderModel: "m1",
-      leaderNote: "turn 2",
-      leaderActivity: "正在审查成员结果",
-      members: [
-        { name: "frontend", status: "running", note: "turn 1", latest: "正在编辑 login.tsx" },
-        { name: "backend", status: "done" },
-      ],
-    },
-    65000,
-    (t) => t,
-  );
-  assert.match(lines[0], /agent-team dev-team ▶ running · 1m5s/);
-  assert.match(lines[1], /任务: .+…/);
-  assert.match(lines[2], /leader: m1 · turn 2/);
-  assert.match(lines[3], /↳ 正在审查成员结果/);
-  assert.match(lines[4], /▶ frontend running — turn 1 — 正在编辑 login\.tsx/);
-  assert.match(lines[5], /✓ backend done/);
 });
 
 test("team-level shared worktree: leader runs inside it and the record carries it", async () => {
