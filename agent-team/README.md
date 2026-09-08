@@ -91,7 +91,7 @@ members:
 | `esc` | 退出选中 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget` 组件工厂每会话只挂载一次，组件自持 1s 重绘 tick 拉取 `getStatus()` 快照；按键经 `tui.addInputListener`（先于编辑器分发，可吞键/放行）+ 纯函数 reducer 处理；查看器 overlay 打开期间自动旁路。
+实现：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新（宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 

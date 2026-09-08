@@ -2,23 +2,17 @@
  * agent-team — below-editor live run widget (selectable bright block)
  *
  * Renders the coordinator's run snapshot BELOW the editor (placement
- * "belowEditor", first user in this workspace) instead of the old
- * per-second string[] widget above it. Mounted once as a component
- * factory; pulls `coordinator.getStatus()` on every render and ticks a
- * 1s repaint timer for elapsed labels.
+ * "belowEditor") as plain `setWidget(key, string[], …)` refreshed on a 1s
+ * interval, and makes the block selectable: alt+down/up activates a modal
+ * selection, bare arrows move the row cursor, enter opens the transcript
+ * viewer on the row's actor, esc (or any other key) leaves selection and —
+ * except for esc — passes the key through to the editor untouched.
  *
- * Selection is modal: bare arrows/enter belong to the editor (cursor
- * movement, history, submit), so the block only takes them over after an
- * explicit activation key (alt+down / alt+up). While selected: up/down
- * move the row cursor, enter opens the transcript viewer on the row's
- * actor, esc (or any other key) leaves selection and — except for esc —
- * passes the key through to the editor untouched.
- *
- * Row building and the key reducer are pure and unit-tested;
- * `TeamRunWidget` is the thin pi-tui host component (repo convention).
+ * Row building and the key reducer are pure and unit-tested; the
+ * `RunWidgetController` wires them to the host without a pi-tui component.
  */
 
-import { matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
+import { matchesKey } from "@earendil-works/pi-tui";
 import { elapsedLabel, type RunStatusSnapshot } from "./cockpit.ts";
 import { LEADER_ACTOR } from "./transcript.ts";
 import { truncateVisible, type Styles } from "./viewer.ts";
@@ -171,44 +165,72 @@ export function renderWidgetView(
 }
 
 // ---------------------------------------------------------------------------
-// Host component (thin; not unit-tested — repo convention)
+// Controller (host-agnostic: string[] setWidget + terminal input hook)
 // ---------------------------------------------------------------------------
 
-export interface TeamRunWidgetOptions {
+export interface RunWidgetControllerOptions {
   /** Coordinator status provider (live progress or last record). */
   load: () => RunStatusSnapshot;
   styles: Styles;
-  /** Requests a repaint (host passes a guarded tui.requestRender). */
-  requestRender: () => void;
   /** Enter handler: opens the transcript viewer on the row's actor. */
   onConfirm: (actor: string) => void;
   /** While true the widget ignores activation (viewer overlay open). */
   gate?: () => boolean;
+  /** Terminal width provider; defaults to process.stdout.columns ?? 80. */
+  width?: () => number;
   /** Test seam; defaults to Date.now(). */
   nowMs?: () => number;
   tickMs?: number;
 }
 
-/** pi-tui component: input listener + repaint timer + row rendering. */
-export class TeamRunWidget implements Component {
-  private readonly opts: TeamRunWidgetOptions;
+/**
+ * Owns the below-editor widget WITHOUT a pi-tui component: display is plain
+ * `setWidget(key, string[], { placement: "belowEditor" })` on a 1s interval —
+ * the host wraps and renders string widgets itself, the rendering path
+ * proven stable across host builds (a per-tick component-factory repaint
+ * turned into appended-line trails on one bundled host build). Selection
+ * hooks the terminal input through a host callback (`ctx.ui.onTerminalInput`
+ * where available); keys are consumed before the editor only while the
+ * modal selection is active, so unsupported hosts just lose the shortcut.
+ */
+export class RunWidgetController {
   private state = initialWidgetKeyState();
   private rows: WidgetRowSpec[] = [];
-  private readonly removeListener: () => void;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private removeInput: (() => void) | undefined;
+  private readonly opts: RunWidgetControllerOptions;
+  private readonly setWidget: (lines: string[] | undefined) => void;
+  private readonly attachInput: ((handler: (data: string) => { consume?: boolean } | undefined) => (() => void) | undefined) | undefined;
 
-  constructor(opts: TeamRunWidgetOptions, tui: TUI) {
+  constructor(
+    opts: RunWidgetControllerOptions,
+    setWidget: (lines: string[] | undefined) => void,
+    attachInput?: (handler: (data: string) => { consume?: boolean } | undefined) => (() => void) | undefined,
+  ) {
     this.opts = opts;
-    this.removeListener = tui.addInputListener((data) => this.onData(data));
-    this.timer = setInterval(() => this.repaint(), opts.tickMs ?? WIDGET_TICK_MS);
+    this.setWidget = setWidget;
+    this.attachInput = attachInput;
+  }
+
+  /** Starts the repaint loop and (when available) the input hook. */
+  start(): void {
+    if (this.timer) return;
+    this.removeInput = this.attachInput?.((data) => this.onData(data));
+    this.refresh();
+    this.timer = setInterval(() => this.refresh(), this.opts.tickMs ?? WIDGET_TICK_MS);
     if (typeof this.timer.unref === "function") this.timer.unref();
   }
 
-  private repaint(): void {
+  /** Rebuilds rows and pushes them to the host (one setWidget per tick). */
+  refresh(): void {
     try {
-      this.opts.requestRender();
+      const snapshot = this.opts.load();
+      this.rows = buildWidgetRows(snapshot, this.opts.nowMs?.() ?? Date.now());
+      if (this.state.cursor > this.rows.length - 1) this.state.cursor = Math.max(0, this.rows.length - 1);
+      const width = this.opts.width?.() ?? process.stdout.columns ?? 80;
+      this.setWidget(renderWidgetView(this.rows, this.state, width, this.opts.styles));
     } catch {
-      /* rendering is best-effort */
+      /* widget failures never break the session */
     }
   }
 
@@ -224,7 +246,7 @@ export class TeamRunWidget implements Component {
       if (result.type === "none") return undefined;
       this.state = result.state;
       if (result.type === "confirm") {
-        this.repaint();
+        this.refresh();
         try {
           this.opts.onConfirm(result.actor);
         } catch {
@@ -233,35 +255,20 @@ export class TeamRunWidget implements Component {
         return { consume: true };
       }
       if (result.type === "passthrough") return undefined;
-      this.repaint();
+      this.refresh();
       return { consume: true };
     } catch {
       return undefined; /* key failures never break the session */
     }
   }
 
-  render(width: number): string[] {
-    let snapshot: RunStatusSnapshot;
-    try {
-      snapshot = this.opts.load();
-    } catch {
-      return [];
-    }
-    this.rows = buildWidgetRows(snapshot, this.opts.nowMs?.() ?? Date.now());
-    if (this.state.cursor > this.rows.length - 1) this.state.cursor = Math.max(0, this.rows.length - 1);
-    return renderWidgetView(this.rows, this.state, width, this.opts.styles);
-  }
-
-  invalidate(): void {
-    /* stateless rendering — nothing cached */
-  }
-
-  /** Stops the repaint timer and removes the input listener. */
-  dispose(): void {
-    this.removeListener();
+  /** Stops the repaint loop and removes the input hook. */
+  stop(): void {
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.removeInput?.();
+    this.removeInput = undefined;
   }
 }

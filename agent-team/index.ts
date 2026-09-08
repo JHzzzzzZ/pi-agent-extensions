@@ -26,7 +26,7 @@ import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
-import { TeamRunWidget } from "./widget.ts";
+import { RunWidgetController } from "./widget.ts";
 import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData } from "./viewer.ts";
 import {
   FileTranscriptSink,
@@ -236,6 +236,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     projectTrusted: boolean;
     /** Below-editor run widget mounted once per session. */
     widgetMounted: boolean;
+    widget: RunWidgetController | undefined;
     /** True while the transcript viewer overlay is open (widget key gate). */
     viewerOpen: boolean;
   } = {
@@ -249,6 +250,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     cwd: process.cwd(),
     projectTrusted: false,
     widgetMounted: false,
+    widget: undefined,
     viewerOpen: false,
   };
 
@@ -317,40 +319,50 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   };
 
   /**
-   * Mounts the below-editor run widget (idempotent per session). The widget
-   * pulls getStatus() on its own repaint ticks, so mounting once is enough
-   * for both live runs and the hydrated/finished last record.
+   * Mounts the below-editor run widget (idempotent per session): a 1s
+   * string[] setWidget loop plus (when the host exposes it) a
+   * `ctx.ui.onTerminalInput` hook for the modal selection.
    * PI_AGENT_TEAM_WIDGET=0 disables it entirely (rendering diagnostics).
    */
   const ensureRunWidget = (ctx: ExtensionContext): void => {
     if (process.env.PI_AGENT_TEAM_WIDGET === "0") return;
     if (state.widgetMounted || !ctx.hasUI || ctx.mode !== "tui") return;
     try {
-      ctx.ui.setWidget(
-        WIDGET_ID,
-        (tui, theme) =>
-          new TeamRunWidget(
-            {
-              load: () => state.coordinator.getStatus(),
-              styles: themeStyles(theme),
-              requestRender: () => {
-                try {
-                  tui.requestRender();
-                } catch {
-                  /* rendering is best-effort */
-                }
-              },
-              onConfirm: (actor) => {
-                void openViewer(ctx, actor).catch(() => {
-                  /* opening failures never break the session */
-                });
-              },
-              gate: () => state.viewerOpen,
-            },
-            tui,
-          ),
-        { placement: "belowEditor" },
+      const controller = new RunWidgetController(
+        {
+          load: () => state.coordinator.getStatus(),
+          styles: themeStyles(ctx.ui.theme),
+          onConfirm: (actor) => {
+            void openViewer(ctx, actor).catch(() => {
+              /* opening failures never break the session */
+            });
+          },
+          gate: () => state.viewerOpen,
+        },
+        (lines) => {
+          try {
+            ctx.ui.setWidget(WIDGET_ID, lines, { placement: "belowEditor" });
+          } catch {
+            /* widget failures never break the session */
+          }
+        },
+        (handler) => {
+          const hookable = ctx.ui as {
+            onTerminalInput?: (h: (data: string) => { consume?: boolean } | undefined) => (() => void) | void;
+          };
+          if (typeof hookable.onTerminalInput !== "function") return undefined;
+          const remove = hookable.onTerminalInput((data) => {
+            try {
+              return handler(data);
+            } catch {
+              return undefined; /* key failures never break the session */
+            }
+          });
+          return typeof remove === "function" ? remove : undefined;
+        },
       );
+      controller.start();
+      state.widget = controller;
       state.widgetMounted = true;
     } catch {
       /* widget failures never break the session */
@@ -657,8 +669,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     state.cwd = ctx.cwd;
     state.projectTrusted = ctx.isProjectTrusted();
     state.viewerOpen = false;
-    clearWidget(ctx); // disposes the previous session's widget component
+    state.widget?.stop();
+    state.widget = undefined;
     state.widgetMounted = false;
+    clearWidget(ctx);
 
     // Hydrate the most recent run record so /team:status works after reload.
     try {
@@ -707,6 +721,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
 
   pi.on("session_shutdown", async (_event, ctx) => {
     state.coordinator.stop();
+    state.widget?.stop();
+    state.widget = undefined;
     clearWidget(ctx);
   });
 
