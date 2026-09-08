@@ -67,7 +67,7 @@ members:
 
 | 方式 | 说明 |
 |---|---|
-| `/team:run <团队名> <任务>` | **后台运行**：命令立即返回，主会话可继续对话；Widget 实时显示进度，完成后报告自动送入会话 |
+| `/team:run <团队名> <任务>` | **后台运行**：命令立即返回，主会话可继续对话；输入栏下方亮块实时显示进度（见 §4），完成后报告自动送入会话 |
 | `/team:<团队名> <任务>` | 等价快捷方式（`/reload` 后对新团队生效） |
 | `team_run` 工具 | 让主 agent 自主派单（同步等待，流式进度） |
 
@@ -75,7 +75,23 @@ members:
 
 其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）。
 
-### 4. 会话记录查看器（/team:view）与成员 transcript
+### 4. 进度亮块（输入栏下方，可键盘选中）
+
+派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`）：平时暗色，显示 leader/各成员实时状态与最新动作；run 结束后切换为终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），不残留 "running" 字样，保留可查看。
+
+裸 `↑`/`↓`/`enter` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的：
+
+| 按键 | 作用 |
+|---|---|
+| `alt+↓` / `alt+↑` | 进入选中：亮块高亮，出现行光标与按键提示行 |
+| `↑` / `↓` | 在行间移动光标（首末行钳位） |
+| `enter` | 打开 `/team:view` 查看器并定位到光标行的 agent（成员行→该成员，标题/leader 行→leader） |
+| `esc` | 退出选中 |
+| 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
+
+实现：`setWidget` 组件工厂每会话只挂载一次，组件自持 1s 重绘 tick 拉取 `getStatus()` 快照；按键经 `tui.addInputListener`（先于编辑器分发，可吞键/放行）+ 纯函数 reducer 处理；查看器 overlay 打开期间自动旁路。
+
+### 5. 会话记录查看器（/team:view）与成员 transcript
 
 派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏边框页查看器**（约 82% 终端高、96% 宽，完整边框与主 agent 界面明确分割）。**每一页是一个 agent**（leader 或成员，`←→`/`1-9` 切换），页面内容是与主 agent 一致的连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，自上而下完整时间线实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
@@ -104,7 +120,7 @@ members:
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
 - 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、动态 `/team:<name>`
-- Widget：运行期间显示 leader/各成员实时状态与最新动作（仅 TUI 模式）
+- Widget：输入栏下方可选中亮块——`alt+↓` 选中、`↑`/`↓` 行光标、`enter` 直达查看器并定位成员（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
 
 ## 开发与测试
@@ -112,7 +128,7 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（85 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（93 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
