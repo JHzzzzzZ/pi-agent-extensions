@@ -1,6 +1,6 @@
 {
 	"name": "pwr",
-	"version": "2.3.0",
+	"version": "2.4.0",
 	"private": true,
 	"type": "module",
 	"description": "PWR (Pi Workflow Runtime) — v2.3.0：v2.2.0 + /workflows:view 全屏运行查看器与脚本结构图 (JHL-18)",
