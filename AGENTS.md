@@ -7,6 +7,16 @@ Workspace of extensions for the Pi coding agent (docs/comments are Chinese; code
 - **`pwr/` — primary project.** PWR (Pi Workflow Runtime) v2.4.0: users write constrained ECMAScript workflow scripts; PWR validates them, shows an approval card, then runs them by spawning child `pi` processes as sub-agents (`PiAgentRunner`). v2.4.0 adds a live per-step run trace (runner `onEvent` → runtime `task_event` → viewer agent rows), `/workflows:saved` listing, and schema-guided `key=value` args input for `/workflow:<name>` (JSON still accepted). Zero-build TypeScript ESM, executed directly by Node >= 22.18 native type-stripping.
 - **Satellites** (independent, same extension shape): `agent-team/` (reusable multi-agent teams: independent leader child dispatches member children via `team_dispatch`), `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `run-timer/` (session/task/turn timer widget), `loop/` (`/loop` fixed-interval loops + daily-at-time loops + daily-window interval loops (v1.2.0) + one-shot reminders + `--bg` background-agent mode (v1.3.0: foreground followUp delivery OR spawning a resumable child `pi --mode json -p` process whose session id is captured and recoverable via `pi --session <id>`; `runner.ts`), followUp delivery + session-entry snapshot persistence, agent tools `loop_create/list/delete`), `goal/` (`/goal` session goal loop — agent auto-continues across turns until an independent LLM evaluator judges the condition met), `opencode-bridge/` (spawns/reuses a local HTTP CONNECT → SOCKS5 bridge helper (`opencode-bridge-helper.mjs`, zero-dep standalone process) so Pi's `httpProxy` can route through a local SOCKS5 (v2rayN); `session_start` probes `127.0.0.1:<port>` first so multiple Pi/subagent instances share one bridge, spawns detached + unref'd (Pi never holds child resources), `/opencode-bridge` status command, env `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT`; helper survives socket errors/ECONNRESET, exits 0 on port-in-use).
 
+## Requirement Intake → `todos/` Registration (Mandatory)
+
+所有需求入口（对话中提出的新需求、子代理/团队派单任务、bug/重构请求等）在动手实现前，必须先到 `todos/` 目录完成登记，规则如下：
+
+1. **定位对应文件** — `todos/` 下每个插件一份 `<插件名>-todo.md`（如 `todos/pwr-todo.md`、`todos/agent-team-todo.md`）。先判断需求归属哪个插件，打开对应文件；跨插件需求在涉及的各文件中分别登记。
+2. **领取或新建条目** — 文件内已有匹配的条目 → 直接领取该条；没有 → 在文件末尾追加一条 `- [ ] <需求描述>` 新建。
+3. **标注 processing（进行中）** — 领取或新建后立即把该条目标注为处理中：`- [ ] <需求描述>（processing）`；需求完成前始终保持此状态。未开始的条目保持 `- [ ]`，已完成条目为 `- [x] <需求描述>`。
+4. **完成后标注完成** — 需求全部完成（代码 + README/AGENTS/package.json 同步，见 Delivery 节）后，改为 `- [x] <需求描述>` 并去掉 processing 标注。
+5. 取消/搁置的需求在条目上注明原因后还原为 `- [ ]` 或删除，`todos/` 始终反映真实状态。
+
 ## Architecture & Data Flow
 
 PWR (`pwr/`) is layered, with `src/types.ts` as the shared contract hub (`RuntimeAdapter`, `ScriptEngine`, `WorkflowRun`, `PwrErrorResult`, entry/custom-message constants, caps). Not strictly layered — `runtime/` imports `src/plan.ts` and `src/ui/types.ts` (RunEvent); `engine/interpreter.ts` re-exports `runner/errors.ts` `RunnerError`.
@@ -87,6 +97,7 @@ Every coding change is only complete when its docs and manifests are updated in 
 
 - **README**: update the affected extension's section in the root `README.md` (and `pwr/README.md` / `pwr/DELIVERY.md` for PWR) — new/changed features, usage, and the measured test count.
 - **AGENTS.md**: update whenever architecture, file layout, conventions, commands, or measured test counts change (satellite descriptions in Project Overview / Key Directories, test counts in Development Commands and Testing & QA).
+- **`todos/`**: 每个插件必须对应一份 `todos/<插件名>-todo.md`，与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应；**新增插件时必须在同一变更里同步创建该 todo 文件**，缺失视为交付不完整。
 - **package.json**: bump `version` (and `description` if it names features) in every touched extension's `package.json`; also bump the root `package.json` `version` (kept aligned with the shipped feature version, e.g. loop v1.3.0 → root 1.3.0).
 - Docs/manifest updates ship as their own commit(s) in the same push (convention: `docs:` / `chore(pi):` prefixes).
 
