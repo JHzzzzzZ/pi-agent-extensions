@@ -1,14 +1,16 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加四个独立卫星扩展（模型提供商、额度查询、流式计量、运行计时）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加六个独立卫星扩展（模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 355 个（node:test） |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 模型提供商（OpenAI 兼容 + Anthropic API） | 无 |
-| [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 无 |
+| [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
+| [`loop/`](#loop) | /loop 定时任务：固定间隔循环 + 一次性提醒 | 91 个（node:test） |
+| [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 39 个 |
 
 ## 安装
 
@@ -132,11 +134,45 @@ node --experimental-strip-types --test provider-quota/index.test.ts
 node --experimental-strip-types --test run-timer/run-timer.test.ts
 ```
 
+## loop
+
+定时任务扩展（精简版，参考 Claude Code `/loop`）：固定间隔循环 + 一次性提醒。到期任务经 `deliverAs: "followUp"` 在回合间送达——agent 空闲则开新 turn，正在响应则排队到当前 turn 结束；错过的时间点不补跑。任务以全量快照持久化为会话条目（`loop-tasks-v1`，不进 LLM 上下文），随会话恢复；重复任务 7 天过期、每会话上限 50 个、widget 显示下次倒计时。
+
+| 命令 | 作用 |
+| --- | --- |
+| `/loop 5m <任务>` | 固定间隔循环（单位 `s/m/h/d`，最小 1m，秒向上取整；兼容 `every 2 hours` 分写） |
+| `/loop in 30m <任务>` | 一次性提醒（相对时间） |
+| `/loop at 15:00 <任务>` | 一次性提醒（本地时刻，已过则排到明天） |
+| `/loop list` | 查看全部任务 |
+| `/loop pause <id>` / `resume <id>` | 暂停/恢复（id 支持前缀匹配） |
+| `/loop delete <id>` / `clear` | 删除单个/全部任务 |
+
+**agent 工具**（v1.1.0）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"明天 9 点提醒我"这类自然语言请求由 agent 自行建任务。
+
+```bash
+cd loop
+npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
+npm test           # 91 个测试（node:test）
+npm run typecheck  # tsc --noEmit（strict，0 错误）
+```
+
+## goal
+
+会话目标循环（参考 Claude Code `/goal`）：`/goal <条件>` 设置完成条件后，agent 跨回合自动推进——每个回合结束（`agent_settled`）由**独立 LLM 评估器**（当前会话模型的一次小调用，限 512 tokens）根据目标 + 最近回合 assistant 输出判定 `{met, reason}`；未达成则携带评估原因自动开启下一回合（`triggerTurn + followUp` 续跑通道），达成后自动清除目标并写入结果条目。**不设轮次上限**，可在条件文本中自限（如 "or stop after 20 turns"）。
+
+- `/goal` 查看状态（目标/已评估轮数/时长/评估器最近判定）；`/goal clear|stop|off|reset|none|cancel` 停止；`/goal resume` 在手动中断或评估器连续失败暂停后恢复
+- 每会话一个活跃目标，条件最长 4000 字符；恢复会话时目标保留但轮数/计时重置；不改变任何工具权限语义
+- 手动中断（Esc）自动暂停；评估器连续 3 次失败暂停（瞬时失败不杀循环）；状态行 `◎ goal: …`
+
+```bash
+node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
+```
+
 ---
 
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`pwr/` 用 tab 缩进，`run-timer/`、`stream-token-speed/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`pwr/` 用 tab 缩进，`run-timer/`、`stream-token-speed/`、`loop/`、`goal/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`pwr/vendor/acorn.mjs` 为生成文件，勿修改

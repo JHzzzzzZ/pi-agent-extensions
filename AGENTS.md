@@ -5,7 +5,7 @@
 Workspace of extensions for the Pi coding agent (docs/comments are Chinese; code is English). Extensions load by being copied into `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (trusted project), then `/reload` in Pi.
 
 - **`pwr/` — primary project.** PWR (Pi Workflow Runtime) v2.2.0: users write constrained ECMAScript workflow scripts; PWR validates them, shows an approval card, then runs them by spawning child `pi` processes as sub-agents (`PiAgentRunner`). Zero-build TypeScript ESM, executed directly by Node >= 22.18 native type-stripping.
-- **Satellites** (independent, same extension shape): `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `run-timer/` (session/task/turn timer widget).
+- **Satellites** (independent, same extension shape): `stream-token-speed/` (TTFT + live token/s status), `chatanywhere-provider/` (OpenAI-compatible + Anthropic Messages provider adapters), `provider-quota/` (balance status + `/quota`), `run-timer/` (session/task/turn timer widget), `loop/` (`/loop` fixed-interval loops + one-shot reminders, followUp delivery + session-entry snapshot persistence, agent tools `loop_create/list/delete`), `goal/` (`/goal` session goal loop — agent auto-continues across turns until an independent LLM evaluator judges the condition met).
 
 ## Architecture & Data Flow
 
@@ -31,7 +31,7 @@ PWR (`pwr/`) is layered, with `src/types.ts` as the shared contract hub (`Runtim
 - `pwr/src/` + `pwr/src/ui/` — orchestration contracts and TUI layer.
 - `pwr/test/`, `pwr/tests/`, `pwr/runtime/test/`, `pwr/runner/test/` — node:test suites (see Testing).
 - `pwr/vendor/` — vendored acorn 8.18.0 (`acorn.mjs` + hand-rolled `acorn.d.mts` + license); generated file, don't modify. Imported only by `engine/parser.ts` so PWR has zero runtime npm deps.
-- Satellites: `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `run-timer/` (index.ts + test, no package.json). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy.
+- Satellites: `stream-token-speed/` (multi-file: index/adapter/controller/metrics/status-port + test/), `chatanywhere-provider/` (index.ts + package.json with `pi.extensions` manifest), `provider-quota/` (index.ts, no package.json), `run-timer/` (index.ts + test, no package.json), `loop/` (parse.ts + tasks.ts + tools.ts + index.ts + package.json with `pi.extensions` manifest + tsconfig), `goal/` (single file + test, no package.json: turn chaining via `agent_settled` + `pi.sendMessage({triggerTurn, deliverAs:"followUp"})`, state persisted as `goal-state-v1` entries, evaluator = one small `ctx.modelRegistry` + pi-ai `provider.stream` call). Every extension directory uses `index.ts` as its entry point, so pi auto-discovery (`extensions/*/index.ts`) loads it after a plain directory copy.
 
 ## Development Commands
 
@@ -49,6 +49,9 @@ Satellites (not covered by pwr's script):
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 43 tests
 node --experimental-strip-types --test run-timer/run-timer.test.ts               # no package.json here
+node --experimental-strip-types --test goal/index.test.ts                        # 39 tests, no package.json here
+node --experimental-strip-types --test provider-quota/index.test.ts              # 15 tests, no package.json here
+cd loop && npm install && npm test                                               # 91 tests; also: npm run typecheck
 ```
 
 No build step, no linter, no formatter configured.
@@ -72,8 +75,8 @@ Other patterns:
 - **File header comments** cite JHL ticket IDs + PRD sections (`* PWR - Pi Workflow Runtime extension entry (JHL-16 trigger/generation/approval + JHL-17 save/load & parameter commands)`). Keep them updated.
 - **Security invariants** (PWR): no `vm`/`eval`; whitelist validation before execution; fail-closed defaults (missing engine/runner ⇒ typed error, no implicit fallback); script source/args never persisted; `pwr-tmp://` in-process only; no API keys stored; error messages are static templates.
 - **Typebox** for tool parameter schemas (`src/tools.ts` `registerPwrTools`).
-- **TUI conventions (satellites):** guard writes with `ctx.hasUI`, style via `theme.fg("dim", …)`, exception-isolate every `setStatus`/`setWidget` call, one status key per extension (`stream-token-speed`, `provider-quota`, `run-timer`).
-- Indentation: tabs in `pwr/`, 2 spaces in `run-timer/` and `stream-token-speed/`.
+- **TUI conventions (satellites):** guard writes with `ctx.hasUI`, style via `theme.fg("dim", …)`, exception-isolate every `setStatus`/`setWidget` call, one status key per extension (`stream-token-speed`, `provider-quota`, `run-timer`, `loop`, `goal`). `loop/` passes plain (unstyled) strings to `setWidget` — `ExtensionUIContext` has no `theme` field, so typed access to `ctx.ui.theme` does not compile.
+- Indentation: tabs in `pwr/`, 2 spaces in `run-timer/`, `stream-token-speed/`, `loop/`, and `goal/`.
 
 ## Important Files
 
@@ -96,11 +99,11 @@ Other patterns:
 
 ## Testing & QA
 
-- **Framework: `node:test` + `node:assert/strict`** — no vitest/jest; no mock libraries. Flat `test("name", fn)` naming in pwr and stream-token-speed (prose assertions, some Chinese names); `describe`/`it` only in `run-timer.test.ts` (47 `it`s, with a `setInterval` mock via before/after hooks). `*.test.ts` suffix everywhere.
+- **Framework: `node:test` + `node:assert/strict`** — no vitest/jest; no mock libraries. Flat `test("name", fn)` naming in pwr, stream-token-speed, and goal (prose assertions, some Chinese names); `describe`/`it` in `run-timer.test.ts` (47 `it`s, with a `setInterval` mock via before/after hooks) and `loop/test/`. `*.test.ts` suffix everywhere.
 - **Mocking = hand-written fakes at process boundaries:** fake `AgentRunner` (`makeFakeRunner`, `pwr/test/helpers.ts`), fake pi child (`FakeChild` + `makeFakeSpawn` + `waitForChild`, `pwr/runner/test/helpers.ts`), `RecordingStatusPort` (`stream-token-speed/test/fixtures.ts`). The real pi-tui is never instantiated in tests (structural fakes cast `as never`).
 - **Integration pattern:** wire real modules (`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`) with a mocked spawn, scripted child events, and polling `waitSettled` (10ms × 100) — see `pwr/runner/test/integration.test.ts` (happy path + `restart_agent` semantics; `handle.records.length` proves cache replay doesn't spawn).
 - **Perf gate:** `pwr/test/perf.test.ts` — `validateScript` on ~1500-agent / ~64KB scripts must finish < 300ms (wall clock).
-- **Counts (measured via grep):** pwr ≈ 335 tests across 30 `*.test.ts` files (test/ 98, tests/ 153, runtime/test/ 47, runner/test/ 37) — READMEs claim 346, DELIVERY.md 322; trust the measured count. stream-token-speed 43; run-timer 47.
-- **Coverage gaps:** `chatanywhere-provider` and `provider-quota` have zero tests. No TODO/skip/only markers anywhere.
+- **Counts (measured via grep):** pwr ≈ 335 tests across 30 `*.test.ts` files (test/ 98, tests/ 153, runtime/test/ 47, runner/test/ 37) — READMEs claim 346, DELIVERY.md 322; trust the measured count. stream-token-speed 43; run-timer 47; loop 91; goal 39; provider-quota 15.
+- **Coverage gaps:** `chatanywhere-provider` has zero tests. No TODO/skip/only markers anywhere.
 - **Determinism & hermeticity:** injected fixed clocks (`2026-08-05T12:00:00Z`), temp dirs via `os.tmpdir()` with cleanup, no network.
 - Quality bar per `pwr/DELIVERY.md`: full suite green + `npm run typecheck` zero errors before delivery.
