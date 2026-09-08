@@ -320,8 +320,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
    * Mounts the below-editor run widget (idempotent per session). The widget
    * pulls getStatus() on its own repaint ticks, so mounting once is enough
    * for both live runs and the hydrated/finished last record.
+   * PI_AGENT_TEAM_WIDGET=0 disables it entirely (rendering diagnostics).
    */
   const ensureRunWidget = (ctx: ExtensionContext): void => {
+    if (process.env.PI_AGENT_TEAM_WIDGET === "0") return;
     if (state.widgetMounted || !ctx.hasUI || ctx.mode !== "tui") return;
     try {
       ctx.ui.setWidget(
