@@ -1,1 +1,2 @@
 - [x] 根 README 为每个插件增加效果示意图
+- [ ] 增加 opencode go（Muse Spark 等模型）的额度显示适配器
