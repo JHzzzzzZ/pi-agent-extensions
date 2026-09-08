@@ -735,21 +735,7 @@ const gpt4CAModels: ModelDef[] = [
 
 // ---- DeepSeek 系列 ----
 const deepseekModels: ModelDef[] = [
-	{
-		id: "deepseek-v3-2",
-		name: "DeepSeek V3-2",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.0012),
-			output: per1M(0.0018),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		// DeepSeek V3.2：约 160K 上下文，最大输出 64K。
-		contextWindow: 163840,
-		maxTokens: 65536,
-	},
+	
 	{
 		id: "deepseek-v4-flash",
 		name: "DeepSeek V4 Flash",
@@ -778,19 +764,10 @@ const deepseekModels: ModelDef[] = [
 		contextWindow: 1000000,
 		maxTokens: 128000,
 	},
-	model("deepseek-v3.2", "DeepSeek V3.2", 0.0012, 0.0018, 163840, 65536, true),
-	// DeepSeek API 的兼容别名：chat 为 8K，reasoner/R1 为 64K 输出。
-	model("deepseek-chat", "DeepSeek Chat", 0.0012, 0.0018, 128000, 8192),
-	model(
-		"deepseek-reasoner",
-		"DeepSeek Reasoner",
-		0.0024,
-		0.0096,
-		128000,
-		65536,
-		true,
-	),
-	model("deepseek-r1", "DeepSeek R1", 0.0024, 0.0096, 128000, 65536, true),
+	
+	
+	
+	
 ];
 
 // ---- Qwen 系列 ----
@@ -879,81 +856,24 @@ const kimiModels: ModelDef[] = [
 		true,
 		["text", "image"],
 	),
-	model("kimi-k2.6", "Kimi K2.6", 0.00455, 0.0189, 262144, 32768, true, [
-		"text",
-	]),
-	model("kimi-k2.5", "Kimi K2.5", 0.0028, 0.0147, 262144, 32768, true, [
-		"text",
-		"image",
-	]),
+	
+	
 ];
 
 // ---- GLM 系列 ----
 const glmModels: ModelDef[] = [
 	// GLM-5.2 官方规格：1M 上下文；GLM-5 系列最大生成长度为 131,072。
 	model("glm-5.2", "GLM-5.2", 0.0064, 0.0224, 1048576, 131072, true, ["text"]),
-	model("glm-5.1", "GLM-5.1", 0.0036, 0.0144, 200000, 131072, true, ["text"]),
-	model("glm-5", "GLM-5", 0.0024, 0.0108, 200000, 131072, true, ["text"]),
+	
+	
 ];
 
 // ---- Claude 系列（通过 Anthropic Messages API） ----
 const claudeModels: ModelDef[] = [
-	{
-		id: "claude-opus-4-8",
-		name: "Claude Opus 4.8",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.025),
-			output: per1M(0.125),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 128000,
-	},
-	{
-		id: "claude-sonnet-4-6",
-		name: "Claude Sonnet 4.6",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.015),
-			output: per1M(0.075),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 128000,
-	},
-	{
-		id: "claude-opus-4-5-20251101",
-		name: "Claude Opus 4.5 (20251101)",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.025),
-			output: per1M(0.125),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 200000,
-		maxTokens: 64000,
-	},
-	{
-		id: "claude-sonnet-4-5-20250929",
-		name: "Claude Sonnet 4.5 (20250929)",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.015),
-			output: per1M(0.075),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 200000,
-		maxTokens: 64000,
-	},
+	
+	
+	
+	
 	{
 		id: "claude-haiku-4-5-20251001",
 		name: "Claude Haiku 4.5 (20251001)",
@@ -968,48 +888,9 @@ const claudeModels: ModelDef[] = [
 		contextWindow: 200000,
 		maxTokens: 64000,
 	},
-	{
-		id: "claude-opus-4-5",
-		name: "Claude Opus 4.5",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.025),
-			output: per1M(0.125),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 200000,
-		maxTokens: 64000,
-	},
-	{
-		id: "claude-opus-4-6",
-		name: "Claude Opus 4.6",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.025),
-			output: per1M(0.125),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 128000,
-	},
-	{
-		id: "claude-opus-4-7",
-		name: "Claude Opus 4.7",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.025),
-			output: per1M(0.125),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 128000,
-	},
+	
+	
+	
 	{
 		id: "claude-opus-5",
 		name: "Claude Opus 5",
@@ -1070,128 +951,23 @@ const minimaxModels: ModelDef[] = [
 		contextWindow: 1000000,
 		maxTokens: 8192,
 	},
-	model("minimax-m2.1", "MiniMax M2.1", 0.00126, 0.00504, 1000000, 8192, true),
-	model("minimax-m2.5", "MiniMax M2.5", 0.00126, 0.00504, 1000000, 8192, true),
-	model("minimax-m2.7", "MiniMax M2.7", 0.00126, 0.00504, 1000000, 8192, true),
+	
+	
+	
 ];
 
 // ---- Gemini 系列 ----
 const geminiModels: ModelDef[] = [
-	{
-		id: "gemini-2.5-pro",
-		name: "Gemini 2.5 Pro",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.007),
-			output: per1M(0.04),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 64000,
-	},
-	{
-		id: "gemini-2.5-flash",
-		name: "Gemini 2.5 Flash",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.0012),
-			output: per1M(0.01),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 64000,
-	},
-	{
-		id: "gemini-2.5-flash-lite",
-		name: "Gemini 2.5 Flash Lite",
-		reasoning: false,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.0004),
-			output: per1M(0.0016),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 64000,
-	},
-	{
-		id: "gemini-3-pro-preview",
-		name: "Gemini 3 Pro Preview",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.008),
-			output: per1M(0.048),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 64000,
-	},
-	{
-		id: "gemini-3-flash-preview",
-		name: "Gemini 3 Flash Preview",
-		reasoning: true,
-		input: ["text", "image"],
-		cost: {
-			input: per1M(0.002),
-			output: per1M(0.012),
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 1000000,
-		maxTokens: 64000,
-	},
-	model(
-		"gemini-2.5-flash-image-preview",
-		"Gemini 2.5 Flash Image Preview",
-		0.0015,
-		0.15,
-		1000000,
-		64000,
-		false,
-	),
-	// 这些图像模型按张计费；Pi 的 token 成本字段无法表示该费用，因此保留为 0。
-	model(
-		"gemini-3-pro-image-preview",
-		"Gemini 3 Pro Image Preview",
-		0,
-		0,
-		1000000,
-		64000,
-		false,
-	),
-	model(
-		"gemini-3.1-flash-image-preview",
-		"Gemini 3.1 Flash Image Preview",
-		0.0025,
-		0.3,
-		1000000,
-		64000,
-		false,
-	),
-	model(
-		"gemini-3.1-pro-preview",
-		"Gemini 3.1 Pro Preview",
-		0.008,
-		0.048,
-		1000000,
-		64000,
-		true,
-	),
-	model(
-		"gemini-3.1-flash-lite-preview",
-		"Gemini 3.1 Flash Lite Preview",
-		0.001,
-		0.006,
-		1000000,
-		64000,
-	),
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	model(
 		"gemini-3.5-flash",
 		"Gemini 3.5 Flash",
