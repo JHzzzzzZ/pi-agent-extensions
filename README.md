@@ -57,6 +57,42 @@ pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
 
 本地工作流编排扩展（v2.4.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行。
 
+### 效果示意
+
+`/workflows` 运行列表（实测格式）：
+
+```text
+PWR runs (2)
+run        script              status             elapsed    agents     tokens    cost     warnings
+a1b2c3d4   code-review.js      completed          2m 14s     12/12      84.2k     $0.41    -
+e5f6a7b8   doc-translate.js    running            0m 38s     3/9        21.7k     $0.09    [!] large run
+```
+
+`workflow_validate` 成功后自动弹出批准卡（关闭卡片仍是待批准，不是拒绝）：
+
+```text
+Approve workflow "code-review.js"?
+run:   a1b2c3d4
+digest 3f9a1c2e4b
+
+（脚本执行计划：stage 划分 / 每个 stage 的 agent 数 / budget 估算）
+
+Choices: Run once / Remember for this script / View raw script / Reject
+  ❯ Run once
+    Remember for this script
+    View raw script
+    Reject
+```
+
+`/workflows:view <runId>` 全屏运行查看器（脚本结构图 + 每 stage 一页 + 实时 trace）：
+
+```text
+┌─ PWR · code-review.js · running · 1m 05s · run a1b2c3d4 ─────────────────┐
+│ [1 概览] [2 Stages] [3 Agents] [4 Result] [5 脚本]                        │
+│ …每个 agent 行下方实时滚动该子 agent 的工具调用摘要与输出尾部、tokens 累计 │
+└─ ctrl+alt+z 暂停 · ctrl+alt+x 停止 · ctrl+alt+r 重启 agent · ↑/↓ 滚动 ───┘
+```
+
 ### 功能
 
 - **脚本引擎**（`engine/`）— acorn 解析 + 白名单校验（拒绝 `eval`/`vm`/反射/原型访问/动态代码）+ AST 解释器；单次快照安全边界，防宿主泄漏；脚本 ≤ 256KB、单运行 ≤ 1000 次 agent 调用、并发 ≤ 128
@@ -66,7 +102,7 @@ pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
 - **结果回传** — 运行成功或失败后以 `pwr-workflow-result` 消息自动唤起主 agent 汇报；用户主动取消不打扰
 - **批准记忆** — 批准键 = 项目 canonical path + 脚本 SHA-256 digest；脚本被编辑后必须重新批准
 - **保存/复用**（`workflow_save` + `/workflow:<name> <参数>`）— 自动补齐 meta、落盘前强制重新校验、参数 JSON-schema 校验（`meta.argsSchema`）；args 支持 **`key=value` 语法**（按 schema 自动转类型，重复键/逗号成数组，`{` 开头仍按 JSON 解析，v2.4.0）；保存位置：用户范围 `~/.pi/agent/workflows/<name>.js`、项目范围 `.pi/workflows/<name>.js`（仅可信项目）
-- **观察与控制**（`/workflows`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+p/x/r`；`/workflows:saved` 列出已保存工作流（scope/描述/参数提示），`/workflow-delete` 不带名称时同样先列出（v2.4.0）
+- **观察与控制**（`/workflows`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+z/x/r`；`/workflows:saved` 列出已保存工作流（scope/描述/参数提示），`/workflow-delete` 不带名称时同样先列出（v2.4.0）
 
 ### 命令
 
@@ -107,6 +143,18 @@ npm run demo       # 模拟 /workflows UI（无宿主）
 
 可复用、可对话创建的多 agent 团队（参考 Multica 的 squad/leader/dispatch 模式）。团队 = 1 个 leader + N 个成员，每个成员可指定独立后端模型（`provider/model`）与专属 system prompt。派单后由**独立 leader 子进程**自主拆解任务、通过 `team_dispatch` 工具并行调度成员子进程、审查结果并汇总报告交回主会话。
 
+效果示意（运行期间 widget，实测格式）：
+
+```text
+agent-team dev-team ▶ running · 3m 12s
+任务: 重构登录模块并补齐单测
+leader: claude-opus-4 · 已派发 3 个子任务
+  ↳ 正在审查 frontend 的改动
+▶ frontend running — 编辑 auth.ts
+▶ backend running — 单测 12/18 通过
+✓ reviewer done — 整体通过，2 条非阻塞建议
+```
+
 - **对话式建团** — 主 agent 调 `team_create`/`team_list` 工具直接创建/查看团队；团队定义文件（`~/.pi/agent/teams/*.md` 或项目 `.pi/teams/*.md`）可随时手改，下一次派单即生效
 - **派单与复用** — `/team:run <团队> <任务>`、`/team:<团队> <任务>` 或 `team_run` 工具；同一团队反复使用；`/team:stop` 中止
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
@@ -126,6 +174,13 @@ npm run typecheck
 ## stream-token-speed
 
 流式回复速度计量：显示 **TTFT（首 token 延迟）** 与瞬时 **tokens/s**（1s 滑动窗口 + EMA 平滑，250ms 节流），结束后保留本轮 TTFT / 最后瞬时值 / 平均速度。计量范围覆盖 text / thinking / tool call 增量；tool result 与工具执行进度一律排除。不读取、不记录、不发送任何消息内容。
+
+效果示意（终端状态行，实测格式）：
+
+```text
+生成中：TTFT 412 ms｜速度 86.4 tok/s          ← 流式回复期间实时刷新（热身期速度显示 —）
+TTFT 412 ms｜最后 ~91.2 tok/s｜平均 78.6 tok/s ← 回合结束后保留（~ 表示末尾瞬时值为沿用值）
+```
 
 ```bash
 cd stream-token-speed
@@ -147,6 +202,15 @@ export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选
 
 查询当前 provider 的账户额度/余额并在终端状态行显示。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行附带 5 小时窗口的下次刷新时间（`GLM tok X% mcp Y% → HH:mm (Xh Ym)`，跨日显示 `MM-dd HH:mm`，字段以实测 `nextResetTime` 为准）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
 
+效果示意（终端状态行，实测格式）：
+
+```text
+OR $4.58 (used $5.42)                ← OpenRouter：剩余额度（已用）
+DS 102.50 CNY                        ← DeepSeek：余额
+CA 186.40                            ← ChatAnywhere：余额
+GLM tok 72% mcp 40% → 14:30 (2h 5m)  ← 智谱：token/MCP 窗口占用 + 下次刷新倒计时
+```
+
 ```bash
 node --experimental-strip-types --test provider-quota/index.test.ts
 ```
@@ -154,6 +218,13 @@ node --experimental-strip-types --test provider-quota/index.test.ts
 ## run-timer
 
 终端底部状态行计时：当前任务耗时、本轮对话耗时、会话总耗时（每秒 tick）。含 CJK 视觉宽度处理，避免中文导致布局错位。
+
+效果示意（widget，实测格式）：
+
+```text
+任务 05:32 · 本轮 00:41 · 本会话 18:07
+上次任务 12:03（已结束） · 本轮 00:00 · 本会话 18:07   ← 任务结束后切换为「上次任务」
+```
 
 ```bash
 node --experimental-strip-types --test run-timer/run-timer.test.ts
@@ -175,6 +246,16 @@ node --experimental-strip-types --test run-timer/run-timer.test.ts
 | `/loop pause <id>` / `resume <id>` | 暂停/恢复（id 支持前缀匹配） |
 | `/loop delete <id>` / `clear` | 删除单个/全部任务 |
 
+效果示意（widget + `/loop list`，实测格式）：
+
+```text
+widget：⏰ loop 2 个任务 · 下次 04:32 · 后台运行 1
+
+/loop list：
+a1b2c3d4  every 30m                          14:30:00  检查 CI 状态
+e5f6g7h8  [后台] every 1h from 00:00 to 09:00  01:00:00  夜间巡检部署
+```
+
 daily/window 调度与固定间隔共用同一套语义：错过的时间点不补跑（跨天/跨窗口只触发一次），暂停后恢复、会话恢复（hydrate）时错过的触发点直接重算到下一个未来时刻；旧格式快照（无 schedule 字段）零迁移兼容。
 
 **后台模式细节**（v1.3.0，`runner.ts`）：子进程 cwd 取宿主会话目录，会话落在该项目的 sessions 目录（`pi -r` 选择器可见，`--name loop-<id>` 可辨识）；JSON 输出首行会话头 `{"type":"session","id":…}` 被捕获记入 `lastRun`；单次运行超时 30 分钟（SIGTERM→SIGKILL）；完成后通知结果摘要与恢复提示。前台模式行为完全不变。
@@ -194,7 +275,14 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 
 - `/goal` 查看状态（目标/已评估轮数/时长/评估器最近判定）；`/goal clear|stop|off|reset|none|cancel` 停止；`/goal resume` 在手动中断或评估器连续失败暂停后恢复
 - 每会话一个活跃目标，条件最长 4000 字符；恢复会话时目标保留但轮数/计时重置；不改变任何工具权限语义
-- 手动中断（Esc）自动暂停；评估器连续 3 次失败暂停（瞬时失败不杀循环）；状态行 `◎ goal: …`
+- 手动中断（Esc）自动暂停；评估器连续 3 次失败暂停（瞬时失败不杀循环）
+
+效果示意（终端状态行，实测格式）：
+
+```text
+◎ goal: 让 pwr 全部测试通过且 typecheck 零错误 · 第3轮 · 06:12   ← 推进中
+⏸ goal: 让 pwr 全部测试通过且 typecheck 零错误 · 已暂停 · 06:12  ← 手动中断后自动暂停
+```
 
 ```bash
 node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
