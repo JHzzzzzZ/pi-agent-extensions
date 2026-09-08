@@ -54,11 +54,15 @@ function fakePi() {
   const commands = new Map<string, { description: string }>();
   const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => Promise<void>>>();
   const entryRenderers = new Map<string, unknown>();
+  const appendedEntries: Array<{ type: string; data: unknown }> = [];
+  const sentMessages: Array<{ message: unknown; options?: unknown }> = [];
   return {
     tools,
     commands,
     handlers,
     entryRenderers,
+    appendedEntries,
+    sentMessages,
     on(name: string, fn: (event: unknown, ctx: unknown) => Promise<void>) {
       const list = handlers.get(name) ?? [];
       list.push(fn);
@@ -72,6 +76,14 @@ function fakePi() {
     },
     registerEntryRenderer(type: string, renderer: unknown) {
       entryRenderers.set(type, renderer);
+    },
+    appendEntry(customType: string, data: unknown) {
+      appendedEntries.push({ type: customType, data });
+      return {};
+    },
+    sendMessage(message: unknown, options?: unknown) {
+      sentMessages.push({ message, options });
+      return {};
     },
     async fire(name: string, event: unknown, ctx: unknown) {
       for (const fn of handlers.get(name) ?? []) await fn(event, ctx);
