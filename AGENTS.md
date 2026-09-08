@@ -78,6 +78,15 @@ Other patterns:
 - **TUI conventions (satellites):** guard writes with `ctx.hasUI`, style via `theme.fg("dim", …)`, exception-isolate every `setStatus`/`setWidget` call, one status key per extension (`stream-token-speed`, `provider-quota`, `run-timer`, `loop`, `goal`). `loop/` passes plain (unstyled) strings to `setWidget` — `ExtensionUIContext` has no `theme` field, so typed access to `ctx.ui.theme` does not compile.
 - Indentation: tabs in `pwr/`, 2 spaces in `run-timer/`, `stream-token-speed/`, `loop/`, and `goal/`.
 
+## Delivery & Documentation Sync (Mandatory)
+
+Every coding change is only complete when its docs and manifests are updated in the same change — never leave them stale for a follow-up:
+
+- **README**: update the affected extension's section in the root `README.md` (and `pwr/README.md` / `pwr/DELIVERY.md` for PWR) — new/changed features, usage, and the measured test count.
+- **AGENTS.md**: update whenever architecture, file layout, conventions, commands, or measured test counts change (satellite descriptions in Project Overview / Key Directories, test counts in Development Commands and Testing & QA).
+- **package.json**: bump `version` (and `description` if it names features) in every touched extension's `package.json`; also bump the root `package.json` `version` (kept aligned with the shipped feature version, e.g. loop v1.3.0 → root 1.3.0).
+- Docs/manifest updates ship as their own commit(s) in the same push (convention: `docs:` / `chore(pi):` prefixes).
+
 ## Important Files
 
 - `pwr/index.ts` — extension entry; `export default pwrExtension(pi: ExtensionAPI)`; commands (`/workflow`, `/pwr-model`, `/workflow-delete`, dynamic `/workflow:<name>`), hooks (`input`, `before_agent_start`, `session_start`, `model_select`, `tool_call`, `tool_result`), tools via `registerPwrTools` (`workflow_validate`, `workflow_start`, `workflow_control`, `workflow_save`), approval cards, entry renderer, runner injection.
