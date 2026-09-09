@@ -6,8 +6,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { COMMAND_NAME, RESTORE_COMMAND_NAME, SYNC_COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatRestoreConfirmMessage, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
-import { DEFAULT_BRIDGE_PORT, DEFAULT_SOCKS_HOST, DEFAULT_SOCKS_PORT, ProxySyncActions, type BridgeDeps, type ProxySyncDeps } from "./bridge.ts";
+import { COMMAND_NAME, RESTORE_COMMAND_NAME, SYNC_COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatPortChangeConfirmMessage, formatRestoreConfirmMessage, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
+import { BRIDGE_HOST, DEFAULT_BRIDGE_PORT, DEFAULT_SOCKS_HOST, DEFAULT_SOCKS_PORT, ProxySyncActions, bridgeConfigPath, type BridgeDeps, type ProxySyncDeps, type ShutdownBridgeResult } from "./bridge.ts";
 
 // ===== fake:pi 宿主（对齐 goal/index.test.ts 的手写 fake 风格） =====
 
@@ -276,21 +276,25 @@ test("注册 /opencode-bridge-sync 命令，/opencode-bridge 不再自动改 set
   assert.ok(commands.has(SYNC_COMMAND_NAME));
 });
 
-test("session_start 桥已运行：完全不读写 settings.json", async () => {
+test("session_start 桥已运行：不写任何文件、不读 settings.json（只读端口配置文件）", async () => {
   const { pi, handlers, notifications, makeCtx } = makeFakePi();
   const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
-  let readCalled = false;
+  let settingsRead = false;
+  let settingsWritten = false;
   const sync: ProxySyncDeps = {
-    readTextFile: () => {
-      readCalled = true;
+    readTextFile: (p) => {
+      if (p === SETTINGS_PATH) settingsRead = true;
       return undefined;
     },
-    writeTextFile: () => undefined,
+    writeTextFile: (p) => {
+      if (p === SETTINGS_PATH || p.startsWith(`${SETTINGS_PATH}.bak`)) settingsWritten = true;
+    },
     listDir: () => [],
   };
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   await handlers.get("session_start")!({}, makeCtx());
-  assert.equal(readCalled, false);
+  assert.equal(settingsRead, false);
+  assert.equal(settingsWritten, false);
   assert.equal(notifications.length, 0);
 });
 
@@ -301,10 +305,11 @@ test("sync：桥活着且无 httpProxy → 弹确认；确认后写入并备份"
   const now = new Date(2026, 7, 5, 12, 0, 0);
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => now });
 
-  // 在 makeCtx 基础上注入 confirm 的返回值并捕获弹窗内容
+  // 在 makeCtx 基础上注入 confirm 的返回值并捕获弹窗内容（无参默认回车保持端口）
   const ctx = makeCtx();
   let confirmCalled = 0;
   let confirmCaptured: { title: string; message: string } | undefined;
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.input = async () => "";
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async (title: string, message: string) => {
     confirmCalled += 1;
     confirmCaptured = { title, message };
@@ -332,6 +337,7 @@ test("sync：用户取消 → settings 不变", async () => {
   const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.input = async () => "";
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => false;
   await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
   assert.equal(files.get(SETTINGS_PATH), '{"theme":"dark"}');
@@ -344,6 +350,7 @@ test("sync：已有其它代理地址 → 不弹确认，提示不碰", async ()
   const { deps: sync, files } = makeFakeProxySyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.input = async () => "";
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
     throw new Error("不应弹确认框");
   };
@@ -359,6 +366,7 @@ test("sync：桥死了且原值指向本桥 → 弹确认提议移除；确认�
   const { deps: sync, files } = makeFakeProxySyncDeps(JSON.stringify({ theme: "dark", httpProxy: "http://127.0.0.1:10899" }));
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.input = async () => "";
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => true;
   await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
   const saved = JSON.parse(files.get(SETTINGS_PATH)!);
@@ -384,6 +392,7 @@ test("sync：settings.json 解析失败 → error 提示，不弹框不改文件
   const { deps: sync, files } = makeFakeProxySyncDeps("{ not json");
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.input = async () => "";
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
     throw new Error("不应弹确认框");
   };
@@ -518,4 +527,341 @@ test("formatRestoreConfirmMessage：三行文案含备份/再备份/重启提示
   assert.match(lines[0]!, /恢复为所选备份的内容/);
   assert.match(lines[1]!, /恢复操作本身可撤销/);
   assert.match(lines[2]!, /重启 Pi 后生效/);
+});
+
+// ===== 端口自定义 v1.4.0：状态来源 + sync 迁移（全 fake，不碰真实端口/文件） =====
+
+const CONFIG_PATH = "/fake/opencode-bridge.json";
+const OLD_PORT = 10899;
+const NEW_PORT = 20900;
+const NEW_PROXY = `http://${BRIDGE_HOST}:${NEW_PORT}`;
+
+/** 端口迁移专用 fake：按端口返回 probe，shutdown 可注入，记录全部调用。 */
+function makePortBridgeFake(options: {
+  shutdown?: ShutdownBridgeResult;
+  /** old 端口是否仍在监听（默认 false=已释放） */
+  oldAlive?: boolean;
+  /** new 端口首探是否已在监听（默认 false=需 spawn；true=直接复用） */
+  newAliveFirst?: boolean;
+  existingPaths?: string[];
+} = {}) {
+  const shutdownCalls: Array<{ host: string; port: number }> = [];
+  const spawnCalls: Array<{ helperPath: string; env: Record<string, string | undefined> }> = [];
+  const probeCalls: Array<{ host: string; port: number }> = [];
+  let newProbed = 0;
+  const deps: BridgeDeps = {
+    async probe(_host, port) {
+      probeCalls.push({ host: _host, port });
+      if (port === OLD_PORT) return options.oldAlive ?? false;
+      if (port === NEW_PORT) {
+        newProbed += 1;
+        if (options.newAliveFirst && newProbed === 1) return true;
+        return newProbed === 1 ? false : true;
+      }
+      return false;
+    },
+    fileExists: (p) => options.existingPaths?.includes(p) ?? false,
+    spawnDetached: (_node, helperPath, env) => {
+      spawnCalls.push({ helperPath, env });
+    },
+    async sleep() {
+      /* 立即返回 */
+    },
+    async shutdownBridge(host, port) {
+      shutdownCalls.push({ host, port });
+      return options.shutdown ?? { ok: true, body: "opencode-bridge shutting down\n" };
+    },
+  };
+  return { deps, shutdownCalls, spawnCalls, probeCalls };
+}
+
+function setUi(ctx: unknown, ui: Record<string, unknown>): void {
+  Object.assign((ctx as { ui: Record<string, unknown> }).ui, ui);
+}
+
+test("formatStatusLines 带来源时新增端口来源行，坏配置给出配置提示行", () => {
+  const base = {
+    bridgeHost: BRIDGE_HOST,
+    bridgePort: OLD_PORT,
+    socksHost: DEFAULT_SOCKS_HOST,
+    socksPort: DEFAULT_SOCKS_PORT,
+    proxyUrl: `http://${BRIDGE_HOST}:${OLD_PORT}`,
+  };
+  const withSource = formatStatusLines(base, true, "", "配置文件");
+  assert.equal(withSource.length, 5);
+  assert.match(withSource[3]!, /端口来源: 配置文件/);
+  const withWarning = formatStatusLines(base, true, "", "默认值", "桥配置文件解析失败，已忽略");
+  assert.equal(withWarning.length, 6);
+  assert.match(withWarning[4]!, /配置提示/);
+});
+
+test("formatPortChangeConfirmMessage 列清写配置/停旧桥/起新桥/改 httpProxy 四件事", () => {
+  const msg = formatPortChangeConfirmMessage(
+    OLD_PORT,
+    NEW_PORT,
+    CONFIG_PATH,
+    true,
+    { action: ProxySyncActions.SET, proxyUrl: NEW_PROXY, message: "" },
+    SETTINGS_PATH,
+    "/fake/settings.json.bak-x",
+  );
+  assert.match(msg, /10899 → .*20900/);
+  assert.match(msg, /写配置文件/);
+  assert.match(msg, /停旧桥/);
+  assert.match(msg, /起新桥/);
+  assert.match(msg, /改 httpProxy.*20900/);
+  assert.match(msg, /重启 Pi 后生效/);
+});
+
+test("sync 带参新端口：一次确认后迁移+写配置+httpProxy 指向新端口且备份链完整", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls, spawnCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(2026, 7, 5, 12, 0, 0) });
+  const ctx = makeCtx();
+  let confirmMsg = "";
+  setUi(ctx, {
+    input: async () => {
+      throw new Error("带参不应询问端口");
+    },
+    confirm: async (_t: string, m: string) => {
+      confirmMsg = m;
+      return true;
+    },
+  });
+  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  assert.match(confirmMsg, /写配置文件/);
+  assert.match(confirmMsg, /停旧桥/);
+  assert.match(confirmMsg, /起新桥/);
+  assert.match(confirmMsg, /改 httpProxy/);
+  assert.deepEqual(shutdownCalls, [{ host: BRIDGE_HOST, port: OLD_PORT }]);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0]?.env.PI_BRIDGE_PORT, String(NEW_PORT));
+  assert.equal(JSON.parse(files.get(CONFIG_PATH)!).bridgePort, NEW_PORT);
+  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+  assert.equal(saved.httpProxy, NEW_PROXY);
+  assert.equal(saved.theme, "dark");
+  assert.equal(files.get("/fake/settings.json.bak-opencode-bridge-20260805-120000"), '{"theme":"dark"}');
+  assert.match(notifications[0]?.message ?? "", new RegExp(NEW_PROXY.replace(/\//g, "\\/")));
+  assert.equal(notifications[0]?.type, "info");
+});
+
+test("sync 带参非法端口直接警告退出，零落盘（不 shutdown、不写文件）", async () => {
+  for (const bad of ["abc", "0", "70000", "1.5"]) {
+    const { pi, notifications, commands, makeCtx } = makeFakePi();
+    const { deps, shutdownCalls, spawnCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+    const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+    createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+    const ctx = makeCtx();
+    setUi(ctx, {
+      input: async () => {
+        throw new Error("非法参数不应询问");
+      },
+      confirm: async () => {
+        throw new Error("非法参数不应确认");
+      },
+    });
+    const before = new Map(files);
+    await commands.get(SYNC_COMMAND_NAME)!.handler(bad, ctx);
+    assert.match(notifications[0]?.message ?? "", /端口无效/);
+    assert.equal(notifications[0]?.type, "warning");
+    assert.deepEqual(shutdownCalls, []);
+    assert.deepEqual(spawnCalls, []);
+    assert.deepEqual(files, before);
+  }
+});
+
+test("sync 参数过多直接警告退出，零落盘", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  setUi(ctx, { confirm: async () => {
+    throw new Error("不应确认");
+  } });
+  await commands.get(SYNC_COMMAND_NAME)!.handler("20900 20901", ctx);
+  assert.match(notifications[0]?.message ?? "", /参数过多/);
+  assert.deepEqual(shutdownCalls, []);
+  assert.equal(files.get(SETTINGS_PATH), "{}");
+});
+
+test("sync 无参 TUI 输入新端口：询问后迁移（placeholder 为当前端口）", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  let inputArgs: { title: string; placeholder?: string } | undefined;
+  setUi(ctx, {
+    input: async (title: string, placeholder?: string) => {
+      inputArgs = { title, placeholder };
+      return String(NEW_PORT);
+    },
+    confirm: async () => true,
+  });
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.equal(inputArgs?.placeholder, String(OLD_PORT));
+  assert.match(inputArgs?.title ?? "", /桥端口/);
+  assert.deepEqual(shutdownCalls, [{ host: BRIDGE_HOST, port: OLD_PORT }]);
+  assert.equal(JSON.parse(files.get(CONFIG_PATH)!).bridgePort, NEW_PORT);
+  assert.match(notifications[0]?.message ?? "", /20900/);
+});
+
+test("sync 无参 TUI 回车保持：不迁移，走原 httpProxy 确认（不写配置文件）", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls, spawnCalls } = makePortBridgeFake({ oldAlive: true, existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  setUi(ctx, { input: async () => "", confirm: async () => true });
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.deepEqual(shutdownCalls, []);
+  assert.equal(files.get(CONFIG_PATH), undefined);
+  assert.equal(JSON.parse(files.get(SETTINGS_PATH)!).httpProxy, `http://${BRIDGE_HOST}:${OLD_PORT}`);
+  assert.match(notifications[0]?.message ?? "", /已写入 httpProxy/);
+});
+
+test("sync 输入框取消：全 abort，零落盘", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls, spawnCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  setUi(ctx, {
+    input: async () => undefined,
+    confirm: async () => {
+      throw new Error("取消后不应确认");
+    },
+  });
+  const before = new Map(files);
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.match(notifications[0]?.message ?? "", /已取消/);
+  assert.deepEqual(shutdownCalls, []);
+  assert.deepEqual(spawnCalls, []);
+  assert.deepEqual(files, before);
+});
+
+test("sync 输入非法端口：警告退出，零落盘", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  setUi(ctx, {
+    input: async () => "abc",
+    confirm: async () => {
+      throw new Error("不应确认");
+    },
+  });
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.match(notifications[0]?.message ?? "", /端口无效/);
+  assert.deepEqual(shutdownCalls, []);
+  assert.equal(files.get(SETTINGS_PATH), "{}");
+});
+
+test("sync 指纹不符拒绝迁移并零落盘（不写配置/备份/settings）", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls, spawnCalls } = makePortBridgeFake({
+    shutdown: { ok: true, body: "some other proxy" },
+    existingPaths: [HELPER_PATH],
+  });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  setUi(ctx, { confirm: async () => true });
+  const before = new Map(files);
+  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  assert.deepEqual(shutdownCalls, [{ host: BRIDGE_HOST, port: OLD_PORT }]);
+  assert.deepEqual(spawnCalls, []);
+  assert.deepEqual(files, before);
+  assert.equal(notifications[0]?.type, "error");
+  assert.match(notifications[0]?.message ?? "", /非本桥占用/);
+});
+
+test("sync 旧桥不释放超时 abort，零落盘", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, spawnCalls } = makePortBridgeFake({ oldAlive: true, existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  setUi(ctx, { confirm: async () => true });
+  const before = new Map(files);
+  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  assert.deepEqual(spawnCalls, []);
+  assert.deepEqual(files, before);
+  assert.equal(notifications[0]?.type, "error");
+  assert.match(notifications[0]?.message ?? "", /未释放/);
+});
+
+test("sync 确认拒绝零落盘（不 shutdown、不写文件）", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls, spawnCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  setUi(ctx, { confirm: async () => false });
+  const before = new Map(files);
+  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  assert.deepEqual(shutdownCalls, []);
+  assert.deepEqual(spawnCalls, []);
+  assert.deepEqual(files, before);
+  assert.match(notifications[0]?.message ?? "", /已取消/);
+});
+
+test("sync 迁移时已有外部代理：桥照切+配置照写，settings 不碰", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  setUi(ctx, { confirm: async () => true });
+  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  assert.equal(JSON.parse(files.get(CONFIG_PATH)!).bridgePort, NEW_PORT);
+  assert.match(files.get(SETTINGS_PATH)!, /7890/);
+  assert.equal(notifications[0]?.type, "warning");
+  assert.match(notifications[0]?.message ?? "", /已切换到.*20900/);
+});
+
+test("sync 非 TUI 带参新端口：提示去 TUI，零落盘", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const before = new Map(files);
+  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), makeCtx({ hasUI: false }));
+  assert.deepEqual(shutdownCalls, []);
+  assert.deepEqual(files, before);
+  assert.equal(notifications.length, 0);
+});
+
+test("sync 配置文件坏值忽略回退：状态行提示一句，不阻断正常同步", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makePortBridgeFake({ oldAlive: true, existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  files.set(CONFIG_PATH, "{ not json");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const statusHandler = commands.get(COMMAND_NAME)!;
+  const statusCtx = makeCtx();
+  await statusHandler.handler("", statusCtx);
+  assert.match(notifications[0]?.message ?? "", /端口来源: 默认值/);
+  assert.match(notifications[0]?.message ?? "", /配置提示/);
+  const syncCtx = makeCtx();
+  setUi(syncCtx, { input: async () => "", confirm: async () => true });
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", syncCtx);
+  assert.equal(JSON.parse(files.get(SETTINGS_PATH)!).httpProxy, `http://${BRIDGE_HOST}:${OLD_PORT}`);
+});
+
+test("sync 配置文件端口生效：无环境变量时状态与同步都走配置文件端口", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps, shutdownCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH], newAliveFirst: true });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
+  files.set(CONFIG_PATH, '{"bridgePort": 20900}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, env: {}, now: () => new Date(0) });
+  await commands.get(COMMAND_NAME)!.handler("", makeCtx());
+  assert.match(notifications[0]?.message ?? "", /20900/);
+  assert.match(notifications[0]?.message ?? "", /端口来源: 配置文件/);
+  assert.deepEqual(shutdownCalls, []);
+  const cfgPath = bridgeConfigPath(SETTINGS_PATH);
+  assert.ok(cfgPath.endsWith("opencode-bridge.json"));
 });

@@ -16,10 +16,16 @@
  *   仅增/删 httpProxy 字段，其余配置原样保留。
  *   恢复（v1.3.0）：/opencode-bridge-restore 从备份中选择恢复，恢复前同样
  *   先把当前配置备份一份，保证恢复操作本身可撤销。
+ *
+ * 端口自定义（v1.4.0）：/opencode-bridge-sync 支持直接跟端口或交互式询问，
+ *   端口持久化到 settings.json 同目录 opencode-bridge.json（仅 {"bridgePort": N}）；
+ *   生效优先级 参数 > 环境变量 > 配置文件 > 默认值；改端口后经指纹确认自动
+ *   停旧桥、起新桥，httpProxy 联动，一次确认覆盖全部落盘动作（fail-closed）。
  */
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 
@@ -35,6 +41,15 @@ export const HELPER_FILE_NAME = "opencode-bridge-helper.mjs";
 export const PROBE_TIMEOUT_MS = 600;
 export const START_ATTEMPTS = 25;
 export const START_POLL_DELAY_MS = 120;
+
+/** 端口配置文件名（settings.json 同目录） */
+export const BRIDGE_CONFIG_FILE_NAME = "opencode-bridge.json";
+/** 旧桥受控关闭路径（仅本地可达，helper 内建） */
+export const BRIDGE_SHUTDOWN_PATH = "/__bridge/shutdown";
+/** 自家 helper 指纹：shutdown 响应体含此标记才算自家桥 */
+export const BRIDGE_SHUTDOWN_MARKER = "opencode-bridge";
+/** 关闭旧桥的请求超时（仅连 127.0.0.1） */
+export const SHUTDOWN_TIMEOUT_MS = PROBE_TIMEOUT_MS;
 
 /** httpProxy 同步动作（静态、可诊断；plan 只读，apply 才落盘） */
 export const ProxySyncActions = {
@@ -169,12 +184,53 @@ export interface EnsureBridgeOptions {
   probeTimeoutMs?: number;
 }
 
+/** 关闭旧桥的结果（响应体用于指纹校验，不透传 payload）。 */
+export type ShutdownBridgeResult =
+  | { ok: true; body: string }
+  | { ok: false; message: string };
+
+/** 桥端口来源（状态行展示，优先级 参数 > 环境变量 > 配置文件 > 默认值）。 */
+export type BridgePortSource = "命令行" | "环境变量" | "配置文件" | "默认值";
+
+/** 迁移失败码（静态、可诊断，fail-closed：任一步失败都不落盘）。 */
+export const MigrateErrorCodes = {
+  /** 旧端口非本桥占用，拒绝迁移 */
+  FOREIGN_BRIDGE: "FOREIGN_BRIDGE",
+  /** 关闭旧桥请求失败 */
+  SHUTDOWN_FAILED: "SHUTDOWN_FAILED",
+  /** 旧桥端口未释放（超时） */
+  RELEASE_TIMEOUT: "RELEASE_TIMEOUT",
+  /** 新桥拉起失败 */
+  ENSURE_FAILED: "ENSURE_FAILED",
+} as const;
+export type MigrateErrorCode = (typeof MigrateErrorCodes)[keyof typeof MigrateErrorCodes];
+
+export type MigrateBridgeResult =
+  | { ok: true; message: string }
+  | { ok: false; code: MigrateErrorCode; message: string };
+
+export interface MigrateBridgeOptions {
+  host: string;
+  oldPort: number;
+  /** 新桥完整配置（含 socks，bridgePort 即新端口） */
+  newConfig: BridgeConfig;
+  helperPaths: string[];
+  execPath: string;
+  env?: Record<string, string | undefined>;
+  shutdownTimeoutMs?: number;
+  releaseAttempts?: number;
+  releaseDelayMs?: number;
+  probeTimeoutMs?: number;
+}
+
 /** 进程/网络边界。测试注入 fake，生产由 createDefaultBridgeDeps 提供。 */
 export interface BridgeDeps {
   probe(host: string, port: number, timeoutMs: number): Promise<boolean>;
   fileExists(path: string): boolean;
   spawnDetached(nodePath: string, helperPath: string, env: Record<string, string | undefined>): void;
   sleep(ms: number): Promise<void>;
+  /** 关闭旧桥（仅连 127.0.0.1，600ms 超时）；老 fake 可不实现（可选）。 */
+  shutdownBridge?(host: string, port: number, timeoutMs: number): Promise<ShutdownBridgeResult>;
 }
 
 // ===== 配置解析 =====
@@ -194,6 +250,95 @@ function parsePortEnv(
     return { ok: false, message: `环境变量 ${name} 无效：需为 1-65535 的整数（当前值：${JSON.stringify(raw)}）` };
   }
   return { ok: true, value };
+}
+
+/** 解析用户输入的端口字符串（sync 参数/交互输入）：必须为 1-65535 整数。 */
+export function parsePortString(raw: string): { ok: true; value: number } | { ok: false; message: string } {
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (trimmed === "" || !Number.isInteger(value) || value < 1 || value > 65535) {
+    return { ok: false, message: `端口无效：需为 1-65535 的整数（当前值：${JSON.stringify(raw)}）` };
+  }
+  return { ok: true, value };
+}
+
+/** 端口配置文件路径：settings.json 同目录 opencode-bridge.json。 */
+export function bridgeConfigPath(settingsPath: string): string {
+  return path.join(path.dirname(settingsPath), BRIDGE_CONFIG_FILE_NAME);
+}
+
+/** 端口配置文件内容：仅 {"bridgePort": N}。 */
+export function formatBridgePortConfig(port: number): string {
+  return JSON.stringify({ bridgePort: port }, null, 2) + "\n";
+}
+
+/**
+ * 读取端口配置文件：缺失/空文件视为无配置（静默回退）；JSON 坏/根不是对象/
+ * 端口非法一律忽略回退并给出 warning（状态行提示一句，不阻断）。永不抛异常。
+ */
+export function readBridgePortConfig(
+  settingsPath: string,
+  deps: ProxySyncDeps,
+): { port?: number; warning?: string } {
+  const cfgPath = bridgeConfigPath(settingsPath);
+  let raw: string | undefined;
+  try {
+    raw = deps.readTextFile(cfgPath);
+  } catch {
+    return { warning: `桥配置文件读取失败，已忽略（${cfgPath}）` };
+  }
+  if (raw === undefined || raw.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { warning: `桥配置文件解析失败，已忽略（${cfgPath}）` };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { warning: `桥配置文件根不是对象，已忽略（${cfgPath}）` };
+  }
+  const port = (parsed as Record<string, unknown>).bridgePort;
+  if (port === undefined) return {};
+  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
+    return { warning: `桥配置文件端口无效，已忽略（${cfgPath}）` };
+  }
+  return { port };
+}
+
+/**
+ * 生效端口纯函数：参数 > 环境变量 > 配置文件 > 默认值。
+ * 环境变量非法时返回 ok:false（fail-closed，不静默回退）；cliPort 已由
+ * parsePortString 校验，此处再做防御性校验。配置文件端口调用方已校验。
+ */
+export function resolveEffectivePort(options: {
+  cliPort?: number;
+  env: Record<string, string | undefined>;
+  configPort?: number;
+}): { ok: true; port: number; source: BridgePortSource } | { ok: false; message: string } {
+  const { cliPort, env, configPort } = options;
+  if (cliPort !== undefined) {
+    if (!Number.isInteger(cliPort) || cliPort < 1 || cliPort > 65535) {
+      return { ok: false, message: `端口无效：需为 1-65535 的整数（当前值：${JSON.stringify(String(cliPort))}）` };
+    }
+    return { ok: true, port: cliPort, source: "命令行" };
+  }
+  const rawEnv = env.PI_BRIDGE_PORT;
+  if (rawEnv !== undefined && rawEnv !== "") {
+    const value = Number(rawEnv);
+    if (!Number.isInteger(value) || value < 1 || value > 65535) {
+      return { ok: false, message: `环境变量 PI_BRIDGE_PORT 无效：需为 1-65535 的整数（当前值：${JSON.stringify(rawEnv)}）` };
+    }
+    return { ok: true, port: value, source: "环境变量" };
+  }
+  if (configPort !== undefined) {
+    return { ok: true, port: configPort, source: "配置文件" };
+  }
+  return { ok: true, port: DEFAULT_BRIDGE_PORT, source: "默认值" };
+}
+
+/** shutdown 响应体是否含自家桥标记。 */
+export function isOwnBridgeShutdownBody(body: string): boolean {
+  return body.includes(BRIDGE_SHUTDOWN_MARKER);
 }
 
 /** 解析桥配置；任一端口非法即整体拒绝（Result union，不抛异常）。 */
@@ -265,6 +410,43 @@ export function createDefaultBridgeDeps(): BridgeDeps {
     },
     sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
+    },
+    shutdownBridge(host, port, timeoutMs) {
+      if (host !== BRIDGE_HOST) {
+        return Promise.resolve({ ok: false as const, message: `拒绝关闭非本地桥（${host}）` });
+      }
+      return new Promise<ShutdownBridgeResult>((resolve) => {
+        let settled = false;
+        const finish = (result: ShutdownBridgeResult) => {
+          if (settled) return;
+          settled = true;
+          resolve(result);
+        };
+        try {
+          const req = http.get(
+            { host, port, path: BRIDGE_SHUTDOWN_PATH, timeout: timeoutMs },
+            (res) => {
+              let body = "";
+              res.on("data", (chunk) => {
+                if (body.length < 4096) body += String(chunk).slice(0, 4096 - body.length);
+              });
+              res.on("end", () => finish({ ok: true, body }));
+              res.on("error", () => finish({ ok: false, message: `关闭旧桥请求失败（${host}:${port}）` }));
+            },
+          );
+          req.on("timeout", () => {
+            try {
+              req.destroy(new Error("shutdown timeout"));
+            } catch {
+              /* ignore */
+            }
+            finish({ ok: false, message: `关闭旧桥请求超时（${host}:${port}）` });
+          });
+          req.on("error", () => finish({ ok: false, message: `关闭旧桥请求失败（${host}:${port}）` }));
+        } catch (err) {
+          finish({ ok: false, message: `关闭旧桥请求失败：${err instanceof Error ? err.message : String(err)}` });
+        }
+      });
     },
   };
 }
@@ -468,4 +650,80 @@ export async function ensureBridge(
     code: EnsureErrorCodes.START_TIMEOUT,
     message: `helper 已拉起但未监听 ${config.proxyUrl}（检查上游 SOCKS5 ${config.socksHost}:${config.socksPort} 是否可用）`,
   };
+}
+
+// ===== 端口迁移（fail-closed：任一步失败都不落盘，由调用方保证确认后才调用） =====
+
+/**
+ * 迁移桥端口：只对 127.0.0.1 旧端口发本地 GET /__bridge/shutdown，且响应体含
+ * 自家标记才算自家 helper，否则一律不动并提示手动释放；停旧桥后有界轮询等
+ * 端口释放，超时 abort；再按新端口探测/拉起。本函数不读写任何文件。
+ */
+export async function migrateBridgePort(
+  options: MigrateBridgeOptions,
+  deps: BridgeDeps,
+): Promise<MigrateBridgeResult> {
+  const { host, oldPort, newConfig } = options;
+  const newPort = newConfig.bridgePort;
+  if (oldPort === newPort) {
+    return { ok: true, message: "端口未变，无需迁移" };
+  }
+  if (host !== BRIDGE_HOST || newConfig.bridgeHost !== BRIDGE_HOST) {
+    return { ok: false, code: MigrateErrorCodes.SHUTDOWN_FAILED, message: `拒绝迁移非本地桥（${host}），请手动释放端口` };
+  }
+  if (!deps.shutdownBridge) {
+    return { ok: false, code: MigrateErrorCodes.SHUTDOWN_FAILED, message: `不支持关闭旧桥（${host}:${oldPort}），请手动释放端口` };
+  }
+  const shutdownTimeoutMs = options.shutdownTimeoutMs ?? SHUTDOWN_TIMEOUT_MS;
+  let shutdown: ShutdownBridgeResult;
+  try {
+    shutdown = await deps.shutdownBridge(host, oldPort, shutdownTimeoutMs);
+  } catch (err) {
+    return { ok: false, code: MigrateErrorCodes.SHUTDOWN_FAILED, message: `关闭旧桥失败（${host}:${oldPort}）：${err instanceof Error ? err.message : String(err)}，请手动释放端口` };
+  }
+  if (!shutdown.ok) {
+    return { ok: false, code: MigrateErrorCodes.SHUTDOWN_FAILED, message: `关闭旧桥失败（${host}:${oldPort}）：${shutdown.message}，请手动释放端口` };
+  }
+  if (!isOwnBridgeShutdownBody(shutdown.body)) {
+    return { ok: false, code: MigrateErrorCodes.FOREIGN_BRIDGE, message: `旧端口 ${oldPort} 非本桥占用，拒绝迁移，请手动释放端口` };
+  }
+  const attempts = options.releaseAttempts ?? START_ATTEMPTS;
+  const delayMs = options.releaseDelayMs ?? START_POLL_DELAY_MS;
+  const probeTimeoutMs = options.probeTimeoutMs ?? PROBE_TIMEOUT_MS;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await deps.sleep(delayMs);
+    } catch {
+      /* sleep 失败继续轮询 */
+    }
+    let alive = true;
+    try {
+      alive = await deps.probe(host, oldPort, probeTimeoutMs);
+    } catch {
+      alive = true;
+    }
+    if (!alive) break;
+    if (i === attempts - 1) {
+      return { ok: false, code: MigrateErrorCodes.RELEASE_TIMEOUT, message: `旧桥端口 ${oldPort} 未释放（超时），请手动释放后重试` };
+    }
+  }
+  let ensured: EnsureBridgeResult;
+  try {
+    ensured = await ensureBridge(
+      {
+        config: newConfig,
+        helperPaths: options.helperPaths,
+        execPath: options.execPath,
+        env: options.env,
+        probeTimeoutMs,
+      },
+      deps,
+    );
+  } catch (err) {
+    return { ok: false, code: MigrateErrorCodes.ENSURE_FAILED, message: `新桥启动异常：${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!ensured.ok) {
+    return { ok: false, code: MigrateErrorCodes.ENSURE_FAILED, message: `新桥启动失败：${ensured.message}` };
+  }
+  return { ok: true, message: `已迁移到新端口 ${newPort}` };
 }

@@ -6,24 +6,35 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
 import {
+  BRIDGE_CONFIG_FILE_NAME,
   BRIDGE_HOST,
+  BRIDGE_SHUTDOWN_MARKER,
   DEFAULT_BRIDGE_PORT,
   DEFAULT_SOCKS_HOST,
   DEFAULT_SOCKS_PORT,
   EnsureErrorCodes,
   HELPER_FILE_NAME,
+  MigrateErrorCodes,
   type BridgeDeps,
   type EnsureBridgeResult,
+  type ShutdownBridgeResult,
+  bridgeConfigPath,
   createDefaultBridgeDeps,
   ensureBridge,
   applyHttpProxySync,
   applyRestore,
+  formatBridgePortConfig,
+  isOwnBridgeShutdownBody,
   listHttpProxyBackups,
   makeBackupPath,
+  migrateBridgePort,
   parseBridgeConfig,
+  parsePortString,
   planHttpProxySync,
   ProxySyncActions,
   type ProxySyncDeps,
+  readBridgePortConfig,
+  resolveEffectivePort,
 } from "./bridge.ts";
 
 // ===== fake 依赖 =====
@@ -490,4 +501,225 @@ test("applyRestore：settings.json 当前不存在 → 无恢复前备份仍可�
   assert.ok(r.ok);
   assert.equal(r.currentBackupPath, undefined);
   assert.equal(files.get(SETTINGS_PATH), '{"theme":"dark"}');
+});
+
+// ===== 端口自定义 v1.4.0：parsePortString / bridgeConfigPath / format =====
+
+test("parsePortString 合法端口通过，前后空格容忍", () => {
+  assert.deepEqual(parsePortString("20900"), { ok: true, value: 20900 });
+  assert.deepEqual(parsePortString("  1  "), { ok: true, value: 1 });
+  assert.deepEqual(parsePortString("65535"), { ok: true, value: 65535 });
+});
+
+test("parsePortString 非法端口拒绝（非整数/越界/空）", () => {
+  for (const bad of ["abc", "0", "70000", "10899.5", "", "  ", "-1", "12a"]) {
+    const r = parsePortString(bad);
+    assert.equal(r.ok, false, `端口 ${JSON.stringify(bad)} 应被拒绝`);
+    if (!r.ok) assert.match(r.message, /1-65535/);
+  }
+});
+
+test("bridgeConfigPath 为 settings.json 同目录 opencode-bridge.json", () => {
+  assert.equal(bridgeConfigPath(SETTINGS_PATH), path.join(path.dirname(SETTINGS_PATH), BRIDGE_CONFIG_FILE_NAME));
+  assert.match(bridgeConfigPath("/a/b/settings.json"), /opencode-bridge\.json$/);
+});
+
+test("formatBridgePortConfig 仅含 bridgePort 字段", () => {
+  assert.deepEqual(JSON.parse(formatBridgePortConfig(20900)), { bridgePort: 20900 });
+});
+
+// ===== readBridgePortConfig：坏值忽略回退 =====
+
+function makeConfigDeps(files: Map<string, string>): ProxySyncDeps {
+  return {
+    readTextFile: (p) => files.get(p),
+    writeTextFile: (p, c) => files.set(p, c),
+    listDir: () => [],
+  };
+}
+
+test("readBridgePortConfig 缺失/空文件静默回退（无 warning）", () => {
+  assert.deepEqual(readBridgePortConfig(SETTINGS_PATH, makeConfigDeps(new Map())), {});
+  const cfgPath = bridgeConfigPath(SETTINGS_PATH);
+  assert.deepEqual(readBridgePortConfig(SETTINGS_PATH, makeConfigDeps(new Map([[cfgPath, "   "]]))), {});
+});
+
+test("readBridgePortConfig 合法端口读取成功", () => {
+  const cfgPath = bridgeConfigPath(SETTINGS_PATH);
+  assert.deepEqual(readBridgePortConfig(SETTINGS_PATH, makeConfigDeps(new Map([[cfgPath, '{"bridgePort": 20900}']]))), { port: 20900 });
+});
+
+test("readBridgePortConfig JSON 坏/根不是对象/端口非法一律忽略并 warning", () => {
+  const cfgPath = bridgeConfigPath(SETTINGS_PATH);
+  for (const bad of ['{ not json', '[]', '"str"', '{"bridgePort": "20900"}', '{"bridgePort": 0}', '{"bridgePort": 70000}', '{"bridgePort": 1.5}']) {
+    const r = readBridgePortConfig(SETTINGS_PATH, makeConfigDeps(new Map([[cfgPath, bad]])));
+    assert.equal(r.port, undefined, `坏值 ${bad} 不应给出端口`);
+    assert.ok(r.warning, `坏值 ${bad} 应有 warning`);
+  }
+  const noField = readBridgePortConfig(SETTINGS_PATH, makeConfigDeps(new Map([[cfgPath, '{"other": 1}']])));
+  assert.equal(noField.port, undefined);
+  assert.equal(noField.warning, undefined);
+});
+
+// ===== resolveEffectivePort：参数 > 环境变量 > 配置文件 > 默认值 =====
+
+test("resolveEffectivePort 默认值 10899（无任何来源）", () => {
+  const r = resolveEffectivePort({ env: {} });
+  assert.ok(r.ok && r.port === DEFAULT_BRIDGE_PORT && r.source === "默认值");
+});
+
+test("resolveEffectivePort 配置文件来源", () => {
+  const r = resolveEffectivePort({ env: {}, configPort: 20900 });
+  assert.ok(r.ok && r.port === 20900 && r.source === "配置文件");
+});
+
+test("resolveEffectivePort 环境变量覆盖配置文件", () => {
+  const r = resolveEffectivePort({ env: { PI_BRIDGE_PORT: "20800" }, configPort: 20900 });
+  assert.ok(r.ok && r.port === 20800 && r.source === "环境变量");
+});
+
+test("resolveEffectivePort 参数覆盖环境变量与配置文件", () => {
+  const r = resolveEffectivePort({ cliPort: 20700, env: { PI_BRIDGE_PORT: "20800" }, configPort: 20900 });
+  assert.ok(r.ok && r.port === 20700 && r.source === "命令行");
+});
+
+test("resolveEffectivePort 环境变量空串视为未设置，回退配置文件", () => {
+  const r = resolveEffectivePort({ env: { PI_BRIDGE_PORT: "" }, configPort: 20900 });
+  assert.ok(r.ok && r.port === 20900 && r.source === "配置文件");
+});
+
+test("resolveEffectivePort 环境变量非法返回 ok:false（fail-closed）", () => {
+  const r = resolveEffectivePort({ env: { PI_BRIDGE_PORT: "abc" }, configPort: 20900 });
+  assert.ok(!r.ok);
+  if (!r.ok) assert.match(r.message, /PI_BRIDGE_PORT/);
+});
+
+test("resolveEffectivePort 参数非法返回 ok:false，且参数无视非法环境变量", () => {
+  const bad = resolveEffectivePort({ cliPort: 0, env: {} });
+  assert.ok(!bad.ok);
+  const win = resolveEffectivePort({ cliPort: 20700, env: { PI_BRIDGE_PORT: "abc" }, configPort: 20900 });
+  assert.ok(win.ok && win.port === 20700 && win.source === "命令行");
+});
+
+test("isOwnBridgeShutdownBody 含标记才算自家桥", () => {
+  assert.equal(isOwnBridgeShutdownBody(`xxx ${BRIDGE_SHUTDOWN_MARKER} yyy`), true);
+  assert.equal(isOwnBridgeShutdownBody("opencode-bridge shutting down\n"), true);
+  assert.equal(isOwnBridgeShutdownBody("hello world"), false);
+  assert.equal(isOwnBridgeShutdownBody(""), false);
+});
+
+// ===== migrateBridgePort（全 fake，不碰真实端口） =====
+
+interface MigrateFakeOptions {
+  shutdown?: ShutdownBridgeResult;
+  shutdownThrows?: Error;
+  /** 按端口返回 probe 结果 */
+  probeByPort?: (host: string, port: number) => boolean;
+  existingPaths?: string[];
+}
+
+function makeMigrateFake(options: MigrateFakeOptions = {}) {
+  const shutdownCalls: Array<{ host: string; port: number }> = [];
+  const probeCalls: Array<{ host: string; port: number }> = [];
+  const spawnCalls: Array<{ helperPath: string; env: Record<string, string | undefined> }> = [];
+  const deps: BridgeDeps = {
+    async probe(host, port) {
+      probeCalls.push({ host, port });
+      return options.probeByPort?.(host, port) ?? false;
+    },
+    fileExists: (p) => options.existingPaths?.includes(p) ?? false,
+    spawnDetached: (_node, helperPath, env) => {
+      spawnCalls.push({ helperPath, env });
+    },
+    async sleep() {
+      /* 立即返回 */
+    },
+    async shutdownBridge(host, port) {
+      shutdownCalls.push({ host, port });
+      if (options.shutdownThrows) throw options.shutdownThrows;
+      return options.shutdown ?? { ok: true, body: "opencode-bridge shutting down\n" };
+    },
+  };
+  return { deps, shutdownCalls, probeCalls, spawnCalls };
+}
+
+const OLD_PORT = 10899;
+const NEW_PORT = 20900;
+const MIGRATE_NEW_CONFIG = {
+  bridgeHost: BRIDGE_HOST,
+  bridgePort: NEW_PORT,
+  socksHost: "127.0.0.1",
+  socksPort: 18808,
+  proxyUrl: `http://${BRIDGE_HOST}:${NEW_PORT}`,
+};
+const MIGRATE_BASE = { host: BRIDGE_HOST, oldPort: OLD_PORT, newConfig: MIGRATE_NEW_CONFIG, helperPaths: [HELPER_PATH], execPath: "/node" };
+
+test("migrateBridgePort 新旧相同直接成功，不发 shutdown、不 spawn", async () => {
+  const { deps, shutdownCalls, spawnCalls } = makeMigrateFake();
+  const r = await migrateBridgePort({ ...MIGRATE_BASE, oldPort: NEW_PORT }, deps);
+  assert.ok(r.ok);
+  assert.equal(shutdownCalls.length, 0);
+  assert.equal(spawnCalls.length, 0);
+});
+
+test("migrateBridgePort shutdown 失败返回 SHUTDOWN_FAILED 且不 spawn", async () => {
+  const { deps, spawnCalls } = makeMigrateFake({ shutdown: { ok: false, message: "conn refused" } });
+  const r = await migrateBridgePort(MIGRATE_BASE, deps);
+  assert.ok(!r.ok && r.code === MigrateErrorCodes.SHUTDOWN_FAILED);
+  assert.match(r.message, /手动释放/);
+  assert.equal(spawnCalls.length, 0);
+});
+
+test("migrateBridgePort 指纹不符拒绝迁移（FOREIGN_BRIDGE）且不 spawn", async () => {
+  const { deps, spawnCalls } = makeMigrateFake({ shutdown: { ok: true, body: "some other proxy" } });
+  const r = await migrateBridgePort(MIGRATE_BASE, deps);
+  assert.ok(!r.ok && r.code === MigrateErrorCodes.FOREIGN_BRIDGE);
+  assert.match(r.message, /手动释放/);
+  assert.equal(spawnCalls.length, 0);
+});
+
+test("migrateBridgePort 旧端口不释放超时 abort（RELEASE_TIMEOUT）", async () => {
+  const { deps, spawnCalls } = makeMigrateFake({
+    shutdown: { ok: true, body: "opencode-bridge shutting down" },
+    probeByPort: ( _host, port) => (port === OLD_PORT ? true : false),
+    existingPaths: [HELPER_PATH],
+  });
+  const r = await migrateBridgePort({ ...MIGRATE_BASE, releaseAttempts: 3, releaseDelayMs: 0 }, deps);
+  assert.ok(!r.ok && r.code === MigrateErrorCodes.RELEASE_TIMEOUT);
+  assert.equal(spawnCalls.length, 0);
+});
+
+test("migrateBridgePort 新桥 helper 缺失返回 ENSURE_FAILED", async () => {
+  const { deps } = makeMigrateFake({
+    shutdown: { ok: true, body: "opencode-bridge shutting down" },
+    probeByPort: ( _host, port) => false,
+  });
+  const r = await migrateBridgePort(MIGRATE_BASE, deps);
+  assert.ok(!r.ok && r.code === MigrateErrorCodes.ENSURE_FAILED);
+});
+
+test("migrateBridgePort 成功：停旧桥→等释放→起新桥（PI_BRIDGE_PORT 透传新端口）", async () => {
+  let newProbes = 0;
+  const { deps, shutdownCalls, spawnCalls } = makeMigrateFake({
+    shutdown: { ok: true, body: "opencode-bridge shutting down\n" },
+    probeByPort: (_host, port) => {
+      if (port === OLD_PORT) return false;
+      newProbes += 1;
+      return newProbes === 1 ? false : true;
+    },
+    existingPaths: [HELPER_PATH],
+  });
+  const r = await migrateBridgePort({ ...MIGRATE_BASE, releaseAttempts: 2, releaseDelayMs: 0 }, deps);
+  assert.ok(r.ok);
+  assert.deepEqual(shutdownCalls[0], { host: BRIDGE_HOST, port: OLD_PORT });
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0]?.env.PI_BRIDGE_PORT, String(NEW_PORT));
+});
+
+test("createDefaultBridgeDeps 提供 shutdownBridge（仅 127.0.0.1）", async () => {
+  const deps = createDefaultBridgeDeps();
+  assert.equal(typeof deps.shutdownBridge, "function");
+  const foreign = await deps.shutdownBridge!("192.168.1.1", 10899, 50);
+  assert.ok(!foreign.ok);
+  assert.match(foreign.message, /非本地/);
 });

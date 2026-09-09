@@ -21,11 +21,15 @@
  *       字段，其余配置原样保留；写入在下次 Pi 启动才生效。
  *
  * 命令：/opencode-bridge — 查看状态（必要时尝试启动），显示监听地址、上游
- *       SOCKS5 地址、settings.json 的 httpProxy 当前状态。
- *       /opencode-bridge-sync — 修改 settings.json 的 httpProxy（确认 + 备份）。
+ *       SOCKS5 地址、端口来源、settings.json 的 httpProxy 当前状态。
+ *       /opencode-bridge-sync [port] — 修改 settings.json 的 httpProxy（确认 +
+ *       备份）；可直接跟端口或交互式询问，端口持久化到 settings.json 同目录
+ *       opencode-bridge.json，改端口后自动停旧桥、起新桥，httpProxy 联动，
+ *       一次确认覆盖全部落盘动作。
  *       /opencode-bridge-restore — 从备份中恢复 settings.json（确认；恢复前
  *       先把当前配置再备份一份，保证恢复操作本身可撤销）。
  *
+ * 端口优先级：命令行参数 > PI_BRIDGE_PORT > 配置文件 > 默认值（10899）。
  * 环境变量：PI_BRIDGE_PORT / PI_BRIDGE_SOCKS_HOST / PI_BRIDGE_SOCKS_PORT
  *           （helper 另支持 PI_BRIDGE_LOG 指定日志文件路径）
  *
@@ -38,22 +42,30 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  BRIDGE_HOST,
   HELPER_FILE_NAME,
   PROBE_TIMEOUT_MS,
   type BridgeConfig,
   type BridgeDeps,
+  type BridgePortSource,
   type HttpProxySyncPlan,
   type ProxySyncDeps,
   ProxySyncActions,
   applyHttpProxySync,
   applyRestore,
+  bridgeConfigPath,
   createDefaultBridgeDeps,
   createDefaultProxySyncDeps,
   ensureBridge,
+  formatBridgePortConfig,
   listHttpProxyBackups,
   makeBackupPath,
+  migrateBridgePort,
   parseBridgeConfig,
+  parsePortString,
   planHttpProxySync,
+  readBridgePortConfig,
+  resolveEffectivePort,
 } from "./bridge.ts";
 
 // ===== 常量 =====
@@ -94,6 +106,53 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
 }
 
 /**
+ * 解析当前生效配置（不探测、不拉起）：优先级 参数 > 环境变量 > 配置文件 > 默认值。
+ * 配置文件缺失/坏值一律忽略回退（warning 带回，不阻断）；端口非法返回 ok:false。
+ */
+function resolveCurrentEffective(
+  env: Record<string, string | undefined>,
+  proxySyncDeps: ProxySyncDeps,
+  settingsPath: string,
+  cliPort?: number,
+):
+  | { ok: false; errors: string[] }
+  | { ok: true; config: BridgeConfig; source: BridgePortSource; configWarning?: string; configPort?: number } {
+  let configPort: number | undefined;
+  let configWarning: string | undefined;
+  try {
+    const read = readBridgePortConfig(settingsPath, proxySyncDeps);
+    configPort = read.port;
+    configWarning = read.warning;
+  } catch (err) {
+    configWarning = `桥配置文件读取异常，已忽略：${err instanceof Error ? err.message : String(err)}`;
+  }
+  const resolved = resolveEffectivePort({ cliPort, env, configPort });
+  if (!resolved.ok) {
+    return { ok: false, errors: [resolved.message] };
+  }
+  const parsed = parseBridgeConfig({ ...env, PI_BRIDGE_PORT: String(resolved.port) });
+  if (!parsed.ok) {
+    return { ok: false, errors: parsed.errors };
+  }
+  return { ok: true, config: parsed.config, source: resolved.source, configWarning, configPort };
+}
+
+/** 探测复用或拉起（不碰 settings.json，异常由调用方隔离）。 */
+async function probeAndEnsure(
+  config: BridgeConfig,
+  deps: { bridge: BridgeDeps; helperPaths: string[]; env: Record<string, string | undefined> },
+): Promise<{ alive: boolean; note: string; message?: string }> {
+  const alive0 = await deps.bridge.probe(config.bridgeHost, config.bridgePort, PROBE_TIMEOUT_MS);
+  if (alive0) return { alive: true, note: "" };
+  const result = await ensureBridge(
+    { config, helperPaths: deps.helperPaths, execPath: process.execPath, env: deps.env },
+    deps.bridge,
+  );
+  if (result.ok) return { alive: true, note: "（已自动启动）" };
+  return { alive: false, note: `（启动失败：${result.message}）`, message: result.message };
+}
+
+/**
  * 确保桥在跑（session_start 与命令共用），不碰 settings.json。
  * 所有异常都在内部消化，不外抛；配置无效时返回 parsed: false。
  */
@@ -103,32 +162,35 @@ async function ensureBridgeRunning(
     bridge: BridgeDeps;
     helperPaths: string[];
     env: Record<string, string | undefined>;
+    proxySync: ProxySyncDeps;
+    settingsPath: string;
+    cliPort?: number;
     /** 拉起失败时是否发 error 通知（session_start 用；命令走状态行，不开） */
     reportError: boolean;
   },
-): Promise<{ parsed: false } | { parsed: true; alive: boolean; note: string; config: BridgeConfig }> {
-  const parsed = parseBridgeConfig(deps.env);
-  if (!parsed.ok) {
-    notify(ctx, `opencode-bridge 配置无效：${parsed.errors.join("；")}`, "error");
+): Promise<
+  | { parsed: false }
+  | { parsed: true; alive: boolean; note: string; config: BridgeConfig; source: BridgePortSource; configWarning?: string; configPort?: number }
+> {
+  const effective = resolveCurrentEffective(deps.env, deps.proxySync, deps.settingsPath, deps.cliPort);
+  if (!effective.ok) {
+    notify(ctx, `opencode-bridge 配置无效：${effective.errors.join("；")}`, "error");
     return { parsed: false };
   }
-  const config = parsed.config;
-
-  let alive = await deps.bridge.probe(config.bridgeHost, config.bridgePort, PROBE_TIMEOUT_MS);
+  const config = effective.config;
+  let alive = false;
   let note = "";
-  if (!alive) {
-    const result = await ensureBridge(
-      { config, helperPaths: deps.helperPaths, execPath: process.execPath, env: deps.env },
-      deps.bridge,
-    );
-    alive = result.ok;
-    note = result.ok ? "（已自动启动）" : `（启动失败：${result.message}）`;
-    if (!result.ok && deps.reportError) {
-      notify(ctx, `opencode-bridge: ${result.message}`, "error");
+  try {
+    const ensured = await probeAndEnsure(config, deps);
+    alive = ensured.alive;
+    note = ensured.note;
+    if (!ensured.alive && ensured.message && deps.reportError) {
+      notify(ctx, `opencode-bridge: ${ensured.message}`, "error");
     }
+  } catch (err) {
+    throw err;
   }
-
-  return { parsed: true, alive, note, config };
+  return { parsed: true, alive, note, config, source: effective.source, configWarning: effective.configWarning, configPort: effective.configPort };
 }
 
 /** helper 候选路径：扩展目录（import.meta.url 同目录）优先，其余为常见安装位置。 */
@@ -157,13 +219,53 @@ function resolveHelperCandidates(metaUrl: string | undefined): string[] {
 }
 
 /** /opencode-bridge 状态输出（纯函数，便于测试断言）。 */
-export function formatStatusLines(config: BridgeConfig, alive: boolean, note: string): string[] {
-  return [
+export function formatStatusLines(
+  config: BridgeConfig,
+  alive: boolean,
+  note: string,
+  source?: BridgePortSource,
+  configWarning?: string,
+): string[] {
+  const lines = [
     `状态: ${alive ? "运行中" : "未运行"}${note}`,
     `监听: ${config.proxyUrl}`,
     `上游: socks5://${config.socksHost}:${config.socksPort}`,
-    `pi 配置: 如需让模型请求走本桥，运行 /opencode-bridge-sync（人工确认 + 自动备份 settings.json）`,
   ];
+  if (source !== undefined) lines.push(`端口来源: ${source}`);
+  if (configWarning) lines.push(`配置提示: ${configWarning}`);
+  lines.push(`pi 配置: 如需让模型请求走本桥，运行 /opencode-bridge-sync（人工确认 + 自动备份 settings.json）`);
+  return lines;
+}
+
+/** /opencode-bridge-sync 切换端口的确认弹窗文案（纯函数，便于测试断言）。 */
+export function formatPortChangeConfirmMessage(
+  oldPort: number,
+  newPort: number,
+  configPath: string,
+  configNeedsWrite: boolean,
+  httpProxyPlan: HttpProxySyncPlan,
+  settingsPath: string,
+  backupPath: string,
+): string {
+  const configLine = configNeedsWrite
+    ? `写配置文件：${configPath}（{"bridgePort": ${newPort}}）`
+    : `写配置文件：${configPath}（已是最新，无需写入）`;
+  let proxyLine: string;
+  if (httpProxyPlan.action === ProxySyncActions.SET) {
+    proxyLine = `改 httpProxy：写入 ${httpProxyPlan.proxyUrl}（原文件备份到 ${backupPath}；仅改 httpProxy 字段；重启 Pi 后生效）`;
+  } else if (httpProxyPlan.action === ProxySyncActions.FOREIGN) {
+    proxyLine = `改 httpProxy：${httpProxyPlan.message}，不碰`;
+  } else {
+    proxyLine = `改 httpProxy：${httpProxyPlan.message}，无需改动`;
+  }
+  return [
+    `即将切换桥端口：${BRIDGE_HOST}:${oldPort} → ${BRIDGE_HOST}:${newPort}`,
+    configLine,
+    `停旧桥：${BRIDGE_HOST}:${oldPort}（仅自家 helper 才停，指纹不符则中止）`,
+    `起新桥：${BRIDGE_HOST}:${newPort}（探测复用或拉起 helper）`,
+    proxyLine,
+    `文件：${settingsPath}；重启 Pi 后生效`,
+  ].join("\n");
 }
 
 /** /opencode-bridge-sync 的确认弹窗文案（纯函数，便于测试断言）。 */
@@ -203,6 +305,8 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
         bridge: bridgeDeps,
         helperPaths,
         env,
+        proxySync: proxySyncDeps,
+        settingsPath,
         reportError: true,
       });
     } catch (err) {
@@ -218,10 +322,16 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
           bridge: bridgeDeps,
           helperPaths,
           env,
+          proxySync: proxySyncDeps,
+          settingsPath,
           reportError: false,
         });
         if (!state.parsed) return;
-        notify(ctx, formatStatusLines(state.config, state.alive, state.note).join("\n"), state.alive ? "info" : "warning");
+        notify(
+          ctx,
+          formatStatusLines(state.config, state.alive, state.note, state.source, state.configWarning).join("\n"),
+          state.alive ? "info" : "warning",
+        );
       } catch (err) {
         notify(ctx, `opencode-bridge 异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
       }
@@ -229,13 +339,135 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
   });
 
   pi.registerCommand(SYNC_COMMAND_NAME, {
-    description: "修改 settings.json 的 httpProxy 指向本桥（人工确认 + 自动备份，仅改 httpProxy 字段）",
+    description: "修改 settings.json 的 httpProxy 指向本桥（人工确认 + 自动备份，仅改 httpProxy 字段；可跟端口切换桥端口）",
     handler: async (_args, ctx) => {
       try {
+        const rawArgs = typeof _args === "string" ? _args : "";
+        const tokens = rawArgs.trim().split(/\s+/).filter(Boolean);
+        if (tokens.length > 1) {
+          notify(ctx, `opencode-bridge-sync：参数过多，只支持一个端口（当前：${JSON.stringify(rawArgs.trim())}）`, "warning");
+          return;
+        }
+        let cliPort: number | undefined;
+        if (tokens.length === 1) {
+          const parsedArg = parsePortString(tokens[0]!);
+          if (!parsedArg.ok) {
+            notify(ctx, `opencode-bridge-sync：${parsedArg.message}`, "warning");
+            return;
+          }
+          cliPort = parsedArg.value;
+        }
+
+        const oldEffective = resolveCurrentEffective(env, proxySyncDeps, settingsPath, undefined);
+        if (!oldEffective.ok) {
+          notify(ctx, `opencode-bridge 配置无效：${oldEffective.errors.join("；")}`, "error");
+          return;
+        }
+        const oldPort = oldEffective.config.bridgePort;
+
+        let desiredPort = oldPort;
+        if (cliPort !== undefined) {
+          desiredPort = cliPort;
+        } else if (ctx.hasUI) {
+          let inputResult: string | undefined;
+          try {
+            inputResult = await ctx.ui.input("opencode-bridge：输入桥端口（回车保持当前）", String(oldPort));
+          } catch (err) {
+            notify(ctx, `opencode-bridge-sync 输入框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+            return;
+          }
+          if (inputResult === undefined) {
+            notify(ctx, "已取消，settings.json 未改动", "info");
+            return;
+          }
+          const trimmed = inputResult.trim();
+          if (trimmed !== "") {
+            const parsedInput = parsePortString(trimmed);
+            if (!parsedInput.ok) {
+              notify(ctx, `opencode-bridge-sync：${parsedInput.message}`, "warning");
+              return;
+            }
+            desiredPort = parsedInput.value;
+          }
+        } else {
+          desiredPort = oldPort;
+        }
+
+        if (desiredPort !== oldPort) {
+          if (!ctx.hasUI) {
+            notify(ctx, "opencode-bridge-sync 需要图形确认，请在 TUI 中运行此命令", "warning");
+            return;
+          }
+          const newEffective = resolveCurrentEffective(env, proxySyncDeps, settingsPath, desiredPort);
+          if (!newEffective.ok) {
+            notify(ctx, `opencode-bridge 配置无效：${newEffective.errors.join("；")}`, "error");
+            return;
+          }
+          const newConfig = newEffective.config;
+          const newProxyUrl = newConfig.proxyUrl;
+          const configPath = bridgeConfigPath(settingsPath);
+          const configNeedsWrite = oldEffective.configPort !== desiredPort;
+          const predicted = planHttpProxySync({ settingsPath, proxyUrl: newProxyUrl, bridgeAlive: true }, proxySyncDeps);
+          if (!predicted.ok) {
+            notify(ctx, `opencode-bridge-sync：${predicted.message}`, "error");
+            return;
+          }
+          const backupPath = makeBackupPath(settingsPath, now());
+          let confirmed = false;
+          try {
+            confirmed = await ctx.ui.confirm(
+              "opencode-bridge：切换桥端口？",
+              formatPortChangeConfirmMessage(oldPort, desiredPort, configPath, configNeedsWrite, predicted.plan, settingsPath, backupPath),
+            );
+          } catch (err) {
+            notify(ctx, `opencode-bridge-sync 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+            return;
+          }
+          if (!confirmed) {
+            notify(ctx, "已取消，settings.json 未改动", "info");
+            return;
+          }
+          const migrated = await migrateBridgePort(
+            { host: BRIDGE_HOST, oldPort, newConfig, helperPaths, execPath: process.execPath, env },
+            bridgeDeps,
+          );
+          if (!migrated.ok) {
+            notify(ctx, `opencode-bridge-sync：${migrated.message}`, "error");
+            return;
+          }
+          if (configNeedsWrite) {
+            try {
+              proxySyncDeps.writeTextFile(configPath, formatBridgePortConfig(desiredPort));
+            } catch (err) {
+              notify(ctx, `opencode-bridge-sync：写桥配置文件失败，未改 httpProxy：${err instanceof Error ? err.message : String(err)}`, "error");
+              return;
+            }
+          }
+          const finalPlanned = planHttpProxySync({ settingsPath, proxyUrl: newProxyUrl, bridgeAlive: true }, proxySyncDeps);
+          if (!finalPlanned.ok) {
+            notify(ctx, `opencode-bridge-sync：${finalPlanned.message}（桥已迁移，配置文件已更新）`, "error");
+            return;
+          }
+          const finalPlan = finalPlanned.plan;
+          if (finalPlan.action === ProxySyncActions.NOOP || finalPlan.action === ProxySyncActions.FOREIGN) {
+            notify(
+              ctx,
+              `opencode-bridge-sync：桥已切换到 ${newProxyUrl}，配置文件已更新；${finalPlan.message}，settings.json 未改动`,
+              finalPlan.action === ProxySyncActions.FOREIGN ? "warning" : "info",
+            );
+            return;
+          }
+          const applied = applyHttpProxySync(finalPlan, { settingsPath, backupPath }, proxySyncDeps);
+          notify(ctx, `opencode-bridge-sync：桥已切换到 ${newProxyUrl}；${applied.message}`, applied.ok ? "info" : "error");
+          return;
+        }
+
         const state = await ensureBridgeRunning(ctx, {
           bridge: bridgeDeps,
           helperPaths,
           env,
+          proxySync: proxySyncDeps,
+          settingsPath,
           reportError: false,
         });
         if (!state.parsed) return;
