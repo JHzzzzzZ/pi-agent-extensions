@@ -10,10 +10,15 @@
  */
 
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
+import { serializeTeam } from "../config.ts";
 import { RUN_ENTRY_TYPE } from "../types.ts";
+import { fixtureTeam } from "./fixtures.ts";
+import { makeFakeSpawn, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -123,13 +128,13 @@ test("team:view 互斥：viewer 打开期间再进入不开第二个 overlay", a
 // 防重影核心：① viewer 打开 → widget 隐藏（setWidget(undefined) 先于 custom）；
 // ② 关闭 → widget 恢复并立即重绘一次；③ 打开期间再进入 → custom 只进一次。
 
-/** 带记录 setWidget 的 session ctx（widget 挂载 + 隐藏/恢复都走这里）。 */
-function widgetSessionCtx(timeline: string[]) {
+/** 带记录 setWidget 的 session ctx（widget 隐藏/恢复都走这里）。 */
+function widgetSessionCtx(timeline: string[], cwd: string) {
   return {
-    cwd: os.tmpdir(),
+    cwd,
     hasUI: true,
     mode: "tui",
-    isProjectTrusted: (): boolean => false,
+    isProjectTrusted: (): boolean => true,
     ui: {
       setWidget: (_key: string, lines: string[] | undefined): void => {
         timeline.push(lines === undefined ? "hide" : "draw");
@@ -157,6 +162,45 @@ function widgetSessionCtx(timeline: string[]) {
       ],
     },
   };
+}
+
+/**
+ * 挂好 widget 的会话：真实派一个后台 run（fake leader 子进程常开不回）
+ * 让 ensureRunWidget 走真实挂载路径。水合不再从终态记录挂 widget
+ * （/team:clear + 水合门控语义），所以这里必须经真实派单挂载。
+ */
+async function mountedSession(timeline: string[]): Promise<{
+  pi: ReturnType<typeof fakePi>;
+  child: Awaited<ReturnType<typeof waitForChild>>;
+  sessionCtx: unknown;
+  spawn: FakeSpawnHandle;
+  projectDir: string;
+  stop: () => Promise<void>;
+}> {
+  resetDoubleLoadGuardForTests();
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-mutex-"));
+  fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
+  const team = fixtureTeam({ name: "proj-team", description: "互斥观测团队", filePath: "", notes: undefined });
+  fs.writeFileSync(path.join(projectDir, ".pi", "teams", "proj-team.md"), serializeTeam(team));
+  const spawn = makeFakeSpawn();
+  const pi = fakePi();
+  agentTeamExtension(pi as never, { spawn: spawn.spawn });
+  const sessionCtx = widgetSessionCtx(timeline, projectDir);
+  await pi.fire("session_start", sessionCtx);
+  const run = pi.tools.get("team_run") as unknown as {
+    execute: (id: string, params: Record<string, unknown>, signal?: undefined, onUpdate?: undefined, ctx?: unknown) => Promise<unknown>;
+  };
+  const started = (await run.execute("call-run", { team: "proj-team", task: "viewer 互斥观测任务" }, undefined, undefined, sessionCtx)) as {
+    isError?: boolean;
+  };
+  assert.notEqual(started.isError, true, "后台派单应成功（widget 挂载前置）");
+  const child = await waitForChild(spawn, 0); // 常开不回 → run 保持 running
+  const stop = async (): Promise<void> => {
+    await pi.fire("session_shutdown", sessionCtx); // 停 run + 停 widget + 清亮块
+    fs.rmSync(projectDir, { recursive: true, force: true });
+    resetDoubleLoadGuardForTests();
+  };
+  return { pi, child, sessionCtx, spawn, projectDir, stop };
 }
 
 type ViewerComponentLike = { handleInput: (data: string) => void };
@@ -199,15 +243,12 @@ function closableViewCtx(opts: { timeline?: string[]; customCalls?: unknown[][] 
 }
 
 test("接线：viewer 打开时 widget 隐藏（setWidget(undefined) 先于 custom 进入），关闭后恢复并立即重绘", async () => {
-  resetDoubleLoadGuardForTests();
   const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
   delete process.env.PI_AGENT_TEAM_WIDGET; // 让 widget 挂载（1s unref timer，不阻塞退出）
+  const timeline: string[] = [];
+  const mounted = await mountedSession(timeline);
   try {
-    const timeline: string[] = [];
-    const pi = fakePi();
-    agentTeamExtension(pi as never);
-    await pi.fire("session_start", widgetSessionCtx(timeline));
-
+    const { pi } = mounted;
     const customCalls: unknown[][] = [];
     const view = pi.commands.get("team:view");
     assert.ok(view);
@@ -227,20 +268,18 @@ test("接线：viewer 打开时 widget 隐藏（setWidget(undefined) 先于 cust
     const restoreAt = timeline.lastIndexOf("draw");
     assert.ok(restoreAt > customAt, "恢复重绘应在 custom 之后");
   } finally {
+    await mounted.stop();
     if (previousWidget === undefined) delete process.env.PI_AGENT_TEAM_WIDGET;
     else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
-    resetDoubleLoadGuardForTests();
   }
 });
 
 test("接线：viewer 打开期间再次 /team:view → custom 只进一次（widget 挂载态下仍互斥）", async () => {
-  resetDoubleLoadGuardForTests();
   const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
   delete process.env.PI_AGENT_TEAM_WIDGET;
+  const mounted = await mountedSession([]);
   try {
-    const pi = fakePi();
-    agentTeamExtension(pi as never);
-    await pi.fire("session_start", widgetSessionCtx([]));
+    const { pi } = mounted;
 
     const customCalls: unknown[][] = [];
     const view = pi.commands.get("team:view");
@@ -256,8 +295,8 @@ test("接线：viewer 打开期间再次 /team:view → custom 只进一次（wi
     ]);
     assert.equal(customCalls.length, 1, "widget 挂载态下第二个 viewer 也不得调用 ui.custom");
   } finally {
+    await mounted.stop();
     if (previousWidget === undefined) delete process.env.PI_AGENT_TEAM_WIDGET;
     else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
-    resetDoubleLoadGuardForTests();
   }
 });

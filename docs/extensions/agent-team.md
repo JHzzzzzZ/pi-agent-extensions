@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ e338c96
+> last verified @ 0274803
 
 ## 职责与边界
 
@@ -31,6 +31,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - run 生命周期由 coordinator 同步 claim 保护：`start()` 在首个 await 前占住 active/pending/progress，finally 清空——并发 start 竞态与终态后残留 progress 均由此拦截；aborted 终态必须补全 roster 成员（queued/running → aborted），否则 widget/status 少报。
 - `team_stop` 的 runId 必填：省略/未知/已结束分别返回 `RUN_ID_REQUIRED`/`RUN_NOT_FOUND`/`RUN_ALREADY_FINISHED`（类型化错误，不抛异常）。
 - 亮块 `setWidget` 传**纯字符串数组**（无样式）——`ExtensionUIContext` 无 `theme` 字段，类型化访问 `ctx.ui.theme` 无法编译。
+- 亮块终态行只能 `/team:clear` 手动清除（run 进行中拒绝，只卸 widget 不动 `lastRecord`）；`session_start` 水合仅在存在 **running** run 时挂亮块——终态记录不自动重挂（否则用户 clear 后 /reload 又复活）；派新单经 `startBackgroundRun → ensureRunWidget` 自然复挂。集成测试要挂 widget 时必须走真实派单（旧“水合终态记录即挂载”路径已删）。
 - viewer 打开期间必须暂停下方 widget（`RunWidgetController.setPaused`），关闭恢复。
 - **不偷编辑器按键**：亮块非选中态只有激活键被消费，其余（含 esc）原样交还编辑器；bare `↓`/`←` 仅当编辑器为空才激活（`editorState` 端口注入 `getEditorText`，宿主缺该 API 时降级为仅 alt 通道）。
 - **TUI 同步 ≠ 依赖**：viewer/widget 行为对照 pi-subagents（基线 v0.66.0，`agent-team/docs/tui-sync.md`）代码级同步，但不 import 它；测试期望只能从矩阵来，不从实现反推；同步后登记新版本号。
@@ -46,7 +47,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（137 个）。
+- 必跑：`cd agent-team && npm install && npm test`（144 个）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
 - 涉及团队文件格式：同步 `types.ts` + `examples/` + README。

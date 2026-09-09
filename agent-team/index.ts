@@ -72,7 +72,7 @@ function transcriptRoot(): string {
 const TRANSCRIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** /team:<name> dynamic registrations never shadow these built-ins. */
-const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view"]);
+const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view", "clear"]);
 
 /** Builds the guarded UI port over ctx.ui (repo TUI conventions). */
 function uiPortFrom(ctx: ExtensionContext): UiPort {
@@ -790,6 +790,30 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     },
   });
 
+  pi.registerCommand("team:clear", {
+    description: "清除输入栏下方的 team run 亮块（不影响 /team:status、/team:view 回看）",
+    handler: async (_args, ctx) => {
+      const ui = uiPortFrom(ctx);
+      if (state.coordinator.isRunning()) {
+        ui.notify("team run 进行中；先 /team:stop 或等它结束再清除。", "warning");
+        return;
+      }
+      if (!state.widgetMounted) {
+        ui.notify("下方没有 team run 亮块。", "info");
+        return;
+      }
+      try {
+        state.widget?.stop();
+      } catch {
+        /* widget failures never break the session */
+      }
+      state.widget = undefined;
+      state.widgetMounted = false;
+      clearWidget(ctx);
+      ui.notify("已清除下方亮块；/team:status、/team:view 仍可回看。", "info");
+    },
+  });
+
   // -- Session lifecycle --------------------------------------------------
 
   pi.on("session_start", async (_event, ctx) => {
@@ -816,10 +840,13 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       /* hydration is best-effort */
     }
 
-    // Below-editor run widget: mount right away when hydration found a run
-    // (finished record still shows for review); otherwise at first dispatch.
+    // Below-editor run widget: only mount right away when hydration found a
+    // STILL-RUNNING run. A terminal record hydrates /team:status and
+    // /team:view paths but must not re-mount the below-editor block on every
+    // /reload — the user cleared it with /team:clear for a reason. The next
+    // dispatch remounts it (startBackgroundRun → ensureRunWidget).
     const snapshot = state.coordinator.getStatus();
-    if (snapshot.running || snapshot.lastRecord) ensureRunWidget(ctx);
+    if (snapshot.running) ensureRunWidget(ctx);
 
     // Best-effort retention: drop transcript artifact dirs older than a week.
     try {
