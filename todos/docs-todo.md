@@ -14,3 +14,4 @@
   - [x] 阶段 B 收尾：cross/ 三份经独立 reviewer 子代理逐事实校对（错误码名单/键值/端口名全部属实，修正 SaveLibDeps 漏列、StatusPort 说法、loop 时钟例外、--no-session 契约 4 处）；INDEX 已含全部 11 行摘要。
   - 硬原则：只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄代码、不列 API；每份 ≤100 行、bullet 为主。
   - 实施步骤：先搭骨架 + agent-team、pwr 两张样板卡给用户过目，认可后再铺满其余 9 个插件。
+- [x] team_stop（agent-team 1.2.0）落地后同步 docs/ 知识库：agent-team 卡（职责/数据流/不变量/改动清单 109→137 + last verified）与 INDEX 摘要行。

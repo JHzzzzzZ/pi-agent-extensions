@@ -23,7 +23,7 @@
 | 卡 | 一句话 |
 | --- | --- |
 | [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行 |
-| [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达 |
+| [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达；team_stop 按 runId 中止 |
 | chatanywhere-provider | OpenAI 兼容 + Anthropic Messages provider 适配器 |
 | deep-init | `/deep-init` 提示词驱动四阶段深度初始化 |
 | goal | `/goal` 会话目标循环：agent 跨回合自动推进至评估器判定达成 |

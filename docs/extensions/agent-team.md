@@ -1,10 +1,10 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 0142e14
+> last verified @ 8642a5b
 
 ## 职责与边界
 
-Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单：拉起独立 leader 子进程，leader 经 `team_dispatch` 调度成员子进程并行干活，报告以 followUp 送回。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
+Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单：拉起独立 leader 子进程，leader 经 `team_dispatch` 调度成员子进程并行干活，报告以 followUp 送回；派单变卦/超预算/跑偏时主 agent 用 `team_stop <runId>` 中止（runId 由 team_run 返回与 team_status 展示）。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
 
 ## 文件地图
 
@@ -17,16 +17,19 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 核心数据流
 
-1. `team_run` → 默认后台派单（立即返回）→ 拉起 leader 子进程（注入 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`）。
+1. `team_run` → 默认后台派单（立即返回，含 runId）→ 拉起 leader 子进程（注入 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`）。
 2. leader 解释团队 prompt → 调 `team_dispatch`（每 dispatch ≤8 任务、≤4 并发成员）。
 3. 每任务物化 `team-tmp://` prompt → member 子 pi 执行 → 结果 ≤50KB / 摘要 ≤8KB 回 leader。
 4. leader 汇总 → 退出码 0 → 报告经 `deliverRunResult` 以 followUp 自动送达主会话。
 5. `wait: true` 保留同步契约（注意：同步 await 会阻塞主 agent 轮次）。
+6. `team_stop <runId>` 中止：`stopAndSettle()` SIGTERM→SIGKILL 后有界等待（默认 7s）落定，返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达，可立即重新派单。
 
 ## 不变量
 
 - 自包含：不引 pwr、不依赖其它扩展目录，独立可复制加载。
 - 上限：每 dispatch 8 任务、4 并发、50KB 结果、8KB 摘要（`TeamErrorCodes` result union）。
+- run 生命周期由 coordinator 同步 claim 保护：`start()` 在首个 await 前占住 active/pending/progress，finally 清空——并发 start 竞态与终态后残留 progress 均由此拦截；aborted 终态必须补全 roster 成员（queued/running → aborted），否则 widget/status 少报。
+- `team_stop` 的 runId 必填：省略/未知/已结束分别返回 `RUN_ID_REQUIRED`/`RUN_NOT_FOUND`/`RUN_ALREADY_FINISHED`（类型化错误，不抛异常）。
 - 亮块 `setWidget` 传**纯字符串数组**（无样式）——`ExtensionUIContext` 无 `theme` 字段，类型化访问 `ctx.ui.theme` 无法编译。
 - viewer 打开期间必须暂停下方 widget（`RunWidgetController.setPaused`），关闭恢复。
 
@@ -40,7 +43,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（109 个）。
+- 必跑：`cd agent-team && npm install && npm test`（137 个）。
 - TUI 改动：除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
 - 涉及团队文件格式：同步 `types.ts` + `examples/` + README。
