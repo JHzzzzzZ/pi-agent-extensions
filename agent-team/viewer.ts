@@ -19,7 +19,7 @@
  * the thin host opener.
  */
 
-import { Markdown, truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import { Markdown, truncateToWidth, wrapTextWithAnsi, type Component, type OverlayOptions } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { type TranscriptEntry } from "./transcript.ts";
 import { VIEWER_HEIGHT_JITTER_ROWS, VIEWER_TICK_MS } from "./types.ts";
@@ -770,6 +770,21 @@ function markdownRenderer(): ((text: string, width: number) => string[]) | undef
 }
 
 /**
+ * Overlay geometry for the transcript viewer: centered, ~96% wide, height
+ * capped at 85% of the terminal with a 1-row margin. The `maxHeight`
+ * cap keeps the overlay box stable across refresh repaints — without it
+ * the geometry is recomputed from content every frame and, combined with
+ * the 1s widget repaint underneath, the host leaves ghost title+tabs rows
+ * on top (same shape as pi-subagents' fleet inspector overlay).
+ */
+export const VIEWER_OVERLAY_OPTIONS: OverlayOptions = {
+  anchor: "center",
+  width: "96%",
+  maxHeight: "85%",
+  margin: 1,
+};
+
+/**
  * Opens the transcript viewer as a centered capturing overlay (~96% wide,
  * ~82% of the terminal height with a full border). Resolves when the user
  * closes it (q/Esc). Host failures are the caller's to guard (index.ts
@@ -806,7 +821,7 @@ export async function openTranscriptViewer(
       }),
     {
       overlay: true,
-      overlayOptions: { anchor: "center", width: "96%" },
+      overlayOptions: VIEWER_OVERLAY_OPTIONS,
     },
   );
 }

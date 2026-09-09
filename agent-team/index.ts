@@ -316,9 +316,20 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     return { team: progress?.team ?? lastRecord?.team ?? "(unknown)", runId, runStatus, elapsed, actors, entries };
   };
 
-  /** Opens the transcript viewer overlay (gates the widget's key handling). */
+  /**
+   * Opens the transcript viewer overlay: gates the widget's key handling
+   * AND pauses its 1s repaint loop (hiding the below-editor block) so the
+   * open overlay repaints against a still main screen. Restores both on
+   * close. Every step is exception-isolated — widget failures never break
+   * the viewer.
+   */
   const openViewer = async (ctx: ExtensionContext, initialActor?: string): Promise<void> => {
     state.viewerOpen = true;
+    try {
+      state.widget?.setPaused(true);
+    } catch {
+      /* widget failures never break the session */
+    }
     try {
       await openTranscriptViewer(ctx.ui, {
         load: buildViewerData,
@@ -326,6 +337,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       });
     } finally {
       state.viewerOpen = false;
+      try {
+        state.widget?.setPaused(false);
+      } catch {
+        /* widget failures never break the session */
+      }
     }
   };
 

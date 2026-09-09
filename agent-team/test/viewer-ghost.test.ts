@@ -13,6 +13,7 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   VIEWER_CHROME_ROWS,
+  VIEWER_OVERLAY_OPTIONS,
   handleViewerKey,
   initialViewerState,
   plainStyles,
@@ -175,6 +176,15 @@ test("切换成员时同时钉住 actor id", () => {
   const legacy = handleViewerKey(initialViewerState(), "\x1b[C", { totalLines: 10, actorCount: 2, bodyHeight: 10 });
   assert.ok(legacy.type === "update");
   assert.ok(!("actor" in legacy.state), "旧路径不新增字段");
+});
+
+test("overlay 盒模型与参考对齐：maxHeight 约束 + margin", () => {
+  // 无 maxHeight 时 overlay 几何每帧随内容重算，主屏 churn 下旧行残留
+  // 堆叠（与 elapsed 同频追加的观感）。与 pi-subagents 检查器同形。
+  assert.equal(VIEWER_OVERLAY_OPTIONS.anchor, "center");
+  assert.equal(VIEWER_OVERLAY_OPTIONS.width, "96%");
+  assert.equal(VIEWER_OVERLAY_OPTIONS.maxHeight, "85%");
+  assert.equal(VIEWER_OVERLAY_OPTIONS.margin, 1);
 });
 
 test("帧高消抖吸收 1 行抖动，大变化才跟随", () => {

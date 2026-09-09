@@ -7,7 +7,7 @@
 
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildWidgetRows, handleWidgetKey, initialWidgetKeyState, renderWidgetView } from "../widget.ts";
+import { RunWidgetController, buildWidgetRows, handleWidgetKey, initialWidgetKeyState, renderWidgetView } from "../widget.ts";
 import type { RunStatusSnapshot } from "../cockpit.ts";
 import { plainStyles, visibleWidth } from "../viewer.ts";
 
@@ -187,4 +187,70 @@ test("renderWidgetView truncates every line to terminal width (CJK-heavy rows)",
   const selected = renderWidgetView(rows, { selected: true, cursor: 1 }, 270, styles);
   assert.match(selected[1], /^▸ /);
   assert.match(selected[selected.length - 1], /↑↓ 选择/);
+});
+
+test("controller setPaused(true) 隐藏亮块并冻结重绘，恢复后立即刷出最新行", () => {
+  const pushed: Array<string[] | undefined> = [];
+  const controller = new RunWidgetController(
+    {
+      load: liveSnapshot,
+      styles: plainStyles(),
+      onConfirm: () => {},
+      width: () => 80,
+      nowMs: () => 65000,
+      tickMs: 60 * 60 * 1000, // 长 tick：本用例只验证暂停/恢复的同步语义
+    },
+    (lines) => {
+      pushed.push(lines);
+    },
+  );
+  try {
+    controller.start();
+    assert.ok(pushed.length >= 1, "start 后立即刷出一帧");
+    assert.ok((pushed[pushed.length - 1]?.length ?? 0) > 0, "运行中有亮块行");
+
+    controller.setPaused(true);
+    assert.deepEqual(pushed[pushed.length - 1], undefined, "暂停时推 undefined 隐藏亮块");
+
+    const frozen = pushed.length;
+    controller.refresh();
+    assert.equal(pushed.length, frozen, "暂停期间 refresh 不再 setWidget");
+
+    controller.setPaused(false);
+    assert.ok(pushed.length > frozen, "恢复后立即刷出一帧");
+    assert.ok((pushed[pushed.length - 1]?.length ?? 0) > 0, "恢复后亮块行回来");
+    assert.match(pushed[pushed.length - 1]![0], /agent-team dev-team ▶ running/);
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 暂停后 tick 不再 setWidget", async () => {
+  const pushed: Array<string[] | undefined> = [];
+  const controller = new RunWidgetController(
+    {
+      load: liveSnapshot,
+      styles: plainStyles(),
+      onConfirm: () => {},
+      width: () => 80,
+      nowMs: () => 65000,
+      tickMs: 5,
+    },
+    (lines) => {
+      pushed.push(lines);
+    },
+  );
+  try {
+    controller.start();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.ok(pushed.length >= 2, `tick 应持续重绘，实得 ${pushed.length}`);
+
+    controller.setPaused(true);
+    const afterPause = pushed.length;
+    assert.deepEqual(pushed[pushed.length - 1], undefined, "暂停帧为 undefined");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(pushed.length, afterPause, "暂停后 tick 不再 setWidget");
+  } finally {
+    controller.stop();
+  }
 });

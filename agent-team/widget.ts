@@ -197,6 +197,10 @@ export class RunWidgetController {
   private state = initialWidgetKeyState();
   private rows: WidgetRowSpec[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** True while the transcript viewer overlay is open (tick paused). */
+  private paused = false;
+  /** True once start() has run (pause/resume never starts a fresh loop). */
+  private started = false;
   private removeInput: (() => void) | undefined;
   private readonly opts: RunWidgetControllerOptions;
   private readonly setWidget: (lines: string[] | undefined) => void;
@@ -215,14 +219,46 @@ export class RunWidgetController {
   /** Starts the repaint loop and (when available) the input hook. */
   start(): void {
     if (this.timer) return;
+    this.started = true;
     this.removeInput = this.attachInput?.((data) => this.onData(data));
+    if (this.paused) return;
     this.refresh();
     this.timer = setInterval(() => this.refresh(), this.opts.tickMs ?? WIDGET_TICK_MS);
     if (typeof this.timer.unref === "function") this.timer.unref();
   }
 
+  /**
+   * Pauses the 1s repaint loop while the transcript viewer overlay is
+   * open (and hides the below-editor block), resuming with an immediate
+   * repaint on close. The open overlay + the per-second widget repaint
+   * underneath churn the main screen every second, which leaves ghost
+   * title+tabs rows on a trail-prone host — pausing removes that churn.
+   */
+  setPaused(paused: boolean): void {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    if (paused) {
+      if (this.timer !== null) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+      try {
+        this.setWidget(undefined);
+      } catch {
+        /* widget failures never break the session */
+      }
+      return;
+    }
+    if (this.started && this.timer === null) {
+      this.timer = setInterval(() => this.refresh(), this.opts.tickMs ?? WIDGET_TICK_MS);
+      if (typeof this.timer.unref === "function") this.timer.unref();
+    }
+    this.refresh();
+  }
+
   /** Rebuilds rows and pushes them to the host (one setWidget per tick). */
   refresh(): void {
+    if (this.paused) return;
     try {
       const snapshot = this.opts.load();
       this.rows = buildWidgetRows(snapshot, this.opts.nowMs?.() ?? Date.now());
@@ -264,6 +300,7 @@ export class RunWidgetController {
 
   /** Stops the repaint loop and removes the input hook. */
   stop(): void {
+    this.started = false;
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
