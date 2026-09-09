@@ -179,6 +179,23 @@ test("team_run wait:true keeps the synchronous contract: inline report, no follo
   }
 });
 
+test("team_run background result exposes the runId (team_stop's handle)", async () => {
+  const { pi, spawn, run, cleanup } = await setup();
+  try {
+    const result = await run({ team: "proj-team", task: "修复登录 bug" });
+    const runId = (result.details as { runId?: string }).runId;
+    assert.ok(runId, "details.runId present");
+    assert.match(runId, /^run-\d+$/);
+    assert.match(result.content[0].text, /runId/);
+    const child = await waitForChild(spawn, 0);
+    assert.equal(runId, spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID, "runId matches the leader's env");
+    child.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length > 0);
+  } finally {
+    cleanup();
+  }
+});
+
 test("team_run while a run is active returns RUN_IN_PROGRESS without spawning again", async () => {
   const { pi, spawn, run, cleanup } = await setup();
   try {

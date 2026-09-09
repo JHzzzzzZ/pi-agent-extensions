@@ -130,7 +130,7 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（109 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（137 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

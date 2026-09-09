@@ -188,6 +188,7 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
     5000,
   );
   assert.match(running, /当前 run：team dev-team ▶ running · 5s/);
+  assert.match(running, /runId: r/);
   assert.match(running, /leader: m1 · turn 3/);
   assert.match(running, /↳ 正在汇总报告/);
   assert.match(running, /▶ frontend running — turn 2 — 在写样式/);
@@ -213,6 +214,7 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
     0,
   );
   assert.match(done, /最近一次 run：team dev-team ✓ completed · 12s · \$0\.0500/);
+  assert.match(done, /runId: run-1/);
   assert.match(done, /✓ frontend done — m/);
   assert.match(done, /共享 worktree: `\/wt\/team`/);
 
@@ -274,6 +276,153 @@ test("stop() aborts the run and the record is marked aborted", async () => {
   assert.equal(result.value?.status, "aborted");
   assert.equal(coordinator.stop(), false);
 });
+
+test("stopAndSettle aborts the active run and returns the terminal aborted record", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+  const settle = coordinator.stopAndSettle();
+  assert.ok(child.killed.includes("SIGTERM"), "abort sent synchronously");
+  child.emitClose(null);
+  const outcome = await settle;
+  assert.equal(outcome.wasRunning, true);
+  assert.equal(outcome.settled, true);
+  assert.equal(outcome.record?.status, "aborted");
+  assert.equal(outcome.record?.runId, spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID);
+  // Stale progress cleared: status lands on the terminal record, not a phantom "running".
+  const status = coordinator.getStatus();
+  assert.equal(status.running, false);
+  assert.equal(status.progress, null);
+  assert.equal(status.lastRecord?.status, "aborted");
+  const result = await promise;
+  assert.ok(result.ok);
+  assert.equal(result.value?.status, "aborted");
+  // Settle removed the RUN_IN_PROGRESS residue: an immediate restart works.
+  const second = coordinator.start({ team: fixtureTeam(), task: "t2", ui: fakeUi() });
+  const child2 = await waitForChild(spawn, 1);
+  assert.equal(spawn.records.length, 2, "second leader spawned right after settle");
+  child2.autoRespond(leaderLines());
+  const secondResult = await second;
+  assert.ok(secondResult.ok);
+  assert.equal(secondResult.value?.status, "completed");
+});
+
+test("stopAndSettle with no active run reports wasRunning:false", async () => {
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    piCommand: "pi",
+  });
+  const outcome = await coordinator.stopAndSettle();
+  assert.deepEqual(outcome, { wasRunning: false, settled: true, record: null });
+});
+
+test("stopAndSettle times out while children are still shutting down (settled:false, not an error)", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+  const outcome = await coordinator.stopAndSettle(30);
+  assert.equal(outcome.wasRunning, true);
+  assert.equal(outcome.settled, false);
+  assert.equal(outcome.record, null);
+  assert.ok(child.killed.includes("SIGTERM"), "abort still sent before the timeout");
+  // Once the child finally closes, the run settles into the terminal record.
+  child.emitClose(null);
+  const result = await promise;
+  assert.ok(result.ok);
+  assert.equal(result.value?.status, "aborted");
+  assert.equal(coordinator.getStatus().progress, null);
+});
+
+test("aborted runs fold the full roster into the record: queued/running members become aborted", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const team = fixtureTeam({
+    members: [
+      ...fixtureTeam().members,
+      { name: "db", model: "anthropic/claude-sonnet-4-5", prompt: "你是 DBA。" },
+    ],
+  });
+  const promise = coordinator.start({ team, task: "t", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+  // Partial progress: one member dispatched and finished; the other two never started.
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "拆解任务" }] }));
+  child.emitLine(toolExecutionStartLine("team_dispatch", { tasks: [{ agent: "frontend", task: "a" }] }));
+  child.emitLine(
+    dispatchDetails([
+      { name: "frontend", ok: true, status: "done", summary: "前端做完", usage: { input: 10, output: 5, cost: 0.01, turns: 1 } },
+    ]),
+  );
+  void coordinator.stopAndSettle();
+  child.emitClose(null);
+  const result = await promise;
+  assert.ok(result.ok);
+  const record = result.value!;
+  assert.equal(record.status, "aborted");
+  assert.equal(record.members.length, 3, "every roster member present in the record");
+  const byName = new Map(record.members.map((m) => [m.name, m]));
+  assert.equal(byName.get("frontend")?.status, "done");
+  assert.equal(byName.get("backend")?.status, "aborted");
+  assert.equal(byName.get("backend")?.model, "anthropic/claude-sonnet-4-5");
+  assert.equal(byName.get("db")?.status, "aborted");
+  assert.equal(byName.get("db")?.model, "anthropic/claude-sonnet-4-5");
+});
+
+/**
+ * Roster-fold regression (see cockpit.ts start() aborted path): a run that
+ * is aborted after its dispatch results have been parsed must not lose the
+ * members that never finished a dispatch. Those appear as "aborted".
+ */
+test("aborted roster fold leaves completed members untouched", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const team = fixtureTeam();
+  const promise = coordinator.start({ team, task: "t", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+  child.emitLine(toolExecutionStartLine("team_dispatch", { tasks: [{ agent: "frontend", task: "a" }, { agent: "backend", task: "b" }] }));
+  child.emitLine(
+    dispatchDetails([
+      { name: "frontend", ok: true, status: "done", summary: "s", usage: { input: 1, output: 1, cost: 0, turns: 1 } },
+      { name: "backend", ok: false, status: "failed", summary: "f", usage: { input: 1, output: 1, cost: 0, turns: 1 } },
+    ]),
+  );
+  void coordinator.stopAndSettle();
+  child.emitClose(null);
+  const result = await promise;
+  assert.ok(result.ok);
+  const record = result.value!;
+  assert.equal(record.status, "aborted");
+  assert.equal(record.members.length, 2, "completed dispatch statuses survive the fold");
+  assert.equal(record.members.find((m) => m.name === "frontend")?.status, "done");
+  assert.equal(record.members.find((m) => m.name === "backend")?.status, "failed");
+});
+
+// ---------------------------------------------------------------------------
+// stopAndSettle helpers are kept private; the coordinator's own promise is
+// the only settle boundary (bounded wait, never throws).
+// ---------------------------------------------------------------------------
 
 test("leader child failure marks the run failed with the error detail", async () => {
   const spawn = makeFakeSpawn();

@@ -9,7 +9,8 @@
 |---|---|
 | 团队文件格式 | `~/.pi/agent/teams/*.md` 或受信项目 `.pi/teams/`（项目优先），frontmatter `leader` + `members[]` |
 | 成员字段 | 每成员 `provider/model` + `tools` + `worktree` + 块标量 `prompt`，见 `examples/dev-team.example.md` |
-| 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（仅 `team_dispatch`），无则 cockpit 模式（`team_create/list/run` + `/team*`） |
+| 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（仅 `team_dispatch`），无则 cockpit 模式（`team_create/list/run/status/stop` + `/team*`） |
+| 停止/终态 | `cockpit.ts` `TeamRunCoordinator.stop()`（同步 abort）/`stopAndSettle()`（有界等待落定返回终态记录）+ `team_stop` 工具（runId 必填；aborted 记录补全 roster 成员） |
 | 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，4 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
 | 隔离分支 | `worktree.ts`（每次 run 独立分支，不碰当前目录） |
@@ -20,6 +21,7 @@
 - leader prompt 经 `leader-prompt.ts` 组装，自包含任务上下文 —— 直传用户原话则成员看不到约束。
 - 结果 ≤50KB、摘要 ≤8KB，与 pwr 同限不同码 —— 超限截断，违则 cockpit entry 溢出。
 - cockpit/widget/entry 键 `agent-team-run-v1` —— 改键则旧会话渲染器失配。
+- start() 在首个 await 前同步 claim（controller + progress + pending）且 finally 清空 —— 并发 start 竞态与终态后残留 progress 均由此拦截；aborted 终态必须补全 roster（否则 widget/status 少报成员）。
 - 缩进 2 空格（pwr 用 tab）—— 混用即 diff 噪音。
 
 ## ANTI-PATTERNS
@@ -30,6 +32,6 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 102 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 137 测试（node --test test/*.test.ts）
 npm run typecheck
 ```

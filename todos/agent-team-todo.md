@@ -9,11 +9,13 @@
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞
 - [ ] 参照 pi-subagents（v0.66.0）对齐 agent-team 可靠性：async-first 统一 + run 落盘/reconcile + 预算可配可见 + doctor 自检 + model 预检。（processing：方案待审批，未动手）
 - [ ] 修复每次 `/reload` 后 team 相关工具消失的问题（globalThis 双加载守卫跨 reload 常驻，entry 直接 return）。
-- [ ] 新增停止工具并暴露给 agent（如 `team_stop`：按 runId 停止运行中的团队派单）
+- [x] 新增停止工具并暴露给 agent（如 `team_stop`：按 runId 停止运行中的团队派单）
 
   现状只能从 view 手动停（且该条还没做）；leader / 主 agent 在派单变卦、超预算、跑偏时停不掉，只能等跑完。
-  - [ ] 与 view 手动停止共用同一停止语义：成员子进程 SIGTERM→SIGKILL、run 落盘终态、widget/行状态更新、后台 followUp 报告不再送达（或送达“已停止”终态）。
-  - [ ] 工具参数用 Typebox schema（对齐 `manage.ts` 现有风格）；停不存在/已结束的 runId 返回类型化错误，不抛异常。
+  - [x] 与 view 手动停止共用同一停止语义：成员子进程 SIGTERM→SIGKILL、run 落盘终态、widget/行状态更新、后台 followUp 报告不再送达（或送达“已停止”终态）。
+  - [x] 工具参数用 Typebox schema（对齐 `manage.ts` 现有风格）；停不存在/已结束的 runId 返回类型化错误，不抛异常。
+
+  v1.2.0 落地：cockpit 新增 `stopAndSettle()`（有界等待落定后返回终态记录，默认 7s），start() 提前同步 claim（消 concurrent start 竞态）+ finally 清空 pending/currentProgress（终态后不再谎报 running）；aborted 记录补全全体 roster 成员；team_stop 工具（runId 必填，RUN_ID_REQUIRED/RUN_NOT_FOUND/RUN_ALREADY_FINISHED）；team_run 后台返回与 team_status 输出暴露 runId。11 个新测试。
 - [x] agent-team 的 TUI 与 pi-subagents 同步，所有细节同步到代码层级
 
   agent-team 的 viewer/widget 是对照 pi-subagents（v0.66.0，`src/tui` + `src/extension` + fleet 壳）手抄的；两边一旦各改各，显示 bug（如重影堆叠）会反复出现。以后 pi-subagents 的 TUI 每变一次，agent-team 跟进一次，差异只留 agent-team 特有语义。
