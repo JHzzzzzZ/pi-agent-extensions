@@ -12,6 +12,7 @@ import {
   MAX_SUMMARY,
   NOTIFY_KINDS,
   PROMPT_TITLE,
+  WAITING_TOOL_NAMES,
   buildToastScript,
   createHumanNotifyExtension,
   shouldNotify,
@@ -83,12 +84,17 @@ function fireSettled(fake: ReturnType<typeof makeFakePi>, ctx: unknown = {}) {
   return fake.handlers.get("agent_settled")!({ type: "agent_settled" }, ctx);
 }
 
+function fireTool(fake: ReturnType<typeof makeFakePi>, toolName: string, ctx: unknown = {}) {
+  return fake.handlers.get("tool_execution_start")!({ type: "tool_execution_start", toolCallId: "call_1", toolName, args: {} }, ctx);
+}
+
 // ===== 接线 =====
 
 test("注册 ui_prompt_start 与 agent_settled 两个 hook", () => {
   const { fake } = boot();
   assert.ok(fake.handlers.has("ui_prompt_start"), "缺少 ui_prompt_start hook");
   assert.ok(fake.handlers.has("agent_settled"), "缺少 agent_settled hook");
+  assert.ok(fake.handlers.has("tool_execution_start"), "缺少 tool_execution_start hook");
 });
 
 // ===== win32 触发 =====
@@ -101,6 +107,36 @@ test("win32 + prompt 各 kind 均触发 spawn 且脚本含 Pi 等待你确认", 
     const script = (spawned.calls[0].args.at(-1) ?? "") as string;
     assert.ok(script.includes(PROMPT_TITLE), `kind=${kind} 脚本应含标题`);
   }
+});
+
+test("win32 + 名单内等人工具触发 spawn 且脚本含 Pi 等待你确认", async () => {
+  assert.ok((WAITING_TOOL_NAMES as readonly string[]).includes("plan_mode_question"), "名单应含 plan_mode_question");
+  for (const toolName of WAITING_TOOL_NAMES) {
+    const { fake, spawned } = boot();
+    await fireTool(fake, toolName);
+    assert.equal(spawned.calls.length, 1, `tool=${toolName} 应触发一次`);
+    const script = (spawned.calls[0].args.at(-1) ?? "") as string;
+    assert.ok(script.includes(PROMPT_TITLE), `tool=${toolName} 脚本应含标题`);
+  }
+});
+
+test("非名单工具零 spawn 且不消耗防抖窗口", async () => {
+  const { fake, spawned } = boot();
+  for (const toolName of ["bash", "read", "edit", "subagent", "todo"]) {
+    await fireTool(fake, toolName);
+  }
+  assert.equal(spawned.calls.length, 0, "非名单工具应零调用");
+  await fireTool(fake, "plan_mode_question");
+  assert.equal(spawned.calls.length, 1, "防抖窗口不应被非名单工具消耗,名单命中应立即发送");
+});
+
+test("等人工具同样受平台门控与一键关闭约束", async () => {
+  const offPlatform = boot({ platform: "linux" });
+  await fireTool(offPlatform.fake, "plan_mode_question");
+  assert.equal(offPlatform.spawned.calls.length, 0);
+  const killed = boot({ env: { PI_HUMAN_NOTIFY: "0" } });
+  await fireTool(killed.fake, "plan_mode_question");
+  assert.equal(killed.spawned.calls.length, 0);
 });
 
 test("win32 + agent_settled 触发 Pi 任务完成", async () => {

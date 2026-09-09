@@ -18,3 +18,15 @@
   - 单测 15 个全绿 + `tsc --noEmit`（strict + erasableSyntaxOnly，0 错误）+ strip-types 加载正常。
   - Windows 真机程序化验证通过：`buildToastScript` 产物经真实 `powershell.exe` 执行，审批/完成两条 Toast 均 `status=0` 且 stderr 为空（Show() 已实际调用）。视觉目检：请在通知中心确认两条 Toast 的标题正文。
   - 真机调试修出的形态已固化进单测：WinRT 双程序集显式加载 + `[ToastNotification]::new($xml)`（Windows PowerShell 5.1 下 `New-Object` 无法绑定该构造）。
+
+## 后续需求（方案 1：特判等人工具，用户 2026-09-09 确认）
+
+- [x] `plan_mode_question` 这类等人工具调用时也发 Toast
+
+  背景：`ui_prompt_start` 只在扩展调 `ctx.ui.*` 弹窗时触发；`plan_mode_question` 等是 harness 侧工具调用，走 `tool_execution_start`，宿主实测确认盲区。
+  - [x] 监听 `tool_execution_start`，仅当 `toolName` 在 `WAITING_TOOL_NAMES` 名单（首批：`plan_mode_question`）时触发；非名单工具不得消耗防抖窗口。
+  - [x] 复用既有 `fire` 通道（平台门控 + 5s 全局防抖 + detached 派生 + 异常隔离）；标题复用 `PROMPT_TITLE`，正文用静态模板 + 工具标签映射，不透传工具参数原文。
+  - [x] 单测：名单命中触发 / 非名单零 spawn 且不占防抖窗口 / 非 win32 与 `PI_HUMAN_NOTIFY=0` 照常 no-op。
+  - [x] 交付同步：`human-notify/` 代码 + 单测、根 `README.md` 小节更新、`AGENTS.md` 计数、根版本 patch bump（同一变更内完成）。
+
+  交付备注（feat/human-notify-waiting → dev-laptop，根 2.8.2）：单测 18 个全绿 + `tsc --noEmit` 0 错误 + strip-types 加载正常；真机 Toast 通道沿用上一轮已验证形态，未改脚本拼装。
