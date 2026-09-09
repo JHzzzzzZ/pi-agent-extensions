@@ -10,7 +10,7 @@
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
-| [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式 | 169 个（node:test） |
+| [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定） | 182 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 44 个 |
 | [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 32 个（node:test） |
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy + 端口自定义自动迁移，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 108 个 |
@@ -303,6 +303,7 @@ node --experimental-strip-types --test run-timer/run-timer.test.ts
 | `/loop daily at 09:00 <任务>` | 每天固定时刻循环（`every day at` 等价；首触发已过则排明天）（v1.2.0） |
 | `/loop every 1h from 00:00 to 09:00 <任务>` | 每日时间窗口 `[start, end]` **闭区间**内按间隔循环：网格锚定在窗口起点（如每小时 → 0:00, 1:00, …, 9:00），支持任意间隔（`every 90m`），要求 `start < end`，跨天用本地时区日 rollover（v1.2.0） |
 | `/loop --bg <上述任意创建形态>` | **后台模式**（v1.3.0）：到期不注入当前会话，而是拉起独立子 pi 进程（`pi --mode json -p --name loop-<id>`，无 `--no-session`），每次触发开新会话落盘；会话 id 自动记入任务，用 `pi --session <id>` 可随时恢复后台对话记录。上一轮未跑完则本次跳过；会话关闭自动终止在途子进程并标记 interrupted |
+| `/loop --bg --model <provider/id> <创建形态>` | **后台模型指定**（v1.4.0）：透传子 pi 进程的 `--model` 参数（接受 pi 的模型 pattern/ID 语法），不传用 pi 默认模型；仅后台模式支持，前台注入无法指定。适用场景：定时巡检用便宜模型、重要任务用强模型 |
 | `/loop list` | 查看全部任务（后台任务附 `[后台]` 徽标与最近一次运行状态/会话 id） |
 | `/loop pause <id>` / `resume <id>` | 暂停/恢复（id 支持前缀匹配） |
 | `/loop delete <id>` / `clear` | 删除单个/全部任务 |
@@ -319,14 +320,14 @@ e5f6g7h8  [后台] every 1h from 00:00 to 09:00  01:00:00  夜间巡检部署
 
 daily/window 调度与固定间隔共用同一套语义：错过的时间点不补跑（跨天/跨窗口只触发一次），暂停后恢复、会话恢复（hydrate）时错过的触发点直接重算到下一个未来时刻；旧格式快照（无 schedule 字段）零迁移兼容。
 
-**后台模式细节**（v1.3.0，`runner.ts`）：子进程 cwd 取宿主会话目录，会话落在该项目的 sessions 目录（`pi -r` 选择器可见，`--name loop-<id>` 可辨识）；JSON 输出首行会话头 `{"type":"session","id":…}` 被捕获记入 `lastRun`；单次运行超时 30 分钟（SIGTERM→SIGKILL）；完成后通知结果摘要与恢复提示。前台模式行为完全不变。
+**后台模式细节**（v1.3.0，`runner.ts`；v1.4.0 起支持模型指定）：子进程 cwd 取宿主会话目录，会话落在该项目的 sessions 目录（`pi -r` 选择器可见，`--name loop-<id>` 可辨识）；JSON 输出首行会话头 `{"type":"session","id":…}` 被捕获记入 `lastRun`；单次运行超时 30 分钟（SIGTERM→SIGKILL）；完成后通知结果摘要与恢复提示。模型经 `--model` 透传（`/loop list` 的调度列以 `@provider/id` 标注），未知模型由子 pi 报错、任务标记 failed。前台模式行为完全不变。
 
-**agent 工具**（v1.1.0，v1.2.0 起支持新调度语法，v1.3.0 起支持 `mode: "foreground" | "background"`）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"、"后台每小时帮我检查一次部署"这类自然语言请求由 agent 自行建任务。
+**agent 工具**（v1.1.0，v1.2.0 起支持新调度语法，v1.3.0 起支持 `mode: "foreground" | "background"`，v1.4.0 起 `loop_create` 支持可选 `model` 参数——仅 `mode="background"` 生效，前台带 model 返回类型化错误）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"、"后台每小时用便宜模型帮我检查一次部署"这类自然语言请求由 agent 自行建任务。
 
 ```bash
 cd loop
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
-npm test           # 169 个测试（node:test）
+npm test           # 182 个测试（node:test）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 

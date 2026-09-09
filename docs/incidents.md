@@ -55,3 +55,9 @@
 - 症状：worktree 里为省安装用 `mklink /J node_modules` 指回主干 `agent-team/node_modules`；随后 `git worktree remove` 沿 junction **穿透删除**，把主干真实 node_modules 删掉一角（`@earendil-works/pi-ai`、`pi-coding-agent/dist`、`.bin/tsc` 先后消失），`npm test` 大面积文件级红（ERR_MODULE_NOT_FOUND / tsc 不存在）。
 - 根因：递归删除会跟随目录 junction/符号链接到真实目标。view-stop（5fa873b 会话）与 agent-team-reliability（ef439a7 会话）两个 worktree 各犯一次，同一根因两起事故。
 - 教训：① 绝不在 worktree 里 junction 主干 node_modules——需要依赖就在 worktree 内 `npm install`；② 删除目录报 "Filename too long" 时先怀疑沿链接深删，立即停手检查链接目标；③ 恢复手段：主干 `npm install` 重装后全量测试确认。
+
+## CRLF 仓库自写替换脚本静默 MISS + `git checkout` 销毁未提交实现，把一字符错拖成多轮排查（loop v1.4.0 会话）
+
+- 症状：给 loop 加 `--model` 解析时，`parseLoopCommand("5m x")` 在 `rest[0]` 处抛 `Cannot read properties of undefined`，而插桩显示 `mdl` 值完全正确；中间还被 TDZ 错误（`Cannot access 'mdl' before initialization`）与大面积测试回归轮番误导。
+- 根因（三层叠加）：① 真正的 bug 是一字符错——返回形状从扁平 `bg.rest` 换成 result-union 嵌套后，`let rest = mdl.rest;` 忘改成 `mdl.value.rest`（静默 undefined，症状离根因十万八千里）；② 用自写 node 脚本做跨行字符串替换，LF 串匹配 CRLF 文件 8 处改 5 处 MISS，造成"部分改完"的假象；③ 排查中两次 `git checkout -- parse.ts` 把未提交的实现整个回退掉（其中一次还误删了当时唯一的实现副本）。
+- 教训：① 改动返回形状（扁平 → `{ ok, value }`）时，逐个过一遍所有字段访问路径，嵌套层级变了路径必须跟着变；② CRLF 仓库的跨行编辑用 edit 工具（透明处理行尾），绝不用自写 LF 匹配脚本——MISS 是静默的；③ 永远不要对未提交工作跑 `git checkout -- <file>`，回退前先 `cp` 备份；④ 插桩打印值时先核对打印点与崩溃点的相对位置，否则"值正确"的结论本身就是错觉。

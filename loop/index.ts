@@ -298,6 +298,7 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
             intervalMs: spec.intervalMs,
             schedule: spec.schedule,
             background: spec.background,
+            model: spec.model,
             fireAtMs: spec.fireAtMs ?? (spec.recurring ? now + (spec.intervalMs ?? 0) : now),
             nowMs: now,
           },
@@ -312,7 +313,7 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
         const t = result.task;
         notify(
           ctx,
-          `已创建 loop ${t.id}：${describeRecurrence(spec)}${spec.background ? " · 后台执行" : ""} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`,
+          `已创建 loop ${t.id}：${describeRecurrence(spec)}${spec.background ? " · 后台执行" : ""}${t.model ? ` · 模型 ${t.model}` : ""} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`,
         );
         return;
       }
