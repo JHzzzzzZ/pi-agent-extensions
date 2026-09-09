@@ -12,7 +12,7 @@
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式 | 169 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 39 个 |
-| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 人工确认修改 settings.json 的 httpProxy，自动备份） | 57 个 |
+| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 70 个 |
 
 ## 安装
 
@@ -306,6 +306,7 @@ node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
 | --- | --- |
 | `/opencode-bridge` | 查看状态（必要时尝试启动）：监听地址、上游 SOCKS5、配置引导 |
 | `/opencode-bridge-sync` | 修改 settings.json 的 `httpProxy` 指向本桥（人工确认 + 自动备份；仅改 `httpProxy` 字段；桥不通且现值指向本桥时提议移除） |
+| `/opencode-bridge-restore` | 从备份列表选择恢复 settings.json（人工确认；恢复前先把当前配置再备份一份，保证恢复操作本身可撤销） |
 | `PI_BRIDGE_PORT` | 桥监听端口，默认 `10899`（仅绑定 127.0.0.1；需 1-65535 整数，非法启动时报静态错误） |
 | `PI_BRIDGE_SOCKS_HOST` | 上游 SOCKS5 主机，默认 `127.0.0.1` |
 | `PI_BRIDGE_SOCKS_PORT` | 上游 SOCKS5 端口，默认 `10808` |
@@ -314,7 +315,7 @@ node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
 ```bash
 cd opencode-bridge
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型）
-npm test           # 57 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
+npm test           # 70 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 
