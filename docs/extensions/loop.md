@@ -1,10 +1,10 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ 0142e14
+> last verified @ 14a7bad
 
 ## 职责与边界
 
-`/loop` 与 agent 工具 `loop_create/list/delete` 创建四类定时任务：固定间隔循环、daily 每天定时、window 每日时间窗口、一次性提醒；到期经 followUp 注入当前会话，`--bg` 则拉起独立子 pi 后台执行（会话落盘可 resume）。**不做**：跨会话共享任务（任务随会话快照存亡）、补跑错过的触发点、持久化脚本编排（那是 pwr）。
+`/loop` 与 agent 工具 `loop_create/list/delete` 创建四类定时任务：固定间隔循环、daily 每天定时、window 每日时间窗口、一次性提醒；到期经 followUp 注入当前会话，`--bg` 则拉起独立子 pi 后台执行（会话落盘可 resume；v1.4.0 起 `--bg` 支持可选 `--model <provider/id>` 透传子 pi 模型指定，仅后台模式支持，前台带 model 显式报错——fail-closed 而非静默忽略）。**不做**：跨会话共享任务（任务随会话快照存亡）、补跑错过的触发点、持久化脚本编排（那是 pwr）、provider 层模型预检（未知模型由子 pi 报错、任务标记 failed——引 provider registry 违背零依赖）。
 
 ## 文件地图
 
