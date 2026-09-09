@@ -369,6 +369,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
             });
           },
           gate: () => state.viewerOpen,
+          // 空编辑器才允许 bare ↓/← 激活 widget（对齐 fleet-status
+          // `getEditorText() === ""`）；宿主无 getEditorText 时省略该端口
+          // → controller 降级为仅 alt 通道激活。
+          ...(typeof ctx.ui.getEditorText === "function"
+            ? { editorState: () => ({ text: ctx.ui.getEditorText() }) }
+            : {}),
         },
         (lines) => {
           try {

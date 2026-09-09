@@ -308,3 +308,58 @@ test("真实宿主中途改终端高度：重绘后仍为一组标题+页签", (
   assert.equal(counts.gridTitles, 1, `改高度后像素屏标题应恰 1，实得 ${counts.gridTitles}`);
   assert.equal(counts.gridTabs, 1, `改高度后像素屏页签应恰 1，实得 ${counts.gridTabs}`);
 });
+
+// ---------------------------------------------------------------------------
+// Slice 6：组件关闭/销毁语义（seam E——真实 TranscriptViewer，真实定时器）
+// ---------------------------------------------------------------------------
+
+test("TranscriptViewer 关闭路径：先停 timer 再调 done（close 后 load 冻结 + done 恰一次）", async () => {
+  let loadCount = 0;
+  const events: string[] = [];
+  const viewer = new TranscriptViewer({
+    load: () => {
+      loadCount += 1;
+      return scenarioData(1, 0);
+    },
+    done: () => events.push("done"),
+    styles: plainStyles(),
+    refreshMs: 5, // 短 tick：几个微秒内 load 应多次，便于断言 timer 已停
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.ok(loadCount >= 3, `5ms tick 下 load 应持续增长，实得 ${loadCount}`);
+    assert.deepEqual(events, [], "未关闭前 done 不应被调");
+
+    viewer.handleInput("\x03"); // ctrl+c 关闭（close 键集对齐 fleet）
+    assert.deepEqual(events, ["done"], "关闭路径恰调一次 done");
+    const afterClose = loadCount;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(loadCount, afterClose, "关闭后 timer 应已停：load 不再增长（dispose 先于 done 清 timer）");
+  } finally {
+    viewer.dispose();
+  }
+});
+
+test("TranscriptViewer dispose 幂等：双调不炸且 timer 只停一次", async () => {
+  let loadCount = 0;
+  const viewer = new TranscriptViewer({
+    load: () => {
+      loadCount += 1;
+      return scenarioData(1, 0);
+    },
+    done: () => {},
+    styles: plainStyles(),
+    refreshMs: 5,
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(loadCount >= 2, "dispose 前 timer 在跑");
+    viewer.dispose();
+    viewer.dispose(); // 幂等：双调不炸
+    const afterDispose = loadCount;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(loadCount, afterDispose, "dispose 后 timer 停：load 不再增长");
+  } finally {
+    viewer.dispose();
+  }
+});

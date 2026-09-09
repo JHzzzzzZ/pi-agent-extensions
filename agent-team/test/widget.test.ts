@@ -16,6 +16,7 @@ const ACTIVATE_LEGACY = "\x1b\x1b[B"; // alt+down, legacy xterm ESC-prefix encod
 const ACTIVATE_UP_CSI = "\x1b[1;3A"; // alt+up
 const KEY_UP = "\x1b[A";
 const KEY_DOWN = "\x1b[B";
+const KEY_LEFT = "\x1b[D";
 const KEY_ENTER = "\r";
 const KEY_ESC = "\x1b";
 
@@ -97,24 +98,58 @@ test("key reducer: activation consumes alt+down/up in both encodings; bare keys 
   const state = initialWidgetKeyState();
   const actors = ["_leader", "frontend"];
 
-  // Before activation every bare editor key is untouched.
-  assert.equal(handleWidgetKey(state, KEY_DOWN, 2, actors).type, "none");
-  assert.equal(handleWidgetKey(state, KEY_UP, 2, actors).type, "none");
-  assert.equal(handleWidgetKey(state, KEY_ENTER, 2, actors).type, "none");
-  assert.equal(handleWidgetKey(state, KEY_ESC, 2, actors).type, "none");
-  assert.equal(handleWidgetKey(state, "x", 2, actors).type, "none");
-  assert.equal(handleWidgetKey(state, "\x03", 2, actors).type, "none", "ctrl+c passes through");
+  // 未选中 + 编辑器非空（canActivate=false）时，所有裸编辑器键原样放行。
+  assert.equal(handleWidgetKey(state, KEY_DOWN, 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_LEFT, 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_UP, 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_ENTER, 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_ESC, 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(state, "x", 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(state, "\x03", 2, actors, false).type, "none", "ctrl+c passes through");
 
-  // No rows: nothing to select.
-  assert.equal(handleWidgetKey(state, ACTIVATE_CSI, 0, []).type, "none");
+  // No rows: nothing to select even when activation is allowed.
+  assert.equal(handleWidgetKey(state, ACTIVATE_CSI, 0, [], true).type, "none");
 
   // Both encodings activate (consume) with the cursor kept where it was.
-  const csi = handleWidgetKey(state, ACTIVATE_CSI, 2, actors);
+  const csi = handleWidgetKey(state, ACTIVATE_CSI, 2, actors, false);
   assert.ok(csi.type === "update" && csi.state.selected && csi.state.cursor === 0);
-  const legacy = handleWidgetKey(state, ACTIVATE_LEGACY, 2, actors);
+  const legacy = handleWidgetKey(state, ACTIVATE_LEGACY, 2, actors, false);
   assert.ok(legacy.type === "update" && legacy.state.selected);
-  const altUp = handleWidgetKey(state, ACTIVATE_UP_CSI, 2, actors);
+  const altUp = handleWidgetKey(state, ACTIVATE_UP_CSI, 2, actors, false);
   assert.ok(altUp.type === "update" && altUp.state.selected);
+});
+
+test("key reducer 激活门控：空编辑器（canActivate=true）才允许 ↓/← 激活（对齐 fleet-status getEditorText）", () => {
+  // 规格表 §4：激活键 down/left，且编辑器文本为空才激活（fleet-status.ts:606-607）。
+  const actors = ["_leader", "frontend"];
+
+  // 编辑器有文本（canActivate=false）：↓/← 不拦截，放行编辑器。
+  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_LEFT, 2, actors, false).type, "none");
+
+  // 编辑器为空（canActivate=true）：↓/← 进入选中。
+  const down = handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, 2, actors, true);
+  assert.ok(down.type === "update" && down.state.selected && down.state.cursor === 0);
+  const left = handleWidgetKey(initialWidgetKeyState(), KEY_LEFT, 2, actors, true);
+  assert.ok(left.type === "update" && left.state.selected);
+
+  // 无行时即便允许激活也不进入选中。
+  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, 0, [], true).type, "none");
+});
+
+test("key reducer 激活门控：alt+↓/↑ 为不受门控的第二通道", () => {
+  // 差异表 §3.3：alt 通道是 agent-team 特有语义（模态选中风格），无论编辑器
+  // 是否有文本都可进入选中。
+  const actors = ["_leader", "frontend"];
+  for (const activate of [ACTIVATE_CSI, ACTIVATE_LEGACY, ACTIVATE_UP_CSI]) {
+    for (const canActivate of [false, true]) {
+      const r = handleWidgetKey(initialWidgetKeyState(), activate, 2, actors, canActivate);
+      assert.ok(
+        r.type === "update" && r.state.selected,
+        `alt 通道（${JSON.stringify(activate)}）在 canActivate=${canActivate} 下应激活`,
+      );
+    }
+  }
 });
 
 test("key reducer selected: arrows move and clamp, enter confirms the row's actor", () => {
@@ -227,13 +262,14 @@ test("controller setPaused(true) 隐藏亮块并冻结重绘，恢复后立即�
 
 test("controller 暂停后 tick 不再 setWidget", async () => {
   const pushed: Array<string[] | undefined> = [];
+  let nowMs = 65000;
   const controller = new RunWidgetController(
     {
       load: liveSnapshot,
       styles: plainStyles(),
       onConfirm: () => {},
       width: () => 80,
-      nowMs: () => 65000,
+      nowMs: () => nowMs,
       tickMs: 5,
     },
     (lines) => {
@@ -242,14 +278,211 @@ test("controller 暂停后 tick 不再 setWidget", async () => {
   );
   try {
     controller.start();
+    // 无变化跳过语义下，同 nowMs 的 tick 不再重绘；推进 elapsed 跨秒后 tick
+    // 读到新渲染串 → 正常重建（证明 tick 循环仍在跑）。
+    nowMs = 67000;
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.ok(pushed.length >= 2, `tick 应持续重绘，实得 ${pushed.length}`);
+    assert.ok(pushed.length >= 2, `tick 应读到推进的 elapsed 并重绘，实得 ${pushed.length}`);
 
     controller.setPaused(true);
     const afterPause = pushed.length;
     assert.deepEqual(pushed[pushed.length - 1], undefined, "暂停帧为 undefined");
+    nowMs = 69000; // 暂停期间 elapsed 再推进也不得 setWidget
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(pushed.length, afterPause, "暂停后 tick 不再 setWidget");
+  } finally {
+    controller.stop();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Slice 4：editorState 门控 + j/k 导航（seam D：经 fake 端口的真实 controller）
+// ---------------------------------------------------------------------------
+
+function controllerHarness(opts: {
+  load: () => RunStatusSnapshot;
+  editorState?: () => { text: string };
+}) {
+  const pushed: Array<string[] | undefined> = [];
+  const handlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
+  const controller = new RunWidgetController(
+    {
+      load: opts.load,
+      styles: plainStyles(),
+      onConfirm: () => {},
+      width: () => 80,
+      nowMs: () => 65000,
+      tickMs: 60 * 60 * 1000, // 长 tick：本用例只验证键盘事件路径
+      editorState: opts.editorState,
+    },
+    (lines) => {
+      pushed.push(lines);
+    },
+    (handler) => {
+      handlers.push(handler);
+      return () => {};
+    },
+  );
+  controller.start();
+  return { controller, pushed, handlers };
+}
+
+const lastLines = (pushed: Array<string[] | undefined>): string[] => pushed[pushed.length - 1] ?? [];
+const cursorRow = (lines: string[]): number => lines.findIndex((line) => line.startsWith("▸ "));
+
+// 编辑器为空：bare ↓ 进入选中并 consume（对齐 fleet-status getEditorText===""）。
+test("controller 空编辑器按 ↓ 激活 widget（consume 且出现行光标）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+  });
+  try {
+    assert.equal(handlers.length, 1, "attachInput 应收到一个 handler");
+    const r = handlers[0]!("\x1b[B");
+    assert.equal(r?.consume, true, "空编辑器 ↓ 应被 widget 消费");
+    assert.equal(cursorRow(lastLines(pushed)), 0, "激活后行光标应在第 0 行");
+  } finally {
+    controller.stop();
+  }
+});
+
+// 编辑器有文本：bare ↓/← 放行编辑器（不消费），widget 不劫持输入。
+test("controller 编辑器有文本时 ↓/← 不消费（放行编辑器）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "abc" }),
+  });
+  try {
+    assert.equal(handlers[0]!("\x1b[B"), undefined, "有文本时 ↓ 不消费");
+    assert.equal(handlers[0]!("\x1b[D"), undefined, "有文本时 ← 不消费");
+    assert.equal(cursorRow(lastLines(pushed)), -1, "未进入选中，无行光标");
+  } finally {
+    controller.stop();
+  }
+});
+
+// 编辑器有文本：alt+↓/↑ 第二通道仍激活（差异表 §3.3）。
+test("controller 编辑器有文本时 alt+↓/↑ 仍激活（第二通道不受门控）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "abc" }),
+  });
+  try {
+    const r = handlers[0]!("\x1b[1;3B");
+    assert.equal(r?.consume, true, "有文本时 alt+↓ 仍应激活");
+    assert.equal(cursorRow(lastLines(pushed)), 0);
+  } finally {
+    controller.stop();
+  }
+});
+
+// 选中态 j/k 移动行光标（对齐 fleet selectDown/selectUp 的 down/j、up/k）。
+test("controller 选中态 k/j 移动行光标（▸ 前缀位置随之变化）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+  });
+  try {
+    handlers[0]!("\x1b[B"); // 激活（cursor 0）
+    assert.equal(cursorRow(lastLines(pushed)), 0);
+
+    handlers[0]!("j"); // 下移
+    assert.equal(cursorRow(lastLines(pushed)), 1, "j 应下移到第 1 行");
+    handlers[0]!("k"); // 上移
+    assert.equal(cursorRow(lastLines(pushed)), 0, "k 应回到第 0 行");
+    handlers[0]!("k"); // 顶部再按 k：钳位不越界
+    assert.equal(cursorRow(lastLines(pushed)), 0);
+    handlers[0]!("j");
+    handlers[0]!("j"); // 底部再按 j：钳位不越界
+    assert.equal(cursorRow(lastLines(pushed)), 1);
+  } finally {
+    controller.stop();
+  }
+});
+
+// 宿主无 editorState 端口：降级为仅 alt 通道激活（bare ↓ 不消费）。
+test("controller 宿主无 editorState 端口 → 降级：仅 alt 通道激活", () => {
+  const { controller, handlers } = controllerHarness({ load: liveSnapshot });
+  try {
+    assert.equal(handlers[0]!("\x1b[B"), undefined, "降级时 bare ↓ 不消费");
+    assert.equal(handlers[0]!("\x1b[1;3B")?.consume, true, "降级时 alt+↓ 仍激活");
+  } finally {
+    controller.stop();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Slice 5：无变化跳过 setWidget（seam D，对齐 fleet-status renderKey 语义）
+// ---------------------------------------------------------------------------
+
+function skipHarness(opts: { load: () => RunStatusSnapshot; nowMs?: () => number }) {
+  const pushed: Array<string[] | undefined> = [];
+  const controller = new RunWidgetController(
+    {
+      load: opts.load,
+      styles: plainStyles(),
+      onConfirm: () => {},
+      width: () => 80,
+      nowMs: opts.nowMs ?? (() => 0),
+      tickMs: 60 * 60 * 1000, // 长 tick：只验证显式 refresh 的跳过语义
+    },
+    (lines) => {
+      pushed.push(lines);
+    },
+  );
+  controller.start();
+  return { controller, pushed };
+}
+
+// 终态快照渲染串静止：连续 refresh 只应 setWidget 一次（第二次起跳过）。
+test("controller 终态静态行连续 refresh → setWidget 只调一次（无变化跳过）", () => {
+  const { controller, pushed } = skipHarness({ load: doneSnapshot, nowMs: () => 0 });
+  try {
+    const afterStart = pushed.length;
+    assert.ok(afterStart >= 1, "start 后应至少刷出一帧");
+    controller.refresh();
+    controller.refresh();
+    assert.equal(pushed.length, afterStart, "静态终态行连续 refresh 应跳过 setWidget");
+  } finally {
+    controller.stop();
+  }
+});
+
+// running 快照固定 nowMs（elapsed 不变）：连续 refresh 跳过；elapsed 变化则重建。
+test("controller running 快照：elapsed 不变跳过、变化重建", () => {
+  let nowMs = 65000;
+  const { controller, pushed } = skipHarness({ load: liveSnapshot, nowMs: () => nowMs });
+  try {
+    const afterStart = pushed.length;
+    controller.refresh();
+    assert.equal(pushed.length, afterStart, "elapsed 未变（同 nowMs）应跳过");
+
+    nowMs = 66000; // elapsed 1m5s → 1m6s
+    controller.refresh();
+    assert.equal(pushed.length, afterStart + 1, "elapsed 变化应重建一帧");
+
+    controller.refresh();
+    assert.equal(pushed.length, afterStart + 1, "同 elapsed 再次 refresh 应跳过");
+  } finally {
+    controller.stop();
+  }
+});
+
+// 选中态 toggle 必须触发重绘（跳过逻辑不得压制选中态变化）。
+test("controller 选中态 toggle 触发重绘（不被跳过逻辑压制）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: doneSnapshot,
+    editorState: () => ({ text: "" }),
+  });
+  try {
+    const before = pushed.length;
+    handlers[0]!("\x1b[B"); // 进入选中：渲染串出现 ▸ + 提示行 → 必须重绘
+    assert.equal(pushed.length, before + 1, "进入选中应触发一次重绘");
+    assert.equal(cursorRow(lastLines(pushed)), 0, "选中后行光标在第 0 行");
+
+    handlers[0]!("\x1b"); // esc 退出选中：渲染串回到无 ▸ → 必须重绘
+    assert.equal(pushed.length, before + 2, "退出选中应再触发一次重绘");
+    assert.equal(cursorRow(lastLines(pushed)), -1, "退出后无行光标");
   } finally {
     controller.stop();
   }

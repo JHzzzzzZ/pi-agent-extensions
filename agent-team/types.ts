@@ -45,8 +45,15 @@ export const WIDGET_ID = "agent-team";
 /** Repaint interval of the below-editor run widget (elapsed labels). */
 export const WIDGET_TICK_MS = 1000;
 
-/** Refresh interval of the full-screen transcript viewer overlay. */
-export const VIEWER_TICK_MS = 800;
+/**
+ * Refresh interval of the full-screen transcript viewer overlay.
+ * Aligned to pi-subagents v0.66.0 fleet `REFRESH_MS = 750`
+ * (`pi-subagents/src/tui/fleet.ts:25`); spec lock in
+ * docs/tui-sync.md §4 + test/tui-sync.test.ts. Deviation here is a
+ * ghosting suspect. (Widget keeps its own 1000ms tick — below-editor
+ * string surface, see WIDGET_TICK_MS.)
+ */
+export const VIEWER_TICK_MS = 750;
 
 /**
  * Frame-height jitter tolerance (rows): terminal-row reports that wobble
