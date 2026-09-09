@@ -218,7 +218,7 @@ test("coordinator writes the leader transcript (task/assistant/tools/system) to 
       piCommand: "pi",
       transcriptRoot: root,
     });
-    const promise = coordinator.start({ team: fixtureTeam(), task: "修复登录 bug", ui: { setWidget: () => {}, notify: () => {}, dim: (t) => t } });
+    const promise = coordinator.start({ team: fixtureTeam(), task: "修复登录 bug", ui: { notify: () => {}, dim: (t) => t } });
     const child = await waitForChild(spawn, 0);
     const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
     child.autoRespond(

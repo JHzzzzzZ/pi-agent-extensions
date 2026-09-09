@@ -67,15 +67,33 @@ members:
 
 | 方式 | 说明 |
 |---|---|
-| `/team:run <团队名> <任务>` | **后台运行**：命令立即返回，主会话可继续对话；Widget 实时显示进度，完成后报告自动送入会话 |
+| `/team:run <团队名> <任务>` | **后台运行**：命令立即返回，主会话可继续对话；输入栏下方亮块实时显示进度（见 §4），完成后报告自动送入会话 |
 | `/team:<团队名> <任务>` | 等价快捷方式（`/reload` 后对新团队生效） |
-| `team_run` 工具 | 让主 agent 自主派单（同步等待，流式进度） |
+| `team_run` 工具 | 让主 agent 自主派单——**默认后台**：立即返回，报告完成后自动送达会话（followUp）；`wait: true` 同步等待整个 run 并内联返回报告（阻塞主会话，不推荐） |
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
 
+**主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
+
 其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）。
 
-### 4. 会话记录查看器（/team:view）与成员 transcript
+### 4. 进度亮块（输入栏下方，可键盘选中）
+
+派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`），刻意保持**紧凑两行**：头行 `agent-team <团队> ▶ running · 耗时 · N/M 并行` + 任务行（44 字符截断）；leader 活动与各成员明细**不进亮块**——想看细节 `enter` 进查看器。run 结束后切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），失败附一条截断错误行，不残留 "running" 字样。
+
+裸 `↑`/`↓`/`enter` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的：
+
+| 按键 | 作用 |
+|---|---|
+| `alt+↓` / `alt+↑` | 进入选中：亮块高亮，出现行光标与按键提示行 |
+| `↑` / `↓` | 在行间移动光标（首末行钳位） |
+| `enter` | 打开 `/team:view` 查看器（定位 leader 页，`←→`/`1-9` 切成员） |
+| `esc` | 退出选中 |
+| 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
+
+实现：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新（宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。
+
+### 5. 会话记录查看器（/team:view）与成员 transcript
 
 派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏边框页查看器**（约 82% 终端高、96% 宽，完整边框与主 agent 界面明确分割）。**每一页是一个 agent**（leader 或成员，`←→`/`1-9` 切换），页面内容是与主 agent 一致的连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，自上而下完整时间线实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
@@ -104,7 +122,7 @@ members:
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
 - 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、动态 `/team:<name>`
-- Widget：运行期间显示 leader/各成员实时状态与最新动作（仅 TUI 模式）
+- Widget：输入栏下方可选中亮块（紧凑两行概要）——`alt+↓` 选中、`enter` 直达查看器（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
 
 ## 开发与测试
@@ -112,7 +130,7 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（85 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（96 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

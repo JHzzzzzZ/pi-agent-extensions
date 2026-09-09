@@ -19,7 +19,7 @@
  * the thin host opener.
  */
 
-import { Markdown, type Component } from "@earendil-works/pi-tui";
+import { Markdown, truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { type TranscriptEntry } from "./transcript.ts";
 
@@ -290,7 +290,11 @@ export function blockLines(
     }
     case "assistant": {
       const label = styles.dim(`▸ assistant${block.ts ? ` · ${block.ts}` : ""}`);
-      const body = renderMarkdown ? renderMarkdown(block.text, width - 2) : wrapText(block.text, width);
+      // Host Markdown output is trusted to be readable but not strictly
+      // width-bounded — rewrap each line so nothing exceeds the pane.
+      const body = renderMarkdown
+        ? renderMarkdown(block.text, width - 2).flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width - 2)))
+        : wrapText(block.text, width);
       return [label, ...body];
     }
     case "tools":
@@ -387,6 +391,17 @@ function sideWrap(line: string, width: number, styles: Styles): string {
 }
 
 /**
+ * ANSI/CJK-aware clamp to an exact display width: truncate (ellipsis) then
+ * pad with spaces. Mirrors pi-subagents' fleet inspector `fit()` — every
+ * frame line is exactly `width` columns, so nothing bleeds past the border
+ * and the diff renderer sees stable line widths.
+ */
+export function fitLine(line: string, width: number): string {
+  const clipped = truncateToWidth(line, width, "…");
+  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+}
+
+/**
  * Renders the full bordered frame: title top border, member tabs, a
  * fixed-height continuous-transcript body window, and the key-legend
  * bottom border. Always returns exactly `bodyHeight + VIEWER_CHROME_ROWS`
@@ -418,7 +433,7 @@ export function renderViewerFrame(
     sideWrap(tabsRow(data, state, inner, styles), inner, styles),
     ...window.map((line) => sideWrap(line, inner, styles)),
     bottomBorder(data, state, width, styles),
-  ];
+  ].map((line) => fitLine(line, width));
 }
 
 /** Plain-text transcript dump for the team_transcript tool (no frame). */
@@ -548,6 +563,8 @@ export interface TranscriptViewerOptions {
   /** Closes the overlay (ctx.ui.custom's done callback). */
   done: () => void;
   styles: Styles;
+  /** Opens on this actor (transcript id) instead of the first one. */
+  initialActor?: string;
   /** Requests a repaint (host passes tui.requestRender). */
   requestRender?: () => void;
   /** Terminal rows provider (defaults to 30). Host passes tui.terminal.rows. */
@@ -569,6 +586,10 @@ export class TranscriptViewer implements Component {
   constructor(opts: TranscriptViewerOptions) {
     this.opts = opts;
     this.data = opts.load();
+    if (opts.initialActor !== undefined) {
+      const index = this.data.actors.findIndex((a) => a.actor === opts.initialActor);
+      if (index >= 0) this.state.actorIndex = index;
+    }
     const refreshMs = opts.refreshMs ?? 800;
     this.timer = setInterval(() => {
       try {
@@ -659,7 +680,7 @@ function markdownRenderer(): ((text: string, width: number) => string[]) | undef
  */
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,
-  opts: { load: () => ViewerData; refreshMs?: number },
+  opts: { load: () => ViewerData; refreshMs?: number; initialActor?: string },
 ): Promise<void> {
   const renderMarkdown = markdownRenderer();
   await ui.custom<void>(
@@ -668,6 +689,7 @@ export async function openTranscriptViewer(
         load: opts.load,
         done,
         styles: themeStyles(theme),
+        ...(opts.initialActor !== undefined ? { initialActor: opts.initialActor } : {}),
         requestRender: () => {
           try {
             tui.requestRender();

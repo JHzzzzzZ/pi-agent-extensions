@@ -232,6 +232,36 @@ test("renderViewerFrame hides tool rows when toggled off and shows a hint when e
   assert.match(empty.join("\n"), /暂无记录/);
 });
 
+test("renderViewerFrame clamps overflowing body lines to the exact frame width", () => {
+  // Regression: host Markdown output (and any tool text) wider than the pane
+  // used to bleed past the right border — fleet-inspector style fit() now
+  // truncates + pads every frame line to an exact display width.
+  const data = viewerData({
+    entries: new Map<string, TranscriptEntry[]>([
+      [
+        "_leader",
+        [
+          entry("task", "目标：" + "面向摄影初学者的中文摄影教学页面。".repeat(20)),
+          entry("tool", "team_dispatch → " + "x".repeat(400)),
+          entry("assistant", "正文"),
+        ],
+      ],
+    ]),
+  });
+  const overwideMarkdown = (text: string): string[] => [text + "——很长的未换行 markdown 输出".repeat(10)];
+  const width = 120;
+  const frame = renderViewerFrame(data, initialViewerState(), width, {
+    styles,
+    bodyHeight: 12,
+    renderMarkdown: overwideMarkdown,
+  });
+  assert.equal(frame.length, 12 + VIEWER_CHROME_ROWS);
+  for (const [index, line] of frame.entries()) {
+    assert.ok(visibleWidth(line) <= width, `line ${index} renders ${visibleWidth(line)} > ${width}`);
+    assert.equal(visibleWidth(line), width, `line ${index} is padded to the exact frame width`);
+  }
+});
+
 test("clampViewerState bounds scroll and follow pins to the bottom", () => {
   assert.equal(clampViewerState({ ...initialViewerState(), follow: true }, 100, 20).scroll, 80);
   assert.equal(clampViewerState({ ...initialViewerState(), follow: false, scroll: 999 }, 100, 20).scroll, 80);

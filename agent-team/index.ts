@@ -9,7 +9,8 @@
  *   team members.
  * - **Cockpit mode** (default, main pi session): registers the
  *   conversation tools (`team_create`, `team_list`, `team_run`), the
- *   `/team*` commands, the live progress widget, and run persistence.
+ *   `/team*` commands, the selectable below-editor run widget, and run
+ *   persistence.
  *
  * Install: copy this directory into `~/.pi/agent/extensions/` (or the
  * project's `.pi/extensions/`), then `/reload`.
@@ -25,6 +26,8 @@ import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
+import { RunWidgetController } from "./widget.ts";
+import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData } from "./viewer.ts";
 import {
   FileTranscriptSink,
   LEADER_ACTOR,
@@ -34,7 +37,6 @@ import {
   sanitizeActorName,
   type TranscriptEntry,
 } from "./transcript.ts";
-import { formatTranscriptText, openTranscriptViewer, type ViewerActor, type ViewerData } from "./viewer.ts";
 import {
   LEADER_ENV_FILE,
   LEADER_ENV_RUNID,
@@ -42,6 +44,7 @@ import {
   RUN_ENTRY_TYPE,
   WIDGET_ID,
   truncateUtf8,
+  type PiSpawn,
   type TeamConfig,
   type TeamRunRecord,
 } from "./types.ts";
@@ -73,14 +76,6 @@ const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view"]);
 /** Builds the guarded UI port over ctx.ui (repo TUI conventions). */
 function uiPortFrom(ctx: ExtensionContext): UiPort {
   return {
-    setWidget: (lines) => {
-      if (!ctx.hasUI) return;
-      try {
-        ctx.ui.setWidget(WIDGET_ID, lines);
-      } catch {
-        /* widget failures never break the session */
-      }
-    },
     notify: (text, level) => {
       try {
         ctx.ui.notify(text, level);
@@ -234,20 +229,29 @@ function singleLineTail(text: string, max = 160): string {
 // Cockpit mode (main pi session)
 // ---------------------------------------------------------------------------
 
-function registerCockpitMode(pi: ExtensionAPI): void {
+function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): void {
   const state: {
     coordinator: TeamRunCoordinator;
     cwd: string;
     projectTrusted: boolean;
+    /** Below-editor run widget mounted once per session. */
+    widgetMounted: boolean;
+    widget: RunWidgetController | undefined;
+    /** True while the transcript viewer overlay is open (widget key gate). */
+    viewerOpen: boolean;
   } = {
     coordinator: new TeamRunCoordinator({
       cwd: () => state.cwd,
       worktreeRoot: worktreeRoot(),
       extensionEntryPath: extensionEntryPath(),
       transcriptRoot: transcriptRoot(),
+      ...(opts.spawn ? { spawn: opts.spawn } : {}),
     }),
     cwd: process.cwd(),
     projectTrusted: false,
+    widgetMounted: false,
+    widget: undefined,
+    viewerOpen: false,
   };
 
   const resolveTeam = (name: string): { ok: true; value: TeamConfig } | { ok: false; message: string } => {
@@ -301,20 +305,91 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     return { team: progress?.team ?? lastRecord?.team ?? "(unknown)", runId, runStatus, elapsed, actors, entries };
   };
 
-  /** Command-mode run flow (runs in BACKGROUND): persist, notify, deliver. */
-  const runFromCommand = (ctx: ExtensionContext, teamName: string, task: string): void => {
-    const ui = uiPortFrom(ctx);
-    const found = resolveTeam(teamName);
-    if (!found.ok) {
-      ui.notify(found.message, "error");
-      return;
+  /** Opens the transcript viewer overlay (gates the widget's key handling). */
+  const openViewer = async (ctx: ExtensionContext, initialActor?: string): Promise<void> => {
+    state.viewerOpen = true;
+    try {
+      await openTranscriptViewer(ctx.ui, {
+        load: buildViewerData,
+        ...(initialActor !== undefined ? { initialActor } : {}),
+      });
+    } finally {
+      state.viewerOpen = false;
     }
-    ui.notify(`team ${teamName} 已在后台启动（/team:status 查看进度，/team:stop 中止）`, "info");
-    // Fire-and-forget: the command handler returns immediately so the user
-    // can keep talking to the main agent while the team works. Completion
-    // still persists the record and wakes the session with the report.
+  };
+
+  /**
+   * Mounts the below-editor run widget (idempotent per session): a 1s
+   * string[] setWidget loop plus (when the host exposes it) a
+   * `ctx.ui.onTerminalInput` hook for the modal selection.
+   * PI_AGENT_TEAM_WIDGET=0 disables it entirely (rendering diagnostics).
+   */
+  const ensureRunWidget = (ctx: ExtensionContext): void => {
+    if (process.env.PI_AGENT_TEAM_WIDGET === "0") return;
+    if (state.widgetMounted || !ctx.hasUI || ctx.mode !== "tui") return;
+    try {
+      const controller = new RunWidgetController(
+        {
+          load: () => state.coordinator.getStatus(),
+          styles: themeStyles(ctx.ui.theme),
+          onConfirm: (actor) => {
+            void openViewer(ctx, actor).catch(() => {
+              /* opening failures never break the session */
+            });
+          },
+          gate: () => state.viewerOpen,
+        },
+        (lines) => {
+          try {
+            ctx.ui.setWidget(WIDGET_ID, lines, { placement: "belowEditor" });
+          } catch {
+            /* widget failures never break the session */
+          }
+        },
+        (handler) => {
+          const hookable = ctx.ui as {
+            onTerminalInput?: (h: (data: string) => { consume?: boolean } | undefined) => (() => void) | void;
+          };
+          if (typeof hookable.onTerminalInput !== "function") return undefined;
+          const remove = hookable.onTerminalInput((data) => {
+            try {
+              return handler(data);
+            } catch {
+              return undefined; /* key failures never break the session */
+            }
+          });
+          return typeof remove === "function" ? remove : undefined;
+        },
+      );
+      controller.start();
+      state.widget = controller;
+      state.widgetMounted = true;
+    } catch {
+      /* widget failures never break the session */
+    }
+  };
+
+  /**
+   * Background run flow shared by /team:run and the team_run tool: fire and
+   * forget — persists the record and delivers the final report as a
+   * followUp turn so the user can keep talking to the main agent while the
+   * team works. Returns immediately; RUN_IN_PROGRESS surfaces right away.
+   */
+  const startBackgroundRun = (
+    ctx: ExtensionContext,
+    ui: UiPort,
+    team: TeamConfig,
+    task: string,
+  ): { ok: false; code: string; message: string } | { ok: true; team: string; members: number } => {
+    ensureRunWidget(ctx);
+    if (state.coordinator.isRunning()) {
+      return { ok: false, code: "RUN_IN_PROGRESS", message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。" };
+    }
+    ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
+    // Completion still persists the record and wakes the session with the
+    // report (followUp turn).
     void state.coordinator
-      .start({ team: found.value, task, ui })
+      .start({ team, task, ui })
       .then((result) => {
         if (!result.ok) {
           ui.notify(result.message, "error");
@@ -324,11 +399,11 @@ function registerCockpitMode(pi: ExtensionAPI): void {
         appendRunRecord(pi as unknown as SessionPort, record);
         if (record.status === "completed") {
           const secs = Math.round((record.durationMs ?? 0) / 100) / 10;
-          ui.notify(`team ${teamName} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
+          ui.notify(`team ${team.name} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
           deliverRunResult(pi as unknown as SessionPort, record.report ?? "(leader 未返回报告)");
         } else {
           ui.notify(
-            `team ${teamName} ${record.status}: ${record.error ?? "已中止"}`,
+            `team ${team.name} ${record.status}: ${record.error ?? "已中止"}`,
             record.status === "aborted" ? "warning" : "error",
           );
         }
@@ -336,6 +411,21 @@ function registerCockpitMode(pi: ExtensionAPI): void {
       .catch((e: unknown) => {
         ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
       });
+    return { ok: true, team: team.name, members: team.members.length };
+  };
+
+  /** Command-mode run flow (runs in BACKGROUND): persist, notify, deliver. */
+  const runFromCommand = (ctx: ExtensionContext, teamName: string, task: string): void => {
+    const ui = uiPortFrom(ctx);
+    const found = resolveTeam(teamName);
+    if (!found.ok) {
+      ui.notify(found.message, "error");
+      return;
+    }
+    const started = startBackgroundRun(ctx, ui, found.value, task);
+    if (!started.ok) {
+      ui.notify(started.message, "error");
+    }
   };
 
   // -- Conversation tools -------------------------------------------------
@@ -346,14 +436,18 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     name: "team_run",
     label: "Run Agent Team",
     description:
-      "把一个任务派给指定的 agent team：leader 会拆解任务并通过 team_dispatch 调度成员协同完成，返回最终报告。同一团队可反复派单复用。",
+      "把一个任务派给指定的 agent team：leader 会拆解任务并通过 team_dispatch 调度成员协同完成。默认后台运行、立即返回，最终报告完成后自动送达本会话（followUp），等待期间用户可继续对话；wait=true 时同步等待整个 run 结束并内联返回报告（阻塞主会话，不推荐）。同一团队可反复派单复用。",
     promptGuidelines: [
       "派单前先用 team_list 确认团队存在且成员配置合适；不确定时先问用户。",
       "task 要自包含：目标、范围、验收标准。成员和 leader 都看不到这段对话。",
+      "默认（wait 省略）立即返回，报告稍后自动送达；等待期间正常回应用户其它消息，不要空转等待。",
     ],
     parameters: Type.Object({
       team: Type.String({ description: "团队名（可用 team_list 查询）" }),
       task: Type.String({ description: "任务描述（issue）" }),
+      wait: Type.Optional(
+        Type.Boolean({ description: "同步等待整个 run 完成并内联返回报告（阻塞主会话）。默认 false=后台运行", default: false }),
+      ),
     }),
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const found = resolveTeam(params.team);
@@ -365,6 +459,28 @@ function registerCockpitMode(pi: ExtensionAPI): void {
         };
       }
       const ui = uiPortFrom(ctx);
+      if (params.wait !== true) {
+        // Default: background dispatch — the main agent's turn ends right
+        // away so the user can keep talking; the report arrives later as a
+        // followUp turn (same flow as /team:run).
+        const started = startBackgroundRun(ctx, ui, found.value, params.task);
+        if (!started.ok) {
+          return {
+            content: [{ type: "text" as const, text: started.message }],
+            details: { code: started.code },
+            isError: started.code === "RUN_IN_PROGRESS" ? false : true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `team ${started.team} 已在后台启动（${started.members} 成员并行）。报告完成后会自动送达本会话；期间可继续对话。用 team_status 查询进度，/team:stop 中止。`,
+            },
+          ],
+          details: { started: true, background: true, team: started.team, task: params.task, members: started.members },
+        };
+      }
       const result = await state.coordinator.start({
         team: found.value,
         task: params.task,
@@ -540,7 +656,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
         return;
       }
       try {
-        await openTranscriptViewer(ctx.ui, { load: buildViewerData });
+        await openViewer(ctx);
       } catch (e) {
         ui.notify(`打开会话记录查看器失败: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
@@ -552,6 +668,10 @@ function registerCockpitMode(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     state.cwd = ctx.cwd;
     state.projectTrusted = ctx.isProjectTrusted();
+    state.viewerOpen = false;
+    state.widget?.stop();
+    state.widget = undefined;
+    state.widgetMounted = false;
     clearWidget(ctx);
 
     // Hydrate the most recent run record so /team:status works after reload.
@@ -568,6 +688,11 @@ function registerCockpitMode(pi: ExtensionAPI): void {
     } catch {
       /* hydration is best-effort */
     }
+
+    // Below-editor run widget: mount right away when hydration found a run
+    // (finished record still shows for review); otherwise at first dispatch.
+    const snapshot = state.coordinator.getStatus();
+    if (snapshot.running || snapshot.lastRecord) ensureRunWidget(ctx);
 
     // Best-effort retention: drop transcript artifact dirs older than a week.
     try {
@@ -596,6 +721,8 @@ function registerCockpitMode(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     state.coordinator.stop();
+    state.widget?.stop();
+    state.widget = undefined;
     clearWidget(ctx);
   });
 
@@ -614,7 +741,7 @@ function registerCockpitMode(pi: ExtensionAPI): void {
  */
 const LOADER_FLAG = "__piAgentTeamExtensionLoaded";
 
-export default function agentTeamExtension(pi: ExtensionAPI): void {
+export default function agentTeamExtension(pi: ExtensionAPI, opts?: { spawn?: PiSpawn }): void {
   const loader = globalThis as { [LOADER_FLAG]?: boolean };
   if (loader[LOADER_FLAG]) return;
   loader[LOADER_FLAG] = true;
@@ -624,7 +751,7 @@ export default function agentTeamExtension(pi: ExtensionAPI): void {
     registerLeaderMode(pi, teamFile);
     return;
   }
-  registerCockpitMode(pi);
+  registerCockpitMode(pi, opts);
 }
 
 /** Test seam: clears the double-load guard (the flag lives on globalThis). */

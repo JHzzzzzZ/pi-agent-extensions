@@ -4,8 +4,9 @@
  * Owns the single active team run: pre-flights worktree requirements,
  * spawns the leader child pi process with the team's leader prompt +
  * dispatch tool, tracks progress from the leader's JSON event stream (its
- * own turns/activity + team_dispatch tool updates), renders the widget,
- * exposes a status snapshot, and produces the final TeamRunRecord.
+ * own turns/activity + team_dispatch tool updates), exposes a status
+ * snapshot (pulled by the below-editor widget and status queries), and
+ * produces the final TeamRunRecord.
  */
 
 import * as path from "node:path";
@@ -31,7 +32,6 @@ import {
 
 /** UI surface used by the coordinator (implemented over ctx.ui, guarded). */
 export interface UiPort {
-  setWidget: (lines: string[] | undefined) => void;
   notify: (text: string, level: "info" | "warning" | "error") => void;
   dim: (text: string) => string;
 }
@@ -57,7 +57,8 @@ export type StartRunResult =
   | { ok: true; value: TeamRunRecord }
   | { ok: false; code: TeamErrorCode; message: string };
 
-function elapsedLabel(startedAtMs: number, nowMs: number): string {
+/** Elapsed label for live runs: "45s" / "3m12s". */
+export function elapsedLabel(startedAtMs: number, nowMs: number): string {
   const totalSecs = Math.max(0, Math.round((nowMs - startedAtMs) / 1000));
   const mins = Math.floor(totalSecs / 60);
   const secs = totalSecs % 60;
@@ -76,30 +77,6 @@ function toolResultText(toolName: string, result: unknown): string {
   const single = (text: string): string => text.replace(/\s+/g, " ").trim();
   const text = single(`${toolName}${result === undefined || result === null ? "" : ` → ${result}`}`);
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
-}
-
-/** Pure widget renderer (unit-tested). */
-export function renderWidgetLines(progress: RunProgress, nowMs: number, dim: (text: string) => string): string[] {
-  const lines: string[] = [];
-  lines.push(dim(`agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}`));
-  const task = progress.task.length > 44 ? `${progress.task.slice(0, 44)}…` : progress.task;
-  lines.push(dim(`任务: ${task}`));
-  const leaderBits: string[] = [];
-  if (progress.leaderModel) leaderBits.push(progress.leaderModel);
-  if (progress.leaderNote) leaderBits.push(progress.leaderNote);
-  lines.push(dim(`leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`));
-  if (progress.leaderActivity) {
-    lines.push(dim(`  ↳ ${progress.leaderActivity}`));
-  }
-  for (const member of progress.members) {
-    const icon =
-      member.status === "done" ? "✓" : member.status === "failed" ? "✗" : member.status === "aborted" ? "⊘" : "▶";
-    const bits = [`${icon} ${member.name} ${member.status}`];
-    if (member.note) bits.push(member.note);
-    if (member.latest) bits.push(member.latest);
-    lines.push(dim(bits.join(" — ")));
-  }
-  return lines;
 }
 
 /** Immutable snapshot of the current/most recent run (status queries). */
@@ -210,10 +187,11 @@ export class TeamRunCoordinator {
 
   /**
    * Starts a team run. Resolves when the leader child finishes; progress
-   * flows through `ui.setWidget` and `onProgress` while it runs. A run that
-   * fails at the child level still resolves (status failed/aborted). An
-   * optional external `signal` (e.g. the calling tool's abort signal) is
-   * bridged to the run controller.
+   * flows through `onProgress` (and the below-editor widget, which pulls
+   * getStatus() on its own repaint ticks) while it runs. A run that fails
+   * at the child level still resolves (status failed/aborted). An optional
+   * external `signal` (e.g. the calling tool's abort signal) is bridged to
+   * the run controller.
    */
   async start(options: {
     team: TeamConfig;
@@ -229,7 +207,7 @@ export class TeamRunCoordinator {
         message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。",
       };
     }
-    const { team, task, ui } = options;
+    const { team, task } = options;
     const now = this.deps.now ?? (() => new Date().toISOString());
     const nowMs = this.deps.nowMs ?? (() => Date.now());
     const runId = `run-${nowMs()}`;
@@ -296,11 +274,6 @@ export class TeamRunCoordinator {
     recordTranscript("task", task);
 
     const render = () => {
-      try {
-        ui.setWidget(renderWidgetLines(progress, nowMs(), ui.dim));
-      } catch {
-        /* widget failures never break the run */
-      }
       try {
         options.onProgress?.(progress);
       } catch {
@@ -373,7 +346,8 @@ export class TeamRunCoordinator {
     const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
     const leaderCwd = sharedWorktree?.path ?? baseCwd;
 
-    // 1s elapsed-time ticker for the widget; never keeps the process alive.
+    // 1s progress ticker (onProgress observers; the widget repaints on its
+    // own tick). Never keeps the process alive.
     const ticker = setInterval(render, 1000);
     if (typeof ticker.unref === "function") ticker.unref();
 
