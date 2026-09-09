@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ merge（合并后 amend）
+> last verified @ ef439a7
 
 ## 职责与边界
 
