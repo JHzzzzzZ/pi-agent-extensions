@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加九个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -14,6 +14,7 @@
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 39 个 |
 | [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 32 个（node:test） |
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 70 个 |
+| [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入等待与 agent 结束时把人叫回终端（Linux / macOS no-op） | 14 个 |
 
 ## 安装
 
@@ -332,6 +333,20 @@ cd opencode-bridge
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型）
 npm test           # 70 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
+```
+
+---
+
+## human-notify
+
+人工介入通知：需要你回到终端时发送一条 Windows Toast——等审批/输入时（`ui_prompt_start`，标题“Pi 等待你确认”）与 agent 完全结束时（`agent_settled`，标题“Pi 任务完成”）。只在 Windows 生效，Linux / macOS 直接 no-op（后续支持）。
+
+- **零依赖原生通道** — 内联 WinRT PowerShell（ToastNotificationManager + XmlDocument），`child_process.spawn` detached + unref 派生，不阻塞会话、不持有会话资源；发送失败静默吞掉，绝不破坏会话
+- **文案安全** — 静态模板 + 事件自带摘要截断（最长 120 字符压单行），不透传工具原始输出与密钥；全局 5s 防抖避免审批 + settle 连发刷屏
+- **一键关闭** — `PI_HUMAN_NOTIFY=0` 关闭全部通知
+
+```bash
+node --experimental-strip-types --test human-notify/index.test.ts   # 14 个测试
 ```
 
 ---
