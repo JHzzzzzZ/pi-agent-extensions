@@ -1,6 +1,6 @@
 # chatanywhere-provider — 双 provider 运行时自动发现（OpenAI 兼容 + Anthropic Messages）
 
-> last verified @ 01aca63
+> last verified @ 851a938
 
 ## 职责与边界
 
