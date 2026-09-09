@@ -189,7 +189,7 @@ test("after session_shutdown the guard resets and a fresh load registers everyth
     for (const name of ["team_run", "team_status", "team_transcript", "team_stop"]) {
       assert.ok(second.tools.has(name), `tool ${name} re-registered after reload`);
     }
-    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view"]) {
+    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear"]) {
       assert.ok(second.commands.has(name), `command ${name} re-registered after reload`);
     }
     assert.ok(second.entryRenderers.has("agent-team-run-v1"));
@@ -224,7 +224,7 @@ test("repeated session_shutdown keeps the guard usable", async () => {
     const second = fakePi();
     agentTeamExtension(second as never);
     assert.ok(second.tools.has("team_run"), "tool registered after two shutdowns");
-    assert.equal(second.commands.size, 5);
+    assert.equal(second.commands.size, 6);
   });
 });
 
