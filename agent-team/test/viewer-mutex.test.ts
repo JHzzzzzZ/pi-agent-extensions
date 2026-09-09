@@ -98,11 +98,18 @@ test("team:view 互斥：viewer 打开期间再进入不开第二个 overlay", a
     const view = pi.commands.get("team:view");
     assert.ok(view, "cockpit 应注册 /team:view");
 
-    const first = view.handler("", viewCtx as never); // 第一次：打开 overlay（pending）
-    await view.handler("", viewCtx as never); // 第二次：互斥，直接返回
+    void view.handler("", viewCtx as never); // 第一次：打开 overlay（pending，不 await）
+    // 第二次：互斥应让它在短时间内直接返回。若互斥缺失，第二次会真的再
+    // 开一个永不关闭的 overlay 并永久 await——race 超时让旧行为快速失败
+    // 而不是把测试套件挂死（旧版实测挂 300s）。
+    await Promise.race([
+      view.handler("", viewCtx as never),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("互斥缺失：第二个 viewer 调用未在 500ms 内返回（= 双 overlay 永久打开）")), 500),
+      ),
+    ]);
     assert.equal(customCalls.length, 1, "第二个 viewer 不得调用 ui.custom");
     assert.equal(customCalls[0]?.length, 2, "overlay 调用保持 (factory, { overlay, overlayOptions }) 形状");
-    void first; // 第一个 overlay 仍开着：刻意不 await
   } finally {
     if (previousWidget === undefined) delete process.env.PI_AGENT_TEAM_WIDGET;
     else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
