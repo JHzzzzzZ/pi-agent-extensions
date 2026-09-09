@@ -5,7 +5,7 @@
 Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。扩展通过复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目）加载，然后在 Pi 中执行 `/reload` 生效。
 
 - **`pwr/` — 主项目。** PWR（Pi Workflow Runtime）v2.4.0：用户编写受约束的 ECMAScript 工作流脚本；PWR 校验后弹出批准卡，再通过派生子 `pi` 进程作为 sub-agent 执行（`PiAgentRunner`）。v2.4.0 新增逐步实时运行 trace（runner `onEvent` → runtime `task_event` → 查看器 agent 行）、`/workflows:saved` 列表，以及 `/workflow:<name>` 的 schema 引导 `key=value` 参数输入（仍兼容 JSON）。零构建 TypeScript ESM，由 Node ≥ 22.18 原生 type-stripping 直接执行。
-- **卫星扩展**（相互独立，扩展形态相同）：`agent-team/`（可复用多 agent 团队：独立 leader 子进程通过 `team_dispatch` 调度成员子进程）、`stream-token-speed/`（TTFT + 实时 tokens/s 状态）、`chatanywhere-provider/`（OpenAI 兼容 + Anthropic Messages provider 适配器）、`provider-quota/`（余额/额度状态 + `/quota`；适配器含 OpenRouter/DeepSeek/ChatAnywhere/智谱/OpenCode Go，Go 的限额窗口重置时间跟随命中的限额窗口）、`run-timer/`（会话/任务/回合计时 widget）、`loop/`（`/loop` 固定间隔循环 + 每天定时循环 + 每日窗口间隔循环（v1.2.0）+ 一次性提醒 + `--bg` 后台 agent 模式（v1.3.0：前台 followUp 送达，或拉起可恢复的子 `pi --mode json -p` 进程，其会话 id 会被捕获、可用 `pi --session <id>` 恢复；见 `runner.ts`），followUp 送达 + 会话条目快照持久化，agent 工具 `loop_create/list/delete`）、`goal/`（`/goal` 会话目标循环——agent 跨回合自动推进，直至独立 LLM 评估器判定条件达成）、`opencode-bridge/`（拉起/复用本地 HTTP CONNECT → SOCKS5 桥 helper（`opencode-bridge-helper.mjs`，零依赖独立进程），使 Pi 的 `httpProxy` 能经由本地 SOCKS5（v2rayN）转发；`session_start` 先探测 `127.0.0.1:<port>`，多 Pi/subagent 实例共享同一桥，detached + unref 派生（Pi 不持有子进程资源），桥在监听后自动同步 settings.json 的 httpProxy（其它代理不碰、桥不通指向本桥则自愈移除、`PI_BRIDGE_AUTO_PROXY=0` 可关），`/opencode-bridge` 状态命令，环境变量 `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT`/`PI_BRIDGE_AUTO_PROXY`；helper 可在 socket 错误/ECONNRESET 下存活，端口被占用时以 0 退出）。
+- **卫星扩展**（相互独立，扩展形态相同）：`agent-team/`（可复用多 agent 团队：独立 leader 子进程通过 `team_dispatch` 调度成员子进程）、`stream-token-speed/`（TTFT + 实时 tokens/s 状态）、`chatanywhere-provider/`（OpenAI 兼容 + Anthropic Messages provider 适配器）、`provider-quota/`（余额/额度状态 + `/quota`；适配器含 OpenRouter/DeepSeek/ChatAnywhere/智谱/OpenCode Go，Go 的限额窗口重置时间跟随命中的限额窗口）、`run-timer/`（会话/任务/回合计时 widget）、`loop/`（`/loop` 固定间隔循环 + 每天定时循环 + 每日窗口间隔循环（v1.2.0）+ 一次性提醒 + `--bg` 后台 agent 模式（v1.3.0：前台 followUp 送达，或拉起可恢复的子 `pi --mode json -p` 进程，其会话 id 会被捕获、可用 `pi --session <id>` 恢复；见 `runner.ts`），followUp 送达 + 会话条目快照持久化，agent 工具 `loop_create/list/delete`）、`goal/`（`/goal` 会话目标循环——agent 跨回合自动推进，直至独立 LLM 评估器判定条件达成）、`opencode-bridge/`（拉起/复用本地 HTTP CONNECT → SOCKS5 桥 helper（`opencode-bridge-helper.mjs`，零依赖独立进程），使 Pi 的 `httpProxy` 能经由本地 SOCKS5（v2rayN）转发；`session_start` 先探测 `127.0.0.1:<port>`，多 Pi/subagent 实例共享同一桥，detached + unref 派生（Pi 不持有子进程资源），扩展**绝不自动改** settings.json——`/opencode-bridge-sync` 命令人工确认后仅增/删 `httpProxy` 字段（其余配置不动），写前备份原文到 `settings.json.bak-opencode-bridge-<时间戳>`，settings 读写经 `ProxySyncDeps` 注入（plan/apply 两阶段，防竞态），`/opencode-bridge` 状态命令，环境变量 `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT`；helper 可在 socket 错误/ECONNRESET 下存活，端口被占用时以 0 退出）。
 
 ## 需求受理 → `todos/` 登记（强制）
 
@@ -63,7 +63,7 @@ node --experimental-strip-types --test run-timer/run-timer.test.ts              
 node --experimental-strip-types --test goal/index.test.ts                        # 39 个测试，此目录无 package.json
 node --experimental-strip-types --test provider-quota/index.test.ts              # 15 个测试，此目录无 package.json
 cd loop && npm install && npm test                                               # 169 个测试；另有 npm run typecheck
-cd opencode-bridge && npm install && npm test                                    # 50 个测试（helper 集成测试派生真实 helper + 手写 fake SOCKS5）；另有 npm run typecheck
+cd opencode-bridge && npm install && npm test                                    # 57 个测试（helper 集成测试派生真实 helper + 手写 fake SOCKS5）；另有 npm run typecheck
 ```
 
 无构建步骤、无 linter、无 formatter。
@@ -126,7 +126,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）。测试中从不实例化真实 pi-tui（结构 fake 以 `as never` 断言）。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 85；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 50。
+- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 85；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 57。
 - **覆盖缺口：** `chatanywhere-provider` 零测试。全库无 TODO/skip/only 标记。
 - **确定性与封闭性：** 注入固定时钟（`2026-08-05T12:00:00Z`）、临时目录经 `os.tmpdir()` 并清理、无网络。
 - 质量标准见 `pwr/DELIVERY.md`：交付前全套测试绿 + `npm run typecheck` 零错误。

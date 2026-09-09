@@ -12,7 +12,7 @@
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式 | 169 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 39 个 |
-| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；自动同步 settings.json 的 httpProxy，可关） | 50 个 |
+| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 人工确认修改 settings.json 的 httpProxy，自动备份） | 57 个 |
 
 ## 安装
 
@@ -293,7 +293,7 @@ node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
 
 ## opencode-bridge — 本地代理桥（HTTP CONNECT → SOCKS5）
 
-背景：opencode-go 的 Muse Spark 等模型按出口 IP 限区，而 Pi 只支持 HTTP 代理（不认 `socks5://`）。本扩展随 Pi 启动确保一个**独立 helper 进程**在跑：它监听 `127.0.0.1:10899`，把 HTTP CONNECT 转成你本地 v2rayN 的 SOCKS5（默认 `127.0.0.1:10808`）。桥确认在监听后，扩展会**自动把 settings.json 的 `httpProxy` 指向本桥**（幂等；已有其它代理地址不碰；桥不通且原值指向本桥则自动移除自愈；`PI_BRIDGE_AUTO_PROXY=0` 可关闭），模型请求即可经此桥从允许地区出去。写入在下一次 Pi 启动生效。
+背景：opencode-go 的 Muse Spark 等模型按出口 IP 限区，而 Pi 只支持 HTTP 代理（不认 `socks5://`）。本扩展随 Pi 启动确保一个**独立 helper 进程**在跑：它监听 `127.0.0.1:10899`，把 HTTP CONNECT 转成你本地 v2rayN 的 SOCKS5（默认 `127.0.0.1:10808`）。需要让模型请求走本桥时，运行 `/opencode-bridge-sync`：**人工确认后**才修改 settings.json 的 `httpProxy` 字段（仅此字段，其余配置不动；修改前原文件自动备份到 `settings.json.bak-opencode-bridge-<时间戳>`）。扩展自身**绝不自动修改** settings.json。
 
 - **进程隔离** — 桥运行在独立进程（`opencode-bridge-helper.mjs`，零依赖 .mjs）中，任何 socket 异常/未捕获异常都不会影响 Pi 主进程；Pi 侧 spawn 后 `unref()`，不持有子进程资源
 - **多实例复用** — `session_start` 只做 TCP 探测：桥已在监听则直接复用（多个 Pi / subagent 共用一个桥），仅在必要时拉起 helper；端口被另一个桥占用时新 helper 以 0 退出（竞争安全）
@@ -304,18 +304,17 @@ node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
 
 | 命令/配置 | 作用 |
 | --- | --- |
-| `/opencode-bridge` | 查看状态（必要时尝试启动）：监听地址、上游 SOCKS5、`httpProxy` 同步结果 |
-| `"httpProxy": "http://127.0.0.1:10899"` | 由扩展自动同步到 Pi `settings.json`（桥在监听才写；其它代理地址不碰；`PI_BRIDGE_AUTO_PROXY=0` 关闭） |
+| `/opencode-bridge` | 查看状态（必要时尝试启动）：监听地址、上游 SOCKS5、配置引导 |
+| `/opencode-bridge-sync` | 修改 settings.json 的 `httpProxy` 指向本桥（人工确认 + 自动备份；仅改 `httpProxy` 字段；桥不通且现值指向本桥时提议移除） |
 | `PI_BRIDGE_PORT` | 桥监听端口，默认 `10899`（仅绑定 127.0.0.1；需 1-65535 整数，非法启动时报静态错误） |
 | `PI_BRIDGE_SOCKS_HOST` | 上游 SOCKS5 主机，默认 `127.0.0.1` |
 | `PI_BRIDGE_SOCKS_PORT` | 上游 SOCKS5 端口，默认 `10808` |
-| `PI_BRIDGE_AUTO_PROXY` | 设为 `0`/`false`/`off` 关闭 httpProxy 自动同步（默认开） |
 | `PI_BRIDGE_LOG` | helper 日志文件路径（默认与 helper 同目录的 `opencode-bridge.log`；单行/文件大小均有上限，不记录 payload） |
 
 ```bash
 cd opencode-bridge
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型）
-npm test           # 50 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
+npm test           # 57 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 

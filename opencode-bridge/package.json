@@ -1,9 +1,9 @@
 {
   "name": "pi-extension-opencode-bridge",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
-  "description": "opencode-bridge — 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程 + httpProxy 自动同步 + /opencode-bridge 状态命令）",
+  "description": "opencode-bridge — 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程 + /opencode-bridge-sync 确认式修改 settings.json + /opencode-bridge 状态命令）",
   "engines": {
     "node": ">=22.18"
   },
