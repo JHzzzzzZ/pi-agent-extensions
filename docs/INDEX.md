@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 0142e14
+> last verified @ 7301f5a
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -23,7 +23,7 @@
 | 卡 | 一句话 |
 | --- | --- |
 | [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行 |
-| [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达；team_stop 按 runId 中止；run 落盘/reconcile、budget 预算块、model 预检、/team:doctor；TUI 对照 pi-subagents 矩阵同步（docs/tui-sync.md） |
+| [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达；team_stop 按 runId 中止；viewer 内 m 发消息直接对话（派单语义）；run 落盘/reconcile、budget 预算块、model 预检、/team:doctor；TUI 对照 pi-subagents 矩阵同步（docs/tui-sync.md） |
 | chatanywhere-provider | 双 provider 运行时自动发现：探测 /models 按家族线归并注册，探测失败 fail-closed |
 | deep-init | `/deep-init` 提示词驱动四阶段深度初始化 |
 | goal | `/goal` 会话目标循环：agent 跨回合自动推进至评估器判定达成 |

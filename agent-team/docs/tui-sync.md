@@ -66,6 +66,7 @@
 | 无变化跳过 | 渲染串指纹相同且无 running 强制 → 跳过 | `fleet-status.ts:585-591` |
 | stop 键位 | `["D"]`（确认态按键：Enter/Y 确认；Esc/ctrl+c/N/backspace 取消） | `fleet.ts:46`、`fleet.ts:1134-1150` |
 | refresh 键位 | `["r", "R"]` | `fleet.ts:43` |
+| 发消息键位（特有） | `m` 进入单行输入模式；输入模式优先于一切现有按键：可打印字符（含 CJK）追加 buffer，backspace（`\x7f`）删最后一个码点，Enter 提交（返回 `chat-submit`），Esc/ctrl+c 只退出输入不关 viewer，其余控制序列忽略 | fleet 无对应语义（inspector 无对话输入）；agent-team 特有，`viewer.ts` `handleViewerKey` 输入分支 + `viewer-chat.test.ts` 锁定 |
 
 ## 5. 同步记录
 
@@ -75,6 +76,7 @@
 | agent-team 1.2.0 | 2026-09-09 | viewer ctrl+c 关闭 + tick 750；widget 空编辑器激活门控 + j/k 导航 + 无变化跳过 setWidget；接线互斥/隐藏/销毁语义测试锁定 | `feat/agent-team-tui-sync` |
 | agent-team 1.4.0 | 2026-09-14 | viewer stop（D 两步确认，确认态按键集对齐 fleet.ts:1134-1150）+ refresh（r/R）；差异条目 §3.8（横幅占正文窗口顶部、帧总高不变）与 §3.9（停止粒度 = 整个 run）登记；tui-sync/viewer/viewer-host/viewer-stop 四文件测试锁定 | `feat/agent-team-view-stop` |
 | agent-team 1.5.0 | 2026-09-09 | 亮块 running 头行新增可选余额提示（仅当团队配了 `budget.maxCostUsd` 且未超限：`· 剩 $X.XX`；fleet 无此概念，agent-team 特有语义）——差异条目 §3.10 登记；widget.test 锁定 | `feat/agent-team-reliability` |
+| agent-team 1.6.0 | 2026-09-14 | viewer 发消息（`m` 单行输入，特有语义；输入模式分支优先于一切按键、Esc 只退输入不关 viewer）；actionLines 优先级 busy > confirm > **input** > notice（输入行占正文窗口、帧总高不变）；图例追加 `m 发消息`。差异条目 §4（发消息键位行）登记；chat/viewer-chat/viewer-chat-host 三文件测试锁定 | `feat/agent-team-view-chat` |
 
 ## 6. 范围外（明确不做）
 

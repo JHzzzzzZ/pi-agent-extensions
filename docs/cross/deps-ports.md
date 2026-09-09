@@ -9,7 +9,7 @@
 | 扩展 | 端口 | 替代的真实边界 |
 | --- | --- | --- |
 | pwr | `FlowDeps` / `ToolDeps`（src/flow.ts, src/tools.ts）、`SaveAdapter` / `SaveLibDeps`（src/save.ts，save.test.ts 实际注入口）、`SaveFlowDeps`、`UiRuntimeAdapter`、`RunPersister`（runtime/persist.ts） | 流程编排、保存加载、UI、持久化 |
-| agent-team | `CoordinatorDeps` / `DispatchDeps` / `ManageDeps`；入口接受 `{ spawn }` | 子进程 spawn、调度、团队文件管理 |
+| agent-team | `CoordinatorDeps` / `DispatchDeps` / `ManageDeps` / `ChatCoordinatorDeps`（chat.ts：resolveTeam/startRun/contextTail/notify 全注入，纯逻辑层）；入口接受 `{ spawn }` | 子进程 spawn、调度、团队文件管理、viewer 发消息队列 |
 | loop | `LoopToolDeps`（tools.ts）；runner.ts 派生边界 | 工具依赖、后台 pi 派生 |
 | goal | `GoalDeps`（index.ts） | 评估器调用、时钟 |
 | opencode-bridge | `BridgeDeps`（bridge.ts，探测/派生/fs/sleep/shutdown）、`ProxySyncDeps`（settings + 端口配置读写，plan/apply 两阶段）、`BridgeExtensionDeps`（入口） | socket / 文件系统 / 进程生命周期 |

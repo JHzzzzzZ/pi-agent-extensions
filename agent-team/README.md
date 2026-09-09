@@ -112,11 +112,14 @@ members:
 | `←`/`→`、`h`/`l`、`Tab` | 切换上/下一个成员（换页） |
 | `1`–`9` | 直接跳到第 N 个成员 |
 | `x` | 显示/隐藏工具调用行 |
+| `m` | 发消息给当前选中的成员/leader（进入底部单行输入，详见下段） |
 | `D`（shift+d） | 停止整个 run（两步确认，对齐 fleet）：运行中按下进入确认态（顶部横幅 `确认停止 run <runId>？`），`Enter`/`Y` 确认、`N`/`Esc`/`ctrl+c`/`backspace` 取消（取消不关闭查看器）；确认后经 `stopAndSettle()` 中止 leader 与全体成员（SIGTERM→SIGKILL、有界等待落定），顶部横幅依次显示停止中→结果（settled → `run 已停止（aborted · Xs）；该 run 的报告不再送达`，未落定 → 提示稍后用 `/team:status` 确认终态）；run 已结束时按下仅提示，不进确认态 |
 | `r` / `R` | 手动刷新：绕过 750ms 指纹门控强制重载重绘 |
 | `q` / `Esc` / `ctrl+c` | 关闭查看器（close 键集对齐 fleet） |
 
 实现机制（run artifacts）：每个 run 在 `~/.pi/agent/teams/runs/<runId>/` 下保留每个成员一份有界 JSONL 流水（leader 为 `_leader.jsonl`）——leader 侧事件由驾驶舱从 leader 子进程 JSON 流写入，成员侧由 leader 进程内的 dispatch 执行器实时写入，查看器与工具按需读取。单条记录封顶 4KB、单文件 2MB、目录保留 7 天（session 启动时自动清理）。全部落盘 best-effort，记录失败绝不影响 run 本身。
+
+**与成员/leader 直接对话（`m` 发消息，v1.6.0）**：选中某个 actor 后按 `m` 进入正文窗口顶部单行输入（`❯ <内容>▏`），可打印字符（含 CJK）追加、backspace 删字、`Esc`/`ctrl+c` 只退出输入（不关查看器）、`Enter` 提交。架构上成员子进程归 leader 派生、驾驶舱无通道向运行中的子进程注入消息，因此对话走**派单语义**：每条消息编成一个新 run 的 task（leader 直发；成员则指示 leader 转派并附该成员 transcript 尾部 ~2000 字节作上文，派出时刻现读不缓存），复用 `startBackgroundRun`（含 model 预检）派出；当前 run 在跑则消息**排队**，run 落定（completed）后自动链式派出，run failed/aborted 则清空队列（用户变卦语义，与 `team_stop`/viewer `D`/`/team:clear` 一致——显式停止也清队列并提示丢弃条数）。回复经新 run 的 transcript 在查看器里展示（选中页跟随最新 run），报告照常 followUp 送达主会话。队列驻留在会话内存不落盘，`/reload` 后丢失可接受。
 
 对话内查看：主 agent 可调用 `team_transcript` 工具（`member` 参数指定成员名或 `leader`）读取同样的记录并转述要点；`team_status` 之外想深入某个成员"到底做了什么"时用它。动态命令 `/team:<name>` 不会覆盖内置的 `/team:run|status|stop|view`。
 
@@ -132,7 +135,7 @@ members:
 
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_status`（查运行状态，含 runId 与预算）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
-- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、`/team:clear`、`/team:doctor`、动态 `/team:<name>`
+- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`（内含 `m` 发消息直接对话）、`/team:clear`、`/team:doctor`、动态 `/team:<name>`
 - Widget：输入栏下方可选中亮块（紧凑两行概要）——`alt+↓` 选中、`enter` 直达查看器（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
 
@@ -141,7 +144,7 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（196 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（255 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
