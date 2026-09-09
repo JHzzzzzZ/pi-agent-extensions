@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 405 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏会话记录查看器） | 147 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏会话记录查看器） | 196 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
@@ -161,11 +161,12 @@ leader: claude-opus-4 · 已派发 3 个子任务
 - **派单与复用** — `/team:run <团队> <任务>`、`/team:<团队> <任务>` 或 `team_run` 工具（默认后台，报告完成自动送达，返回含 runId）；同一团队反复使用；`/team:stop` 或 `team_stop` 工具按 runId 中止（settle-aware：停止后拿到 aborted 终态记录，报告 followUp 不再送达，可立即重新派单）
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
 - **进度可视（可选中亮块）** — 输入栏下方的紧凑亮块：暗色一行概要（团队/状态/耗时/并行成员数 + 任务），`↓`/`←`（编辑器为空时）或 `alt+↓` 进入选中（`↑`/`↓`/`j`/`k` 移动、`enter` 打开查看器看成员明细、`esc`/其它键退出并放行编辑器）；run 结束切终态行（`✓/✗ · 耗时 · 费用`），不再残留 running（SIGTERM → SIGKILL 逐级中止）；不需要终态行时 `/team:clear` 手动清除（`/reload` 后仅进行中 run 自动重挂）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [agent-team/docs/tui-sync.md](agent-team/docs/tui-sync.md)）
+- **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team:doctor` 自检报告
 - **会话记录查看器** — `/team:view` 全屏边框页（≈82% 终端高），每个 agent 一页连续会话流（任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行），run artifacts 落盘、run 结束后仍可查；`q`/`Esc`/`ctrl+c` 关闭；主 agent 可用 `team_transcript` 工具转述记录要点
 
 ```bash
 cd agent-team
-npm install && npm test        # 147 个测试（含真实 git worktree 用例）
+npm install && npm test        # 196 个测试（含真实 git worktree 用例）
 npm run typecheck
 ```
 

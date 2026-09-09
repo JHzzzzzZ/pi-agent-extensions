@@ -1,6 +1,11 @@
 ---
 name: dev-team
 description: 全栈开发小队（示例，复制到 ~/.pi/agent/teams/ 后即可派单）
+budget:                     # 可选：每次 run 的预算上限（不配用默认：12 次 dispatch / 40 次成员运行）
+  maxDispatchCalls: 20
+  maxMemberRuns: 60
+  maxCostUsd: 5.0           # 累计费用超限 → 整个 run 自动中止
+  maxTotalTokens: 1000000
 leader:
   model: anthropic/claude-opus-4-5
   prompt: |
