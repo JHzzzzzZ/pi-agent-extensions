@@ -1,1 +1,2 @@
 - [x] 根 README 为每个插件增加效果示意图
+- [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞

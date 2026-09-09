@@ -1,6 +1,10 @@
 {
 	"name": "pi-agent-extensions",
+<<<<<<< Updated upstream
 	"version": "2.6.0",
+=======
+	"version": "2.5.5",
+>>>>>>> Stashed changes
 	"private": true,
 	"type": "module",
 	"description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge / deep-init",

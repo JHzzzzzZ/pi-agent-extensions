@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-opencode-bridge",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.3.1",
   "type": "module",
   "description": "opencode-bridge — 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程 + /opencode-bridge-sync 确认式修改与 /opencode-bridge-restore 备份恢复 settings.json + /opencode-bridge 状态命令）",
   "engines": {
@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   }

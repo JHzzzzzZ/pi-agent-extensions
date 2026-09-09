@@ -132,7 +132,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 
 - **Node ≥ 22.18**（原生 type-stripping——`.ts` 直接运行；已在 Node 22.23.1 / Windows 验证）。不用 Bun、无构建步骤、无 bundler。
 - **npm**（package-lock v3）。包管理器不是 Bun/pnpm。
-- TypeScript ^5.8（解析为 5.9.3）；`@earendil-works/pi-*` ^0.83.0 仅作 devDependencies——宿主 Pi 环境在运行时解析它们。
+- TypeScript ^5.8（解析为 5.9.3）；`@earendil-works/pi-*` ^0.85.1 仅作 devDependencies——宿主 Pi 环境在运行时解析它们。
 - 工作区使用的 Pi 扩展 API 面：`pi.on`（`session_start`、`agent_start`、`agent_settled`、`turn_start/end`、`model_select`、`message_start/update/end`、`input`、`before_agent_start`、`tool_call`、`tool_result`）、`pi.registerCommand`、`pi.registerTool`、`pi.registerProvider`、`pi.registerShortcut`、`pi.registerEntryRenderer`、`pi.appendEntry`、`pi.sendMessage`、`ctx.ui.setStatus/setWidget/notify`、`ctx.sessionManager.getEntries`。
 - 配置经环境变量（`CHATANYWHERE_API_KEY`、`CHATANYWHERE_BASE_URL`）或 `~/.pi/agent/auth.json` 按 provider id 键（provider-quota——明确不用环境变量）。
 - 安装形态：所有扩展都是带 `index.ts` 入口的目录（chatanywhere-provider 另在 package.json 声明 `pi.extensions: ["./index.ts"]`）；目录复制进 `extensions/` 后 pi 自动加载。
