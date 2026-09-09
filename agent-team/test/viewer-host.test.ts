@@ -226,16 +226,13 @@ function scenarioData(elapsedSec: number, dispatches: number): ViewerData {
   };
 }
 
-const isTitleRow = (line: string): boolean => stripAnsi(line).includes("╭─ agent-team");
-const isTabsRow = (line: string): boolean => {
-  const plain = stripAnsi(line);
-  return plain.includes("1 leader") && plain.includes("front");
-};
+const isTitleRow = (line: string): boolean => stripAnsi(line).includes("agent-team viewer");
+const isRosterRow = (line: string): boolean => stripAnsi(line).includes("· _leader");
 
 interface HostCounts {
   modelTitles: number;
   gridTitles: number;
-  gridTabs: number;
+  gridRoster: number;
 }
 
 /**
@@ -288,25 +285,25 @@ function driveHostViewer(opts: { cols?: number; rows?: number; resizeTo?: number
     return {
       modelTitles: model.filter(isTitleRow).length,
       gridTitles: grid.filter(isTitleRow).length,
-      gridTabs: grid.filter(isTabsRow).length,
+      gridRoster: grid.filter(isRosterRow).length,
     };
   } finally {
     viewer.dispose();
   }
 }
 
-test("真实宿主 6 秒运行：屏模型与像素屏都恒为一组标题+页签", () => {
+test("真实宿主 6 秒运行：屏模型与像素屏都恒为一组标题+roster", () => {
   const counts = driveHostViewer();
   assert.equal(counts.modelTitles, 1, `屏模型标题行应恰 1，实得 ${counts.modelTitles}`);
   assert.equal(counts.gridTitles, 1, `像素屏标题行应恰 1，实得 ${counts.gridTitles}`);
-  assert.equal(counts.gridTabs, 1, `像素屏页签行应恰 1，实得 ${counts.gridTabs}`);
+  assert.equal(counts.gridRoster, 1, `像素屏 roster 行应恰 1，实得 ${counts.gridRoster}`);
 });
 
-test("真实宿主中途改终端高度：重绘后仍为一组标题+页签", () => {
+test("真实宿主中途改终端高度：重绘后仍为一组标题+roster", () => {
   const counts = driveHostViewer({ resizeTo: 36 });
   assert.equal(counts.modelTitles, 1, `改高度后屏模型标题应恰 1，实得 ${counts.modelTitles}`);
   assert.equal(counts.gridTitles, 1, `改高度后像素屏标题应恰 1，实得 ${counts.gridTitles}`);
-  assert.equal(counts.gridTabs, 1, `改高度后像素屏页签应恰 1，实得 ${counts.gridTabs}`);
+  assert.equal(counts.gridRoster, 1, `改高度后像素屏 roster 应恰 1，实得 ${counts.gridRoster}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -370,7 +367,7 @@ test("停止确认态渲染：横幅两行占正文窗口顶部且帧总行数�
     const frame = stripAnsi(viewer.render(100).join("\n"));
     assert.equal(viewer.render(100).length, before, "帧总行数不变");
     assert.match(frame, /确认停止 run run-1788938207941？/);
-    assert.match(frame, /Enter\/Y 确认 · N 取消 · Esc 取消/);
+    assert.match(frame, /Enter\/Y 确认 · N 取消/, "确认提示占右栏（按 detail 宽换行）");
   } finally {
     viewer.dispose();
   }

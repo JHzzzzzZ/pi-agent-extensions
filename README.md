@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 405 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏会话记录查看器，支持查看器内停止 run、m 发消息直接对话） | 255 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话） | 263 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
@@ -217,12 +217,12 @@ leader: claude-opus-4 · 已派发 3 个子任务
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
 - **进度可视（可选中亮块）** — 输入栏下方的紧凑亮块：暗色一行概要（团队/状态/耗时/并行成员数 + 任务），`↓`/`←`（编辑器为空时）或 `alt+↓` 进入选中（`↑`/`↓`/`j`/`k` 移动、`enter` 打开查看器看成员明细、`esc`/其它键退出并放行编辑器）；run 结束切终态行（`✓/✗ · 耗时 · 费用`），不再残留 running（SIGTERM → SIGKILL 逐级中止）；不需要终态行时 `/team:clear` 手动清除（`/reload` 后仅进行中 run 自动重挂）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [agent-team/docs/tui-sync.md](agent-team/docs/tui-sync.md)）
 - **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team:doctor` 自检报告
-- **会话记录查看器** — `/team:view` 全屏边框页（≈82% 终端高），每个 agent 一页连续会话流（任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行），run artifacts 落盘、run 结束后仍可查；`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；主 agent 可用 `team_transcript` 工具转述记录要点
-- **查看器内直接对话（`m` 发消息）** — 选中成员/leader 后按 `m` 进入单行输入，`Enter` 提交；成员子进程不可注入，对话走派单语义：消息编成新 run 的 task（附目标 actor transcript 尾部作上文），run 运行中则排队、落定后自动链式派出（failed/aborted 清空）；回复经新 run transcript 在查看器里展示，报告照常 followUp 送达
+- **会话记录查看器** — `/team:view` 全屏左右分栏（fleet inspector 同款：左栏成员 roster 带选中标记与状态，右栏 Run/State/成员 元信息头 + 选中成员的连续会话流——任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行；≈85% 终端高，窄于 36 列仅提示），run artifacts 落盘、run 结束后仍可查；`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；主 agent 可用 `team_transcript` 工具转述记录要点
+- **查看器内直接对话（`m` 发消息）** — 选中成员/leader 后按 `m` 进入单行输入（右栏输入行），`Enter` 提交；成员子进程不可注入，对话走派单语义：消息编成新 run 的 task（附目标 actor transcript 尾部作上文），run 运行中则排队、落定后自动链式派出（failed/aborted 清空）；回复经新 run transcript 在查看器里展示，报告照常 followUp 送达
 
 ```bash
 cd agent-team
-npm install && npm test        # 255 个测试（含真实 git worktree 用例）
+npm install && npm test        # 263 个测试（含真实 git worktree 用例）
 npm run typecheck
 ```
 

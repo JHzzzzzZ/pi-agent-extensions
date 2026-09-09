@@ -1,15 +1,17 @@
 /**
- * agent-team — full-page run transcript viewer
+ * agent-team — split-pane run transcript viewer (fleet inspector layout)
  *
- * Renders each actor (leader + members) as one bordered full-page chat
- * transcript — a continuous chronological flow like the main agent's own
- * conversation view, not per-message timestamp blocks. Fed by the run
- * artifacts written by transcript.ts (same idea as pi-subagents' fleet
- * inspector).
+ * Renders the run as one bordered two-pane frame, copied structurally from
+ * pi-subagents' fleet inspector (v0.66.0 `fleet.ts:1319-1381`, see
+ * docs/tui-sync.md §4): a left member roster (selection marker + status
+ * glyph + right-aligned status, windowed scrolling) and a right detail pane
+ * (fixed Run/State/成员 meta header + the selected member's full transcript
+ * — a continuous chronological flow like the main agent's own conversation
+ * view, not per-message timestamp blocks). A key-legend row sits above the
+ * bottom border.
  *
- * The page is a complete box (title in the top border, key legend in the
- * bottom border, side borders on every row) sized from the live terminal
- * height (~82%), so it reads as a clearly separated surface over the main
+ * The frame is a complete box sized from the live terminal height (fleet's
+ * 85%−6 formula), so it reads as a clearly separated surface over the main
  * agent UI. Assistant text is rendered with the same Markdown component +
  * theme the host uses for its own messages.
  *
@@ -38,6 +40,8 @@ export interface Styles {
   warning: (text: string) => string;
   /** User-message bubble background (task entries). */
   bubble: (text: string) => string;
+  /** Bold (fleet uses it for the selected roster label + header keys). */
+  bold: (text: string) => string;
 }
 
 /** Unstyled port (tests). */
@@ -51,6 +55,7 @@ export function plainStyles(): Styles {
     error: identity,
     warning: identity,
     bubble: identity,
+    bold: identity,
   };
 }
 
@@ -70,6 +75,13 @@ export function themeStyles(theme: Theme): Styles {
     success: fg("success"),
     error: fg("error"),
     warning: fg("warning"),
+    bold: (text: string): string => {
+      try {
+        return theme.bold(text);
+      } catch {
+        return text;
+      }
+    },
     bubble: (text: string): string => {
       try {
         return theme.bg("userMessageBg", text);
@@ -360,11 +372,15 @@ export function bodyLines(
 }
 
 // ---------------------------------------------------------------------------
-// Bordered frame (~82% of the terminal, clear separation from the main UI)
+// Split frame (fleet inspector layout: roster left, detail right)
 // ---------------------------------------------------------------------------
 
-/** Chrome rows of the frame: top border + member tabs + bottom border. */
-export const VIEWER_CHROME_ROWS = 3;
+/**
+ * Chrome rows of the frame: top border + title row + upper separator +
+ * lower separator + legend row + bottom border (fleet.ts:1343-1370; spec
+ * §4). "Frame total = bodyHeight + VIEWER_CHROME_ROWS" stays invariant.
+ */
+export const VIEWER_CHROME_ROWS = 6;
 
 /**
  * Action key sets aligned with pi-subagents' `DEFAULT_FLEET_KEYBINDINGS`
@@ -380,63 +396,102 @@ export const VIEWER_ACTION_KEYS = {
 export const VIEWER_LEGEND = "↑↓ 滚动 · ←→/1-9 成员 · g/G 首末 · x 工具行 · m 发消息 · D 停止 · r 刷新 · q 关闭";
 
 /**
- * Frame height for a terminal with `rows` rows: ~82% of the screen,
- * at least 12 rows (very small terminals let the TUI clip).
+ * Frame body height for a terminal with `rows` rows: fleet's formula
+ * `max(2, floor(rows * 0.85) - 6)` (fleet.ts:1326-1327; spec §4). Invalid
+ * rows fall back to fleet's default terminal height of 32.
  */
 export function computeFrameHeight(rows: number): number {
-  if (!Number.isFinite(rows) || rows <= 0) return 24;
-  return Math.max(12, Math.min(Math.floor(rows * 0.82), rows - 2));
+  const safe = Number.isFinite(rows) && rows > 0 ? rows : 32;
+  return Math.max(2, Math.floor(safe * 0.85) - 6);
 }
 
-function topBorder(data: ViewerData, width: number, styles: Styles): string {
+/**
+ * Split-pane geometry, verbatim from fleet.ts:1322-1329 (spec §4): the two
+ * `│` borders take 2 columns total, the roster takes 22..46 columns (38%
+ * of the rest), and the detail pane gets whatever remains (≥ 1).
+ */
+export function computeViewerLayout(width: number): { innerWidth: number; rosterWidth: number; detailWidth: number } {
+  const innerWidth = Math.max(0, width - 2);
+  const rosterWidth = Math.max(22, Math.min(46, Math.floor((innerWidth - 1) * 0.38)));
+  const detailWidth = Math.max(1, innerWidth - rosterWidth - 1);
+  return { innerWidth, rosterWidth, detailWidth };
+}
+
+/** fleet's `rightAligned` (fleet.ts:754): left + gap + right, exact width. */
+function rightAligned(left: string, right: string, width: number): string {
+  const rightWidth = visibleWidth(right);
+  const leftWidth = Math.max(0, width - rightWidth - 1);
+  return fitLine(left, leftWidth) + " ".repeat(Math.max(1, width - leftWidth - rightWidth)) + fitLine(right, rightWidth);
+}
+
+function selectedActor(data: ViewerData, state: ViewerState): { actor: ViewerActor; index: number } | undefined {
+  const index = Math.min(Math.max(0, state.actorIndex), Math.max(0, data.actors.length - 1));
+  const actor = data.actors[index];
+  return actor ? { actor, index } : undefined;
+}
+
+/**
+ * Left-pane member roster, fleet's `rosterLines` (fleet.ts:1217-1229)
+ * adapted to the agent-team actor list: `<marker> <status icon> <label>
+ * · <actorId>` with the status text right-aligned, selected row marker
+ * `›` (accent) + bold label. The window follows the selection so it never
+ * scrolls out of view (fleet's start-clamp formula, fleet.ts:1219). Actor
+ * order is the stable one from buildViewerData (leader first, then by id).
+ */
+function rosterLines(data: ViewerData, state: ViewerState, width: number, bodyHeight: number, styles: Styles): string[] {
+  if (data.actors.length === 0) return [styles.dim("（无成员）")];
+  const selected = Math.min(Math.max(0, state.actorIndex), data.actors.length - 1);
+  const start = Math.max(0, Math.min(selected - bodyHeight + 1, Math.max(0, data.actors.length - bodyHeight)));
+  const rows: string[] = [];
+  for (let index = start; index < Math.min(data.actors.length, start + bodyHeight); index++) {
+    const actor = data.actors[index];
+    if (!actor) continue;
+    const { icon, style } = statusDisplay(actor.status);
+    const isSelected = index === selected;
+    const marker = isSelected ? styles.accent("›") : " ";
+    const label = isSelected ? styles.bold(actor.label) : actor.label;
+    const left = `${marker} ${applyStyle(styles, style, icon)} ${label} ${styles.dim(`· ${actor.actor}`)}`;
+    rows.push(rightAligned(left, styles.dim(actor.status ?? "unknown"), width));
+  }
+  return rows;
+}
+
+/**
+ * Fixed detail-pane meta header (the agent-team counterpart of fleet's
+ * `structuredHeader`, minimal three lines per the spec): Run / State /
+ * 成员. Key names bold like fleet's `^(Run|State|…):` rule; the header
+ * never scrolls with the transcript.
+ */
+function detailHeaderLines(data: ViewerData, state: ViewerState, styles: Styles): string[] {
+  const selected = selectedActor(data, state);
+  const member = selected
+    ? `${selected.actor.label}（${selected.actor.status ?? "unknown"}）· ${selected.index + 1}/${data.actors.length}`
+    : "（无成员）";
+  return [
+    `${styles.bold("Run:")} ${data.runId || "(no run)"}`,
+    `${styles.bold("State:")} ${data.runStatus}`,
+    `${styles.bold("成员:")} ${member}`,
+  ];
+}
+
+function titleRow(data: ViewerData, state: ViewerState, innerWidth: number, styles: Styles): string {
   // 标题刻意保持静态（对标 fleet 检查器的静态标题行）：真机截图实锤——
   // 每秒跳动的 `elapsed` 时钟行就是纵向堆叠物本身（53s/54s、1m26s/1m27s
   // 标题并存）。存活秒表只放在输入栏下方的 widget 里（宿主渲染的纯字符
   // 串表面，已证明稳定），绝不放进这个 overlay——chrome 区零每秒文本。
-  const title = `agent-team · team ${data.team} · ${data.runStatus} · ${data.runId || "(no run)"}`;
-  const room = Math.max(4, width - 5);
-  const shown = truncateVisible(title, room);
-  const pad = Math.max(1, width - visibleWidth(`╭─ ${shown} `) - 1);
-  return styles.border(`╭─ `) + shown + styles.border(` ${"─".repeat(pad)}╮`);
+  const title = ` agent-team viewer · team ${data.team}`;
+  const selected = selectedActor(data, state);
+  const right = selected
+    ? `${applyStyle(styles, statusDisplay(selected.actor.status).style, statusDisplay(selected.actor.status).icon)} ${selected.actor.label} · ${selected.actor.status ?? "unknown"} `
+    : `${styles.dim("无成员")} `;
+  return styles.border("│") + rightAligned(title, right, innerWidth) + styles.border("│");
 }
 
-function tabsRow(data: ViewerData, state: ViewerState, width: number, styles: Styles): string {
-  const parts = data.actors.map((actor, index) => {
-    const { icon, style } = statusDisplay(actor.status);
-    const iconText = applyStyle(styles, style, icon);
-    const current = index === state.actorIndex;
-    const base = `${index + 1} ${actor.label} `;
-    return current ? styles.accent(`▸${base}`) + iconText : styles.dim(base) + iconText;
-  });
-  const position =
-    data.actors.length > 0 ? styles.dim(`成员 ${Math.min(state.actorIndex + 1, data.actors.length)}/${data.actors.length}`) : "";
-  const tabs = parts.join(styles.dim("  "));
-  const gap = width - visibleWidth(tabs) - visibleWidth(position) - 2;
-  return gap > 1 ? `${tabs}${" ".repeat(gap)}${position}` : tabs;
-}
-
-function bottomBorder(data: ViewerData, state: ViewerState, width: number, styles: Styles): string {
-  const legend = VIEWER_LEGEND;
-  const hasPosition = data.actors.length > 0;
-  const position = hasPosition ? `成员 ${Math.min(state.actorIndex + 1, data.actors.length)}/${data.actors.length}` : "";
-  const segmentWidth = (legendText: string): number =>
-    3 + visibleWidth(legendText) + (hasPosition ? 3 + visibleWidth(position) + 1 : 1) + 1;
-  let shownLegend = legend;
-  if (segmentWidth(shownLegend) > width) {
-    shownLegend = truncateVisible(legend, Math.max(4, width - segmentWidth("") - 1));
-  }
-  const pad = Math.max(1, width - segmentWidth(shownLegend));
-  return (
-    styles.border(`╰─ `) +
-    styles.dim(shownLegend) +
-    (hasPosition ? styles.border(` ─ `) + styles.dim(position) : styles.border(` `)) +
-    styles.border(` ${"─".repeat(pad)}╯`)
-  );
-}
-
-/** Wraps a body/chrome line with the side borders, padding to full width. */
-function sideWrap(line: string, width: number, styles: Styles): string {
-  return styles.border("│ ") + padLine(line, width) + styles.border(" │");
+function legendRow(data: ViewerData, state: ViewerState, styles: Styles): string {
+  const count = data.actors.length;
+  const position = count > 0 ? `成员 ${Math.min(state.actorIndex + 1, count)}/${count}` : "";
+  const text = position ? `${VIEWER_LEGEND} · ${position}` : VIEWER_LEGEND;
+  return styles.dim(text);
 }
 
 /**
@@ -477,11 +532,31 @@ export function actionLines(data: ViewerData, state: ViewerState, styles: Styles
 }
 
 /**
- * Renders the full bordered frame: title top border, member tabs, a
- * fixed-height continuous-transcript body window, and the key-legend
- * bottom border. Action lines (stop banner/notice) take the top of the
- * body window and shrink it accordingly — the frame always returns
- * exactly `bodyHeight + VIEWER_CHROME_ROWS` lines.
+ * Detail-pane transcript viewport height: bodyHeight minus the fixed
+ * header rows and any action lines (≥ 1). Action lines wrap to the detail
+ * width, so their row count depends on it. The component clamps scroll
+ * and feeds key handling with this so paging matches what is visible.
+ */
+export function viewerViewportHeight(data: ViewerData, state: ViewerState, width: number, bodyHeight: number, styles: Styles): number {
+  const header = detailHeaderLines(data, state, styles).slice(0, Math.max(0, bodyHeight - 1));
+  const actions = wrappedActions(data, state, computeViewerLayout(width).detailWidth, styles);
+  return Math.max(1, bodyHeight - header.length - actions.length);
+}
+
+/** Action lines wrapped to the detail width (fleet wraps detail lines too). */
+function wrappedActions(data: ViewerData, state: ViewerState, detailWidth: number, styles: Styles): string[] {
+  return actionLines(data, state, styles, detailWidth).flatMap((line) => wrapTextWithAnsi(line, Math.max(1, detailWidth)));
+}
+
+/**
+ * Renders the fleet-style split frame (fleet.ts:1343-1370): plain top
+ * border, static title row with the selected actor's status right-aligned,
+ * `│roster│detail│` body rows, and the key legend above the plain bottom
+ * border. The detail pane = fixed meta header + action lines (stop
+ * banner/notice) + the scrollable transcript window — the frame always
+ * returns exactly `bodyHeight + VIEWER_CHROME_ROWS` lines. Terminals
+ * narrower than 36 columns get a single hint line (fleet's minimum-width
+ * gate, fleet.ts:1321; spec §4).
  */
 export function renderViewerFrame(
   data: ViewerData,
@@ -493,26 +568,43 @@ export function renderViewerFrame(
     renderMarkdown?: (text: string, width: number) => string[];
   },
 ): string[] {
+  if (width < 36) return [truncateToWidth("agent-team viewer 至少需要 36 列。Esc 关闭。", width)];
   const styles = opts.styles;
-  // Side borders take "│ " + " │" = 4 columns.
-  const inner = Math.max(10, width - 4);
+  const { innerWidth, rosterWidth, detailWidth } = computeViewerLayout(width);
+  const bodyHeight = opts.bodyHeight;
 
+  const roster = rosterLines(data, state, rosterWidth, bodyHeight, styles);
   const actor = data.actors[state.actorIndex];
   const entries = actor ? (data.entries.get(actor.actor) ?? []) : [];
-  const lines = bodyLines(entries, state.showTools, inner, styles, opts.renderMarkdown);
-  const actions = actionLines(data, state, styles, inner);
-  const effective = Math.max(1, opts.bodyHeight - actions.length);
-  const clamped = clampViewerState(state, lines.length, effective);
-  const window = lines.slice(clamped.scroll, clamped.scroll + effective);
+  const body = bodyLines(entries, state.showTools, detailWidth, styles, opts.renderMarkdown);
+  const header = detailHeaderLines(data, state, styles).slice(0, Math.max(0, bodyHeight - 1));
+  const actions = wrappedActions(data, state, detailWidth, styles);
+  const effective = Math.max(1, bodyHeight - header.length - actions.length);
+  const clamped = clampViewerState(state, body.length, effective);
+  const window = body.slice(clamped.scroll, clamped.scroll + effective);
   while (window.length < effective) window.push("");
+  const detail = [...header, ...actions, ...window];
 
-  return [
-    topBorder(data, width, styles),
-    sideWrap(tabsRow(data, state, inner, styles), inner, styles),
-    ...actions.map((line) => sideWrap(line, inner, styles)),
-    ...window.map((line) => sideWrap(line, inner, styles)),
-    bottomBorder(data, state, width, styles),
-  ].map((line) => fitLine(line, width));
+  const lines = [
+    styles.border(`╭${"─".repeat(innerWidth)}╮`),
+    titleRow(data, state, innerWidth, styles),
+    styles.border(`├${"─".repeat(rosterWidth)}┬${"─".repeat(detailWidth)}┤`),
+  ];
+  for (let index = 0; index < bodyHeight; index++) {
+    const rosterLine = roster[index] ?? "";
+    const detailLine = detail[index] ?? "";
+    lines.push(
+      styles.border("│") +
+        fitLine(rosterLine, rosterWidth) +
+        styles.border("│") +
+        fitLine(detailLine, detailWidth) +
+        styles.border("│"),
+    );
+  }
+  lines.push(styles.border(`├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
+  lines.push(styles.border("│") + fitLine(legendRow(data, state, styles), innerWidth) + styles.border("│"));
+  lines.push(styles.border(`╰${"─".repeat(innerWidth)}╯`));
+  return lines.map((line) => fitLine(line, width));
 }
 
 /** Plain-text transcript dump for the team_transcript tool (no frame). */
@@ -541,7 +633,7 @@ export interface ViewerKeyContext {
   totalLines: number;
   actorCount: number;
   bodyHeight: number;
-  /** Transcript actor ids in tab order (pins selection by id when present). */
+  /** Transcript actor ids in roster order (pins selection by id when present). */
   actorIds?: string[];
   /** True while the current run is running (gates the D stop action). */
   runRunning?: boolean;
@@ -819,6 +911,7 @@ export class TranscriptViewer implements Component {
   private state: ViewerState = initialViewerState();
   private lastTotalLines = 0;
   private lastBodyHeight = 22;
+  private lastWidth = 100;
   private lastFingerprint: string | null = null;
   private disposed = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -837,7 +930,7 @@ export class TranscriptViewer implements Component {
     }
     try {
       const rows = this.opts.rows?.() ?? 30;
-      this.lastBodyHeight = computeFrameHeight(rows) - VIEWER_CHROME_ROWS;
+      this.lastBodyHeight = computeFrameHeight(rows);
     } catch {
       /* keep the default height */
     }
@@ -850,7 +943,7 @@ export class TranscriptViewer implements Component {
         let bodyHeight = this.lastBodyHeight;
         try {
           const rows = this.opts.rows?.() ?? 30;
-          bodyHeight = stabilizeBodyHeight(this.lastBodyHeight, computeFrameHeight(rows) - VIEWER_CHROME_ROWS);
+          bodyHeight = stabilizeBodyHeight(this.lastBodyHeight, computeFrameHeight(rows));
         } catch {
           /* keep the previous height */
         }
@@ -878,19 +971,23 @@ export class TranscriptViewer implements Component {
   }
 
   render(width: number): string[] {
+    this.lastWidth = width;
     const rows = this.opts.rows?.() ?? 30;
-    const bodyHeight = stabilizeBodyHeight(this.lastBodyHeight, computeFrameHeight(rows) - VIEWER_CHROME_ROWS);
+    const bodyHeight = stabilizeBodyHeight(this.lastBodyHeight, computeFrameHeight(rows));
     this.lastBodyHeight = bodyHeight;
     this.data = this.opts.load();
     this.state = withResolvedActor(this.data, this.state);
     this.lastFingerprint = viewerDataFingerprint(this.data);
+    const { detailWidth } = computeViewerLayout(width);
     const actor = this.data.actors[this.state.actorIndex];
     const entries = actor ? (this.data.entries.get(actor.actor) ?? []) : [];
+    // 总行数按右栏正文宽度计（detailWidth）：滚动状态作用在 detail 正文上。
     this.lastTotalLines =
       this.data.actors.length > 0
-        ? bodyLines(entries, this.state.showTools, Math.max(10, width - 4), this.opts.styles, this.opts.renderMarkdown).length
+        ? bodyLines(entries, this.state.showTools, detailWidth, this.opts.styles, this.opts.renderMarkdown).length
         : 1;
-    this.state = clampViewerState(this.state, this.lastTotalLines, bodyHeight);
+    // 滚动/翻页以右栏实际视口（bodyHeight − 头部 − action 行）为准。
+    this.state = clampViewerState(this.state, this.lastTotalLines, viewerViewportHeight(this.data, this.state, width, bodyHeight, this.opts.styles));
     return renderViewerFrame(this.data, this.state, width, {
       styles: this.opts.styles,
       bodyHeight,
@@ -902,7 +999,9 @@ export class TranscriptViewer implements Component {
     const result = handleViewerKey(this.state, data, {
       totalLines: this.lastTotalLines,
       actorCount: this.data.actors.length,
-      bodyHeight: this.lastBodyHeight,
+      // 键位 reducer 的 bodyHeight 语义 = 右栏实际视口高（bodyHeight −
+      // 头部 − action 行），翻页/滚动与屏上可见范围一致。
+      bodyHeight: viewerViewportHeight(this.data, this.state, this.lastWidth, this.lastBodyHeight, this.opts.styles),
       actorIds: this.data.actors.map((a) => a.actor),
       runRunning: this.data.runStatus === "running",
       runStatus: this.data.runStatus,

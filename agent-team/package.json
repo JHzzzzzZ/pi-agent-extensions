@@ -1,9 +1,9 @@
 {
   "name": "pi-extension-agent-team",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
-  "description": "agent-team — 可复用的多 agent 团队：独立 leader 子进程调度成员协同完成任务；输入栏下方可选中进度亮块（空编辑器 ↓/← 或 alt+↓ 选中、j/k/↑/↓ 移动、enter 直达会话查看器；终态行可 /team:clear 手动清除，水合仅在 running run 时自动挂载）；team_run 默认后台派单（报告 followUp 自动送达）、team_stop 按 runId 中止（settle-aware，终态可靠）；查看器内 D 停止整个 run（两步确认，fleet 对齐）、r/R 手动刷新、m 发消息直接对话（派单语义：run 运行中排队、落定后链式派出）；v1.5.0：run 元数据落盘 + session_start reconcile（孤儿 leader 只报告不杀）、frontmatter budget: 预算块（dispatch/成员运行 + 可选费用/token 硬上限）、派单前 model 预检、/team:doctor 自检",
+  "description": "agent-team — 可复用的多 agent 团队：独立 leader 子进程调度成员协同完成任务；输入栏下方可选中进度亮块（空编辑器 ↓/← 或 alt+↓ 选中、j/k/↑/↓ 移动、enter 直达会话查看器；终态行可 /team:clear 手动清除，水合仅在 running run 时自动挂载）；team_run 默认后台派单（报告 followUp 自动送达）、team_stop 按 runId 中止（settle-aware，终态可靠）；查看器内 D 停止整个 run（两步确认，fleet 对齐）、r/R 手动刷新、m 发消息直接对话（派单语义：run 运行中排队、落定后链式派出）；v1.7.0：/team:view 改 fleet inspector 同款左右分栏（左栏成员 roster，右栏 Run/State/成员 元信息头 + 完整转录正文，最小宽度门 36 列）；v1.5.0：run 元数据落盘 + session_start reconcile、frontmatter budget: 预算块、派单前 model 预检、/team:doctor 自检",
   "engines": {
     "node": ">=22.18"
   },
