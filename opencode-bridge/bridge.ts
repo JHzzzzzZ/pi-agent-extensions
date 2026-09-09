@@ -14,11 +14,14 @@
  *   斜杠命令手动触发，先 plan（只读）给出将要做的事，经 ctx.ui.confirm 人工
  *   确认后才 apply（写前把原文件原文备份到 settings.json.bak-opencode-bridge-*）；
  *   仅增/删 httpProxy 字段，其余配置原样保留。
+ *   恢复（v1.3.0）：/opencode-bridge-restore 从备份中选择恢复，恢复前同样
+ *   先把当前配置备份一份，保证恢复操作本身可撤销。
  */
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 
 // ===== 常量 =====
 
@@ -68,9 +71,11 @@ export interface ProxySyncDeps {
   /** 文件不存在返回 undefined；读失败抛异常由调用方隔离 */
   readTextFile(path: string): string | undefined;
   writeTextFile(path: string, content: string): void;
+  /** 目录不存在/读失败返回 []（用于枚举备份文件） */
+  listDir(dir: string): string[];
 }
 
-/** 生产依赖：真实 fs 读写。 */
+/** 生产依赖：真实 fs 读写与目录枚举。 */
 export function createDefaultProxySyncDeps(): ProxySyncDeps {
   return {
     readTextFile(path) {
@@ -83,6 +88,13 @@ export function createDefaultProxySyncDeps(): ProxySyncDeps {
     writeTextFile(path, content) {
       fs.writeFileSync(path, content, "utf8");
     },
+    listDir(dir) {
+      try {
+        return fs.readdirSync(dir);
+      } catch {
+        return [];
+      }
+    },
   };
 }
 
@@ -91,6 +103,26 @@ export function makeBackupPath(settingsPath: string, now: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   return `${settingsPath}.bak-opencode-bridge-${stamp}`;
+}
+
+/** 本扩展产生的备份文件前缀（settings.json 同目录）。 */
+export function backupPrefix(settingsPath: string): string {
+  return `${path.basename(settingsPath)}.bak-opencode-bridge-`;
+}
+
+/** 枚举本扩展产生的备份（同目录，文件名降序 = 时间戳最新在前）；任何失败返回空。 */
+export function listHttpProxyBackups(settingsPath: string, deps: ProxySyncDeps): string[] {
+  try {
+    const prefix = backupPrefix(settingsPath);
+    return deps
+      .listDir(path.dirname(settingsPath))
+      .filter((name) => name.startsWith(prefix) && name.length > prefix.length)
+      .sort()
+      .reverse()
+      .map((name) => path.join(path.dirname(settingsPath), name));
+  } catch {
+    return [];
+  }
 }
 
 /** ensureBridge 错误码（静态、可诊断，调用方据此提示用户） */
@@ -340,6 +372,48 @@ export function applyHttpProxySync(
     ok: true,
     backupPath: raw !== undefined ? backupPath : undefined,
     message: `${plan.action === ProxySyncActions.SET ? `已写入 httpProxy: ${plan.proxyUrl}` : "已移除 httpProxy"}${backupNote}（重启 Pi 后生效）`,
+  };
+}
+
+export type ApplyRestoreResult =
+  | { ok: true; currentBackupPath?: string; message: string }
+  | { ok: false; message: string };
+
+/**
+ * 恢复：把 settings.json 整体替换为所选备份的内容。
+ * 恢复前先把当前配置备份到 currentBackupPath（当前文件不存在则跳过），
+ * 保证恢复操作本身可撤销；备份读取失败/当前配置备份失败时一律不动 settings.json。
+ */
+export function applyRestore(
+  options: { backupPath: string; settingsPath: string; currentBackupPath: string },
+  deps: ProxySyncDeps,
+): ApplyRestoreResult {
+  const { backupPath, settingsPath, currentBackupPath } = options;
+
+  const backupRaw = deps.readTextFile(backupPath);
+  if (backupRaw === undefined) {
+    return { ok: false, message: `备份文件不存在或不可读：${backupPath}` };
+  }
+
+  const currentRaw = deps.readTextFile(settingsPath);
+  if (currentRaw !== undefined) {
+    try {
+      deps.writeTextFile(currentBackupPath, currentRaw);
+    } catch (err) {
+      return { ok: false, message: `当前配置备份失败，未恢复：${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  try {
+    deps.writeTextFile(settingsPath, backupRaw);
+  } catch (err) {
+    return { ok: false, message: `恢复写入失败：${err instanceof Error ? err.message : String(err)}` };
+  }
+  const note = currentRaw !== undefined ? `；恢复前的配置已备份到 ${currentBackupPath}` : "；settings.json 原不存在，无恢复前备份";
+  return {
+    ok: true,
+    currentBackupPath: currentRaw !== undefined ? currentBackupPath : undefined,
+    message: `已从 ${path.basename(backupPath)} 恢复 settings.json${note}（重启 Pi 后生效）`,
   };
 }
 

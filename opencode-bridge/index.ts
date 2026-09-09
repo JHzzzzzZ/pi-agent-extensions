@@ -23,6 +23,8 @@
  * 命令：/opencode-bridge — 查看状态（必要时尝试启动），显示监听地址、上游
  *       SOCKS5 地址、settings.json 的 httpProxy 当前状态。
  *       /opencode-bridge-sync — 修改 settings.json 的 httpProxy（确认 + 备份）。
+ *       /opencode-bridge-restore — 从备份中恢复 settings.json（确认；恢复前
+ *       先把当前配置再备份一份，保证恢复操作本身可撤销）。
  *
  * 环境变量：PI_BRIDGE_PORT / PI_BRIDGE_SOCKS_HOST / PI_BRIDGE_SOCKS_PORT
  *           （helper 另支持 PI_BRIDGE_LOG 指定日志文件路径）
@@ -44,9 +46,11 @@ import {
   type ProxySyncDeps,
   ProxySyncActions,
   applyHttpProxySync,
+  applyRestore,
   createDefaultBridgeDeps,
   createDefaultProxySyncDeps,
   ensureBridge,
+  listHttpProxyBackups,
   makeBackupPath,
   parseBridgeConfig,
   planHttpProxySync,
@@ -56,6 +60,7 @@ import {
 
 export const COMMAND_NAME = "opencode-bridge";
 export const SYNC_COMMAND_NAME = "opencode-bridge-sync";
+export const RESTORE_COMMAND_NAME = "opencode-bridge-restore";
 
 // ===== 扩展依赖（测试可注入） =====
 
@@ -172,6 +177,15 @@ export function formatSyncConfirmMessage(plan: HttpProxySyncPlan, settingsPath: 
   ].join("\n");
 }
 
+/** /opencode-bridge-restore 的确认弹窗文案（纯函数，便于测试断言）。 */
+export function formatRestoreConfirmMessage(backupPath: string, settingsPath: string, currentBackupPath: string): string {
+  return [
+    `即将把 settings.json 恢复为所选备份的内容：${backupPath}`,
+    `恢复前当前配置先备份到 ${currentBackupPath}（恢复操作本身可撤销）`,
+    `文件：${settingsPath}；重启 Pi 后生效`,
+  ].join("\n");
+}
+
 // ===== 扩展入口 =====
 
 export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExtensionDeps = {}): void {
@@ -262,6 +276,61 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
         notify(ctx, `opencode-bridge-sync：${applied.message}`, applied.ok ? "info" : "error");
       } catch (err) {
         notify(ctx, `opencode-bridge-sync 异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+      }
+    },
+  });
+
+  pi.registerCommand(RESTORE_COMMAND_NAME, {
+    description: "从备份恢复 settings.json（人工确认；恢复前先备份当前配置）",
+    handler: async (_args, ctx) => {
+      try {
+        if (!ctx.hasUI) {
+          notify(ctx, "opencode-bridge-restore 需要图形选择，请在 TUI 中运行此命令", "warning");
+          return;
+        }
+
+        const backups = listHttpProxyBackups(settingsPath, proxySyncDeps);
+        if (backups.length === 0) {
+          notify(ctx, `opencode-bridge-restore：没有可用的备份（${settingsPath}.bak-opencode-bridge-*）`, "warning");
+          return;
+        }
+
+        let selected: string | undefined;
+        try {
+          selected = await ctx.ui.select(
+            "选择要恢复的备份（最新在前）：",
+            backups.map((p) => path.basename(p)),
+          );
+        } catch (err) {
+          notify(ctx, `opencode-bridge-restore 选择框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+          return;
+        }
+        if (!selected) {
+          notify(ctx, "已取消，settings.json 未改动", "info");
+          return;
+        }
+        const backupPath = path.join(path.dirname(settingsPath), selected);
+
+        const currentBackupPath = makeBackupPath(settingsPath, now());
+        let confirmed = false;
+        try {
+          confirmed = await ctx.ui.confirm(
+            "opencode-bridge：恢复 settings.json？",
+            formatRestoreConfirmMessage(backupPath, settingsPath, currentBackupPath),
+          );
+        } catch (err) {
+          notify(ctx, `opencode-bridge-restore 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+          return;
+        }
+        if (!confirmed) {
+          notify(ctx, "已取消，settings.json 未改动", "info");
+          return;
+        }
+
+        const applied = applyRestore({ backupPath, settingsPath, currentBackupPath }, proxySyncDeps);
+        notify(ctx, `opencode-bridge-restore：${applied.message}`, applied.ok ? "info" : "error");
+      } catch (err) {
+        notify(ctx, `opencode-bridge-restore 异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
       }
     },
   });

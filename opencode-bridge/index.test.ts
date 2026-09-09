@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { COMMAND_NAME, SYNC_COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
+import { COMMAND_NAME, RESTORE_COMMAND_NAME, SYNC_COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatRestoreConfirmMessage, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
 import { DEFAULT_BRIDGE_PORT, DEFAULT_SOCKS_HOST, DEFAULT_SOCKS_PORT, ProxySyncActions, type BridgeDeps, type ProxySyncDeps } from "./bridge.ts";
 
 // ===== fake:pi 宿主（对齐 goal/index.test.ts 的手写 fake 风格） =====
@@ -248,12 +248,20 @@ test("命令：配置非法时提示变量名，不 spawn", async () => {
 function makeFakeProxySyncDeps(initial?: string) {
   const files = new Map<string, string>();
   if (initial !== undefined) files.set(SETTINGS_PATH, initial);
+  const norm = (p: string) => p.replace(/\\/g, "/");
   const deps: ProxySyncDeps = {
     readTextFile(path) {
-      return files.get(path);
+      return files.get(norm(path));
     },
     writeTextFile(path, content) {
-      files.set(path, content);
+      files.set(norm(path), content);
+    },
+    listDir(dir) {
+      const prefix = norm(dir).endsWith("/") ? norm(dir) : `${norm(dir)}/`;
+      return [...files.keys()]
+        .map(norm)
+        .filter((p) => p.startsWith(prefix))
+        .map((p) => p.slice(prefix.length));
     },
   };
   return { deps, files };
@@ -278,6 +286,7 @@ test("session_start 桥已运行：完全不读写 settings.json", async () => {
       return undefined;
     },
     writeTextFile: () => undefined,
+    listDir: () => [],
   };
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   await handlers.get("session_start")!({}, makeCtx());
@@ -395,4 +404,118 @@ test("formatSyncConfirmMessage：四行文案含动作/仅改字段/备份路径
   assert.match(lines[1]!, /仅改动 httpProxy 字段/);
   assert.match(lines[2]!, /备份到/);
   assert.match(lines[3]!, /重启 Pi 后生效/);
+});
+
+// ===== /opencode-bridge-restore：选择备份 + 确认 + 恢复前再备份（v1.3.0） =====
+
+/** 往 fake fs 里放一个备份文件（供 listDir 枚举） */
+function putBackup(files: Map<string, string>, stamp: string, content: string): void {
+  files.set(`${SETTINGS_PATH}.bak-opencode-bridge-${stamp}`, content);
+}
+
+test("注册 /opencode-bridge-restore 命令", () => {
+  const { pi, commands } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync } = makeFakeProxySyncDeps("{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  assert.ok(commands.has(RESTORE_COMMAND_NAME));
+  assert.match(commands.get(RESTORE_COMMAND_NAME)?.description ?? "", /恢复/);
+});
+
+test("restore：无备份 → warning 提示，不弹任何框", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"a":1}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.select = async () => {
+    throw new Error("不应弹选择框");
+  };
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
+    throw new Error("不应弹确认框");
+  };
+  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
+  assert.equal(notifications[0]?.type, "warning");
+  assert.match(notifications[0]?.message ?? "", /没有可用的备份/);
+});
+
+test("restore：选择备份并确认 → settings 恢复为备份内容，当前配置先备份", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"httpProxy":"http://127.0.0.1:10899","theme":"dark"}');
+  putBackup(files, "20260805-120001", '{"theme":"light"}');
+  putBackup(files, "20260805-120002", '{"theme":"dark"}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(2026, 7, 5, 13, 0, 0) });
+  const ctx = makeCtx();
+  let selectedOptions: string[] = [];
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.select = async (_title: string, options: string[]) => {
+    selectedOptions = options;
+    return options[1]!; // 选第二个（更早的备份）
+  };
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => true;
+  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  // 选项按最新在前
+  assert.match(selectedOptions[0] ?? "", /120002/);
+  assert.match(selectedOptions[1] ?? "", /120001/);
+  // settings = 所选备份内容
+  assert.equal(files.get(SETTINGS_PATH), '{"theme":"light"}');
+  // 恢复前当前配置已备份
+  assert.match(files.get(`${SETTINGS_PATH}.bak-opencode-bridge-20260805-130000`) ?? "", /httpProxy/);
+  assert.match(notifications[0]?.message ?? "", /已从 settings\.json\.bak-opencode-bridge-20260805-120001 恢复/);
+  assert.match(notifications[0]?.message ?? "", /已备份到/);
+  assert.equal(notifications[0]?.type, "info");
+});
+
+test("restore：选择框取消 → 不弹确认，settings 不变", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"a":1}');
+  putBackup(files, "20260805-120001", "{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.select = async () => undefined;
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
+    throw new Error("不应弹确认框");
+  };
+  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
+  assert.match(notifications[0]?.message ?? "", /已取消/);
+});
+
+test("restore：确认框取消 → settings 不变", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"a":1}');
+  putBackup(files, "20260805-120001", "{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.select = async (_t: string, o: string[]) => o[0]!;
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => false;
+  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
+  assert.match(notifications[0]?.message ?? "", /已取消/);
+});
+
+test("restore：无 UI → 静默不改文件", async () => {
+  const { pi, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"a":1}');
+  putBackup(files, "20260805-120001", "{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
+  await commands.get(RESTORE_COMMAND_NAME)!.handler("", makeCtx({ hasUI: false }));
+  assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
+  assert.equal(notifications.length, 0);
+});
+
+test("formatRestoreConfirmMessage：三行文案含备份/再备份/重启提示", () => {
+  const lines = formatRestoreConfirmMessage(
+    "/fake/settings.json.bak-opencode-bridge-old",
+    "/fake/settings.json",
+    "/fake/settings.json.bak-opencode-bridge-new",
+  ).split("\n");
+  assert.equal(lines.length, 3);
+  assert.match(lines[0]!, /恢复为所选备份的内容/);
+  assert.match(lines[1]!, /恢复操作本身可撤销/);
+  assert.match(lines[2]!, /重启 Pi 后生效/);
 });

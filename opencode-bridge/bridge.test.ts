@@ -3,6 +3,7 @@
  * 运行:cd opencode-bridge && npm test
  */
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
 import {
   BRIDGE_HOST,
@@ -16,6 +17,8 @@ import {
   createDefaultBridgeDeps,
   ensureBridge,
   applyHttpProxySync,
+  applyRestore,
+  listHttpProxyBackups,
   makeBackupPath,
   parseBridgeConfig,
   planHttpProxySync,
@@ -204,6 +207,12 @@ function makeFakeSyncDeps(initial?: string) {
       writeCalls.push({ path, content });
       files.set(path, content);
     },
+    listDir(dir) {
+      const prefix = dir.endsWith("/") ? dir : `${dir}/`;
+      return [...files.keys()]
+        .filter((p) => p.startsWith(prefix))
+        .map((p) => p.slice(prefix.length));
+    },
   };
   return { deps, writeCalls, files };
 }
@@ -336,6 +345,7 @@ test("applyHttpProxySync 备份写失败：拒绝修改 settings", () => {
     writeTextFile(path) {
       if (path === "/fake/backup.bak") throw new Error("disk full");
     },
+    listDir: () => [],
   };
   const r = applyHttpProxySync(
     { action: ProxySyncActions.SET, proxyUrl: PROXY_URL, message: "" },
@@ -352,6 +362,7 @@ test("applyHttpProxySync settings 写失败：报错（备份已落盘可回滚�
     writeTextFile(path, content) {
       if (path === SETTINGS_PATH) throw new Error("EACCES");
     },
+    listDir: () => [],
   };
   const r = applyHttpProxySync(
     { action: ProxySyncActions.SET, proxyUrl: PROXY_URL, message: "" },
@@ -365,4 +376,118 @@ test("applyHttpProxySync settings 写失败：报错（备份已落盘可回滚�
 test("makeBackupPath 生成同目录带时间戳的备份路径", () => {
   const p = makeBackupPath("C:/Users/u/.pi/agent/settings.json", new Date(2026, 7, 5, 12, 3, 4));
   assert.equal(p, "C:/Users/u/.pi/agent/settings.json.bak-opencode-bridge-20260805-120304");
+});
+
+// ===== listHttpProxyBackups / applyRestore =====
+
+test("listHttpProxyBackups：只列本扩展备份且最新在前", () => {
+  const listed: string[] = [
+    "settings.json.bak-opencode-bridge-20260805-120001",
+    "settings.json.bak-opencode-bridge-20260805-120003",
+    "settings.json.bak-opencode-bridge-20260805-120002",
+    "settings.json", // 干扰项
+    "other.json.bak-opencode-bridge-20260805-120004", // 干扰项
+  ];
+  const customDeps: ProxySyncDeps = {
+    readTextFile: () => undefined,
+    writeTextFile: () => undefined,
+    listDir: () => listed,
+  };
+  const r = listHttpProxyBackups(SETTINGS_PATH, customDeps);
+  assert.deepEqual(r, [
+    path.join(path.dirname(SETTINGS_PATH), "settings.json.bak-opencode-bridge-20260805-120003"),
+    path.join(path.dirname(SETTINGS_PATH), "settings.json.bak-opencode-bridge-20260805-120002"),
+    path.join(path.dirname(SETTINGS_PATH), "settings.json.bak-opencode-bridge-20260805-120001"),
+  ]);
+});
+
+test("listHttpProxyBackups：目录不存在返回空", () => {
+  const deps: ProxySyncDeps = {
+    readTextFile: () => undefined,
+    writeTextFile: () => undefined,
+    listDir: () => {
+      throw new Error("enoent");
+    },
+  };
+  assert.deepEqual(listHttpProxyBackups(SETTINGS_PATH, deps), []);
+});
+
+test("applyRestore：settings 替换为备份内容，当前配置先备份", () => {
+  const files = new Map<string, string>();
+  files.set(SETTINGS_PATH, '{"httpProxy":"http://127.0.0.1:10899"}');
+  files.set("/fake/settings.json.bak-old", '{"theme":"dark"}');
+  const writeCalls: Array<{ path: string; content: string }> = [];
+  const deps: ProxySyncDeps = {
+    readTextFile: (p) => files.get(p),
+    writeTextFile: (p, c) => {
+      writeCalls.push({ path: p, content: c });
+      files.set(p, c);
+    },
+    listDir: () => [],
+  };
+  const r = applyRestore(
+    { backupPath: "/fake/settings.json.bak-old", settingsPath: SETTINGS_PATH, currentBackupPath: "/fake/settings.json.bak-restore" },
+    deps,
+  );
+  assert.ok(r.ok);
+  // 第一笔写是当前配置的备份
+  assert.equal(writeCalls[0]?.path, "/fake/settings.json.bak-restore");
+  assert.equal(writeCalls[0]?.content, '{"httpProxy":"http://127.0.0.1:10899"}');
+  // settings = 备份内容
+  assert.equal(files.get(SETTINGS_PATH), '{"theme":"dark"}');
+  assert.match(r.message, /恢复 settings\.json/);
+  assert.match(r.message, /重启/);
+});
+
+test("applyRestore：备份不存在 → 拒绝且不动 settings", () => {
+  const files = new Map<string, string>([[SETTINGS_PATH, '{"a":1}']]);
+  const deps: ProxySyncDeps = {
+    readTextFile: (p) => files.get(p),
+    writeTextFile: (p, c) => files.set(p, c),
+    listDir: () => [],
+  };
+  const r = applyRestore(
+    { backupPath: "/fake/no-such-backup", settingsPath: SETTINGS_PATH, currentBackupPath: "/fake/settings.json.bak-restore" },
+    deps,
+  );
+  assert.ok(!r.ok);
+  assert.match(r.message, /不存在或不可读/);
+  assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
+});
+
+test("applyRestore：当前配置备份失败 → 拒绝恢复", () => {
+  const files = new Map<string, string>();
+  files.set(SETTINGS_PATH, '{"a":1}');
+  files.set("/fake/settings.json.bak-old", "{}");
+  const deps: ProxySyncDeps = {
+    readTextFile: (p) => files.get(p),
+    writeTextFile: (p, c) => {
+      if (p === "/fake/settings.json.bak-restore") throw new Error("disk full");
+      files.set(p, c);
+    },
+    listDir: () => [],
+  };
+  const r = applyRestore(
+    { backupPath: "/fake/settings.json.bak-old", settingsPath: SETTINGS_PATH, currentBackupPath: "/fake/settings.json.bak-restore" },
+    deps,
+  );
+  assert.ok(!r.ok);
+  assert.match(r.message, /备份失败/);
+  assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
+});
+
+test("applyRestore：settings.json 当前不存在 → 无恢复前备份仍可恢复", () => {
+  const files = new Map<string, string>([["/fake/settings.json.bak-old", '{"theme":"dark"}']]);
+  const deps: ProxySyncDeps = {
+    readTextFile: (p) => files.get(p),
+    writeTextFile: (p, c) => files.set(p, c),
+    listDir: () => [],
+  };
+  const r = applyRestore(
+    { backupPath: "/fake/settings.json.bak-old", settingsPath: SETTINGS_PATH, currentBackupPath: "/fake/settings.json.bak-restore" },
+    deps,
+  );
+  assert.ok(r.ok);
+  assert.equal(r.currentBackupPath, undefined);
+  assert.equal(files.get(SETTINGS_PATH), '{"theme":"dark"}');
 });
