@@ -157,7 +157,7 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     assert.ok(pi.tools.has("team_transcript"));
     assert.ok(pi.tools.has("team_stop"));
     assert.ok(!pi.tools.has("team_dispatch"));
-    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view"]) {
+    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear"]) {
       assert.ok(pi.commands.has(name), `command ${name} registered`);
     }
     assert.ok(pi.entryRenderers.has("agent-team-run-v1"));
@@ -176,6 +176,6 @@ test("double load is a no-op (installed package + -e copy)", () => {
   const toolsAfterFirst = pi.tools.size;
   agentTeamExtension(pi as never);
   assert.equal(pi.tools.size, toolsAfterFirst, "second instance registers nothing");
-  assert.equal(pi.commands.size, 5);
+  assert.equal(pi.commands.size, 6);
   resetDoubleLoadGuardForTests();
 });
