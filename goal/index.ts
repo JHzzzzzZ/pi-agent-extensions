@@ -42,6 +42,8 @@ export const MAX_EVALUATOR_TOKENS = 512;
 export const MAX_EVALUATOR_FAILURES = 3;
 
 const CLEAR_ALIASES = ["clear", "stop", "off", "reset", "none", "cancel"] as const;
+/** opencode 系模型( provider id 或 baseUrl host )需注入 x-opencode-session 会话头(对齐宿主 provider-attribution) */
+const OPENCODE_HOST = "opencode.ai";
 
 // ===== 类型 =====
 
@@ -226,6 +228,34 @@ export function extractAssistantText(messages: unknown[]): string {
   return joined.length > MAX_EVIDENCE_CHARS ? joined.slice(-MAX_EVIDENCE_CHARS) : joined;
 }
 
+// ===== 纯函数:opencode 会话头(对齐宿主 pi-coding-agent/core/provider-attribution 的 getSessionHeaders) =====
+
+/** 判定模型是否属于 opencode 系:provider id 为 opencode/opencode-go,或 baseUrl host 为 opencode.ai */
+export function isOpencodeModel(model: { provider?: unknown; baseUrl?: unknown }): boolean {
+  if (model.provider === "opencode" || model.provider === "opencode-go") return true;
+  try {
+    return new URL(String(model.baseUrl)).hostname === OPENCODE_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/** 有 sessionId 才返回会话头;无则 undefined(与宿主 if (!sessionId) return undefined 一致) */
+export function buildOpencodeSessionHeaders(sessionId?: string): Record<string, string> | undefined {
+  if (!sessionId) return undefined;
+  return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
+}
+
+/** 防御式取会话 id:sessionManager 缺失/getSessionId 不存在或抛异常均视为无 sessionId */
+function getSessionIdSafe(ctx: ExtensionContext): string | undefined {
+  try {
+    const id = (ctx.sessionManager as { getSessionId?: unknown } | undefined)?.getSessionId;
+    return typeof id === "function" ? (id.call(ctx.sessionManager) as string | undefined) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ===== 真实评估器:当前会话模型的一次小调用 =====
 
 export function createModelEvaluator(options: { nowMs?: () => number } = {}): GoalEvaluator {
@@ -247,12 +277,16 @@ export function createModelEvaluator(options: { nowMs?: () => number } = {}): Go
       return { ok: false, code: "auth", message: error instanceof Error ? error.message : String(error) };
     }
     if (!auth.ok) return { ok: false, code: "auth", message: auth.error };
+    // 评估器直调 provider.stream,绕过宿主 streamFn 的请求头合并;opencode 系模型(Console Go)强制要求
+    // x-opencode-session,缺失返回 400 MissingSessionID——此处自行注入与宿主等价的会话头,
+    // auth.headers 在后保持宿主合并顺序(请求头覆盖会话头)。
+    const sessionHeaders = isOpencodeModel(model) ? buildOpencodeSessionHeaders(getSessionIdSafe(ctx)) : undefined;
     const message: UserMessage = { role: "user", content: buildEvaluatorPrompt(input), timestamp: nowMs() };
     let finalMessage: AssistantMessage | undefined;
     try {
       const stream = provider.stream(model, { messages: [message] }, {
         apiKey: auth.apiKey,
-        headers: auth.headers,
+        headers: { ...sessionHeaders, ...auth.headers },
         maxTokens: MAX_EVALUATOR_TOKENS,
         signal: ctx.signal,
       });
