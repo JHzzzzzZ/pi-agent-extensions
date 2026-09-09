@@ -70,12 +70,20 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
 /** helper 候选路径：扩展目录（import.meta.url 同目录）优先，其余为常见安装位置。 */
 function resolveHelperCandidates(metaUrl: string | undefined): string[] {
   const candidates: string[] = [];
-  if (metaUrl) {
+  if (metaUrl?.startsWith("file:")) {
     try {
       candidates.push(path.join(path.dirname(fileURLToPath(metaUrl)), HELPER_FILE_NAME));
     } catch {
-      /* jiti 等环境下 import.meta 可能不可用，走后面的兜底 */
+      /* file: URL 解析失败时走后面的兜底 */
     }
+  }
+  // jiti 加载 .ts 扩展时 import.meta.url 是 data: URI（转译后的源码），
+  // 但 jiti 以 CJS 包装函数注入 __dirname，其值即扩展真实目录。
+  try {
+    const dir = typeof __dirname !== "undefined" ? __dirname : undefined;
+    if (dir) candidates.push(path.join(dir, HELPER_FILE_NAME));
+  } catch {
+    /* Node 原生 ESM 下 __dirname 不存在，走后面的兜底 */
   }
   candidates.push(
     path.join(os.homedir(), ".pi", "agent", "extensions", "opencode-bridge", HELPER_FILE_NAME),
