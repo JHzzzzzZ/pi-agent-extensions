@@ -20,6 +20,7 @@ import {
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
   MAX_RESULT_BYTES,
+  STOP_SETTLE_TIMEOUT_MS,
   truncateUtf8,
   type ChildEvent,
   type MemberProgress,
@@ -56,6 +57,24 @@ export interface CoordinatorDeps {
 export type StartRunResult =
   | { ok: true; value: TeamRunRecord }
   | { ok: false; code: TeamErrorCode; message: string };
+
+/** Input of one team run (spawned leader + member dispatch). */
+interface StartOptions {
+  team: TeamConfig;
+  task: string;
+  ui: UiPort;
+  onProgress?: (progress: RunProgress) => void;
+  signal?: AbortSignal;
+}
+
+/** Pre-computed run identity handed from start() to runActive(). */
+interface RunPlan {
+  now: () => string;
+  nowMs: () => number;
+  runId: string;
+  startedAtMs: number;
+  progress: RunProgress;
+}
 
 /** Elapsed label for live runs: "45s" / "3m12s". */
 export function elapsedLabel(startedAtMs: number, nowMs: number): string {
@@ -96,6 +115,7 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     const p = snapshot.progress;
     const lines = [
       line(`当前 run：team ${p.team} ▶ running · ${elapsedLabel(p.startedAtMs, nowMs)}`),
+      line(`runId: ${p.runId}`),
       line(`任务: ${p.task}`),
     ];
     const leaderBits: string[] = [];
@@ -118,6 +138,7 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     const cost = record.totalCost > 0 ? ` · $${record.totalCost.toFixed(4)}` : "";
     const lines = [
       line(`最近一次 run：team ${record.team} ${icon(record.status)} ${record.status}${secs}${cost}`),
+      line(`runId: ${record.runId}`),
       line(`任务: ${record.task}`),
     ];
     if (record.error) lines.push(line(`错误: ${record.error}`));
@@ -155,6 +176,7 @@ export async function runTeamTask(deps: {
 export class TeamRunCoordinator {
   private readonly deps: CoordinatorDeps;
   private active: AbortController | null = null;
+  private pending: Promise<StartRunResult> | null = null;
   private currentProgress: RunProgress | null = null;
   private lastRecord: TeamRunRecord | null = null;
 
@@ -186,6 +208,45 @@ export class TeamRunCoordinator {
   }
 
   /**
+   * Aborts the active run and waits (bounded) for it to settle into its
+   * terminal record — the same primitive the team_stop tool and the viewer
+   * stop path share. settled:false means the abort signal was sent but the
+   * children are still shutting down; never an error by itself, the run's
+   * promise keeps resolving in the background (with the terminal record
+   * landing on lastRecord).
+   */
+  async stopAndSettle(
+    timeoutMs: number = STOP_SETTLE_TIMEOUT_MS,
+  ): Promise<{ wasRunning: boolean; settled: boolean; record: TeamRunRecord | null }> {
+    if (!this.active) {
+      return { wasRunning: false, settled: true, record: null };
+    }
+    this.active.abort();
+    const run = this.pending;
+    if (!run) {
+      return { wasRunning: true, settled: false, record: null };
+    }
+    // Clear the timeout timer as soon as the run settles so a settled stop
+    // never keeps a 7s placeholder alive in the event loop.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      run.then((result): { settled: boolean; record: TeamRunRecord | null } => {
+        if (timer !== undefined) clearTimeout(timer);
+        return { settled: true, record: result.ok ? result.value : null };
+      }),
+      new Promise<{ settled: false; record: null }>((resolve) => {
+        timer = setTimeout(() => resolve({ settled: false, record: null }), timeoutMs);
+      }),
+    ]);
+    return { wasRunning: true, settled: outcome.settled, record: outcome.record };
+  }
+
+  /** runId of the run currently claimed (spawn pending or in flight). */
+  activeRunId(): string | null {
+    return this.currentProgress?.runId ?? null;
+  }
+
+  /**
    * Starts a team run. Resolves when the leader child finishes; progress
    * flows through `onProgress` (and the below-editor widget, which pulls
    * getStatus() on its own repaint ticks) while it runs. A run that fails
@@ -193,13 +254,7 @@ export class TeamRunCoordinator {
    * external `signal` (e.g. the calling tool's abort signal) is bridged to
    * the run controller.
    */
-  async start(options: {
-    team: TeamConfig;
-    task: string;
-    ui: UiPort;
-    onProgress?: (progress: RunProgress) => void;
-    signal?: AbortSignal;
-  }): Promise<StartRunResult> {
+  async start(options: StartOptions): Promise<StartRunResult> {
     if (this.active) {
       return {
         ok: false,
@@ -212,42 +267,11 @@ export class TeamRunCoordinator {
     const nowMs = this.deps.nowMs ?? (() => Date.now());
     const runId = `run-${nowMs()}`;
     const startedAtMs = nowMs();
-    const git = this.deps.gitRunner ?? defaultGitRunner();
-    const baseCwd = this.deps.cwd();
-
-    // Pre-flight: worktree requirements must be satisfiable BEFORE spawning
-    // anything (environmental errors are otherwise invisible mid-run).
-    const needsWorktree = team.worktree === true || team.members.some((m) => m.worktree === true);
-    let sharedWorktree: { path: string; branch: string } | undefined;
-    if (needsWorktree) {
-      if (!(await isGitRepo(git, baseCwd))) {
-        return {
-          ok: false,
-          code: "WORKTREE_UNAVAILABLE",
-          message: `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`,
-        };
-      }
-      if (team.worktree) {
-        const created = await createWorktree({
-          git,
-          repoCwd: baseCwd,
-          worktreePath: path.join(this.deps.worktreeRoot, runId, "team"),
-          branch: `team/${runId}`,
-        });
-        if (!created.ok) {
-          return { ok: false, code: created.code, message: `预检失败：创建团队共享 worktree 失败 — ${created.message}` };
-        }
-        sharedWorktree = created.value;
-      }
-    }
-
+    // Claim the run BEFORE any await: two concurrent starts can no longer
+    // both pass the RUN_IN_PROGRESS gate, stopAndSettle has a stable handle
+    // (this.pending), and team_run can read the runId right after start().
     const controller = new AbortController();
     this.active = controller;
-    if (options.signal) {
-      if (options.signal.aborted) controller.abort();
-      else options.signal.addEventListener("abort", () => controller.abort(), { once: true });
-    }
-
     const progress: RunProgress = {
       runId,
       team: team.name,
@@ -256,13 +280,33 @@ export class TeamRunCoordinator {
       members: team.members.map((m) => ({ name: m.name, status: "queued" as const })),
     };
     this.currentProgress = progress;
+    if (options.signal) {
+      if (options.signal.aborted) controller.abort();
+      else options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+    const run = this.runActive(controller, options, { now, nowMs, runId, startedAtMs, progress });
+    this.pending = run;
+    return run;
+  }
+
+  /**
+   * The spawn-and-wait half of start(), running under the claimed
+   * controller. Resolves with the terminal record; the finally block
+   * releases the claim and drops the stale progress so status queries land
+   * on the terminal record instead of a phantom "running".
+   */
+  private async runActive(controller: AbortController, options: StartOptions, plan: RunPlan): Promise<StartRunResult> {
+    const { team, task } = options;
+    const { now, nowMs, runId, startedAtMs, progress } = plan;
+    const git = this.deps.gitRunner ?? defaultGitRunner();
+    const baseCwd = this.deps.cwd();
 
     // Leader transcript artifacts (best-effort; read back by /team:view and
     // the team_transcript tool). Member transcripts are written by the
-    // leader process itself — both sides share the run dir.
-    const transcript = this.deps.transcriptRoot
-      ? new FileTranscriptSink(this.deps.transcriptRoot, runId, now)
-      : undefined;
+    // leader process itself — both sides share the run dir. Hoisted above
+    // the try so the catch can always report (pre-flight failures have no
+    // transcript yet and silently no-op inside recordTranscript).
+    let transcript: FileTranscriptSink | undefined;
     const recordTranscript = (kind: TranscriptEntryKind, text: string): void => {
       if (!transcript) return;
       try {
@@ -271,87 +315,118 @@ export class TeamRunCoordinator {
         /* transcript failures never break the run */
       }
     };
-    recordTranscript("task", task);
-
-    const render = () => {
-      try {
-        options.onProgress?.(progress);
-      } catch {
-        /* observer failures never break the run */
-      }
-    };
-
-    const onEvent = (event: ChildEvent) => {
-      if (event.type === "message_end" && event.role === "assistant") {
-        if (event.fullText) recordTranscript("assistant", event.fullText);
-        if (event.usage) progress.leaderNote = `turn ${event.usage.turns}`;
-        if (event.model) progress.leaderModel = event.model;
-        if (event.text) progress.leaderActivity = event.text;
-        render();
-        return;
-      }
-      if (event.type === "tool_execution_start") {
-        // Transcript keeps every leader tool call; progress only tracks dispatch.
-        recordTranscript("tool", toolCallText(event.toolName, event.args));
-        if (event.toolName !== "team_dispatch") return;
-        const tasks = (event.args as { tasks?: Array<{ agent?: string; task?: string }> } | undefined)?.tasks;
-        if (Array.isArray(tasks)) {
-          const names = new Set(tasks.map((t) => t.agent).filter((a): a is string => typeof a === "string"));
-          for (const member of progress.members) {
-            if (names.has(member.name) && member.status === "queued") member.status = "running";
-          }
-          const dispatchLines = tasks
-            .map((t) => (typeof t?.agent === "string" ? `${t.agent}: ${typeof t?.task === "string" ? t.task : ""}` : null))
-            .filter((line): line is string => line !== null);
-          if (dispatchLines.length > 0) recordTranscript("tool", `team_dispatch 派发 →\n${dispatchLines.map((l) => `  - ${l}`).join("\n")}`);
-        }
-        render();
-        return;
-      }
-      if (event.type === "tool_execution_end") {
-        recordTranscript("tool", toolResultText(event.toolName, event.text));
-        if (event.toolName !== "team_dispatch") return;
-        const members = parseDispatchMemberResults(event.details);
-        if (members) {
-          for (const member of members) {
-            const existing = progress.members.find((m) => m.name === member.name);
-            const next: MemberProgress = {
-              name: member.name,
-              status: member.status,
-              ...(member.error ? { note: `${member.error.code}: ${member.error.message}` } : {}),
-              ...(member.latest ? { latest: member.latest } : {}),
-            };
-            // Bound the failure note so the widget stays readable.
-            if (next.note && next.note.length > 120) next.note = `${next.note.slice(0, 120)}…`;
-            if (existing) Object.assign(existing, next);
-            else progress.members.push(next);
-          }
-        }
-        render();
-        return;
-      }
-      if (event.type === "error") {
-        recordTranscript("error", `${event.code}: ${event.message}`);
-      }
-    };
-
-    const leaderPrompt = buildLeaderSystemPrompt(team, sharedWorktree);
-    const args: string[] = ["--mode", "json", "-p", "--no-session"];
-    if (team.leader.model) args.push("--model", team.leader.model);
-    if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
-    if (this.deps.extensionEntryPath) args.push("-e", this.deps.extensionEntryPath);
-    args.push("--append-system-prompt", `team-tmp://${leaderPrompt}`);
-    args.push(`Task: ${task}`);
-
-    const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
-    const leaderCwd = sharedWorktree?.path ?? baseCwd;
-
-    // 1s progress ticker (onProgress observers; the widget repaints on its
-    // own tick). Never keeps the process alive.
-    const ticker = setInterval(render, 1000);
-    if (typeof ticker.unref === "function") ticker.unref();
+    let ticker: ReturnType<typeof setInterval> | undefined;
 
     try {
+      // Pre-flight: worktree requirements must be satisfiable BEFORE spawning
+      // anything (environmental errors are otherwise invisible mid-run).
+      const needsWorktree = team.worktree === true || team.members.some((m) => m.worktree === true);
+      let sharedWorktree: { path: string; branch: string } | undefined;
+      if (needsWorktree) {
+        if (!(await isGitRepo(git, baseCwd))) {
+          return {
+            ok: false,
+            code: "WORKTREE_UNAVAILABLE",
+            message: `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`,
+          };
+        }
+        if (team.worktree) {
+          const created = await createWorktree({
+            git,
+            repoCwd: baseCwd,
+            worktreePath: path.join(this.deps.worktreeRoot, runId, "team"),
+            branch: `team/${runId}`,
+          });
+          if (!created.ok) {
+            return { ok: false, code: created.code, message: `预检失败：创建团队共享 worktree 失败 — ${created.message}` };
+          }
+          sharedWorktree = created.value;
+        }
+      }
+
+      transcript = this.deps.transcriptRoot
+        ? new FileTranscriptSink(this.deps.transcriptRoot, runId, now)
+        : undefined;
+      recordTranscript("task", task);
+
+      const render = () => {
+        try {
+          options.onProgress?.(progress);
+        } catch {
+          /* observer failures never break the run */
+        }
+      };
+
+      const onEvent = (event: ChildEvent) => {
+        if (event.type === "message_end" && event.role === "assistant") {
+          if (event.fullText) recordTranscript("assistant", event.fullText);
+          if (event.usage) progress.leaderNote = `turn ${event.usage.turns}`;
+          if (event.model) progress.leaderModel = event.model;
+          if (event.text) progress.leaderActivity = event.text;
+          render();
+          return;
+        }
+        if (event.type === "tool_execution_start") {
+          // Transcript keeps every leader tool call; progress only tracks dispatch.
+          recordTranscript("tool", toolCallText(event.toolName, event.args));
+          if (event.toolName !== "team_dispatch") return;
+          const tasks = (event.args as { tasks?: Array<{ agent?: string; task?: string }> } | undefined)?.tasks;
+          if (Array.isArray(tasks)) {
+            const names = new Set(tasks.map((t) => t.agent).filter((a): a is string => typeof a === "string"));
+            for (const member of progress.members) {
+              if (names.has(member.name) && member.status === "queued") member.status = "running";
+            }
+            const dispatchLines = tasks
+              .map((t) => (typeof t?.agent === "string" ? `${t.agent}: ${typeof t?.task === "string" ? t.task : ""}` : null))
+              .filter((line): line is string => line !== null);
+            if (dispatchLines.length > 0) recordTranscript("tool", `team_dispatch 派发 →\n${dispatchLines.map((l) => `  - ${l}`).join("\n")}`);
+          }
+          render();
+          return;
+        }
+        if (event.type === "tool_execution_end") {
+          recordTranscript("tool", toolResultText(event.toolName, event.text));
+          if (event.toolName !== "team_dispatch") return;
+          const members = parseDispatchMemberResults(event.details);
+          if (members) {
+            for (const member of members) {
+              const existing = progress.members.find((m) => m.name === member.name);
+              const next: MemberProgress = {
+                name: member.name,
+                status: member.status,
+                ...(member.error ? { note: `${member.error.code}: ${member.error.message}` } : {}),
+                ...(member.latest ? { latest: member.latest } : {}),
+              };
+              // Bound the failure note so the widget stays readable.
+              if (next.note && next.note.length > 120) next.note = `${next.note.slice(0, 120)}…`;
+              if (existing) Object.assign(existing, next);
+              else progress.members.push(next);
+            }
+          }
+          render();
+          return;
+        }
+        if (event.type === "error") {
+          recordTranscript("error", `${event.code}: ${event.message}`);
+        }
+      };
+
+      const leaderPrompt = buildLeaderSystemPrompt(team, sharedWorktree);
+      const args: string[] = ["--mode", "json", "-p", "--no-session"];
+      if (team.leader.model) args.push("--model", team.leader.model);
+      if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
+      if (this.deps.extensionEntryPath) args.push("-e", this.deps.extensionEntryPath);
+      args.push("--append-system-prompt", `team-tmp://${leaderPrompt}`);
+      args.push(`Task: ${task}`);
+
+      const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
+      const leaderCwd = sharedWorktree?.path ?? baseCwd;
+
+      // 1s progress ticker (onProgress observers; the widget repaints on its
+      // own tick). Never keeps the process alive.
+      ticker = setInterval(render, 1000);
+      if (typeof ticker.unref === "function") ticker.unref();
+
       const outcome = await runChildPi({
         command: invocation.command,
         args: invocation.args,
@@ -388,6 +463,21 @@ export class TeamRunCoordinator {
           ...(member.worktree ? { worktree: member.worktree } : {}),
         };
       });
+      // Aborted runs: fold every roster member that never produced a
+      // dispatch result (queued at abort, or dispatched-but-still-running)
+      // into the record as "aborted" — without this the terminal record
+      // silently drops everyone the leader hadn't finished with and the
+      // widget/status rows under-report the team.
+      if (aborted) {
+        const covered = new Set(members.map((m) => m.name));
+        for (const member of progress.members) {
+          if (covered.has(member.name)) continue;
+          if (member.status === "queued" || member.status === "running") {
+            const config = team.members.find((c) => c.name === member.name);
+            members.push({ name: member.name, model: config?.model, status: "aborted" });
+          }
+        }
+      }
 
       const record: TeamRunRecord = {
         runId,
@@ -422,7 +512,9 @@ export class TeamRunCoordinator {
       return { ok: false, code: "CHILD_FAILED", message: `failed to start leader process: ${message}` };
     } finally {
       this.active = null;
-      clearInterval(ticker);
+      this.pending = null;
+      this.currentProgress = null;
+      if (ticker !== undefined) clearInterval(ticker);
     }
   }
 }

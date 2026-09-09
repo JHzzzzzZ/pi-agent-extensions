@@ -155,6 +155,7 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     assert.ok(pi.tools.has("team_run"));
     assert.ok(pi.tools.has("team_status"));
     assert.ok(pi.tools.has("team_transcript"));
+    assert.ok(pi.tools.has("team_stop"));
     assert.ok(!pi.tools.has("team_dispatch"));
     for (const name of ["team", "team:run", "team:status", "team:stop", "team:view"]) {
       assert.ok(pi.commands.has(name), `command ${name} registered`);

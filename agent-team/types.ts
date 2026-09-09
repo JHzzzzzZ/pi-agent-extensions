@@ -30,6 +30,13 @@ export const MAX_MEMBER_RUNS_PER_RUN = 40;
 /** Grace period between SIGTERM and SIGKILL when aborting a child. */
 export const KILL_GRACE_MS = 5000;
 
+/**
+ * Bounded settle window for stopAndSettle: SIGTERM→SIGKILL grace plus a
+ * 2s margin for the leader's event stream to flush before the terminal
+ * record is written.
+ */
+export const STOP_SETTLE_TIMEOUT_MS = KILL_GRACE_MS + 2000;
+
 /** Per-message text captured in run transcripts (bytes, UTF-8). */
 export const MAX_TRANSCRIPT_MESSAGE_BYTES = 4 * 1024;
 
@@ -123,6 +130,9 @@ export const TeamErrorCodes = {
   CHILD_FAILED: "CHILD_FAILED",
   AGENT_ABORTED: "AGENT_ABORTED",
   RUN_IN_PROGRESS: "RUN_IN_PROGRESS",
+  RUN_ID_REQUIRED: "RUN_ID_REQUIRED",
+  RUN_NOT_FOUND: "RUN_NOT_FOUND",
+  RUN_ALREADY_FINISHED: "RUN_ALREADY_FINISHED",
   BUDGET_EXCEEDED: "BUDGET_EXCEEDED",
 } as const;
 

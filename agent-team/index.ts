@@ -42,6 +42,7 @@ import {
   LEADER_ENV_RUNID,
   MAX_RESULT_BYTES,
   RUN_ENTRY_TYPE,
+  STOP_SETTLE_TIMEOUT_MS,
   WIDGET_ID,
   truncateUtf8,
   type PiSpawn,
@@ -411,16 +412,19 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     ui: UiPort,
     team: TeamConfig,
     task: string,
-  ): { ok: false; code: string; message: string } | { ok: true; team: string; members: number } => {
+  ): { ok: false; code: string; message: string } | { ok: true; team: string; members: number; runId: string } => {
     ensureRunWidget(ctx);
     if (state.coordinator.isRunning()) {
       return { ok: false, code: "RUN_IN_PROGRESS", message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。" };
     }
-    ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
+    // start() claims the run synchronously, so the runId is readable right
+    // after the call — the handle team_stop needs.
+    const runPromise = state.coordinator.start({ team, task, ui });
+    const runId = state.coordinator.activeRunId() ?? "";
+    ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
     // Completion still persists the record and wakes the session with the
     // report (followUp turn).
-    void state.coordinator
-      .start({ team, task, ui })
+    void runPromise
       .then((result) => {
         if (!result.ok) {
           ui.notify(result.message, "error");
@@ -442,7 +446,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       .catch((e: unknown) => {
         ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
       });
-    return { ok: true, team: team.name, members: team.members.length };
+    return { ok: true, team: team.name, members: team.members.length, runId };
   };
 
   /** Command-mode run flow (runs in BACKGROUND): persist, notify, deliver. */
@@ -506,10 +510,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           content: [
             {
               type: "text" as const,
-              text: `team ${started.team} 已在后台启动（${started.members} 成员并行）。报告完成后会自动送达本会话；期间可继续对话。用 team_status 查询进度，/team:stop 中止。`,
+              text: `team ${started.team} 已在后台启动（${started.members} 成员并行）。runId: ${started.runId}；报告完成后会自动送达本会话；期间可继续对话。用 team_status 查询进度（含 runId），team_stop 按 runId 中止。`,
             },
           ],
-          details: { started: true, background: true, team: started.team, task: params.task, members: started.members },
+          details: { started: true, background: true, team: started.team, task: params.task, members: started.members, runId: started.runId },
         };
       }
       const result = await state.coordinator.start({
@@ -604,6 +608,92 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       return {
         content: [{ type: "text" as const, text: truncateUtf8(body, MAX_RESULT_BYTES) }],
         details: { actors: data.actors.map((a) => ({ actor: a.actor, label: a.label, status: a.status })) },
+      };
+    },
+  });
+
+  // Stop tool: the MAIN agent aborts a background run by runId (the same
+  // primitive /team:stop uses, plus a bounded settle wait so the agent gets
+  // a terminal record instead of a phantom "running"). Only the cockpit
+  // registers it — leader/member child processes never see team_stop.
+  pi.registerTool({
+    name: "team_stop",
+    label: "Stop Agent Team Run",
+    description:
+      "按 runId 停止正在运行的 agent team run（leader 与所有成员子进程）。runId 必填，先 team_status 查看当前/最近 runId。停止后该 run 的报告 followUp 不再送达。",
+    promptGuidelines: [
+      "派单变卦/超预算/跑偏需要停止时：先 team_status 确认活动 run 与其 runId，再调本工具。",
+      "runId 必填：省略返回 RUN_ID_REQUIRED；未知返回 RUN_NOT_FOUND；已结束返回 RUN_ALREADY_FINISHED（都不抛异常）。",
+      "停止后收不到该 run 的报告 followUp，只会收到“已中止”通知；停止完成后可立即重新派单。",
+    ],
+    parameters: Type.Object({
+      runId: Type.String({ description: "要停止的 runId（必填；用 team_status 查看当前/最近 runId）" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx: ExtensionContext) {
+      const runId = typeof params?.runId === "string" ? params.runId.trim() : "";
+      if (!runId) {
+        return {
+          content: [{ type: "text" as const, text: "runId 是必填参数：先用 team_status 查看当前/最近一次 run 的 runId。" }],
+          details: { code: "RUN_ID_REQUIRED" },
+          isError: true,
+        };
+      }
+      const snapshot = state.coordinator.getStatus();
+      const activeRunId = snapshot.progress?.runId ?? null;
+      if (activeRunId === runId) {
+        const outcome = await state.coordinator.stopAndSettle();
+        if (outcome.settled) {
+          const record = outcome.record;
+          const secs = record?.durationMs !== undefined ? `（${Math.round(record.durationMs / 100) / 10}s）` : "";
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `run ${runId}（team ${record?.team ?? "?"}）已停止${secs}，状态 aborted。该 run 的报告不再送达；可立即重新派单。`,
+              },
+            ],
+            details: {
+              stopped: true,
+              settled: true,
+              runId,
+              team: record?.team ?? "",
+              status: "aborted",
+              ...(record ? { record } : {}),
+            },
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `已向 run ${runId} 发送中止信号，leader 仍在收尾（超过 ${Math.round(STOP_SETTLE_TIMEOUT_MS / 1000)}s 等待窗口未落定）。稍后用 team_status 确认终态。`,
+            },
+          ],
+          details: {
+            stopped: true,
+            settled: false,
+            runId,
+            team: snapshot.progress?.team ?? "",
+            status: "aborted",
+          },
+        };
+      }
+      if (snapshot.lastRecord?.runId === runId) {
+        return {
+          content: [{ type: "text" as const, text: `run ${runId} 已经结束（${snapshot.lastRecord.status}），无需停止。` }],
+          details: { code: "RUN_ALREADY_FINISHED", status: snapshot.lastRecord.status },
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `没有找到 runId ${runId}。当前/最近的 runId 用 team_status 查看；已结束的历史 run 无法停止。`,
+          },
+        ],
+        details: { code: "RUN_NOT_FOUND" },
+        isError: true,
       };
     },
   });
