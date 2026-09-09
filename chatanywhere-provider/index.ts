@@ -10,6 +10,9 @@
  *  - CHATANYWHERE_API_KEY   API key（可从 https://api.chatanywhere.tech 获取）
  *  - CHATANYWHERE_BASE_URL  可选，默认 https://api.chatanywhere.tech/v1
  *
+ * key 解析优先级：环境变量 → ~/.pi/agent/auth.json（chatanywhere →
+ * chatanywhere-claude 条目，见 auth.ts）——没设环境变量也能探测成功。
+ *
  * 注册两个 provider：
  *  - chatanywhere（openai-completions）：OpenAI 兼容模型；推理模型带思考等级映射
  *  - chatanywhere-claude（anthropic-messages）：Claude 系模型（id 以 claude- 开头），
@@ -22,12 +25,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { claudeApiRoot, probeModels, selectForRegistration } from "./discover.ts";
 import { MODEL_DEFS, MODEL_LINES } from "./catalog.ts";
+import { readAuthJson, resolveApiKey } from "./auth.ts";
 
 const DEFAULT_BASE_URL = "https://api.chatanywhere.tech/v1";
 
+// 探测用 key：环境变量 → auth.json（两 provider 共用同一账户 key）
+const AUTH_PROVIDER_IDS = ["chatanywhere", "chatanywhere-claude"] as const;
+
 export default async function (pi: ExtensionAPI) {
 	const baseUrl = process.env.CHATANYWHERE_BASE_URL ?? DEFAULT_BASE_URL;
-	const probe = await probeModels(baseUrl, process.env.CHATANYWHERE_API_KEY ?? "");
+	const apiKey = resolveApiKey(process.env.CHATANYWHERE_API_KEY, readAuthJson(), AUTH_PROVIDER_IDS);
+	const probe = await probeModels(baseUrl, apiKey ?? "");
 	// 探测失败 → 空模型列表（fail-closed）
 	const { openai, claude } = selectForRegistration(probe, MODEL_DEFS, MODEL_LINES);
 
