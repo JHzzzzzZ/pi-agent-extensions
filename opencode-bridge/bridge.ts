@@ -10,9 +10,10 @@
  *   PI_BRIDGE_SOCKS_HOST  上游 SOCKS5 主机，默认 127.0.0.1
  *   PI_BRIDGE_SOCKS_PORT  上游 SOCKS5 端口，默认 10808（v2rayN 默认值）
  *
- * settings.json httpProxy 同步（v1.1.0）：桥确认在监听后自动写入
- *   httpProxy = http://127.0.0.1:<port>；已有其它代理地址不碰；桥不通且
- *   设置指向本桥时自动移除（自愈）。PI_BRIDGE_AUTO_PROXY=0 可关闭。
+ * settings.json httpProxy 同步（v1.2.0）：不再自动修改。由 /opencode-bridge-sync
+ *   斜杠命令手动触发，先 plan（只读）给出将要做的事，经 ctx.ui.confirm 人工
+ *   确认后才 apply（写前把原文件原文备份到 settings.json.bak-opencode-bridge-*）；
+ *   仅增/删 httpProxy 字段，其余配置原样保留。
  */
 
 import { spawn } from "node:child_process";
@@ -32,21 +33,34 @@ export const PROBE_TIMEOUT_MS = 600;
 export const START_ATTEMPTS = 25;
 export const START_POLL_DELAY_MS = 120;
 
-/** settings.json httpProxy 同步动作（静态、可诊断） */
+/** httpProxy 同步动作（静态、可诊断；plan 只读，apply 才落盘） */
 export const ProxySyncActions = {
-  /** 设置已是本桥地址，无需改动 */
-  UNCHANGED: "unchanged",
-  /** 已写入本桥地址 */
+  /** 将写入 httpProxy（待确认） */
   SET: "set",
-  /** 桥不通且原值指向本桥，已移除（自愈） */
-  REMOVED: "removed",
-  /** 检测到其它代理地址，未改动 */
-  KEPT_FOREIGN: "kept-foreign",
+  /** 将移除指向本桥的 httpProxy（桥不通，待确认） */
+  REMOVE: "remove",
+  /** 已指向本桥，无需改动 */
+  NOOP: "noop",
+  /** 已有其它代理地址，不碰 */
+  FOREIGN: "foreign",
 } as const;
 export type ProxySyncAction = (typeof ProxySyncActions)[keyof typeof ProxySyncActions];
 
-export type ProxySyncResult =
-  | { ok: true; action: ProxySyncAction; message: string }
+export interface HttpProxySyncPlan {
+  action: ProxySyncAction;
+  /** 将写入的地址（set） */
+  proxyUrl?: string;
+  /** 当前 httpProxy 值（存在时） */
+  current?: string;
+  message: string;
+}
+
+export type PlanSyncResult =
+  | { ok: true; plan: HttpProxySyncPlan }
+  | { ok: false; message: string };
+
+export type ApplySyncResult =
+  | { ok: true; backupPath?: string; message: string }
   | { ok: false; message: string };
 
 /** settings.json 读写边界；测试注入 fake，生产用 createDefaultProxySyncDeps()。 */
@@ -56,7 +70,7 @@ export interface ProxySyncDeps {
   writeTextFile(path: string, content: string): void;
 }
 
-/** 生产依赖：真实 fs 读写（写失败/读失败向上抛，由 syncHttpProxy 归一为 Result）。 */
+/** 生产依赖：真实 fs 读写。 */
 export function createDefaultProxySyncDeps(): ProxySyncDeps {
   return {
     readTextFile(path) {
@@ -70,6 +84,13 @@ export function createDefaultProxySyncDeps(): ProxySyncDeps {
       fs.writeFileSync(path, content, "utf8");
     },
   };
+}
+
+/** 备份文件路径：settings.json 同目录，settings.json.bak-opencode-bridge-YYYYMMDD-HHmmss。 */
+export function makeBackupPath(settingsPath: string, now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return `${settingsPath}.bak-opencode-bridge-${stamp}`;
 }
 
 /** ensureBridge 错误码（静态、可诊断，调用方据此提示用户） */
@@ -219,16 +240,15 @@ export function createDefaultBridgeDeps(): BridgeDeps {
 // ===== ensureBridge =====
 
 /**
- * 同步 settings.json 的 httpProxy：
- *   - 桥在监听：确保 httpProxy 指向本桥（已对则不动）；已有其它代理不碰；
- *   - 桥不通：若原值指向本桥则移除（自愈，避免死代理拖垮全部模型请求）。
- * 写入只影响下一次 Pi 启动（settings 在启动时转 HTTP(S)_PROXY），
- * 调用方需在通知里向用户说明。
+ * 读取 settings.json 并生成 httpProxy 同步计划（只读，不落盘）：
+ *   - 桥在监听且未设 httpProxy → set；已指向本桥 → noop；已有其它代理 → foreign（不碰）；
+ *   - 桥不通且原值指向本桥 → remove（建议移除，避免死代理拖垮全部模型请求）。
+ * settings.json 解析失败/根不是对象 → ok:false（绝不写）。
  */
-export function syncHttpProxy(
+export function planHttpProxySync(
   options: { settingsPath: string; proxyUrl: string; bridgeAlive: boolean },
   deps: ProxySyncDeps,
-): ProxySyncResult {
+): PlanSyncResult {
   const { settingsPath, proxyUrl, bridgeAlive } = options;
 
   let settings: Record<string, unknown> = {};
@@ -239,54 +259,87 @@ export function syncHttpProxy(
       if (
         parsed === null || typeof parsed !== "object" || Array.isArray(parsed)
       ) {
-        return { ok: false, message: `settings.json 根不是对象，未改动（${settingsPath}）` };
+        return { ok: false, message: `settings.json 根不是对象，拒绝修改（${settingsPath}）` };
       }
       settings = parsed as Record<string, unknown>;
     } catch {
-      return { ok: false, message: `settings.json 解析失败，未改动（${settingsPath}）` };
+      return { ok: false, message: `settings.json 解析失败，拒绝修改（${settingsPath}）` };
     }
   }
 
   const existing = typeof settings.httpProxy === "string" ? settings.httpProxy : undefined;
 
-  if (!bridgeAlive) {
+  if (bridgeAlive) {
     if (existing === proxyUrl) {
-      delete settings.httpProxy;
-      try {
-        deps.writeTextFile(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-      } catch (err) {
-        return { ok: false, message: `桥未运行但移除 httpProxy 失败：${err instanceof Error ? err.message : String(err)}` };
-      }
-      return { ok: true, action: ProxySyncActions.REMOVED, message: "桥未运行，已移除指向本桥的 httpProxy（自愈）" };
+      return { ok: true, plan: { action: ProxySyncActions.NOOP, current: existing, message: "httpProxy 已指向本桥，无需改动" } };
     }
-    return {
-      ok: true,
-      action: ProxySyncActions.KEPT_FOREIGN,
-      message: "桥未运行，settings.json 未改动",
-    };
+    if (existing !== undefined) {
+      return { ok: true, plan: { action: ProxySyncActions.FOREIGN, current: existing, message: `检测到已有 httpProxy（${existing}），不碰` } };
+    }
+    return { ok: true, plan: { action: ProxySyncActions.SET, proxyUrl, message: `将写入 httpProxy: ${proxyUrl}` } };
   }
 
   if (existing === proxyUrl) {
-    return { ok: true, action: ProxySyncActions.UNCHANGED, message: "httpProxy 已指向本桥，无需改动" };
+    return { ok: true, plan: { action: ProxySyncActions.REMOVE, current: existing, message: "桥未运行，将移除指向本桥的 httpProxy（避免请求卡死）" } };
   }
-  if (existing !== undefined) {
-    return {
-      ok: true,
-      action: ProxySyncActions.KEPT_FOREIGN,
-      message: `检测到已有 httpProxy（${existing}），未改动`,
-    };
+  return { ok: true, plan: { action: ProxySyncActions.NOOP, current: existing, message: "桥未运行，settings.json 无需改动" } };
+}
+
+/**
+ * 执行同步计划：先把原文件原文备份到 backupPath（原文件不存在则跳过备份），
+ * 再仅增/删 httpProxy 字段落盘。apply 前重读校验 current 未变（防竞态覆盖）。
+ */
+export function applyHttpProxySync(
+  plan: HttpProxySyncPlan,
+  options: { settingsPath: string; backupPath: string },
+  deps: ProxySyncDeps,
+): ApplySyncResult {
+  const { settingsPath, backupPath } = options;
+  if (plan.action !== ProxySyncActions.SET && plan.action !== ProxySyncActions.REMOVE) {
+    return { ok: false, message: `无需执行的动作：${plan.action}` };
   }
 
-  settings.httpProxy = proxyUrl;
+  const raw = deps.readTextFile(settingsPath);
+  let settings: Record<string, unknown> = {};
+  if (raw !== undefined && raw.trim() !== "") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return { ok: false, message: "settings.json 根不是对象，拒绝修改" };
+      }
+      settings = parsed as Record<string, unknown>;
+    } catch {
+      return { ok: false, message: "settings.json 解析失败，拒绝修改" };
+    }
+  }
+  const current = typeof settings.httpProxy === "string" ? settings.httpProxy : undefined;
+  if (current !== plan.current) {
+    return { ok: false, message: `settings.json 已变化（当前 httpProxy：${JSON.stringify(current)}），请重新执行命令` };
+  }
+
+  if (raw !== undefined) {
+    try {
+      deps.writeTextFile(backupPath, raw);
+    } catch (err) {
+      return { ok: false, message: `备份失败，未修改：${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  if (plan.action === ProxySyncActions.SET) {
+    settings.httpProxy = plan.proxyUrl;
+  } else {
+    delete settings.httpProxy;
+  }
   try {
     deps.writeTextFile(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   } catch (err) {
     return { ok: false, message: `写入 settings.json 失败：${err instanceof Error ? err.message : String(err)}` };
   }
+  const backupNote = raw !== undefined ? `；原配置已备份到 ${backupPath}` : "；原文件不存在，无备份";
   return {
     ok: true,
-    action: ProxySyncActions.SET,
-    message: `已写入 httpProxy: ${proxyUrl}（本次会话不生效，重启 Pi 后生效）`,
+    backupPath: raw !== undefined ? backupPath : undefined,
+    message: `${plan.action === ProxySyncActions.SET ? `已写入 httpProxy: ${plan.proxyUrl}` : "已移除 httpProxy"}${backupNote}（重启 Pi 后生效）`,
   };
 }
 

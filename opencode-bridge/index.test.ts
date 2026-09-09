@@ -6,8 +6,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatStatusLines, isAutoProxyEnabled } from "./index.ts";
-import { DEFAULT_BRIDGE_PORT, DEFAULT_SOCKS_HOST, DEFAULT_SOCKS_PORT, type BridgeDeps, type ProxySyncDeps } from "./bridge.ts";
+import { COMMAND_NAME, SYNC_COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
+import { DEFAULT_BRIDGE_PORT, DEFAULT_SOCKS_HOST, DEFAULT_SOCKS_PORT, ProxySyncActions, type BridgeDeps, type ProxySyncDeps } from "./bridge.ts";
 
 // ===== fake:pi 宿主（对齐 goal/index.test.ts 的手写 fake 风格） =====
 
@@ -76,16 +76,17 @@ function makeFakeBridgeDeps(options: FakeBridgeOptions = {}) {
 
 const HELPER_PATH = "/fake/opencode-bridge-helper.mjs";
 const SETTINGS_PATH = "/fake/settings.json";
-// 原有测试关掉自动同步，保持"只测桥"的语义；同步行为在后面的专项测试里覆盖
+// 原有测试只测桥本身（扩展不再自动改 settings）；同步行为在后面的专项测试里覆盖
 const BASE_DEPS: BridgeExtensionDeps = {
   helperPaths: [HELPER_PATH],
-  env: { PI_BRIDGE_AUTO_PROXY: "0" },
+  env: {},
   settingsPath: SETTINGS_PATH,
+  now: () => new Date(0),
 };
 
 // ===== formatStatusLines（纯函数） =====
 
-test("formatStatusLines 输出状态/监听/上游/httpProxy 四行，且声明不自动改 settings", () => {
+test("formatStatusLines 输出状态/监听/上游/引导四行，指向 /opencode-bridge-sync", () => {
   const lines = formatStatusLines(
     {
       bridgeHost: "127.0.0.1",
@@ -101,8 +102,9 @@ test("formatStatusLines 输出状态/监听/上游/httpProxy 四行，且声明�
   assert.match(lines[0], /运行中/);
   assert.match(lines[1]!, /http:\/\/127\.0\.0\.1:10899/);
   assert.match(lines[2]!, /socks5:\/\/127\.0\.0\.1:10808/);
-  assert.match(lines[3]!, /httpProxy/);
-  assert.match(lines[3]!, /自动同步/);
+  assert.match(lines[3]!, /opencode-bridge-sync/);
+  assert.match(lines[3]!, /人工确认/);
+  assert.match(lines[3]!, /备份/);
 });
 
 // ===== 注册 =====
@@ -196,7 +198,7 @@ test("命令：桥已运行时展示状态，不 spawn", async () => {
   assert.equal(spawnCalls.length, 0);
   assert.equal(notifications.length, 1);
   assert.match(notifications[0]?.message ?? "", /状态: 运行中/);
-  assert.match(notifications[0]?.message ?? "", /httpProxy/);
+  assert.match(notifications[0]?.message ?? "", /opencode-bridge-sync/);
   assert.equal(notifications[0]?.type, "info");
 });
 
@@ -241,7 +243,7 @@ test("命令：配置非法时提示变量名，不 spawn", async () => {
   assert.match(notifications[0]?.message ?? "", /PI_BRIDGE_SOCKS_PORT/);
 });
 
-// ===== httpProxy 自动同步（v1.1.0） =====
+// ===== /opencode-bridge-sync：手动触发 + 人工确认 + 备份（v1.2.0） =====
 
 function makeFakeProxySyncDeps(initial?: string) {
   const files = new Map<string, string>();
@@ -257,57 +259,16 @@ function makeFakeProxySyncDeps(initial?: string) {
   return { deps, files };
 }
 
-test("isAutoProxyEnabled：默认开，0/false/off 关，其它值视为开", () => {
-  assert.equal(isAutoProxyEnabled({}), true);
-  assert.equal(isAutoProxyEnabled({ PI_BRIDGE_AUTO_PROXY: undefined }), true);
-  assert.equal(isAutoProxyEnabled({ PI_BRIDGE_AUTO_PROXY: "" }), true);
-  assert.equal(isAutoProxyEnabled({ PI_BRIDGE_AUTO_PROXY: "0" }), false);
-  assert.equal(isAutoProxyEnabled({ PI_BRIDGE_AUTO_PROXY: "false" }), false);
-  assert.equal(isAutoProxyEnabled({ PI_BRIDGE_AUTO_PROXY: "OFF" }), false);
-  assert.equal(isAutoProxyEnabled({ PI_BRIDGE_AUTO_PROXY: "1" }), true);
-});
-
-test("自动同步：桥活着且 settings 无 httpProxy → 写入并通知重启生效", async () => {
-  const { pi, handlers, notifications, makeCtx } = makeFakePi();
+test("注册 /opencode-bridge-sync 命令，/opencode-bridge 不再自动改 settings", () => {
+  const { pi, handlers, commands } = makeFakePi();
   const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
-  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
-  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, env: {}, bridge: deps, proxySync: sync });
-  await handlers.get("session_start")!({}, makeCtx());
-  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
-  assert.equal(saved.httpProxy, "http://127.0.0.1:10899");
-  assert.equal(saved.theme, "dark");
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0]?.type, "info");
-  assert.match(notifications[0]?.message ?? "", /已写入 httpProxy/);
-  assert.match(notifications[0]?.message ?? "", /重启/);
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, now: () => new Date(0) });
+  assert.ok(handlers.has("session_start"));
+  assert.ok(commands.has(COMMAND_NAME));
+  assert.ok(commands.has(SYNC_COMMAND_NAME));
 });
 
-test("自动同步：已有其它代理地址 → 不碰并 warning 提示", async () => {
-  const { pi, handlers, notifications, makeCtx } = makeFakePi();
-  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
-  const { deps: sync, files } = makeFakeProxySyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
-  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, env: {}, bridge: deps, proxySync: sync });
-  await handlers.get("session_start")!({}, makeCtx());
-  assert.match(files.get(SETTINGS_PATH)!, /7890/);
-  assert.equal(notifications[0]?.type, "warning");
-  assert.match(notifications[0]?.message ?? "", /未改动/);
-});
-
-test("自动同步：桥死了且原值指向本桥 → 自愈移除", async () => {
-  const { pi, handlers, notifications, makeCtx } = makeFakePi();
-  const { deps } = makeFakeBridgeDeps({ probeSequence: [false] });
-  const { deps: sync, files } = makeFakeProxySyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:10899" }));
-  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, env: {}, bridge: deps, proxySync: sync });
-  await handlers.get("session_start")!({}, makeCtx());
-  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
-  assert.equal(saved.httpProxy, undefined);
-  // 拉起失败先有一条 error，自愈同步是第二条 info
-  assert.equal(notifications[0]?.type, "error");
-  assert.equal(notifications[1]?.type, "info");
-  assert.match(notifications[1]?.message ?? "", /自愈/);
-});
-
-test("自动同步：PI_BRIDGE_AUTO_PROXY=0 → 完全不读写 settings", async () => {
+test("session_start 桥已运行：完全不读写 settings.json", async () => {
   const { pi, handlers, notifications, makeCtx } = makeFakePi();
   const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
   let readCalled = false;
@@ -318,29 +279,120 @@ test("自动同步：PI_BRIDGE_AUTO_PROXY=0 → 完全不读写 settings", async
     },
     writeTextFile: () => undefined,
   };
-  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, env: { PI_BRIDGE_AUTO_PROXY: "0" }, bridge: deps, proxySync: sync });
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   await handlers.get("session_start")!({}, makeCtx());
   assert.equal(readCalled, false);
   assert.equal(notifications.length, 0);
 });
 
-test("自动同步：settings.json 解析失败 → ok:false 静态提示，不外抛", async () => {
-  const { pi, handlers, notifications, makeCtx } = makeFakePi();
+test("sync：桥活着且无 httpProxy → 弹确认；确认后写入并备份", async () => {
+  const { pi, handlers, notifications, commands, makeCtx } = makeFakePi();
   const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
-  const { deps: sync } = makeFakeProxySyncDeps("{ not json");
-  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, env: {}, bridge: deps, proxySync: sync });
-  await handlers.get("session_start")!({}, makeCtx());
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  const now = new Date(2026, 7, 5, 12, 0, 0);
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => now });
+
+  // 在 makeCtx 基础上注入 confirm 的返回值并捕获弹窗内容
+  const ctx = makeCtx();
+  let confirmCalled = 0;
+  let confirmCaptured: { title: string; message: string } | undefined;
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async (title: string, message: string) => {
+    confirmCalled += 1;
+    confirmCaptured = { title, message };
+    return true;
+  };
+
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.equal(confirmCalled, 1);
+  assert.match(confirmCaptured?.title ?? "", /修改 settings\.json/);
+  assert.match(confirmCaptured?.message ?? "", /httpProxy: http:\/\/127\.0\.0\.1:10899/);
+  assert.match(confirmCaptured?.message ?? "", /备份/);
+  assert.match(confirmCaptured?.message ?? "", /settings\.json\.bak-opencode-bridge-20260805-120000/);
+  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+  assert.equal(saved.httpProxy, "http://127.0.0.1:10899");
+  assert.equal(saved.theme, "dark");
+  // 备份内容 = 原文
+  assert.match(notifications[0]?.message ?? "", /已写入 httpProxy/);
+  assert.match(notifications[0]?.message ?? "", /settings\.json\.bak-opencode-bridge-20260805-120000/);
+  assert.equal(notifications[0]?.type, "info");
+});
+
+test("sync：用户取消 → settings 不变", async () => {
+  const { pi, handlers, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => false;
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.equal(files.get(SETTINGS_PATH), '{"theme":"dark"}');
+  assert.match(notifications[0]?.message ?? "", /已取消/);
+});
+
+test("sync：已有其它代理地址 → 不弹确认，提示不碰", async () => {
+  const { pi, handlers, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
+    throw new Error("不应弹确认框");
+  };
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.match(files.get(SETTINGS_PATH)!, /7890/);
   assert.equal(notifications[0]?.type, "warning");
+  assert.match(notifications[0]?.message ?? "", /未改动/);
+});
+
+test("sync：桥死了且原值指向本桥 → 弹确认提议移除；确认后移除并备份", async () => {
+  const { pi, handlers, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [false, false, false, false], existingPaths: [HELPER_PATH] });
+  const { deps: sync, files } = makeFakeProxySyncDeps(JSON.stringify({ theme: "dark", httpProxy: "http://127.0.0.1:10899" }));
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => true;
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+  assert.equal(saved.httpProxy, undefined);
+  assert.equal(saved.theme, "dark");
+  assert.match(notifications[0]?.message ?? "", /已移除 httpProxy/);
+  assert.match(notifications[0]?.message ?? "", /备份/);
+});
+
+test("sync：无 UI（-p / JSON 模式）→ 静默不改文件（notify 本身有 hasUI 守卫）", async () => {
+  const { pi, handlers, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", makeCtx({ hasUI: false }));
+  assert.equal(files.get(SETTINGS_PATH), "{}");
+  assert.equal(notifications.length, 0);
+});
+
+test("sync：settings.json 解析失败 → error 提示，不弹框不改文件", async () => {
+  const { pi, handlers, notifications, commands, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  const { deps: sync, files } = makeFakeProxySyncDeps("{ not json");
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
+  const ctx = makeCtx();
+  (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
+    throw new Error("不应弹确认框");
+  };
+  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  assert.equal(files.get(SETTINGS_PATH), "{ not json");
+  assert.equal(notifications[0]?.type, "error");
   assert.match(notifications[0]?.message ?? "", /解析失败/);
 });
 
-test("自动同步：/opencode-bridge 命令也触发同步", async () => {
-  const { pi, handlers, commands, notifications, makeCtx } = makeFakePi();
-  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
-  const { deps: sync, files } = makeFakeProxySyncDeps("{}");
-  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, env: {}, bridge: deps, proxySync: sync });
-  await commands.get(COMMAND_NAME)!.handler("", makeCtx());
-  assert.match(files.get(SETTINGS_PATH)!, /httpProxy/);
-  assert.match(notifications[0]?.message ?? "", /已写入 httpProxy/);
-  assert.match(notifications[1]?.message ?? "", /状态: 运行中/);
+test("formatSyncConfirmMessage：四行文案含动作/仅改字段/备份路径/重启提示", () => {
+  const lines = formatSyncConfirmMessage(
+    { action: ProxySyncActions.SET, proxyUrl: "http://127.0.0.1:10899", message: "" },
+    "/fake/settings.json",
+    "/fake/settings.json.bak-opencode-bridge-x",
+  ).split("\n");
+  assert.equal(lines.length, 4);
+  assert.match(lines[0]!, /写入 httpProxy: http:\/\/127\.0\.0\.1:10899/);
+  assert.match(lines[1]!, /仅改动 httpProxy 字段/);
+  assert.match(lines[2]!, /备份到/);
+  assert.match(lines[3]!, /重启 Pi 后生效/);
 });

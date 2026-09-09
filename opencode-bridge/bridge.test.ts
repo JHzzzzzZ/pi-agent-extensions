@@ -15,10 +15,12 @@ import {
   type EnsureBridgeResult,
   createDefaultBridgeDeps,
   ensureBridge,
+  applyHttpProxySync,
+  makeBackupPath,
   parseBridgeConfig,
+  planHttpProxySync,
   ProxySyncActions,
   type ProxySyncDeps,
-  syncHttpProxy,
 } from "./bridge.ts";
 
 // ===== fake 依赖 =====
@@ -185,7 +187,7 @@ test("createDefaultBridgeDeps 提供 probe/fileExists/spawnDetached/sleep 全套
   assert.equal(deps.fileExists("/definitely/not/a/real/path/xyz"), false);
 });
 
-// ===== syncHttpProxy（内存 fake，不碰真实 settings.json） =====
+// ===== planHttpProxySync / applyHttpProxySync（内存 fake，不碰真实 settings.json） =====
 
 const SETTINGS_PATH = "/fake/settings.json";
 const PROXY_URL = "http://127.0.0.1:10899";
@@ -206,86 +208,161 @@ function makeFakeSyncDeps(initial?: string) {
   return { deps, writeCalls, files };
 }
 
-test("syncHttpProxy 桥在监听且无 httpProxy：写入并提示重启生效", () => {
-  const { deps, writeCalls, files } = makeFakeSyncDeps('{"theme":"dark"}');
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+test("planHttpProxySync 桥在监听且无 httpProxy：计划 SET（只读，不落盘）", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps('{"theme":"dark"}');
+  const r = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
   assert.ok(r.ok);
-  assert.equal(r.action, ProxySyncActions.SET);
-  assert.match(r.message, /重启/);
-  assert.equal(writeCalls.length, 1);
-  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
-  assert.equal(saved.theme, "dark");
-  assert.equal(saved.httpProxy, PROXY_URL);
-});
-
-test("syncHttpProxy 已指向本桥：幂等不动", () => {
-  const { deps, writeCalls } = makeFakeSyncDeps(JSON.stringify({ httpProxy: PROXY_URL }));
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
-  assert.ok(r.ok);
-  assert.equal(r.action, ProxySyncActions.UNCHANGED);
+  assert.equal(r.plan.action, ProxySyncActions.SET);
+  assert.equal(r.plan.proxyUrl, PROXY_URL);
   assert.equal(writeCalls.length, 0);
 });
 
-test("syncHttpProxy 已有其它代理地址：不碰，仅提示", () => {
-  const { deps, writeCalls, files } = makeFakeSyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+test("planHttpProxySync 已指向本桥：NOOP", () => {
+  const { deps } = makeFakeSyncDeps(JSON.stringify({ httpProxy: PROXY_URL }));
+  const r = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
   assert.ok(r.ok);
-  assert.equal(r.action, ProxySyncActions.KEPT_FOREIGN);
-  assert.match(r.message, /7890/);
-  assert.equal(writeCalls.length, 0);
-  assert.match(files.get(SETTINGS_PATH)!, /7890/);
+  assert.equal(r.plan.action, ProxySyncActions.NOOP);
 });
 
-test("syncHttpProxy 桥不通且原值指向本桥：自愈移除", () => {
-  const { deps, writeCalls, files } = makeFakeSyncDeps(JSON.stringify({ theme: "dark", httpProxy: PROXY_URL }));
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: false }, deps);
-  assert.ok(r.ok);
-  assert.equal(r.action, ProxySyncActions.REMOVED);
-  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
-  assert.equal(saved.theme, "dark");
-  assert.equal(saved.httpProxy, undefined);
-});
-
-test("syncHttpProxy 桥不通且原值是其它代理：不动", () => {
+test("planHttpProxySync 已有其它代理地址：FOREIGN（不碰，报告现值）", () => {
   const { deps, writeCalls } = makeFakeSyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: false }, deps);
+  const r = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
   assert.ok(r.ok);
-  assert.equal(r.action, ProxySyncActions.KEPT_FOREIGN);
+  assert.equal(r.plan.action, ProxySyncActions.FOREIGN);
+  assert.equal(r.plan.current, "http://127.0.0.1:7890");
+  assert.match(r.plan.message, /7890/);
   assert.equal(writeCalls.length, 0);
 });
 
-test("syncHttpProxy 文件不存在视作空设置：桥通则写入", () => {
-  const { deps, writeCalls } = makeFakeSyncDeps(undefined);
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+test("planHttpProxySync 桥不通且原值指向本桥：计划 REMOVE", () => {
+  const { deps } = makeFakeSyncDeps(JSON.stringify({ httpProxy: PROXY_URL }));
+  const r = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: false }, deps);
   assert.ok(r.ok);
-  assert.equal(r.action, ProxySyncActions.SET);
-  assert.equal(writeCalls.length, 1);
+  assert.equal(r.plan.action, ProxySyncActions.REMOVE);
 });
 
-test("syncHttpProxy settings.json 解析失败：报错不写", () => {
-  const { deps, writeCalls } = makeFakeSyncDeps("{ not json");
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+test("planHttpProxySync 桥不通且其它值/无值：NOOP", () => {
+  const { deps } = makeFakeSyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
+  const r1 = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: false }, deps);
+  assert.ok(r1.ok && r1.plan.action === ProxySyncActions.NOOP);
+  const r2 = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: false }, makeFakeSyncDeps(undefined).deps);
+  assert.ok(r2.ok && r2.plan.action === ProxySyncActions.NOOP);
+});
+
+test("planHttpProxySync 解析失败/根是数组：ok:false（绝不写）", () => {
+  const bad = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, makeFakeSyncDeps("{ not json").deps);
+  assert.ok(!bad.ok);
+  assert.match(bad.message, /解析失败/);
+  const arr = planHttpProxySync({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, makeFakeSyncDeps("[]").deps);
+  assert.ok(!arr.ok);
+  assert.match(arr.message, /根不是对象/);
+});
+
+test("applyHttpProxySync SET：先备份原文，再仅加 httpProxy 字段", () => {
+  const raw = '{"theme":"dark","defaultModel":"glm-5.3-flash"}';
+  const { deps, writeCalls, files } = makeFakeSyncDeps(raw);
+  const r = applyHttpProxySync(
+    { action: ProxySyncActions.SET, proxyUrl: PROXY_URL, message: "" },
+    { settingsPath: SETTINGS_PATH, backupPath: "/fake/backup.bak" },
+    deps,
+  );
+  assert.ok(r.ok);
+  assert.equal(r.backupPath, "/fake/backup.bak");
+  // 第一笔写是备份（内容 = 原文），第二笔才是 settings
+  assert.equal(writeCalls[0]?.path, "/fake/backup.bak");
+  assert.equal(writeCalls[0]?.content, raw);
+  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+  assert.equal(saved.httpProxy, PROXY_URL);
+  assert.equal(saved.theme, "dark");
+  assert.equal(saved.defaultModel, "glm-5.3-flash");
+  assert.match(r.message, /备份/);
+  assert.match(r.message, /重启/);
+});
+
+test("applyHttpProxySync REMOVE：备份后仅删 httpProxy 字段，其余不动", () => {
+  const { deps, writeCalls, files } = makeFakeSyncDeps('{"theme":"dark","httpProxy":"http://127.0.0.1:10899"}');
+  const r = applyHttpProxySync(
+    { action: ProxySyncActions.REMOVE, current: PROXY_URL, message: "" },
+    { settingsPath: SETTINGS_PATH, backupPath: "/fake/backup.bak" },
+    deps,
+  );
+  assert.ok(r.ok);
+  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+  assert.equal(saved.httpProxy, undefined);
+  assert.equal(saved.theme, "dark");
+  assert.equal(writeCalls[0]?.path, "/fake/backup.bak");
+});
+
+test("applyHttpProxySync 原文件不存在：无备份仍然可 SET", () => {
+  const { deps, writeCalls, files } = makeFakeSyncDeps(undefined);
+  const r = applyHttpProxySync(
+    { action: ProxySyncActions.SET, proxyUrl: PROXY_URL, message: "" },
+    { settingsPath: SETTINGS_PATH, backupPath: "/fake/backup.bak" },
+    deps,
+  );
+  assert.ok(r.ok);
+  assert.equal(r.backupPath, undefined);
+  assert.equal(writeCalls.length, 1); // 只写 settings，无备份笔
+  assert.match(r.message, /无备份/);
+  assert.equal(JSON.parse(files.get(SETTINGS_PATH)!).httpProxy, PROXY_URL);
+});
+
+test("applyHttpProxySync 竞态：current 与计划不符时拒绝且不写", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
+  const r = applyHttpProxySync(
+    { action: ProxySyncActions.SET, proxyUrl: PROXY_URL, current: undefined, message: "" },
+    { settingsPath: SETTINGS_PATH, backupPath: "/fake/backup.bak" },
+    deps,
+  );
   assert.ok(!r.ok);
-  assert.match(r.message, /解析失败/);
+  assert.match(r.message, /已变化/);
   assert.equal(writeCalls.length, 0);
 });
 
-test("syncHttpProxy 根是数组：报错不写（防整体覆盖）", () => {
-  const { deps, writeCalls } = makeFakeSyncDeps("[]");
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+test("applyHttpProxySync noop 计划直接拒绝", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps("{}");
+  const r = applyHttpProxySync(
+    { action: ProxySyncActions.NOOP, message: "" },
+    { settingsPath: SETTINGS_PATH, backupPath: "/fake/backup.bak" },
+    deps,
+  );
   assert.ok(!r.ok);
-  assert.match(r.message, /根不是对象/);
   assert.equal(writeCalls.length, 0);
 });
 
-test("syncHttpProxy 写入抛异常：归一为 ok:false", () => {
+test("applyHttpProxySync 备份写失败：拒绝修改 settings", () => {
   const deps: ProxySyncDeps = {
-    readTextFile: () => undefined,
-    writeTextFile: () => {
-      throw new Error("disk full");
+    readTextFile: () => '{"theme":"dark"}',
+    writeTextFile(path) {
+      if (path === "/fake/backup.bak") throw new Error("disk full");
     },
   };
-  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  const r = applyHttpProxySync(
+    { action: ProxySyncActions.SET, proxyUrl: PROXY_URL, message: "" },
+    { settingsPath: SETTINGS_PATH, backupPath: "/fake/backup.bak" },
+    deps,
+  );
   assert.ok(!r.ok);
-  assert.match(r.message, /disk full/);
+  assert.match(r.message, /备份失败/);
+});
+
+test("applyHttpProxySync settings 写失败：报错（备份已落盘可回滚）", () => {
+  const deps: ProxySyncDeps = {
+    readTextFile: () => '{"theme":"dark"}',
+    writeTextFile(path, content) {
+      if (path === SETTINGS_PATH) throw new Error("EACCES");
+    },
+  };
+  const r = applyHttpProxySync(
+    { action: ProxySyncActions.SET, proxyUrl: PROXY_URL, message: "" },
+    { settingsPath: SETTINGS_PATH, backupPath: "/fake/backup.bak" },
+    deps,
+  );
+  assert.ok(!r.ok);
+  assert.match(r.message, /EACCES/);
+});
+
+test("makeBackupPath 生成同目录带时间戳的备份路径", () => {
+  const p = makeBackupPath("C:/Users/u/.pi/agent/settings.json", new Date(2026, 7, 5, 12, 3, 4));
+  assert.equal(p, "C:/Users/u/.pi/agent/settings.json.bak-opencode-bridge-20260805-120304");
 });
