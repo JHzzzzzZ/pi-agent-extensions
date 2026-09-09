@@ -7,7 +7,7 @@
 
 Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。扩展通过复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目）加载，然后在 Pi 中执行 `/reload` 生效。
 
-- **`pwr/` — 主项目。** PWR（Pi Workflow Runtime）v2.4.1：用户编写受约束的 ECMAScript 工作流脚本；PWR 校验后弹出批准卡，再通过派生子 `pi` 进程作为 sub-agent 执行（`PiAgentRunner`）。v2.4.0 新增逐步实时运行 trace（runner `onEvent` → runtime `task_event` → 查看器 agent 行）、`/workflows:saved` 列表，以及 `/workflow:<name>` 的 schema 引导 `key=value` 参数输入（仍兼容 JSON）。零构建 TypeScript ESM，由 Node ≥ 22.18 原生 type-stripping 直接执行。
+- **`pwr/` — 主项目。** PWR（Pi Workflow Runtime）v2.4.2：用户编写受约束的 ECMAScript 工作流脚本；PWR 校验后弹出批准卡，再通过派生子 `pi` 进程作为 sub-agent 执行（`PiAgentRunner`）。v2.4.0 新增逐步实时运行 trace（runner `onEvent` → runtime `task_event` → 查看器 agent 行）、`/workflows:saved` 列表，以及 `/workflow:<name>` 的 schema 引导 `key=value` 参数输入（仍兼容 JSON）；v2.4.2 接线会话生命周期（`session_shutdown` 中止在途 run + `session_start` 复活单例 runtime）。零构建 TypeScript ESM，由 Node ≥ 22.18 原生 type-stripping 直接执行。
 
 D
 - **卫星扩展**（相互独立，扩展形态相同）：`agent-team/`（可复用多 agent 团队：独立 leader 子进程通过 `team_dispatch` 调度成员子进程；输入栏下方可选中亮块——紧凑两行概要，`↓`/`←`（编辑器为空时）或 `alt+↓` 激活、`↑`/`↓`/`j`/`k` 移动、`enter` 直达查看器、`esc`/其它键退出并放行编辑器；TUI 行为对照 pi-subagents fleet v0.66.0 代码级同步，矩阵见 `agent-team/docs/tui-sync.md`；`team_run` 默认后台派单，报告经 followUp 自动送达；`team_stop` 按 runId 中止（settle-aware，终态可靠）；查看器内 `D` 停止整个 run（两步确认，fleet v0.66.0 对齐：Enter/Y 确认、Esc/ctrl+c/N/backspace 取消，确认后经 `viewerStopAction` → `stopAndSettle()`，横幅占正文窗口顶部、帧总高不变）与 `r`/`R` 手动刷新；v1.5.0：run 元数据落盘 + session_start reconcile（孤儿 leader 只报告不杀）、frontmatter `budget:` 预算块（dispatch/成员运行 + 可选费用/token 硬上限，超限自动中止）、派单前 model 预检（`MODEL_NOT_FOUND` 不 spawn）、`/team:doctor` 自检；终态亮块可 `/team:clear` 手动清除（session_start 水合仅在存在 running run 时自动挂亮块，终态记录不再在 /reload 后重挂））、`stream-token-speed/`（TTFT + 实时 tokens/s 状态）、`chatanywhere-provider/`（运行时自动发现：加载时探测 `GET {base}/models`，按家族线归并去重注册（每线 ≤3 档、仅最新代、非 chat 与 thinking 变体去重），探测失败 fail-closed；Claude 系模型分派到 Anthropic Messages provider）、`provider-quota/`（余额/额度状态 + `/quota`；适配器含 OpenRouter/DeepSeek/ChatAnywhere/智谱/OpenCode Go，Go 的限额窗口重置时间跟随命中的限额窗口）、`run-timer/`（会话/任务/回合计时 widget）、`loop/`（`/loop` 固定间隔循环 + 每天定时循环 + 每日窗口间隔循环（v1.2.0）+ 一次性提醒 + `--bg` 后台 agent 模式（v1.3.0：前台 followUp 送达，或拉起可恢复的子 `pi --mode json -p` 进程，其会话 id 会被捕获、可用 `pi --session <id>` 恢复；见 `runner.ts`），followUp 送达 + 会话条目快照持久化，agent 工具 `loop_create/list/delete`）、`goal/`（`/goal` 会话目标循环——agent 跨回合自动推进，直至独立 LLM 评估器判定条件达成）、`opencode-bridge/`（拉起/复用本地 HTTP CONNECT → SOCKS5 桥 helper（`opencode-bridge-helper.mjs`，零依赖独立进程），使 Pi 的 `httpProxy` 能经由本地 SOCKS5（v2rayN）转发；`session_start` 先探测 `127.0.0.1:<port>`，多 Pi/subagent 实例共享同一桥，detached + unref 派生（Pi 不持有子进程资源），扩展**绝不自动改** settings.json——`/opencode-bridge-sync [port]` 命令人工确认后仅增/删 `httpProxy` 字段（其余配置不动），写前备份原文到 `settings.json.bak-opencode-bridge-<时间戳>`，端口可跟参或交互询问并持久化到 settings.json 同目录 `opencode-bridge.json`（优先级 参数 > 环境变量 > 配置文件 > 默认值），改端口后指纹确认停旧桥、起新桥、httpProxy 联动（一次确认，fail-closed），settings/端口配置读写经 `ProxySyncDeps` 注入（plan/apply 两阶段，防竞态），`/opencode-bridge-restore` 从备份列表选择恢复 settings.json（人工确认；恢复前先把当前配置再备份一份，保证可撤销），`/opencode-bridge` 状态命令，环境变量 `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT`；helper 可在 socket 错误/ECONNRESET 下存活，端口被占用时以 0 退出）、`deep-init/`（`/deep-init` 深度初始化——提示词驱动复刻 init-deep 四阶段：参数解析 + 已有 AGENTS.md 预检 + `--create-new` 二次确认门控，下发提示词由主 agent 用 read/bash/edit/write 执行发现/评分/生成/复核；v1.1.0 起 Discovery 按规模并行派 subagent 探索并汇总）、`human-notify/`（人工介入 Windows Toast——`ui_prompt_start` 审批/输入等待与 `agent_settled` 完全结束时通知，正文按触发类型差异化：均带一句话摘要（审批/结束取最新 assistant 尾部文本，等人工具优先取 args 中的问题文本），标题不变；用户取消回合（Esc / Ctrl+C）后不弹完成 Toast（照抄 goal 的取消标记模式：turn_end/agent_end 记录 ctx.signal?.aborted，agent_start 重置，settle 在 fire 前守卫、不消耗防抖窗口）；内联 WinRT PowerShell 零依赖，detached + unref 派生，Linux / macOS no-op，`PI_HUMAN_NOTIFY=0` 一键关闭）。
@@ -46,7 +46,7 @@ PWR（`pwr/`）分层组织，`src/types.ts` 是共享契约中枢（`RuntimeAda
 
 **生命周期：** 无 init/onLoad 钩子。入口 `index.ts` 在加载时注册命令/钩子；`session_start` 动态 import `runtime/` + `runner/`，并从 `ctx.sessionManager` 水合持久化条目（`pwr-approval-v1`、`pi-workflow-run-v1`）。缺 runner ⇒ `AGENT_RUNNER_UNAVAILABLE`——绝不隐式回退。持久化仅元数据；脚本源码/args 永不写盘。
 
-**已知怪癖：** pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域处理）；`runtime.shutdown()` 从未接线（无 `session_shutdown` 钩子）；engine↔runner 相互引用；上限值在 `src/types.ts` / `engine/spec.ts` / `runtime/types.ts` 三处重复；`engine/validate-tool.ts` 的 `runWorkflowValidate` 仅被测试消费。
+**已知怪癖：** pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域处理）；engine↔runner 相互引用；上限值在 `src/types.ts` / `engine/spec.ts` / `runtime/types.ts` 三处重复；`engine/validate-tool.ts` 的 `runWorkflowValidate` 仅被测试消费。
 
 ## 关键目录
 
@@ -140,7 +140,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 
 ## 重要文件
 
-- `pwr/index.ts` — 扩展入口；`export default pwrExtension(pi: ExtensionAPI)`；命令（`/workflow`、`/pwr-model`、`/workflow-delete`、动态 `/workflow:<name>`）、钩子（`input`、`before_agent_start`、`session_start`、`model_select`、`tool_call`、`tool_result`）、工具经 `registerPwrTools`（`workflow_validate`、`workflow_start`、`workflow_control`、`workflow_save`）、批准卡、entry 渲染器、runner 注入。
+- `pwr/index.ts` — 扩展入口；`export default pwrExtension(pi: ExtensionAPI)`；命令（`/workflow`、`/pwr-model`、`/workflow-delete`、动态 `/workflow:<name>`）、钩子（`input`、`before_agent_start`、`session_start`、`session_shutdown`、`model_select`、`tool_call`、`tool_result`）、工具经 `registerPwrTools`（`workflow_validate`、`workflow_start`、`workflow_control`、`workflow_save`）、批准卡、entry 渲染器、runner 注入。
 - `pwr/src/types.ts` — 共享契约中枢：跨层接口 + 消息/条目常量（`pi-workflow-run-v1`、`pwr-approval-v1`、`pwr-generation-request`、`pwr-workflow-result`）、上限（`AGENT_LIMIT=1000`、`CONCURRENCY_MAX=128`、`CONCURRENCY_DEFAULT=4`、`MAX_SCRIPT_SIZE=256*1024`、`MAX_FINAL_SUMMARY_SIZE=8*1024`）。
 - `pwr/engine/spec.ts` — DSL 唯一事实来源（白名单、限制、钳制、脚本版本 1.1.2）。
 - `pwr/DELIVERY.md` — 权威架构/安全文档 + 版本历史（v2.0.0 → v2.4.0，JHL 工单映射 JHL-10..18）。注：含损坏痕迹（行首字符丢失、重复标题）。
@@ -165,6 +165,6 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
 D
-- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 215；run-timer 47；loop 169；goal 44；provider-quota 15；opencode-bridge 108；chatanywhere-provider 32；deep-init 32；human-notify 37。
+- **数量（grep 实测）：** pwr 406 个测试，分布在 34 个 `*.test.ts`（test/ 101、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 215；run-timer 47；loop 169；goal 44；provider-quota 15；opencode-bridge 108；chatanywhere-provider 32；deep-init 32；human-notify 37。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。
