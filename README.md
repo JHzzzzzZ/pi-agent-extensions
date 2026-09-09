@@ -14,7 +14,7 @@
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 44 个 |
 | [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 32 个（node:test） |
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy + 端口自定义自动迁移，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 108 个 |
-| [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端（Linux / macOS no-op） | 18 个 |
+| [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 
 ## 安装
 
@@ -342,14 +342,14 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 
 ## human-notify
 
-人工介入通知：需要你回到终端时发送一条 Windows Toast——等审批/输入时（`ui_prompt_start`，标题“Pi 等待你确认”）、等人工具启动时（`tool_execution_start` 且工具名在 `WAITING_TOOL_NAMES` 名单，首批只有 `plan_mode_question`；宿主内置审批/提问不走 `ui_prompt_start`，只能按工具名特判）与 agent 完全结束时（`agent_settled`，标题“Pi 任务完成”）。正文按触发类型差异化：均带一句话摘要（审批/结束取最新 assistant 尾部文本，等人工具优先取 args 中的问题文本）；标题不变。只在 Windows 生效，Linux / macOS 直接 no-op（后续支持）。
+人工介入通知：需要你回到终端时发送一条 Windows Toast——等审批/输入时（`ui_prompt_start`，标题“Pi 等待你确认”）、等人工具启动时（`tool_execution_start` 且工具名在 `WAITING_TOOL_NAMES` 名单，首批只有 `plan_mode_question`；宿主内置审批/提问不走 `ui_prompt_start`，只能按工具名特判）与 agent 完全结束时（`agent_settled`，标题“Pi 任务完成”）。正文按触发类型差异化：均带一句话摘要（审批/结束取最新 assistant 尾部文本，等人工具优先取 args 中的问题文本）；标题不变。用户按 Esc / Ctrl+C 中断回合后，其后的 `agent_settled` 不再发完成 Toast（人都走了不喊人回来看；照抄 goal 的取消标记模式，审批/等人工具 Toast 不受影响）。只在 Windows 生效，Linux / macOS 直接 no-op（后续支持）。
 
 - **零依赖原生通道** — 内联 WinRT PowerShell（ToastNotificationManager + XmlDocument），`child_process.spawn` detached + unref 派生，不阻塞会话、不持有会话资源；发送失败静默吞掉，绝不破坏会话
 - **文案安全** — 差异化文案：审批/输入→“收到确认请求，请回到终端处理：<assistant 尾部摘要>”；等人工具→args 中用户可读的问题文本（取不到回退 assistant 尾部，再取不到回退静态模板）；结束→“本轮结论：<assistant 尾部摘要>”。摘要先截到 80 码点、正文整体再截到 120 码点并压单行，不透传工具原始输出与密钥；全局 5s 防抖避免审批 + settle 连发刷屏
 - **一键关闭** — `PI_HUMAN_NOTIFY=0` 关闭全部通知
 
 ```bash
-node --experimental-strip-types --test human-notify/index.test.ts   # 32 个测试
+node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测试
 ```
 
 ---

@@ -47,9 +47,14 @@
 
 ## 取消抑制（待排期）
 
-- [ ] 人类主动取消的对话不弹框
+- [x] 人类主动取消的对话不弹框
 
   用户按 Esc / Ctrl+C 中断当前回合后，其后的 `agent_settled` 不得再发“任务完成”Toast（人都走了还喊人回来看，纯打扰）。
-  - [ ] 信号沿用 goal 的现成模式：`turn_end` / `agent_end` 时记录 `ctx.signal?.aborted`，`agent_settled` 触发前检查该标记。
-  - [ ] 被抑制的事件不得消耗防抖窗口（与非名单工具不占窗口的既有语义一致）；已发出的审批 Toast 不撤回（发了收不回），取消后不再补发。
-  - [ ] 单测：abort 后 settle 零 spawn；正常完成仍照常通知。
+  - [x] 信号沿用 goal 的现成模式：`turn_end` / `agent_end` 时记录 `ctx.signal?.aborted`，`agent_settled` 触发前检查该标记。
+  - [x] 被抑制的事件不得消耗防抖窗口（与非名单工具不占窗口的既有语义一致）；已发出的审批 Toast 不撤回（发了收不回），取消后不再补发。
+  - [x] 单测：abort 后 settle 零 spawn；正常完成仍照常通知。
+
+  交付备注（feat/human-notify-cancel-suppress → dev-laptop，根 2.13.1）：
+  - `userInterrupted` 标记：`agent_start` 重置（照抄 goal/index.ts 模式），`turn_end` / `agent_end` 记录 `ctx.signal?.aborted`（防御式可选链，宿主缺字段视为未取消）；`agent_settled` 处理器开头守卫，在 `fire` 之前返回——不消耗 5s 防抖窗口。
+  - 抑制仅作用于 done 通道；审批 / 等人工具通道零改动。
+  - 单测 32 → 37（turn_end abort / agent_end abort / 正常完成不误伤 / 抑制不占防抖窗口 / agent_start 重置标记）+ strict `tsc --noEmit` 0 错误；fake 补充 `agent_start` / `turn_end` / `agent_end` 触发器与 `{ signal: { aborted } }` ctx 形态。
