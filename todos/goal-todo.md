@@ -1,2 +1,2 @@
 - [x] 根 README 为每个插件增加效果示意图
-- [ ] 修复 opencode go 评估器请求缺少会话关键词导致的连续失败：评估器调用 Console Go 时报 400 `MissingSessionID`（"Request is missing x-opencode-session and cannot be routed efficiently"，见 https://opencode.ai/docs/go/#where-can-i-use-it），导致 goal 被暂停（"评估器连续 3 次失败"）；需让评估器请求携带 opencode go 要求的会话标识（x-opencode-session 等价关键词）（processing）
+- [x] 修复 opencode go 评估器请求缺少会话关键词导致的连续失败：评估器调用 Console Go 时报 400 `MissingSessionID`（"Request is missing x-opencode-session and cannot be routed efficiently"，见 https://opencode.ai/docs/go/#where-can-i-use-it），导致 goal 被暂停（"评估器连续 3 次失败"）；需让评估器请求携带 opencode go 要求的会话标识（x-opencode-session 等价关键词）
