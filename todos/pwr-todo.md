@@ -4,6 +4,6 @@
 - [ ] pwr 的 TUI 与 pi-agent 同步，代码层级对齐
 
   pwr 自带无宿主 TUI 层（`src/ui/`：`MemoryRunStore` / `views.ts` / 批准卡 / entry 渲染器 / widget-status），只有 `renderer.ts` 直接碰宿主 `pi-tui`（`Box`/`Text`）；宿主侧一改渲染或主题契约，pwr 的显示就可能悄悄跑偏。对照宿主 pi-agent/pi-tui 的实现逐项对齐，差异只留 PWR 特有语义。
-  - [ ] 建对照矩阵：pwr 侧（`src/ui/*` + 快捷键注册表 `keybindings.ts`）逐项对应到 pi-tui/host 侧版本与用法，矩阵落盘（`pwr/DELIVERY.md` 小节或 AGENTS.md）。
+  - [x] 建对照矩阵：pwr 侧（`src/ui/*` + 快捷键注册表 `keybindings.ts`）逐项对应到 pi-tui/host 侧版本与用法，矩阵落盘（pwr/DELIVERY.md 小节或 AGENTS.md）。（完成 2026-09-10 @ feat/pwr-tui-sync-matrix：落盘 `pwr/docs/tui-sync.md`——沿 agent-team/docs/tui-sync.md 先例选独立文件而非 DELIVERY 小节（DELIVERY 为受损的版本历史文档，矩阵需要独立复核生命周期）；含文件映射/对齐维度/行动项 A1-A5（A1 按键匹配换 matchesKey 有 kitty 协议正确性风险，A2 text.ts 换宿主 truncateToWidth/wrapTextWithAnsi 删自写轮子）/宿主升级复核流程，基线 pi-tui 0.85.1）
   - [ ] 对齐粒度到代码层：`Box`/`Text` 用法、主题取色（`theme.fg`）、widget/status 写入契约、entry 渲染器形态、快捷键注册方式；宿主已有现成组件的不自造轮子。
   - [ ] 约束不变：`@earendil-works/pi-tui` 只作 devDependencies（宿主运行时解析）；测试仍用结构 fake（`as never`），永不实例化真实 pi-tui；每次宿主升级即复核矩阵。

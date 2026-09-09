@@ -9,6 +9,7 @@
 ## 文件地图
 
 - `engine/spec.ts` — DSL 唯一事实来源（白名单、上限 128 并发 / 1000 agent / 100k 循环 / 256KB 脚本、SCRIPT_VERSION）。**改 DSL 语义必看这里。**
+- `docs/tui-sync.md` — TUI ↔ 宿主对照矩阵（宿主升级必复核）。
 - `engine/` — vendor/acorn.mjs（内置解析器，勿改）→ parser → validator → interpreter（树遍历，无 vm/eval）→ concurrency。
 - `runner/pi.ts` — 子 `pi --mode json -p --no-session` 契约；SIGTERM → 5s 后 SIGKILL。改进程契约必看。
 - `runner/discover.ts` — .md agent 发现（用户 > 项目 > 内置，trust 门控）。

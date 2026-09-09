@@ -7,6 +7,10 @@
 - 接线 pi 0.85.1 `session_shutdown` 钩子 → `runtime.shutdown()`：/new、/resume、/fork、/clone、exit 时中止在途控制器、非终态 run 标记 cancelled；`RuntimeAdapter` 增加可选 `shutdown?()`/`revive?()` 契约。
 - 新增 `runtime.revive()`：runtime 是模块级单例，新会话 session_start 复位 SESSION_SHUTDOWN 闩锁——否则 /new 一次后 start() 永久抛 SESSION_SHUTDOWN。
 
+## TUI 对照矩阵
+
+pwr 侧 TUI 触点与宿主 pi-tui/extension-UI 原语的代码级对照矩阵落盘在 [`docs/tui-sync.md`](docs/tui-sync.md)（文件映射 / 对齐维度 / 行动项 / 宿主升级复核流程）。宿主每升版一次，复核矩阵一次。
+
 ## 本版变更（v2.4.0）
 
 | 模块 | 变更 | 位置 |
