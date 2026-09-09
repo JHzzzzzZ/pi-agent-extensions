@@ -1,2 +1,3 @@
+- [ ] 后台模式（`--bg`）支持模型指定：`/loop` 与 `loop_create` 加可选模型参数（`provider/id` 格式，如 `opencode-go/deepseek-v4-flash`），透传给子 `pi` 进程的 `--model` 参数（`runner.ts` spawn args）；不传时维持现状（pi 默认模型）。前台模式注入当前会话暂不支持指定。对应场景：定时巡检用便宜模型、重要任务用强模型。
 - [x] 根 README 为每个插件增加效果示意图
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞

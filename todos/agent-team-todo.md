@@ -4,7 +4,7 @@
 - [x] view 顶部标题+页签堆叠依旧（第二轮：overlay 加 maxHeight 85% + margin 1 与参考对齐，viewer 打开期间暂停并隐藏下方 widget 亮块）。105 测试 + typecheck 全绿；但用户真机截图实锤依旧堆叠（53s/54s、1m26s/1m27s 标题并存），见第三轮条。
 - [x] view 标题+页签堆叠第三轮（照抄 pi-subagents fleet 壳——options 一字不差 + 标题去 elapsed 静态化 + openViewer 互斥防双 overlay；elapsed 只留下方 widget，viewer 内零每秒文本）。测试补录：viewer-host（真实 TuiMainScreen + scrollback 仿真器，单实例恒 1 组 chrome）、viewer-mutex（接线层互斥回归，旧版双 overlay 快速失败）。109 测试 + typecheck 全绿；等用户真机确认。
 - [ ] 支持与各个 agent 进行动态对话。（验证中：count-duet 团队 1-10 轮流计数已跑通，5 次串行派单；1-1000 逐个派单超预算待分批方案确认）
-- [ ] view 场景下支持用户与各 agent 直接对话：在 viewer 打开时选中某个成员/leader 后可输入消息，把用户输入经 pi.sendMessage 以 followUp/steer 语义注入该成员子进程会话并展示其回复；与“支持与各个 agent 进行动态对话”条共用派单语义，但入口在 view 亮块内（键盘导航 + 输入框）。
+- [ ] view 场景下支持用户与各 agent 直接对话（processing）：viewer 内选中成员/leader 后按 `m` 进入底部单行输入框，Enter 提交；消息按直接派单语义到达——复用 startBackgroundRun（含 model 预检）以消息为 task 发起新后台 run，run 运行中则排队、落定（completed）后链式派出；回复经新 run transcript 展示，报告照常 followUp 送达主会话。架构约束：成员子进程归 leader 派生，cockpit 无通道注入消息，“动态对话”=派单语义。
 - [ ] 将 team 的 view 界面改成左右分栏式（对照 pi-subagents fleet inspector 布局，截图存于 `agent-team/docs/assets/view-split-layout-reference.png`）：左栏成员列表（状态标记 pending/complete/failed + agent id），右栏当前选中成员的运行详情（runId / State / Step / Transcript tail），底部按键提示栏；替代现有顶部页签切换（`buildViewerData` 页签排序随之退役或改造），键盘导航与选中保持按 actor id，同步更新 tui-sync 对照矩阵。
 - [x] 补齐 `view` 视角下的功能，例如停止 agent。（v1.4.0：viewer 内 `D` 停止整个 run——两步确认横幅占正文窗口顶部、帧总高不变，busy 守卫防重复，`stopAndSettle()` 与 team_stop 同语义，settled/未落定/异常分别映射 success/warning/error notice；`r`/`R` 手动刷新绕过指纹门控。停止粒度 = 整个 run，按成员停不可行——成员子进程归 leader 进程管。19 个新测试，全量 166）
 - [x] 根 README 为每个插件增加效果示意图

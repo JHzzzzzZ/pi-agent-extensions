@@ -1,6 +1,8 @@
 # 仓库开发指南
 <!-- PROJECT KNOWLEDGE BASE / Generated: 2026-09-09T03:50:04Z / Commit: 457adcf / Branch: dev-laptop / Mode: update / MaxDepth: 3 -->
 
+> **愿景准绳：[GOAL.md](GOAL.md)**——把派 Agent 建成最好用的 Agent 框架（插件形态，给自己也给别人用；尺子/差异化/里程碑见 GOAL.md）。每个任务收尾时回答 GOAL.md §5 自检问题（这次离愿景更近了什么），并用 wrap-up skill 走收尾门。
+
 ## 项目概览
 
 Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。扩展通过复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目）加载，然后在 Pi 中执行 `/reload` 生效。
