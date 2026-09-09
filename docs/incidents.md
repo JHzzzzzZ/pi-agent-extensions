@@ -49,3 +49,9 @@
 
 - 症状：无界命令（无 timeout 的长测试、交互式命令）阻塞会话。
 - 教训：每次命令显式传 timeout（快速操作 30–60s，npm test 120–300s）；长工作拆有界小步骤。见 AGENTS.md「命令超时（强制）」。
+
+## worktree 内 junction node_modules 被 `git worktree remove` 沿链深删（主干 node_modules 两度受损）
+
+- 症状：worktree 里为省安装用 `mklink /J node_modules` 指回主干 `agent-team/node_modules`；随后 `git worktree remove` 沿 junction **穿透删除**，把主干真实 node_modules 删掉一角（`@earendil-works/pi-ai`、`pi-coding-agent/dist`、`.bin/tsc` 先后消失），`npm test` 大面积文件级红（ERR_MODULE_NOT_FOUND / tsc 不存在）。
+- 根因：递归删除会跟随目录 junction/符号链接到真实目标。view-stop（5fa873b 会话）与 agent-team-reliability（ef439a7 会话）两个 worktree 各犯一次，同一根因两起事故。
+- 教训：① 绝不在 worktree 里 junction 主干 node_modules——需要依赖就在 worktree 内 `npm install`；② 删除目录报 "Filename too long" 时先怀疑沿链接深删，立即停手检查链接目标；③ 恢复手段：主干 `npm install` 重装后全量测试确认。
