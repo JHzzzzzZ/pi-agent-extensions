@@ -145,7 +145,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）。测试中从不实例化真实 pi-tui（结构 fake 以 `as never` 断言）。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 102；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 70；deep-init 32；human-notify 14。
+- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 102；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 70；deep-init 32；human-notify 18。
 - **覆盖缺口：** `chatanywhere-provider` 零测试。全库无 TODO/skip/only 标记。
 - **确定性与封闭性：** 注入固定时钟（`2026-08-05T12:00:00Z`）、临时目录经 `os.tmpdir()` 并清理、无网络。
 - 质量标准见 `pwr/DELIVERY.md`：交付前全套测试绿 + `npm run typecheck` 零错误。
