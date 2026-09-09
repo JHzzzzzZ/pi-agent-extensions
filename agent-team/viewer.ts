@@ -19,7 +19,7 @@
  * the thin host opener.
  */
 
-import { Markdown, truncateToWidth, wrapTextWithAnsi, type Component, type OverlayOptions } from "@earendil-works/pi-tui";
+import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type OverlayOptions } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { type TranscriptEntry } from "./transcript.ts";
 import { VIEWER_HEIGHT_JITTER_ROWS, VIEWER_TICK_MS } from "./types.ts";
@@ -506,10 +506,14 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
     next.follow = true;
   };
 
+  // close 键集对齐 fleet `close: ["escape", "ctrl+c", "q"]`（v0.66.0
+  // `DEFAULT_FLEET_KEYBINDINGS`，fleet.ts:33-34；规格表 §4）。用 matchesKey
+  // 判定（ctrl+c 编码契约 \x03），普通字符不受影响。
+  if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
+    return { type: "close" };
+  }
+
   switch (data) {
-    case "q":
-    case "\x1b":
-      return { type: "close" };
     case KEY_UP:
     case "k":
       next.follow = false;
@@ -775,9 +779,11 @@ function markdownRenderer(): ((text: string, width: number) => string[]) | undef
 /**
  * Overlay geometry for the transcript viewer, copied verbatim from
  * pi-subagents' fleet inspector (`openSubagentFleet` in
- * `pi-subagents/src/tui/fleet.ts`) — that inspector repaints
- * unconditionally every 750ms on the same host family without ghosting,
- * so any deviation here is a ghosting suspect. Do not "improve" it.
+ * `pi-subagents/src/tui/fleet.ts` v0.66.0, line 1440) — that inspector
+ * repaints unconditionally every 750ms on the same host family without
+ * ghosting, so any deviation here is a ghosting suspect. Do not
+ * "improve" it. Spec-table entry: docs/tui-sync.md §4 (locked by
+ * test/tui-sync.test.ts).
  */
 export const VIEWER_OVERLAY_OPTIONS: OverlayOptions = {
   anchor: "center",

@@ -278,9 +278,20 @@ function keyCtx(totalLines: number, actorCount = 2, bodyHeight = 10) {
   return { totalLines, actorCount, bodyHeight };
 }
 
-test("handleViewerKey closes on q and Escape", () => {
+test("handleViewerKey closes on q, Escape and ctrl+c", () => {
+  // close 键集对齐 fleet `close: ["escape", "ctrl+c", "q"]`（v0.66.0
+  // fleet.ts:34，规格表 §4）。ctrl+c 编码契约 \x03（matchesKey 判定）。
   assert.equal(handleViewerKey(initialViewerState(), "q", keyCtx(10)).type, "close");
   assert.equal(handleViewerKey(initialViewerState(), "\x1b", keyCtx(10)).type, "close");
+  assert.equal(handleViewerKey(initialViewerState(), "\x03", keyCtx(10)).type, "close");
+});
+
+test("handleViewerKey 普通字符不关闭（ctrl+c 不被吞也不会误关）", () => {
+  // 与上面互补：非 close 键保持原状态 update，close 判定不会误伤普通字符。
+  for (const ch of ["a", "z", "0", "\t"]) {
+    const r = handleViewerKey(initialViewerState(), ch, keyCtx(10));
+    assert.ok(r.type === "update", `普通字符 ${JSON.stringify(ch)} 应 update 而非 close`);
+  }
 });
 
 test("handleViewerKey scrolls, unfollows on up, and re-follows at the bottom", () => {

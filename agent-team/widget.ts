@@ -3,10 +3,13 @@
  *
  * Renders the coordinator's run snapshot BELOW the editor (placement
  * "belowEditor") as plain `setWidget(key, string[], …)` refreshed on a 1s
- * interval, and makes the block selectable: alt+down/up activates a modal
- * selection, bare arrows move the row cursor, enter opens the transcript
- * viewer on the row's actor, esc (or any other key) leaves selection and —
- * except for esc — passes the key through to the editor untouched.
+ * interval, and makes the block selectable: bare ↓/← (only while the
+ * editor is empty — aligned to fleet-status) and alt+down/up (ungated
+ * second channel) activate a modal selection; ↑/↓/j/k move the row
+ * cursor, enter opens the transcript viewer on the row's actor, esc (or
+ * any other key) leaves selection and — except for esc — passes the key
+ * through to the editor untouched. Repaints skip when the render string
+ * is unchanged (aligned to fleet-status renderKey).
  *
  * Row building and the key reducer are pure and unit-tested; the
  * `RunWidgetController` wires them to the host without a pi-tui component.
@@ -99,28 +102,34 @@ function isActivate(data: string): boolean {
 }
 
 /**
- * Pure key reducer. Not selected: only the activation keys are consumed
- * (everything else reaches the editor untouched). Selected: up/down/enter/
- * esc are consumed; any other key deselects and passes through so typing
- * and ctrl+c keep working in the editor.
+ * Pure key reducer. Not selected: the activation keys are consumed (bare
+ * ↓/← only when `canActivate` — editor empty; alt+↓/↑ always); everything
+ * else reaches the editor untouched. Selected: up/down/j/k/enter/esc are
+ * consumed; any other key deselects and passes through so typing and
+ * ctrl+c keep working in the editor.
  */
 export function handleWidgetKey(
   state: WidgetKeyState,
   data: string,
   rowCount: number,
   rowActors: string[],
+  canActivate = false,
 ): WidgetKeyResult {
   const clamp = (n: number): number => Math.min(Math.max(0, n), Math.max(0, rowCount - 1));
 
   if (!state.selected) {
-    if (rowCount > 0 && isActivate(data)) {
+    // 激活门控对齐 fleet-status（v0.66.0 fleet-status.ts:606-607，规格表
+    // §4）：bare ↓/← 只在编辑器为空（canActivate=true）时激活；alt+↓/↑ 为
+    // 不受门控的第二通道（差异表 §3.3）。
+    const gatedActivate = canActivate && (matchesKey(data, "down") || matchesKey(data, "left"));
+    if (rowCount > 0 && (isActivate(data) || gatedActivate)) {
       return { type: "update", state: { selected: true, cursor: clamp(state.cursor) } };
     }
     return { type: "none" };
   }
 
-  if (matchesKey(data, "up")) return { type: "update", state: { selected: true, cursor: clamp(state.cursor - 1) } };
-  if (matchesKey(data, "down")) return { type: "update", state: { selected: true, cursor: clamp(state.cursor + 1) } };
+  if (matchesKey(data, "up") || matchesKey(data, "k")) return { type: "update", state: { selected: true, cursor: clamp(state.cursor - 1) } };
+  if (matchesKey(data, "down") || matchesKey(data, "j")) return { type: "update", state: { selected: true, cursor: clamp(state.cursor + 1) } };
   if (matchesKey(data, "enter")) {
     return {
       type: "confirm",
@@ -176,6 +185,12 @@ export interface RunWidgetControllerOptions {
   onConfirm: (actor: string) => void;
   /** While true the widget ignores activation (viewer overlay open). */
   gate?: () => boolean;
+  /**
+   * Editor-text provider. Bare ↓/← activate only when the editor is empty
+   * (aligned to fleet-status `getEditorText() === ""`, v0.66.0
+   * fleet-status.ts:607). Absent = degraded: only the alt channel activates.
+   */
+  editorState?: () => { text: string };
   /** Terminal width provider; defaults to process.stdout.columns ?? 80. */
   width?: () => number;
   /** Test seam; defaults to Date.now(). */
@@ -202,6 +217,8 @@ export class RunWidgetController {
   /** True once start() has run (pause/resume never starts a fresh loop). */
   private started = false;
   private removeInput: (() => void) | undefined;
+  /** Render-string fingerprint of the last setWidget (skip identical repaints). */
+  private lastRender: string | null = null;
   private readonly opts: RunWidgetControllerOptions;
   private readonly setWidget: (lines: string[] | undefined) => void;
   private readonly attachInput: ((handler: (data: string) => { consume?: boolean } | undefined) => (() => void) | undefined) | undefined;
@@ -253,10 +270,20 @@ export class RunWidgetController {
       this.timer = setInterval(() => this.refresh(), this.opts.tickMs ?? WIDGET_TICK_MS);
       if (typeof this.timer.unref === "function") this.timer.unref();
     }
+    // 恢复必须强制重绘一帧：上一帧渲染串可能未变，若不清指纹，refresh 会
+    // 跳过 setWidget，亮块将停留在隐藏态（fleet-status 恢复时同样重置 key）。
+    this.lastRender = null;
     this.refresh();
   }
 
-  /** Rebuilds rows and pushes them to the host (one setWidget per tick). */
+  /**
+   * Rebuilds rows and pushes them to the host. Skips setWidget when the
+   * render string is unchanged (aligned to fleet-status renderKey semantics,
+   * v0.66.0 fleet-status.ts:585-591) — static content no longer churns the
+   * host every tick (a ghosting/flicker source). While running the elapsed
+   * label changes every second and naturally rebuilds; a selection toggle
+   * changes the gutter/hint lines and rebuilds too.
+   */
   refresh(): void {
     if (this.paused) return;
     try {
@@ -264,7 +291,11 @@ export class RunWidgetController {
       this.rows = buildWidgetRows(snapshot, this.opts.nowMs?.() ?? Date.now());
       if (this.state.cursor > this.rows.length - 1) this.state.cursor = Math.max(0, this.rows.length - 1);
       const width = this.opts.width?.() ?? process.stdout.columns ?? 80;
-      this.setWidget(renderWidgetView(this.rows, this.state, width, this.opts.styles));
+      const lines = renderWidgetView(this.rows, this.state, width, this.opts.styles);
+      const renderKey = lines.join("\n");
+      if (renderKey === this.lastRender) return;
+      this.lastRender = renderKey;
+      this.setWidget(lines);
     } catch {
       /* widget failures never break the session */
     }
@@ -273,11 +304,15 @@ export class RunWidgetController {
   private onData(data: string): { consume?: boolean } | undefined {
     try {
       if (this.opts.gate?.()) return undefined;
+      // 编辑器为空才允许 bare ↓/← 激活（对齐 fleet-status getEditorText===""）；
+      // 宿主无 editorState 端口时降级为仅 alt 通道（canActivate=false）。
+      const canActivate = this.opts.editorState ? this.opts.editorState().text === "" : false;
       const result = handleWidgetKey(
         this.state,
         data,
         this.rows.length,
         this.rows.map((row) => row.actor),
+        canActivate,
       );
       if (result.type === "none") return undefined;
       this.state = result.state;
