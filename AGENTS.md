@@ -1,4 +1,5 @@
 # 仓库开发指南
+<!-- PROJECT KNOWLEDGE BASE / Generated: 2026-09-09T03:12:29Z / Commit: 56da138 / Branch: dev-laptop / Mode: update / MaxDepth: 3 -->
 
 ## 项目概览
 
@@ -58,7 +59,7 @@ node --test runtime/test/scheduler.test.ts
 
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 43 个测试
-cd agent-team && npm install && npm test                                        # 96 个测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test                                        # 102 个测试（node --test test/*.test.ts）
 node --experimental-strip-types --test run-timer/run-timer.test.ts               # 此目录无 package.json
 node --experimental-strip-types --test goal/index.test.ts                        # 39 个测试，此目录无 package.json
 node --experimental-strip-types --test human-notify/index.test.ts                # 14 个测试，此目录无 package.json
@@ -93,7 +94,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
 - **TUI 约定（卫星扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键（`stream-token-speed`、`provider-quota`、`run-timer`、`agent-team`、`loop`、`goal`）。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
 - 缩进：`pwr/` 用 tab，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/` 用 2 空格。
-- `agent-team/` 细节：团队 = 持久化 Markdown 文件（frontmatter `leader` + `members[]`，含每成员 `provider/model`、`tools`、`worktree`、块标量 `prompt`），位于 `~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`（同名时项目优先）；每次使用时重新扫描（无缓存）。一套代码、两种模式，以环境变量 `PI_AGENT_TEAM_FILE` 区分：leader 模式只注册 `team_dispatch` 工具；cockpit 模式注册 `team_create`/`team_list`/`team_run` 工具、`/team*` 命令、下方可选中亮块（`widget.ts`：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新——宿主包装的 string 渲染是跨构建最稳的路径，组件工厂式逐帧重绘在某 bundle 构建宿主上会产生逐秒追加残影行；选中经 `ctx.ui.onTerminalInput` 特性检测拦截，`PI_AGENT_TEAM_WIDGET=0` 可整体关闭）、entry 渲染器（`agent-team-run-v1`）。`team_run` 默认后台派单（立即返回，报告经 `deliverRunResult` 以 followUp 送达），`wait: true` 保留同步契约；扩展入口接受 `{ spawn }` 供工具级测试（`test/run-tool.test.ts`）。成员/leader 子进程沿用与 pwr runner 相同的子 `pi` JSON 模式（`team-tmp://` prompt 物化，SIGTERM→SIGKILL），自包含（不引 pwr）。结果联合用 `TeamErrorCodes`；上限：每 dispatch 8 任务、4 并发成员、50KB 结果、8KB 摘要。
+- `agent-team/` 细节：团队 = 持久化 Markdown 文件（frontmatter `leader` + `members[]`，含每成员 `provider/model`、`tools`、`worktree`、块标量 `prompt`），位于 `~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`（同名时项目优先）；每次使用时重新扫描（无缓存）。一套代码、两种模式，以环境变量 `PI_AGENT_TEAM_FILE` 区分：leader 模式只注册 `team_dispatch` 工具；cockpit 模式注册 `team_create`/`team_list`/`team_run` 工具、`/team*` 命令、下方可选中亮块（`widget.ts`：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新——宿主包装的 string 渲染是跨构建最稳的路径，组件工厂式逐帧重绘在某 bundle 构建宿主上会产生逐秒追加残影行；选中经 `ctx.ui.onTerminalInput` 特性检测拦截，`PI_AGENT_TEAM_WIDGET=0` 可整体关闭）、entry 渲染器（`agent-team-run-v1`）。`team_run` 默认后台派单（立即返回，报告经 `deliverRunResult` 以 followUp 送达），`wait: true` 保留同步契约；查看器（`viewer.ts`）定时刷新经数据指纹门控（`elapsed` 空转不重绘）、选中按 actor id 保持、帧高 ±1 行消抖、`buildViewerData` 页签排序固定（防标题+页签重影堆叠）；扩展入口接受 `{ spawn }` 供工具级测试（`test/run-tool.test.ts`）。成员/leader 子进程沿用与 pwr runner 相同的子 `pi` JSON 模式（`team-tmp://` prompt 物化，SIGTERM→SIGKILL），自包含（不引 pwr）。结果联合用 `TeamErrorCodes`；上限：每 dispatch 8 任务、4 并发成员、50KB 结果、8KB 摘要。
 
 ## 编码规范（Clean Code）
 
@@ -144,7 +145,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）。测试中从不实例化真实 pi-tui（结构 fake 以 `as never` 断言）。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 96；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 70；deep-init 32；human-notify 14。
+- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 102；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 70；deep-init 32；human-notify 14。
 - **覆盖缺口：** `chatanywhere-provider` 零测试。全库无 TODO/skip/only 标记。
 - **确定性与封闭性：** 注入固定时钟（`2026-08-05T12:00:00Z`）、临时目录经 `os.tmpdir()` 并清理、无网络。
 - 质量标准见 `pwr/DELIVERY.md`：交付前全套测试绿 + `npm run typecheck` 零错误。
