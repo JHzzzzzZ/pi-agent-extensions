@@ -6,24 +6,30 @@
  * 档位”归并去重为可注册模型列表。
  *
  * 归并规则（与 catalog.ts MODEL_LINES 配合）：
- *  1. classifyId：最长前缀命中家族线；版本 = 前缀内版本 + 后缀版本（dot/dash），
- *     尾部日期（YYYY-MM-DD | 8 位 | 4 位）剥除，剩余档位词整词匹配 tiers，
- *     仅 "-ca" 允许作为渠道后缀。
- *  2. 同种（同线同档位）取最新：版本 → 别名胜快照 → 日期新 → 标准渠道 → id。
- *  3. 每条线 ≤ cap 档：标准渠道 → 版本新 → 价格高 → id；未知档位不占位。
- *  4. 元数据解析：命中目录定义 → 直接用；同种同版本无此 id → 借同版本定义并
- *     在名称上标注日期/渠道；都没有 → 兜底注册（“（未定价）”，接口窗口值优先，
+ *  1. 准入过滤：非 chat 模型（embedding/tts/whisper/生图/transcribe/斜杠重复 id，
+ *     见 catalog.ts NON_CHAT_ID_PATTERNS）与旧代（家族版本低于 GENERATION_FLOORS，
+ *     如 GPT-4.x/o3/gemini-2.x）直接不参与注册——每家族仅保留最新代。
+ *  2. classifyId：最长前缀命中家族线；版本 = 前缀内版本 + 后缀版本（dot/dash），
+ *     尾部日期（YYYY-MM-DD | 8 位 | 4 位）与 -thinking/-nothinking 变体尾缀
+ *     （可交替出现）剥除，剩余档位词整词匹配 tiers，仅 "-ca" 允许作为渠道后缀。
+ *  3. 同种（同线同档位）取最新：版本 → 别名胜快照 → 日期新 → 标准渠道 → 变体
+ *     （thinking > plain > nothinking）→ id。未知模型按去变体尾缀的基名去重、
+ *     thinking 优先——同系列同版本最多注册 1 个。
+ *  4. 每条线 ≤ cap 档：标准渠道 → 版本新 → 价格高 → id；未知档位不占位。
+ *  5. 元数据解析：命中目录定义 → 直接用；同种同版本无此 id → 借同版本定义并
+ *     在名称上标注日期/(CA)/变体后缀；都没有 → 兜底注册（“（未定价）”，接口窗口值优先，
  *     其余默认）。绝不借用跨版本定价（避免给新模型编造价格）。
  *
  * 探测失败（网络/非 2xx/解析失败）一律 {ok:false} —— fail-closed，两个
  * provider 都注册空 models，绝不回退到静态目录。
  *
- * 注：真实的 GET /models 响应形状（data 数组 + context_window/max_tokens 等
- * 可选字段）未能在线验证（无可用密钥，401），按 OpenAI 兼容规范解析并做防御性
- * 读取；camelCase 字段亦接受。
+ * 注：GET /models 响应形状（data 数组 + context_window/max_tokens 等可选字段）
+ * 按 OpenAI 兼容规范解析并做防御性读取（camelCase 亦接受）；2026-09-09 实测
+ * 分组切换后返回 146 个模型、无窗口字段。
  */
 import type { ModelDef, ModelLine } from "./catalog.ts";
-import { MODEL_DEFS, MODEL_LINES } from "./catalog.ts";
+import { GENERATION_FLOORS, isNonChatId, MODEL_DEFS, MODEL_LINES } from "./catalog.ts";
+import type { GenerationFloor } from "./catalog.ts";
 
 export const PROBE_TIMEOUT_MS = 10_000;
 /** 未知模型（目录外）的兜底规格 */
@@ -123,9 +129,17 @@ export interface ParsedId {
 	version: number[];
 	date: string | null; // YYYY-MM-DD | 8 位 | 4 位，均原样保留
 	channel: "std" | "ca";
+	variant: "thinking" | "nothinking" | null; // 渠道商的思考模式变体（如 claude-haiku-4-5-20251001-thinking）
 }
 
 export type ClassifyResult = { ok: true; parsed: ParsedId } | { ok: false; lineName: string | null };
+
+const VARIANT_TAIL = /-(thinking|nothinking)$/;
+
+export const variantOf = (id: string): "thinking" | "nothinking" | null => {
+	const m = VARIANT_TAIL.exec(id);
+	return m ? (m[1] as "thinking" | "nothinking") : null;
+};
 
 /** 前缀内版本：如 "gpt-5"→[5]、"qwen3.5"→[3,5]、"gpt-4o"→[] */
 function prefixVersion(prefix: string): number[] {
@@ -153,6 +167,22 @@ export function classifyId(id: string, lines: readonly ModelLine[]): ClassifyRes
 
 	let version = prefixVersion(line.prefix);
 	let rest = id.slice(line.prefix.length);
+	// 变体尾缀（-thinking/-nothinking）与日期可交替出现（…-thinking-2507 或 …-20251101-thinking），循环剥离直到无标记
+	let variant: "thinking" | "nothinking" | null = null;
+	let date: string | null = null;
+	for (let i = 0; i < 2; i++) {
+		const v = VARIANT_TAIL.exec(rest);
+		if (v) {
+			variant = v[1] as "thinking" | "nothinking";
+			rest = rest.slice(0, rest.length - v[0].length);
+			continue;
+		}
+		const d = popDate(rest);
+		if (d.date !== null) {
+			date = d.date;
+			rest = d.rest;
+		}
+	}
 	if (line.version === "dot") {
 		const m = /^\.(\d+(?:\.\d+)*)(.*)$/.exec(rest);
 		if (m) {
@@ -160,8 +190,6 @@ export function classifyId(id: string, lines: readonly ModelLine[]): ClassifyRes
 			rest = m[2];
 		}
 	}
-	let date: string | null = null;
-	({ rest, date } = popDate(rest));
 	if (line.version === "dash") {
 		const m = /^-(\d+(?:-\d+)*)(.*)$/.exec(rest);
 		if (m) {
@@ -191,7 +219,7 @@ export function classifyId(id: string, lines: readonly ModelLine[]): ClassifyRes
 		}
 	}
 	if (tier === null) return { ok: false, lineName: line.name };
-	return { ok: true, parsed: { line: line.name, tier, version, date, channel } };
+	return { ok: true, parsed: { line: line.name, tier, version, date, channel, variant } };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +255,11 @@ function compareVersion(a: readonly number[], b: readonly number[]): number {
 	return 0;
 }
 
-/** a 是否优于 b（同种内选最新） */
+/** a 是否优于 b（同种内选最新；变体优先级 thinking > plain > nothinking） */
+const VARIANT_RANK = { thinking: 2, nothinking: 0 } as const;
+
+const variantRank = (v: "thinking" | "nothinking" | null): number => (v === null ? 1 : VARIANT_RANK[v]);
+
 function isNewer(a: KindMember, b: KindMember): boolean {
 	const v = compareVersion(a.parsed.version, b.parsed.version);
 	if (v !== 0) return v > 0;
@@ -236,7 +268,20 @@ function isNewer(a: KindMember, b: KindMember): boolean {
 	if (b.parsed.date === null && a.parsed.date !== null) return false;
 	if (a.parsed.date !== null && b.parsed.date !== null && a.parsed.date !== b.parsed.date) return a.parsed.date > b.parsed.date;
 	if (a.parsed.channel !== b.parsed.channel) return a.parsed.channel === "std";
+	const ar = variantRank(a.parsed.variant);
+	const br = variantRank(b.parsed.variant);
+	if (ar !== br) return ar > br;
 	return a.id < b.id;
+}
+
+/** 家族版本低于代际下限 → 旧代整代删除（未知模型同样适用） */
+export function belowGenerationFloor(id: string, floors: readonly GenerationFloor[] = GENERATION_FLOORS): boolean {
+	for (const f of floors) {
+		const m = f.versionRe.exec(id);
+		if (m) return compareVersion(m[1].split(".").map(Number), f.min) < 0;
+		if (f.bare && f.bare.test(id)) return true; // 家族名下无版本号的命名（deepseek-chat）也按旧代处理
+	}
+	return false;
 }
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
@@ -254,12 +299,13 @@ function unknownSpec(probed: ProbedModel): ProviderModelSpec {
 	};
 }
 
-/** 由目录定义构造 spec；名称按需补日期/渠道标注（仅当定义 id ≠ 命中 id 时） */
-function specFromDef(def: ModelDef, winnerId: string, date: string | null, channel: "std" | "ca"): ProviderModelSpec {
+/** 由目录定义构造 spec；名称按需补日期/渠道/变体标注（仅当定义 id ≠ 命中 id 时） */
+function specFromDef(def: ModelDef, winnerId: string, date: string | null, channel: "std" | "ca", variant: "thinking" | "nothinking" | null): ProviderModelSpec {
 	let name = def.name;
 	if (def.id !== winnerId) {
 		if (date !== null && !name.includes(date)) name += ` (${date})`;
 		if (channel === "ca" && !name.includes("CA")) name += " (CA)";
+		if (variant !== null) name += ` (${variant})`;
 	}
 	return {
 		id: winnerId,
@@ -301,8 +347,10 @@ export function collapse(probed: readonly ProbedModel[], defs: readonly ModelDef
 	}
 
 	const kinds = new Map<string, KindBucket>();
-	const unknowns = new Map<string | null, ProbedModel[]>();
+	const unknowns = new Map<string | null, Map<string, ProbedModel>>();
 	for (const p of probed) {
+		// 非 chat 模型（embedding/tts/生图等）与旧代（低于代际下限）直接不参与注册
+		if (isNonChatId(p.id) || belowGenerationFloor(p.id)) continue;
 		const r = classifyId(p.id, lines);
 		if (r.ok) {
 			const key = `${r.parsed.line}|${r.parsed.tier}`;
@@ -313,12 +361,19 @@ export function collapse(probed: readonly ProbedModel[], defs: readonly ModelDef
 			}
 			bucket.members.push({ id: p.id, probed: p, parsed: r.parsed });
 		} else {
-			// 未知模型按（所属线/null=其他）归桶，不参与档位占位
-			const list = unknowns.get(r.lineName ?? null);
-			if (list) list.push(p);
-			else unknowns.set(r.lineName ?? null, [p]);
+			// 未知模型按（所属线/null=其他）归桶；同系列去变体尾缀去重，thinking 优先
+			const base = p.id.replace(/-(thinking|nothinking)$/, "");
+			let bucket = unknowns.get(r.lineName ?? null);
+			if (!bucket) {
+				bucket = new Map();
+				unknowns.set(r.lineName ?? null, bucket);
+			}
+			const exist = bucket.get(base);
+			if (!exist || variantRank(variantOf(p.id)) > variantRank(variantOf(exist.id))) bucket.set(base, p);
 		}
-	}
+		}
+	const unknownList = (key: string | null): ProbedModel[] =>
+		[...(unknowns.get(key) ?? new Map()).values()].sort((a, b) => (a.id < b.id ? -1 : 1));
 
 	const openai: ProviderModelSpec[] = [];
 	const claude: ProviderModelSpec[] = [];
@@ -335,7 +390,7 @@ export function collapse(probed: readonly ProbedModel[], defs: readonly ModelDef
 		const winner = bucket.members.reduce((a, b) => (isNewer(a, b) ? a : b));
 		const def = defById.get(winner.id);
 		const spec = def
-			? specFromDef(def, winner.id, winner.parsed.date, winner.parsed.channel)
+			? specFromDef(def, winner.id, winner.parsed.date, winner.parsed.channel, winner.parsed.variant)
 			: resolveFallback(winner, kindDefs.get(bucket.key) ?? []) ?? unknownSpec(winner.probed);
 		const list = lineWinners.get(bucket.line);
 		const entry = { member: winner, spec, version: winner.parsed.version };
@@ -356,11 +411,10 @@ export function collapse(probed: readonly ProbedModel[], defs: readonly ModelDef
 		});
 		for (const w of winners.slice(0, line.cap)) pushSpec(w.spec);
 		// 未知档位（探测到的线内新档）不占位，按 id 附在线尾
-		const lineUnknowns = unknowns.get(line.name) ?? [];
-		for (const p of [...lineUnknowns].sort((a, b) => (a.id < b.id ? -1 : 1))) pushSpec(unknownSpec(p));
+		for (const p of unknownList(line.name)) pushSpec(unknownSpec(p));
 	}
 	// 无前缀的模型归“其他”（最后，按 id 排序）
-	for (const p of [...(unknowns.get(null) ?? [])].sort((a, b) => (a.id < b.id ? -1 : 1))) pushSpec(unknownSpec(p));
+	for (const p of unknownList(null)) pushSpec(unknownSpec(p));
 	return { openai, claude };
 }
 
@@ -369,7 +423,7 @@ function resolveFallback(winner: KindMember, candidates: { def: ModelDef; parsed
 	const sameVersion = candidates.filter((c) => compareVersion(c.parsed.version, winner.parsed.version) === 0);
 	if (sameVersion.length === 0) return null;
 	const best = sameVersion.find((c) => c.parsed.channel === winner.parsed.channel) ?? sameVersion.find((c) => c.parsed.date === null) ?? sameVersion[0];
-	return specFromDef(best.def, winner.id, winner.parsed.date, winner.parsed.channel);
+	return specFromDef(best.def, winner.id, winner.parsed.date, winner.parsed.channel, winner.parsed.variant);
 }
 
 /** 探测结果 → 注册数据；探测失败 fail-closed：两个 provider 均空 */
