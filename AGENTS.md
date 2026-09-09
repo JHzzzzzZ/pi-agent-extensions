@@ -68,6 +68,8 @@ cd opencode-bridge && npm install && npm test                                   
 
 无构建步骤、无 linter、无 formatter。
 
+**命令超时（强制）：** 每次执行命令都必须显式传入超时（bash 工具的 `timeout` 参数），防止挂起或意外死循环阻塞会话——快速 shell 操作（ls/grep/git）约 30–60 秒，`npm test`/`npm run typecheck` 约 120–300 秒。不允许不带超时的命令；长时间工作应拆成多个有界小步骤，而非一次无上限调用。
+
 ## 代码约定与常见模式
 
 tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm run typecheck` 失败：
@@ -90,6 +92,20 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **TUI 约定（卫星扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键（`stream-token-speed`、`provider-quota`、`run-timer`、`agent-team`、`loop`、`goal`）。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
 - 缩进：`pwr/` 用 tab，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/` 用 2 空格。
 - `agent-team/` 细节：团队 = 持久化 Markdown 文件（frontmatter `leader` + `members[]`，含每成员 `provider/model`、`tools`、`worktree`、块标量 `prompt`），位于 `~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`（同名时项目优先）；每次使用时重新扫描（无缓存）。一套代码、两种模式，以环境变量 `PI_AGENT_TEAM_FILE` 区分：leader 模式只注册 `team_dispatch` 工具；cockpit 模式注册 `team_create`/`team_list`/`team_run` 工具、`/team*` 命令、widget、entry 渲染器（`agent-team-run-v1`）。成员/leader 子进程沿用与 pwr runner 相同的子 `pi` JSON 模式（`team-tmp://` prompt 物化，SIGTERM→SIGKILL），自包含（不引 pwr）。结果联合用 `TeamErrorCodes`；上限：每 dispatch 8 任务、4 并发成员、50KB 结果、8KB 摘要。
+
+## 编码规范（Clean Code）
+
+以上章节描述现状；本节规定新代码怎么写。倾向简单——清晰的代码不是炫技的代码，没有代码胜过投机性的代码。
+
+- **命名表意：** 可读、可搜索、不用编码后缀（`strName`、`iCount`）或噪音词（`Data`、`Info`、`Manager`）。复用仓库领域词汇（`run`、`dispatch`、`approval`、`digest`、`entry`）；同一模块内同一操作只用一个动词——不要 `fetch`/`get`/`load` 混用。
+- **函数只做一件事：** 小（目标 < 40 行）、每函数单一抽象层级、早返回代替深嵌套（`if` 嵌套 ≥ 3 层 ⇒ 重构）。有副作用就写进名字（`saveApproval` 而非 `checkApproval`）。
+- **参数要少：** 位置参数 ≤ 3 个，超出则用 deps/options 对象（对齐 `FlowDeps`/`ToolDeps`）。禁用选择行为的布尔标志参数——拆分函数或改传字符串字面量联合。
+- **类型优于真值判断：** 用带显式标签（`ok`/`kind`）的判别联合，不用可选字段堆砌；`unknown` + 收窄，禁止 `any`；最小导出面——出现第二个调用方之前保持不导出。
+- **错误遵循所在层的 result union：** 新失败模式必须在所属层的 `errors.ts` 中登记错误码（不用临时字符串码），消息用静态模板——不插值用户输入或密钥。
+- **注释解释 why 而非 what：** 删掉代码已表达的内容；文件头保留 JHL 工单号（见上方约定）；注释/文档用中文，标识符用英文。
+- **不过度设计（YAGNI）：** 不做只有单一调用方的配置项、只有一个实现的策略/插件层、只有一个具体类型的接口——除非它是测试需要 fake 的进程边界（此时沿用现有 deps/port 模式作接口）。重复好过错误的抽象；第三次出现才提取（rule of three）。
+- **通过现有接缝扩展：** 新增能力的方式是加一个模块并在 `index.ts` 接线，或扩展 deps/port 对象——而不是把标志参数穿透深层。新上限/常量进所属层的规范文件（`engine/spec.ts`、`src/types.ts`），调用点不写魔法数。这就是全部扩展方式：今天的接缝足够应对明天的需求；有具体需求到来时再回来改。
+- **让代码更好而不是更大：** 每次改动保持全量测试 + `npm run typecheck` 绿；死代码与"以防万一"分支直接删除，不注释保留。
 
 ## 交付与文档同步（强制）
 
