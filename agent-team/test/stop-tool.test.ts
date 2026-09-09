@@ -78,13 +78,13 @@ type Tool = (params: Record<string, unknown>) => Promise<{
 }>;
 
 async function setup(): Promise<{
-  isolateRunsDir();
   pi: ReturnType<typeof fakePi>;
   spawn: FakeSpawnHandle;
   run: Tool;
   stop: Tool;
   cleanup: () => void;
 }> {
+  isolateRunsDir();
   resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-stoptool-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
