@@ -100,17 +100,97 @@ function fireSessionStart(fake: ReturnType<typeof makeFakePi>, ctx: unknown = {}
   return fake.handlers.get("session_start")!({ type: "session_start" }, ctx);
 }
 
+function fireAgentStart(fake: ReturnType<typeof makeFakePi>, ctx: unknown = {}) {
+  return fake.handlers.get("agent_start")!({ type: "agent_start" }, ctx);
+}
+
+function fireTurnEnd(fake: ReturnType<typeof makeFakePi>, ctx: unknown = {}) {
+  return fake.handlers.get("turn_end")!({ type: "turn_end" }, ctx);
+}
+
+function fireAgentEnd(fake: ReturnType<typeof makeFakePi>, ctx: unknown = {}) {
+  return fake.handlers.get("agent_end")!({ type: "agent_end" }, ctx);
+}
+
 function lastScript(spawned: ReturnType<typeof makeFakeSpawn>): string {
   return (spawned.calls.at(-1)?.args.at(-1) ?? "") as string;
 }
 
 // ===== 接线 =====
 
-test("注册 ui_prompt_start 与 agent_settled 两个 hook", () => {
+test("注册 ui_prompt_start 与 agent_settled 等全部 hook", () => {
   const { fake } = boot();
   assert.ok(fake.handlers.has("ui_prompt_start"), "缺少 ui_prompt_start hook");
   assert.ok(fake.handlers.has("agent_settled"), "缺少 agent_settled hook");
   assert.ok(fake.handlers.has("tool_execution_start"), "缺少 tool_execution_start hook");
+  assert.ok(fake.handlers.has("agent_start"), "缺少 agent_start hook");
+  assert.ok(fake.handlers.has("turn_end"), "缺少 turn_end hook");
+  assert.ok(fake.handlers.has("agent_end"), "缺少 agent_end hook");
+});
+
+// ===== 取消抑制 =====
+
+test("turn_end abort → settle 零 spawn", async () => {
+  const { fake, spawned } = boot();
+  fireMessageEnd(fake, "assistant", [{ type: "text", text: "被中断的结论" }]);
+  fireTurnEnd(fake, { signal: { aborted: true } });
+  fireAgentEnd(fake, {});
+  await fireSettled(fake);
+  assert.equal(spawned.calls.length, 0, "用户取消后的 settle 不应弹 Toast");
+});
+
+test("agent_end abort → settle 零 spawn", async () => {
+  const { fake, spawned } = boot();
+  fireTurnEnd(fake, {});
+  fireAgentEnd(fake, { signal: { aborted: true } });
+  await fireSettled(fake);
+  assert.equal(spawned.calls.length, 0, "仅 agent_end 带 aborted 也应抑制");
+});
+
+test("正常完成照常通知:signal 缺失/未 aborted 均不抑制", async () => {
+  const noSignal = boot();
+  fireMessageEnd(noSignal.fake, "assistant", [{ type: "text", text: "正常结论" }]);
+  fireTurnEnd(noSignal.fake, {});
+  fireAgentEnd(noSignal.fake, {});
+  await fireSettled(noSignal.fake);
+  assert.equal(noSignal.spawned.calls.length, 1, "无 signal 应照常通知");
+  assert.ok(lastScript(noSignal.spawned).includes("本轮结论：正常结论"));
+
+  const notAborted = boot();
+  fireTurnEnd(notAborted.fake, { signal: { aborted: false } });
+  fireAgentEnd(notAborted.fake, { signal: { aborted: false } });
+  await fireSettled(notAborted.fake);
+  assert.equal(notAborted.spawned.calls.length, 1, "signal 未 aborted 应照常通知");
+});
+
+test("抑制不消耗防抖窗口:abort 抑制 settle 后立即审批 Toast 照常 spawn", async () => {
+  const { fake, spawned, clock } = boot();
+  fireTurnEnd(fake, { signal: { aborted: true } });
+  fireAgentEnd(fake, { signal: { aborted: true } });
+  await fireSettled(fake);
+  assert.equal(spawned.calls.length, 0);
+  // 紧接着（窗口内）下一个 run 的审批通知不应被抑制期的防抖挡住
+  await firePrompt(fake, "confirm", "请确认");
+  assert.equal(spawned.calls.length, 1, "抑制不应消耗防抖窗口");
+  assert.ok(lastScript(spawned).includes(PROMPT_TITLE));
+  void clock;
+});
+
+test("agent_start 重置取消标记:上一 run 被取消不误伤下一 run", async () => {
+  const { fake, spawned } = boot();
+  // 第一次 run：用户取消，settle 被抑制
+  fireAgentStart(fake);
+  fireTurnEnd(fake, { signal: { aborted: true } });
+  fireAgentEnd(fake, { signal: { aborted: true } });
+  await fireSettled(fake);
+  assert.equal(spawned.calls.length, 0);
+  // 第二次 run：正常完成，settle 应照常 spawn
+  fireAgentStart(fake);
+  fireTurnEnd(fake, {});
+  fireAgentEnd(fake, {});
+  await fireSettled(fake);
+  assert.equal(spawned.calls.length, 1, "agent_start 重置后正常完成应照常通知");
+  assert.ok(lastScript(spawned).includes(DONE_TITLE));
 });
 
 // ===== win32 触发 =====
