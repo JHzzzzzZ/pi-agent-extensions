@@ -5,8 +5,9 @@
  *   根 AGENTS.md(项目全貌)+ 按复杂度评分选出的子目录 AGENTS.md。
  * 本插件为提示词驱动薄封装:只做参数解析、已有文件预检、
  * `--create-new` 二次确认门控;四阶段重活(Discovery→Scoring→
- * Generate→Review)由主 agent 按下发的提示词用自身 read/bash/
- * edit/write 工具执行,不派子 pi 进程,不硬依赖 LSP/ast-grep。
+ * Generate→Review)由主 agent 按下发的提示词执行:Discovery 按规模
+ * 并行派 subagent 探索并汇总,生成与落盘由主 agent 串行完成。
+ * 插件本体不派子 pi 进程,不硬依赖 LSP/ast-grep。
  *
  * 用法:
  *   /deep-init                       update 模式:增量合并已有文件
@@ -190,14 +191,18 @@ export function buildDeepInitPrompt(input: {
     `已有知识文件：`,
     echoExisting(input.existing),
     ``,
-    `按以下四阶段执行，全程只用 read/bash/grep/find/ls/glob 探索、用 edit/write 落盘。`,
+    `按以下四阶段执行：Discovery 并行派 subagent 探索（主会话同时做 bash 与读已有），`,
+    `评分与生成在收齐合并后做，落盘一律主 agent 用 edit/write 串行（单写者）。`,
     ``,
-    `## 阶段 1：发现（Discovery）`,
-    `- 用 bash 看骨架：目录深度与文件计数、Top 目录文件数、按扩展名统计代码集中度。`,
-    `- 读掉每一个已有 AGENTS.md/CLAUDE.md，抽关键约定与反模式；--create-new 也要先读再删。`,
-    `- 找入口（main/index/CLI）、配置（lint/构建/测试）、CI（.github/workflows/Makefile）、测试布局。`,
-    `- grep 反模式注释：DO NOT / NEVER / ALWAYS / DEPRECATED。`,
-    `- 无 LSP/ast-grep 时如实标记引用中心度“未测量”，不编造符号数据。`,
+    `## 阶段 1：发现（Discovery，并发）`,
+    `- 立刻并行派探索 subagent（一次下发、并行执行、不串行等），每路只 REPORT、不写文件：`,
+    `  结构（真实布局 vs 常规模式的偏离）/ 入口（main 文件并追引用）/ 约定（lint/构建/测试配置里的项目特有规则）/`,
+    `  反模式（DO NOT/NEVER/ALWAYS/DEPRECATED 注释）/ 构建CI（.github/workflows/Makefile 非标处）/ 测试（测试结构与覆盖惯例）。`,
+    `- 按规模动态加派：先 bash 测 total_files、total_lines、>500 行大文件数、max_depth、是否 monorepo/多语言；`,
+    `  >100 文件每 100 加 1、>10k 行每 10k 加 1、depth≥4 加 2、大文件>10 加 1、monorepo 每包加 1、每多一语言加 1。`,
+    `- 主会话与子 agent 同时做：bash 骨架统计 + 读掉每个已有 AGENTS.md/CLAUDE.md（--create-new 也先读再删）+`,
+    `  grep 反模式 + code map（有 LSP/ast-grep 则用，没有则标记引用中心度“未测量”，不编造）。`,
+    `- 收齐各路 REPORT 再合并（bash + code map + 已有 + 探索发现），然后进阶段 2；小仓库（<100 文件）可减派、主 agent 直做。`,
     ``,
     `## 阶段 2：评分与选址（Scoring）`,
     `| 因子 | 权重 | 高分线 |`,

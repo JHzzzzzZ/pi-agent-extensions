@@ -200,6 +200,30 @@ describe("buildFinalReport — 报告格式", () => {
   });
 });
 
+describe("buildDeepInitPrompt — subagent 探索（对齐原版）", () => {
+  const prompt = buildDeepInitPrompt({ mode: "update", maxDepth: 3, target: ".", existing: [], meta: META });
+
+  it("要求并行派 subagent，每路只 REPORT 不写文件", () => {
+    assert.ok(prompt.includes("并行派探索 subagent"));
+    assert.ok(prompt.includes("只 REPORT、不写文件"));
+  });
+
+  it("含动态加派规则与规模阈值", () => {
+    for (const marker of [">100", ">10k", "depth≥4", ">500 行", "monorepo"]) {
+      assert.ok(prompt.includes(marker), `缺失：${marker}`);
+    }
+  });
+
+  it("收齐合并后才进阶段 2，小仓库可减派", () => {
+    assert.ok(prompt.includes("收齐各路 REPORT 再合并"));
+    assert.ok(prompt.includes("<100 文件"));
+  });
+
+  it("落盘仍单写者：主 agent edit/write 串行", () => {
+    assert.ok(prompt.includes("单写者"));
+  });
+});
+
 describe("planDispatch — 纯决策", () => {
   it("showHelp → help，内容为 USAGE", () => {
     const d = planDispatch(opts({ showHelp: true }), [], META);

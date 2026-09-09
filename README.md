@@ -12,7 +12,7 @@
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式 | 169 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 39 个 |
-| [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 28 个（node:test） |
+| [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 32 个（node:test） |
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 70 个 |
 
 ## 安装
@@ -294,14 +294,14 @@ node --experimental-strip-types --test goal/index.test.ts   # 39 个测试
 
 ## deep-init
 
-深度初始化（参考 oh-my-openagent `init-deep`）：`/deep-init` 扫描仓库结构并生成层级 `AGENTS.md` 项目知识库——根文件（项目全貌）+ 按复杂度评分选出的子目录文件，agent 自动读取相关上下文，无需手工维护。提示词驱动薄封装：插件只做参数解析、已有文件预检与 `--create-new` 二次确认，四阶段（发现→评分→生成→复核）由主 agent 用自身工具执行。
+深度初始化（参考 oh-my-openagent `init-deep`）：`/deep-init` 扫描仓库结构并生成层级 `AGENTS.md` 项目知识库——根文件（项目全貌）+ 按复杂度评分选出的子目录文件，agent 自动读取相关上下文，无需手工维护。提示词驱动薄封装：插件只做参数解析、已有文件预检与 `--create-new` 二次确认，四阶段中发现阶段按规模并行派 subagent 探索并汇总，其余由主 agent 用自身工具执行。
 
 - `/deep-init` 增量更新（默认）；`/deep-init --create-new` 全量重建（已有文件时须加 `--yes` 确认）；`--max-depth=N` 限深（默认 3）；末尾可跟目标目录
 - 评分选址：文件数 3x>20、引用中心度 3x>20；>15 建、8–15 有独立领域才建、<8 跳过，根必建
 - 写铁律：已存在用 `edit`、不存在用 `write`；子不复父、电报体；完成照发 `=== init-deep Complete ===` 报告
 
 ```bash
-cd deep-init && npm install && npm test   # 28 个测试；另有 npm run typecheck
+cd deep-init && npm install && npm test   # 32 个测试；另有 npm run typecheck
 ```
 
 ---
