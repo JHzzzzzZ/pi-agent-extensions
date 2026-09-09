@@ -30,7 +30,7 @@ import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
 import { RunWidgetController } from "./widget.ts";
-import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData } from "./viewer.ts";
+import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
 import {
   FileTranscriptSink,
   LEADER_ACTOR,
@@ -342,6 +342,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       await openTranscriptViewer(ctx.ui, {
         load: buildViewerData,
         ...(initialActor !== undefined ? { initialActor } : {}),
+        stop: () => viewerStopAction(state.coordinator),
       });
     } finally {
       state.viewerOpen = false;
@@ -925,4 +926,39 @@ export default function agentTeamExtension(pi: ExtensionAPI, opts?: { spawn?: Pi
 /** Test seam: clears the double-load guard (the flag lives on globalThis). */
 export function resetDoubleLoadGuardForTests(): void {
   delete (globalThis as { [LOADER_FLAG]?: boolean })[LOADER_FLAG];
+}
+
+/** Minimal structural view of the coordinator a viewer stop needs. */
+interface ViewerStopCoordinator {
+  getStatus(): {
+    progress: { runId: string } | null;
+    lastRecord: { status: string; runId: string } | null;
+  };
+  stopAndSettle(): Promise<{ settled: boolean; record: { durationMs?: number } | null }>;
+}
+
+/**
+ * Viewer 停止动作（D 确认后注入 TranscriptViewer 的 stop 回调）：与
+ * team_stop 工具共用 stopAndSettle 语义，结果映射为 viewer 顶部 notice
+ * 文案（settled → success、未落定 → warning、异常 → error，绝不上抛）。
+ * 导出仅为测试（同 resetDoubleLoadGuardForTests 惯例）。
+ */
+export async function viewerStopAction(coordinator: ViewerStopCoordinator): Promise<ViewerStopResult> {
+  const snapshot = coordinator.getStatus();
+  if (!snapshot.progress) {
+    return {
+      text: snapshot.lastRecord ? `run 已结束（${snapshot.lastRecord.status}），无需停止` : "当前没有正在运行的 run，无需停止",
+      kind: "error",
+    };
+  }
+  try {
+    const outcome = await coordinator.stopAndSettle();
+    if (outcome.settled) {
+      const secs = outcome.record?.durationMs !== undefined ? ` · ${Math.round(outcome.record.durationMs / 100) / 10}s` : "";
+      return { text: `run 已停止（aborted${secs}）；该 run 的报告不再送达`, kind: "success" };
+    }
+    return { text: "已发送中止信号，leader 仍在收尾；稍后用 /team:status 确认终态", kind: "warning" };
+  } catch {
+    return { text: "停止失败；稍后用 /team:stop 重试", kind: "error" };
+  }
 }

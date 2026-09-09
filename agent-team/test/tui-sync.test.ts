@@ -9,7 +9,7 @@
 
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { VIEWER_OVERLAY_OPTIONS, type ViewerData } from "../viewer.ts";
+import { VIEWER_ACTION_KEYS, VIEWER_LEGEND, VIEWER_OVERLAY_OPTIONS, type ViewerData } from "../viewer.ts";
 import { VIEWER_TICK_MS } from "../types.ts";
 
 test("VIEWER_TICK_MS 对齐 fleet REFRESH_MS = 750（fleet.ts:25）", () => {
@@ -29,6 +29,19 @@ test("VIEWER_OVERLAY_OPTIONS 五字段逐字对齐 fleet overlayOptions（fleet.
     maxHeight: "85%",
     margin: 1,
   });
+});
+
+test("stop/refresh 动作键位对齐 fleet DEFAULT_FLEET_KEYBINDINGS（fleet.ts:46/43）", () => {
+  // 规格表：stop: ["D"]、refresh: ["r", "R"]（v0.66.0）。键位漂移即与 fleet
+  // 交互脱节——两步确认停止与手动刷新的按键契约锁死在这里。
+  assert.deepEqual(VIEWER_ACTION_KEYS.stop, ["D"]);
+  assert.deepEqual(VIEWER_ACTION_KEYS.refresh, ["r", "R"]);
+});
+
+test("viewer 图例含 D 停止 · r 刷新（fleet 停止/刷新动作的 agent-team 对应物）", () => {
+  assert.match(VIEWER_LEGEND, /D 停止/);
+  assert.match(VIEWER_LEGEND, /r 刷新/);
+  assert.match(VIEWER_LEGEND, /q 关闭/);
 });
 
 // 类型使用锚：防止 viewer.ts 的 OverlayOptions 引用被误删（编译期锁）。
