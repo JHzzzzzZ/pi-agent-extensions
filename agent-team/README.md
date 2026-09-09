@@ -76,11 +76,11 @@ members:
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
-其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）。
+其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 清除输入栏下方的 run 亮块（见 §4）。
 
 ### 4. 进度亮块（输入栏下方，可键盘选中）
 
-派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`），刻意保持**紧凑两行**：头行 `agent-team <团队> ▶ running · 耗时 · N/M 并行` + 任务行（44 字符截断）；leader 活动与各成员明细**不进亮块**——想看细节 `enter` 进查看器。run 结束后切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），失败附一条截断错误行，不残留 "running" 字样。
+派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`），刻意保持**紧凑两行**：头行 `agent-team <团队> ▶ running · 耗时 · N/M 并行` + 任务行（44 字符截断）；leader 活动与各成员明细**不进亮块**——想看细节 `enter` 进查看器。run 结束后切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），失败附一条截断错误行，不残留 "running" 字样。终态行会一直保留（可回看）；不需要时用 `/team:clear` 手动清除——run 进行中会拒绝（先 `/team:stop` 或等结束），只卸亮块不清运行记录（`/team:status`、`/team:view` 回看不受影响）；清除后再次派单会自动重挂。`/reload` 后水合仅在存在**进行中** run 时自动挂亮块，终态记录不再自动重挂。
 
 裸 `↑`/`↓` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的。对齐 pi-subagents fleet-status（v0.66.0）：**编辑器为空时** `↓`/`←` 也可进入选中；`alt+↓`/`alt+↑` 是不受门控的第二通道（编辑器有文本也能进）。选中态导航补 `j`/`k`（对齐 fleet roster）：
 
@@ -122,7 +122,7 @@ members:
 
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态，含 runId）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
-- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、动态 `/team:<name>`
+- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、`/team:clear`、动态 `/team:<name>`
 - Widget：输入栏下方可选中亮块（紧凑两行概要）——`alt+↓` 选中、`enter` 直达查看器（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
 
@@ -131,7 +131,7 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（137 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（144 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
