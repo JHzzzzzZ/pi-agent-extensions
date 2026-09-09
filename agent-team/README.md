@@ -81,17 +81,17 @@ members:
 
 派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`），刻意保持**紧凑两行**：头行 `agent-team <团队> ▶ running · 耗时 · N/M 并行` + 任务行（44 字符截断）；leader 活动与各成员明细**不进亮块**——想看细节 `enter` 进查看器。run 结束后切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），失败附一条截断错误行，不残留 "running" 字样。
 
-裸 `↑`/`↓`/`enter` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的：
+裸 `↑`/`↓` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的。对齐 pi-subagents fleet-status（v0.66.0）：**编辑器为空时** `↓`/`←` 也可进入选中；`alt+↓`/`alt+↑` 是不受门控的第二通道（编辑器有文本也能进）。选中态导航补 `j`/`k`（对齐 fleet roster）：
 
 | 按键 | 作用 |
 |---|---|
-| `alt+↓` / `alt+↑` | 进入选中：亮块高亮，出现行光标与按键提示行 |
-| `↑` / `↓` | 在行间移动光标（首末行钳位） |
+| `↓`/`←`（编辑器为空）或 `alt+↓`/`alt+↑` | 进入选中：亮块高亮，出现行光标与按键提示行 |
+| `↑`/`↓`、`j`/`k` | 在行间移动光标（首末行钳位） |
 | `enter` | 打开 `/team:view` 查看器（定位 leader 页，`←→`/`1-9` 切成员） |
 | `esc` | 退出选中 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新（宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。
+实现：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新（宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；渲染串指纹无变化时跳过 `setWidget`（对齐 fleet-status renderKey，静止内容不空转宿主）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
@@ -105,7 +105,7 @@ members:
 | `←`/`→`、`h`/`l`、`Tab` | 切换上/下一个成员（换页） |
 | `1`–`9` | 直接跳到第 N 个成员 |
 | `x` | 显示/隐藏工具调用行 |
-| `q` / `Esc` | 关闭查看器 |
+| `q` / `Esc` / `ctrl+c` | 关闭查看器（close 键集对齐 fleet） |
 
 实现机制（run artifacts）：每个 run 在 `~/.pi/agent/teams/runs/<runId>/` 下保留每个成员一份有界 JSONL 流水（leader 为 `_leader.jsonl`）——leader 侧事件由驾驶舱从 leader 子进程 JSON 流写入，成员侧由 leader 进程内的 dispatch 执行器实时写入，查看器与工具按需读取。单条记录封顶 4KB、单文件 2MB、目录保留 7 天（session 启动时自动清理）。全部落盘 best-effort，记录失败绝不影响 run 本身。
 
@@ -133,6 +133,10 @@ npm install
 npm test          # node --test test/*.test.ts（137 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
+
+### 与 pi-subagents 的 TUI 同步
+
+本扩展的 TUI（viewer / widget / cockpit 状态行 / index 接线）对照 pi-subagents 的 fleet 家族（当前基线 v0.66.0）**代码级同步**：同步≠依赖（不 import pi-subagents），以“对照抄改 + 单测锁定”方式维护。逐文件映射、对齐维度、差异处置与测试期望值的**唯一事实来源**见 [docs/tui-sync.md](docs/tui-sync.md)——pi-subagents 每升版一次，agent-team 跟进一次并登记新版本号。
 
 测试约定与仓库一致：`node:test` + `node:assert/strict`、手写 FakeChild 进程 fake、注入时钟、真实 git 只用于 worktree 用例（临时目录，自动清理）。
 
