@@ -3,6 +3,8 @@
  *
  * 两类事件发送系统原生 Toast,把人叫回终端:
  * - `ui_prompt_start`(kind = confirm / select / input / editor / custom)→“Pi 等待你确认”
+ * - `tool_execution_start` 且 `toolName` 在 `WAITING_TOOL_NAMES` 名单(首批:`plan_mode_question`)
+ *   →“Pi 等待你确认”(宿主内置审批/提问不走 `ui_prompt_start`,只能按工具名特判)
  * - `agent_settled`(已完全 settle,无自动重试/压缩/续跑)→“Pi 任务完成”
  *
  * 仅 Windows 生效(`process.platform === "win32"`),Linux / macOS 直接 no-op。
@@ -32,11 +34,16 @@ export const DEBOUNCE_MS = 5000;
 export const MAX_SUMMARY = 120;
 /** 会触发通知的 ui_prompt kind(以宿主 UIPromptKind 定义为准) */
 export const NOTIFY_KINDS = ["confirm", "select", "input", "editor", "custom"] as const;
+/** 会触发通知的工具名名单:这类工具启动即意味着在等人工(须显式维护) */
+export const WAITING_TOOL_NAMES = ["plan_mode_question"] as const;
 
 /** agent 结束通知正文(静态模板,无事件载荷) */
 const DONE_BODY = "Agent 运行已结束，请回到终端查看结果。";
 
-/** prompt kind 的中文标签(仅用于正文模板) */
+/** 等人工具的中文标签(仅用于正文模板,名单外工具不用) */
+const WAITING_TOOL_LABELS: Record<string, string> = {
+  plan_mode_question: "问题",
+};
 const KIND_LABELS: Record<string, string> = {
   confirm: "确认",
   select: "选择",
@@ -88,6 +95,12 @@ export function buildToastScript(title: string, body: string): string {
   // 转义后理论上已无单引号(变为 &apos;),再做一层 PowerShell 单引号转义兜底
   const psXml = `<toast><visual><binding template="ToastGeneric"><text>${safeTitle}</text><text>${safeBody}</text></binding></visual></toast>`.replace(/'/g, "''");
   return `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('${psXml}'); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Pi Coding Agent').Show($toast)`;
+}
+
+/** 等人工具通知正文:静态模板 + 工具标签,不透传工具参数原文 */
+function buildWaitingBody(toolName: string): string {
+  const label = WAITING_TOOL_LABELS[toolName] ?? "请求";
+  return truncateSummary(`收到${label}，请回到终端处理`);
 }
 
 /** 审批/输入通知正文:静态模板 + 事件自带的安全摘要(标题),整体再截断一次 */
@@ -152,6 +165,17 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
       if (typeof kind !== "string" || !(NOTIFY_KINDS as readonly string[]).includes(kind)) return;
       const rawTitle = (event as { title?: unknown }).title;
       fire(PROMPT_TITLE, buildPromptBody(kind, typeof rawTitle === "string" ? rawTitle : undefined));
+    } catch {
+      /* 忽略 */
+    }
+  });
+
+  pi.on("tool_execution_start", (event) => {
+    try {
+      const toolName = (event as { toolName?: unknown }).toolName;
+      // 先查名单再进 fire:非名单工具直接返回,不消耗全局防抖窗口
+      if (typeof toolName !== "string" || !(WAITING_TOOL_NAMES as readonly string[]).includes(toolName)) return;
+      fire(PROMPT_TITLE, buildWaitingBody(toolName));
     } catch {
       /* 忽略 */
     }
