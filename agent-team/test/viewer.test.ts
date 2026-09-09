@@ -1,8 +1,10 @@
 /**
  * Transcript viewer tests: CJK/ANSI-aware width helpers, block grouping
- * (continuous chat flow), the bordered full-page frame, dynamic height,
- * the pure key reducer, and the plain-text tool formatter. The pi-tui host
- * component itself is never instantiated (repo convention).
+ * (continuous chat flow), the fleet-inspector-style roster+detail split
+ * frame (left member roster, right meta header + scrollable transcript),
+ * dynamic height, the pure key reducer, and the plain-text tool formatter.
+ * The pi-tui host component itself is never instantiated (repo convention).
+ * 帧几何期望值一律抄自 docs/tui-sync.md §4（fleet v0.66.0 字面量）。
  */
 
 import * as assert from "node:assert/strict";
@@ -16,6 +18,7 @@ import {
   charWidth,
   clampViewerState,
   computeFrameHeight,
+  computeViewerLayout,
   formatTranscriptText,
   handleViewerKey,
   initialViewerState,
@@ -36,6 +39,15 @@ const styles: Styles = plainStyles();
 function entry(kind: TranscriptEntry["kind"], text: string, ts = "2026-09-06T12:34:56.000Z"): TranscriptEntry {
   return { kind, text, ts };
 }
+
+// 帧行两栏拆分：按中间分隔边框切（位置与宽度/标签无关，精确到列）。
+function paneColumns(line: string): { roster: string; detail: string } {
+  const mid = line.indexOf("│", 1);
+  return { roster: line.slice(1, mid).trimEnd(), detail: line.slice(mid + 1, line.length - 1).trimEnd() };
+}
+
+// ANSI 包裹样式：与真机 theme 同构（escape 不占显示宽度，不影响 fitLine 定宽）。
+const ansi = (code: string) => (text: string): string => `\x1b[${code}m${text}\x1b[0m`;
 
 function viewerData(overrides: Partial<ViewerData> = {}): ViewerData {
   return {
@@ -172,66 +184,124 @@ test("bodyLines separates blocks with exactly one blank line", () => {
 // Bordered frame + dynamic height
 // ---------------------------------------------------------------------------
 
-test("computeFrameHeight scales to ~82% of the terminal with a 12-row floor", () => {
-  assert.equal(computeFrameHeight(40), 32);
-  assert.equal(computeFrameHeight(24), 19);
-  assert.equal(computeFrameHeight(30), 24);
-  assert.equal(computeFrameHeight(10), 12, "floor for tiny terminals");
-  assert.equal(computeFrameHeight(0), 24, "unknown rows fallback");
+// 规格表 §4：bodyHeight = max(2, floor(rows*0.85) - 6)（fleet.ts:1326-1327，
+// rows 缺省 32）；期望值从 tui-sync.md §4 抄录，不从实现复制。
+test("computeFrameHeight follows the fleet 85%−6 formula with a 2-row floor", () => {
+  assert.equal(computeFrameHeight(40), 28);
+  assert.equal(computeFrameHeight(24), 14);
+  assert.equal(computeFrameHeight(30), 19);
+  assert.equal(computeFrameHeight(10), 2, "2-row floor for tiny terminals");
+  assert.equal(computeFrameHeight(0), 21, "unknown rows fallback = fleet default 32");
 });
 
-test("renderViewerFrame returns a complete bordered box of the requested height", () => {
+test("computeViewerLayout follows the fleet roster/detail geometry formulas", () => {
+  // 规格表 §4：innerWidth=width-2、rosterWidth=max(22,min(46,floor((inner-1)*0.38)))、
+  // detailWidth=max(1,inner-roster-1)（fleet.ts:1322/1328/1329）。
+  assert.deepEqual(computeViewerLayout(80), { innerWidth: 78, rosterWidth: 29, detailWidth: 48 });
+  assert.deepEqual(computeViewerLayout(36), { innerWidth: 34, rosterWidth: 22, detailWidth: 11 }, "最小门下 roster 钳到 22");
+  assert.deepEqual(computeViewerLayout(200), { innerWidth: 198, rosterWidth: 46, detailWidth: 151 }, "roster 钳到 46");
+});
+
+test("renderViewerFrame renders the fleet split-frame structure", () => {
+  // 帧结构（§4）：顶边框 → 标题行（左静态标题/右对齐选中态）→ ├─┬─┤ →
+  // bodyHeight 行 │roster│detail│ → ├─┴─┤ → 图例行 → 底边框（fleet.ts:1343-1370）。
   const bodyHeight = 10;
   const frame = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles, bodyHeight });
   assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS);
-  // 标题静态（elapsed 只留 widget）：含时钟的行就是真机堆叠物，见 viewer-ghost.test.ts。
-  assert.match(frame[0], /^╭─ agent-team · team dev-team · running · run-42 ─+╮$/);
-  assert.match(frame[frame.length - 1], /^╰─ .*╯$/);
-  assert.match(frame[frame.length - 1], /↑↓ 滚动/);
-  assert.match(frame[frame.length - 1], /成员 1\/2/);
-  for (const line of frame.slice(1, frame.length - 1)) {
-    assert.match(line, /^│ /, "side border opens every inner row");
-    assert.match(line, / │$/, "side border closes every inner row");
-    assert.equal(visibleWidth(line), 80, "inner rows are padded to the full width");
+  assert.match(frame[0], /^╭─+╮$/, "plain top border");
+  assert.match(frame[1], /^│ agent-team viewer · team dev-team/, "static title on the left");
+  assert.match(frame[1], /▶ leader · running\s+│$/, "selected actor status right-aligned");
+  assert.match(frame[2], /^├─+┬─+┤$/, "upper roster/detail separator");
+  for (const line of frame.slice(3, 3 + bodyHeight)) {
+    assert.match(line, /^│.*│.*│$/, "body rows span both panes");
+    assert.equal(visibleWidth(line), 80, "body rows are padded to the full width");
   }
-  assert.equal(visibleWidth(frame[0]), 80);
-  assert.equal(visibleWidth(frame[frame.length - 1]), 80);
+  assert.match(frame[3 + bodyHeight], /^├─+┴─+┤$/, "lower separator");
+  assert.match(frame[3 + bodyHeight + 1], /↑↓ 滚动/, "legend row above the bottom border");
+  assert.match(frame[3 + bodyHeight + 2], /^╰─+╯$/, "plain bottom border");
+  for (const [index, line] of frame.entries()) {
+    assert.equal(visibleWidth(line), 80, `line ${index} is exactly frame width`);
+  }
 });
 
-test("renderViewerFrame colors tabs with the style port and marks the current actor", () => {
-  const styled: Styles = {
-    ...styles,
-    accent: (t) => `<a>${t}</a>`,
-    success: (t) => `<s>${t}</s>`,
-  };
+test("renderViewerFrame styles the roster with the port: selected marker, bold label, status icons", () => {
+  const styled: Styles = { ...styles, bold: ansi("1"), accent: ansi("36"), success: ansi("32") };
   const frame = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles: styled, bodyHeight: 8 });
-  const tabs = frame[1];
-  assert.match(tabs, /<a>▸1 leader <\/a>/, "current actor highlighted with accent");
-  assert.match(tabs, /<s>✓<\/s>/, "done status icon in success style");
+  const text = frame.join("\n");
+  assert.match(text, /\x1b\[36m›\x1b\[0m \x1b\[36m▶\x1b\[0m \x1b\[1mleader\x1b\[0m · _leader/, "selected row: accent marker + running icon + bold label");
+  assert.match(text, /\x1b\[32m✓\x1b\[0m frontend · frontend/, "unselected row: success icon + plain label");
+  assert.ok(!frame[1].includes("\x1b[1m"), "title row never bolds (roster-only styling)");
 });
 
-test("renderViewerFrame shows the continuous flow and honours scroll/follow", () => {
+test("renderViewerFrame pins a fixed three-line meta header atop the detail pane", () => {
+  const styled: Styles = { ...styles, bold: ansi("1") };
+  const frame = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles: styled, bodyHeight: 10 });
+  assert.match(paneColumns(frame[3]).detail, /^\x1b\[1mRun:\x1b\[0m run-42/, "Run line first");
+  assert.match(paneColumns(frame[4]).detail, /^\x1b\[1mState:\x1b\[0m running/, "State line second");
+  assert.match(paneColumns(frame[5]).detail, /^\x1b\[1m成员:\x1b\[0m leader（running）· 1\/2/, "member line third");
+  assert.match(paneColumns(frame[6]).detail, /让我先拆解任务/, "transcript body starts below the header");
+  assert.doesNotMatch(paneColumns(frame[3]).detail, /❯/, "header does not scroll with the body");
+
+  // 头部行数上限 bodyHeight-1（fleet.ts:1335）：bodyHeight=3 时成员行让位给正文。
+  const tight = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles: styled, bodyHeight: 3 });
+  assert.equal(tight.length, 3 + VIEWER_CHROME_ROWS);
+  assert.match(paneColumns(tight[3]).detail, /\x1b\[1mRun:/);
+  assert.match(paneColumns(tight[4]).detail, /\x1b\[1mState:/);
+  assert.ok(!tight.join("\n").includes("\x1b[1m成员:"), "header capped at bodyHeight-1");
+});
+
+test("renderViewerFrame gates tiny terminals with a single hint line", () => {
+  // 最小宽度门（§4，fleet.ts:1321）：width<36 → 单行提示（与 fleet 同构：
+  // 窄终端下提示本身也会被截断，只保证单行不破版）。
+  const frame = renderViewerFrame(viewerData(), initialViewerState(), 35, { styles, bodyHeight: 8 });
+  assert.equal(frame.length, 1);
+  assert.match(frame[0], /agent-team viewer/);
+  assert.equal(visibleWidth(frame[0]), 35, "hint line still fits the terminal");
+});
+
+test("renderViewerFrame windows the roster so the selection stays visible", () => {
+  // 窗口化公式（§4，fleet.ts:1219）：start = max(0, min(sel-body+1, max(0, n-body)))。
+  const actors = [
+    { actor: "_leader", label: "leader", status: "running" as const },
+    ...Array.from({ length: 12 }, (_, i) => ({ actor: `m${String(i + 1).padStart(2, "0")}`, label: `m${String(i + 1).padStart(2, "0")}`, status: "done" as const })),
+  ];
+  const data = viewerData({ actors });
+  const bottom = { ...initialViewerState(), actorIndex: 12 };
+  // 宽 120：图例 + 成员位置完整可见（82 列宽 < innerWidth 118）。
+  const frame = renderViewerFrame(data, bottom, 120, { styles, bodyHeight: 10 });
+  assert.match(frame.join("\n"), /· m12/, "selected last actor visible");
+  assert.doesNotMatch(frame.join("\n"), /· m01/, "early actors scrolled out");
+  assert.match(frame.join("\n"), /成员 13\/13/);
+
+  const top = renderViewerFrame(data, initialViewerState(), 120, { styles, bodyHeight: 10 });
+  assert.match(top.join("\n"), /· _leader/, "selection at top shows the head of the roster");
+});
+
+test("renderViewerFrame shows an empty-roster dim row and a member-less header", () => {
+  const frame = renderViewerFrame(viewerData({ actors: [], entries: new Map() }), initialViewerState(), 80, { styles, bodyHeight: 10 });
+  assert.match(paneColumns(frame[3]).roster, /（无成员）/, "roster dim row");
+  assert.match(paneColumns(frame[5]).detail, /成员:\s*（无成员）/);
+  assert.match(frame.join("\n"), /暂无记录/);
+});
+
+test("renderViewerFrame shows the continuous flow and honours scroll/follow in the detail pane", () => {
   const many = Array.from({ length: 50 }, (_, i) => entry("assistant", `line ${i}`));
   const data = viewerData({ entries: new Map([["_leader", many]]) });
 
   const following = renderViewerFrame(data, initialViewerState(), 60, { styles, bodyHeight: 10 });
-  const followBody = following.slice(2, 12).join("\n");
-  assert.match(followBody, /line 49/, "follow shows the newest line");
-  assert.doesNotMatch(followBody, /line 0\b/);
+  assert.match(following.join("\n"), /line 49/, "follow shows the newest line");
+  assert.doesNotMatch(following.join("\n"), /line 0\b/);
 
-  const state = clampViewerState({ ...initialViewerState(), follow: false }, 100, 10);
+  const state = clampViewerState({ ...initialViewerState(), follow: false }, 100, 7);
   assert.equal(state.scroll, 0);
   const top = renderViewerFrame(data, state, 60, { styles, bodyHeight: 10 });
-  assert.match(top.slice(2, 12).join("\n"), /line 0\b/);
-  assert.doesNotMatch(top.slice(2, 12).join("\n"), /line 49/);
+  assert.match(top.join("\n"), /line 0\b/);
+  assert.doesNotMatch(top.join("\n"), /line 49/);
 });
 
-test("renderViewerFrame hides tool rows when toggled off and shows a hint when empty", () => {
+test("renderViewerFrame hides tool rows when toggled off", () => {
   const frame = renderViewerFrame(viewerData(), { ...initialViewerState(), showTools: false }, 60, { styles, bodyHeight: 10 });
   assert.doesNotMatch(frame.join("\n"), /team_dispatch/);
-
-  const empty = renderViewerFrame(viewerData({ actors: [], entries: new Map() }), initialViewerState(), 60, { styles, bodyHeight: 10 });
-  assert.match(empty.join("\n"), /暂无记录/);
 });
 
 test("renderViewerFrame clamps overflowing body lines to the exact frame width", () => {
@@ -422,7 +492,7 @@ test("actionLines：确认横幅两行/busy 一行/notice 一行互斥（优先�
   assert.match(busyWins[0], /停止中…/);
 });
 
-test("renderViewerFrame：action 行占正文窗口顶部，窗口收缩，帧总行数不变", () => {
+test("renderViewerFrame：action 行占右栏正文窗口顶部（头部之下），窗口收缩，帧总行数不变", () => {
   const bodyHeight = 10;
   const plain = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles, bodyHeight });
   assert.equal(plain.length, bodyHeight + VIEWER_CHROME_ROWS);
@@ -430,24 +500,28 @@ test("renderViewerFrame：action 行占正文窗口顶部，窗口收缩，帧�
   const armed = { ...initialViewerState(), follow: false, scroll: 0, stopConfirming: true };
   const frame = renderViewerFrame(viewerData(), armed, 80, { styles, bodyHeight });
   assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS, "帧总行数恒定");
-  assert.match(frame[2], /确认停止 run run-42？/, "横幅第一行在正文窗口顶部");
-  assert.match(frame[3], /Enter\/Y 确认/, "横幅第二行");
-  assert.match(frame[4], /❯ 修复登录 bug/, "正文第一行被横幅下推");
+  // detail 列布局：头部三行（3-5）→ 横幅按 detail 宽换行（6-8）→ 正文（9 起）。
+  assert.match(paneColumns(frame[6]).detail, /确认停止 run run-42/, "横幅第一行在头部之下");
+  assert.match(paneColumns(frame[7]).detail, /Enter\/Y 确认/, "横幅第二行（换行后首段）");
+  assert.match(paneColumns(frame[8]).detail, /· N 取消 · Esc 取消/, "横幅换行尾段");
+  assert.match(paneColumns(frame[9]).detail, /❯ 修复登录 bug/, "正文第一行被横幅下推");
   for (const [index, line] of frame.entries()) {
     assert.equal(visibleWidth(line), 80, `line ${index} fitLine 后行宽恒定`);
   }
 
   const noticeFrame = renderViewerFrame(viewerData(), { ...initialViewerState(), notice: { text: "run 已结束（done），无需停止", kind: "error" } }, 80, { styles, bodyHeight });
   assert.equal(noticeFrame.length, bodyHeight + VIEWER_CHROME_ROWS);
-  assert.match(noticeFrame[2], /run 已结束（done），无需停止/);
+  assert.match(paneColumns(noticeFrame[6]).detail, /run 已结束（done），无需停止/);
 });
 
-test("底部图例含 D 停止与 r 刷新", () => {
-  // 窄终端截断逻辑不变（segmentWidth 溢出时截断）；宽终端下完整图例可见。
+test("图例行独立于底边框：含 D 停止/r 刷新/q 关闭与成员位置", () => {
+  // v1.6.0：图例从底边框内嵌改为独立一行（§4 帧结构，fleet.ts:1366-1368）。
   const frame = renderViewerFrame(viewerData(), initialViewerState(), 120, { styles, bodyHeight: 8 });
-  assert.match(frame[frame.length - 1], /D 停止 · r 刷新 · q 关闭/);
-  const narrow = renderViewerFrame(viewerData(), initialViewerState(), 60, { styles, bodyHeight: 8 });
-  assert.match(narrow[narrow.length - 1], /…/, "窄终端仍走截断");
+  const legend = frame[frame.length - 2];
+  assert.match(legend, /D 停止 · r 刷新 · q 关闭/);
+  assert.match(legend, /成员 1\/2/);
+  assert.match(legend, /^│.*│$/, "图例行在边框内");
+  assert.match(frame[frame.length - 1], /^╰─+╯$/, "底边框纯边框，无内嵌文案");
 });
 
 test("handleViewerKey toggles tool rows and ignores unknown keys", () => {

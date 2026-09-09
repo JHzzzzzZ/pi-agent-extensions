@@ -310,10 +310,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       if (fileActor === LEADER_ACTOR) continue;
       if (!actors.some((a) => a.actor === fileActor)) actors.push({ actor: fileActor, label: fileActor });
     }
-    // Stable tab order: the leader stays first, everyone else sorts by
+    // Stable roster order: the leader stays first, everyone else sorts by
     // actor id. Progress/record/file sources arrive in different orders
     // (dispatch history vs. alphabetical file listing); without this the
-    // tab indices shift after each dispatch and index-kept selections jump.
+    // roster rows shift after each dispatch and index-kept selections jump.
     // Selection itself is pinned by actor id (viewer.ts), this only fixes order.
     const [leader, ...rest] = actors;
     if (leader !== undefined) {

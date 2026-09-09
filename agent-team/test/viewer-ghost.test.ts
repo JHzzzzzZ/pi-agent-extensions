@@ -1,12 +1,13 @@
 /**
- * Viewer ghost regression: /team:view chrome (title top border + member
- * tabs) must render exactly once per frame, and the actor selection must
+ * Viewer ghost regression: /team:view chrome (top border + title row +
+ * roster) must render exactly once per frame, and the actor selection must
  * survive actor-list growth after a dispatch. Pure renderer only — the
  * pi-tui host component is never instantiated (repo convention).
  *
  * Covers the reported bug: after the 2nd member reply, switching views
- * stacked `agent-team · team … · Ns` + `1 leader ▸ 2 front ▸` pairs that
- * kept appending with the elapsed clock (15s/16s/17s…).
+ * stacked the title+roster pairs that kept appending with the elapsed
+ * clock (15s/16s/17s…). v1.6.0 split-frame: title row = frame[1], roster
+ * rows carry `›` for the selection and `· <actorId>` per actor.
  */
 
 import * as assert from "node:assert/strict";
@@ -70,11 +71,12 @@ function afterSecondDispatch(data: ViewerData): ViewerData {
   return { ...data, entries, elapsed: "16s" };
 }
 
-function chromeCounts(frame: string[]): { tops: number; tabs: number; selected: number } {
+function chromeCounts(frame: string[]): { tops: number; titles: number; roster: number; selected: number } {
   return {
-    tops: frame.filter((line) => line.includes("╭─")).length,
-    tabs: frame.filter((line) => line.includes("1 leader")).length,
-    selected: (frame[1].match(/▸/g) ?? []).length,
+    tops: frame.filter((line) => line.startsWith("╭")).length,
+    titles: frame.filter((line) => line.includes("agent-team viewer")).length,
+    roster: frame.filter((line) => line.includes("· _leader")).length,
+    selected: frame.filter((line) => line.includes("›")).length,
   };
 }
 
@@ -90,8 +92,9 @@ test("连续 N 帧（含 elapsed 跳动与二次派单）每帧恰好一组 chro
       assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS, `elapsed=${elapsed} 帧行数恒定`);
       const counts = chromeCounts(frame);
       assert.equal(counts.tops, 1, `elapsed=${elapsed} 顶边恰出现 1 次`);
-      assert.equal(counts.tabs, 1, `elapsed=${elapsed} 成员页签行恰出现 1 次`);
-      assert.equal(counts.selected, 1, `elapsed=${elapsed} 页签仅一个 ▸ 选中`);
+      assert.equal(counts.titles, 1, `elapsed=${elapsed} 标题行恰出现 1 次`);
+      assert.equal(counts.roster, 1, `elapsed=${elapsed} leader roster 行恰出现 1 次`);
+      assert.equal(counts.selected, 1, `elapsed=${elapsed} 选中标记恰 1 个`);
     }
   }
 
@@ -103,7 +106,8 @@ test("连续 N 帧（含 elapsed 跳动与二次派单）每帧恰好一组 chro
       assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS, `派单后第 ${i} 帧行数恒定`);
       const counts = chromeCounts(frame);
       assert.equal(counts.tops, 1, `派单后第 ${i} 帧顶边恰 1 次`);
-      assert.equal(counts.selected, 1, `派单后第 ${i} 帧页签选中恰 1 个`);
+      assert.equal(counts.titles, 1, `派单后第 ${i} 帧标题恰 1 次`);
+      assert.equal(counts.selected, 1, `派单后第 ${i} 帧选中标记恰 1 个`);
     }
   }
 });
@@ -189,12 +193,12 @@ test("overlay 盒模型与 pi-subagents fleet 检查器一字不差", () => {
   });
 });
 
-test("顶边标题静态：elapsed 跳动不进标题行", () => {
+test("标题行静态：elapsed 跳动不进标题行", () => {
   // 真机实锤：53s/54s、1m26s/1m27s 标题并存——每秒时钟就是堆叠物。
   // 秒表只留 widget，overlay chrome 区零每秒文本。
   for (const elapsed of ["53s", "54s", "1m26s"]) {
     const frame = renderViewerFrame(ghostData({ elapsed }), initialViewerState(), 80, { styles, bodyHeight: 10 });
-    assert.ok(!frame[0].includes(elapsed), `标题行不应含 ${elapsed}：${frame[0]}`);
+    assert.ok(!frame[1].includes(elapsed), `标题行不应含 ${elapsed}：${frame[1]}`);
     assert.ok(
       frame.every((line) => !line.includes(elapsed)),
       `整帧无一处含 ${elapsed}（body 时间戳是内容本身，不受此限）`,

@@ -37,7 +37,7 @@
 | # | 差异 | 处置 | 原因 / 注释位置 |
 |---|---|---|---|
 | 3.1 | widget 渲染用 `setWidget(key, string[], …)` 而非 fleet-status 的组件工厂式 `setWidget(key, (tui, theme) => Component, …)` | **避坑保留** | 组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加残影行；string[] 由宿主包装渲染，是跨构建最稳路径。见 `widget.ts` 头注 + `index.ts ensureRunWidget` 注释。 |
-| 3.2 | viewer 单页转录 + 页签 `←→/h/l/tab/1-9/g/G` | **特有语义保留** | fleet 是 roster+detail 双栏 + prompt audit/steer/stop 控制面；agent-team 无对应语义。页签 = agent-team 的成员切换，fleet 无。见 `viewer.ts` `handleViewerKey` + `README.md §5` 按键表。 |
+| 3.2 | viewer roster+detail 左右双栏（v1.6.0 起对齐 fleet 布局），键位保留 agent-team 特有语义：`←→/h/l/tab/1-9` 切换左栏成员（fleet 的 p/Enter/H/s 键位无对应）、`↑↓/j/k/PgUp/PgDn/g/G` 滚右栏正文、`x` 工具行 | **布局已对齐 + 特有键位保留** | 布局与几何公式对照 `fleet.ts:1319-1381` 抄改（§4 规格表）；fleet 的 prompt audit/steer/herdr 控制面 agent-team 无对应语义，成员切换键位 = agent-team 特有。见 `viewer.ts` `renderViewerFrame`/`rosterLines` + `README.md §5` 按键表。 |
 | 3.3 | `alt+↓/↑` 为不受门控的第二激活通道 | **特有语义保留** | fleet-status 只有 ↓/← 激活；alt 通道是 agent-team 历史行为（模态选中风格，与 pi 主编辑器语义并行）。非空编辑器仍可经 alt 通道进 widget。见 `widget.ts` `isActivate`。 |
 | 3.4 | widget tick 1000ms（vs fleet 750ms） | **避坑保留** | 下方亮块是宿主渲染的纯字符串表面（无 overlay 重影风险），1s 节奏够用且省 churn。见 `types.ts` `WIDGET_TICK_MS`。 |
 | 3.5 | 行图标/文案映射 | **已对齐** | fleet ●/◦/■ 与 agent-team ✓/✗/⊘/·/▶ 的映射关系：fleet 运行中 ▶ spinner 语义 ≈ agent-team `running → ▶`；完成 ✓、失败 ✗、中止 ⊘、队列 ·。见 `viewer.ts statusDisplay` + `widget.ts recordIcon`。 |
@@ -66,6 +66,16 @@
 | 无变化跳过 | 渲染串指纹相同且无 running 强制 → 跳过 | `fleet-status.ts:585-591` |
 | stop 键位 | `["D"]`（确认态按键：Enter/Y 确认；Esc/ctrl+c/N/backspace 取消） | `fleet.ts:46`、`fleet.ts:1134-1150` |
 | refresh 键位 | `["r", "R"]` | `fleet.ts:43` |
+| 最小宽度门 | `width < 36` → 单行提示（agent-team 文案：`agent-team viewer 至少需要 36 列。Esc 关闭。`） | `fleet.ts:1321` |
+| innerWidth | `width - 2`（两侧 `│` 边框各占 1 列，无内边距空格） | `fleet.ts:1322` |
+| bodyHeight 公式 | `max(2, floor(rows * 0.85) - 6)`；rows 缺省 `?? 32` | `fleet.ts:1326-1327` |
+| rosterWidth 公式 | `max(22, min(46, floor((innerWidth - 1) * 0.38)))` | `fleet.ts:1328` |
+| detailWidth 公式 | `max(1, innerWidth - rosterWidth - 1)` | `fleet.ts:1329` |
+| 帧行结构 | `│<roster>│<detail>│`，每行 `fit` 定宽（rosterWidth/detailWidth 分别钳制） | `fleet.ts:1352-1358` |
+| 帧结构 | 顶边框 → 标题行（左静态标题，右对齐 `<glyph> <label> · <status>`）→ `├─┬─┤` → bodyHeight 行正文 → `├─┴─┤` → 图例行 → 底边框；chrome 行数 = 6 | `fleet.ts:1343-1370` |
+| roster 行格式 | `<marker> <状态图标> <label> · <actorId 短 id>`，marker 选中 `›`（accent）/空格，选中 label 加粗，右对齐状态文本；无成员时 dim `（无成员）` | `fleet.ts:1217-1229` |
+| roster 窗口化 | `start = max(0, min(selected - bodyHeight + 1, max(0, items - bodyHeight)))`，选中滚出可见区时列表跟随滚动 | `fleet.ts:1219` |
+| detail 头部 | 固定不滚的元信息行（键名加粗），头部行数上限 `bodyHeight - 1`，正文视口 = `bodyHeight - 头部行数`；agent-team 三行：`Run:` / `State:` / `成员:` | `fleet.ts:742-757`、`fleet.ts:1335-1336` |
 
 ## 5. 同步记录
 
@@ -75,9 +85,10 @@
 | agent-team 1.2.0 | 2026-09-09 | viewer ctrl+c 关闭 + tick 750；widget 空编辑器激活门控 + j/k 导航 + 无变化跳过 setWidget；接线互斥/隐藏/销毁语义测试锁定 | `feat/agent-team-tui-sync` |
 | agent-team 1.4.0 | 2026-09-14 | viewer stop（D 两步确认，确认态按键集对齐 fleet.ts:1134-1150）+ refresh（r/R）；差异条目 §3.8（横幅占正文窗口顶部、帧总高不变）与 §3.9（停止粒度 = 整个 run）登记；tui-sync/viewer/viewer-host/viewer-stop 四文件测试锁定 | `feat/agent-team-view-stop` |
 | agent-team 1.5.0 | 2026-09-09 | 亮块 running 头行新增可选余额提示（仅当团队配了 `budget.maxCostUsd` 且未超限：`· 剩 $X.XX`；fleet 无此概念，agent-team 特有语义）——差异条目 §3.10 登记；widget.test 锁定 | `feat/agent-team-reliability` |
+| agent-team 1.6.0 | 2026-09-09 | viewer 改 roster+detail 左右双栏（对照 `fleet.ts:1319-1381` 抄改）：左栏成员 roster（选中标记+状态图标+右对齐状态，窗口化滚动），右栏 = 三行元信息头（Run/State/成员）+ 完整转录正文（滚动/follow/Markdown/x 工具行保留）；`VIEWER_CHROME_ROWS` 3→6、帧高公式换 `max(2, floor(rows*0.85) - 6)`、最小宽度门 36 列；键位不变，差异条目 §3.2 改写，§4 新增几何字面量 | `feat/agent-team-viewer-split` |
 
 ## 6. 范围外（明确不做）
 
 - 不修 /reload 工具消失、team_stop、view 内停止、可靠性对齐、动态对话等其余 todo 条目。
 - 不引入 pi-subagents 运行时依赖；不做 widget 组件工厂化改造。
-- 不抄 fleet 的 roster+detail 双栏与 prompt audit/steer/stop 控制面。
+- 不抄 fleet 的 prompt audit/steer/herdr 控制面（agent-team 无对应语义；roster+detail 双栏已于 1.6.0 对齐）。

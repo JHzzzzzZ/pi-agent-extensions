@@ -102,17 +102,17 @@ members:
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏边框页查看器**（约 82% 终端高、96% 宽，完整边框与主 agent 界面明确分割）。**每一页是一个 agent**（leader 或成员，`←→`/`1-9` 切换），页面内容是与主 agent 一致的连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，自上而下完整时间线实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的三行元信息头（`Run:` / `State:` / `成员:`），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
-| `↑`/`↓` 或 `j`/`k` | 逐行滚动（上滚自动退出跟随，滚到底自动恢复跟随最新） |
+| `↑`/`↓` 或 `j`/`k` | 逐行滚动右栏转录正文（上滚自动退出跟随，滚到底自动恢复跟随最新） |
 | `PgUp`/`PgDn` | 翻页 |
 | `g`/`G`（或 `Home`/`End`） | 跳到顶部 / 跟随底部最新 |
-| `←`/`→`、`h`/`l`、`Tab` | 切换上/下一个成员（换页） |
+| `←`/`→`、`h`/`l`、`Tab` | 切换上/下一个成员（左栏 roster 选中行移动，右栏随之切换） |
 | `1`–`9` | 直接跳到第 N 个成员 |
 | `x` | 显示/隐藏工具调用行 |
-| `D`（shift+d） | 停止整个 run（两步确认，对齐 fleet）：运行中按下进入确认态（顶部横幅 `确认停止 run <runId>？`），`Enter`/`Y` 确认、`N`/`Esc`/`ctrl+c`/`backspace` 取消（取消不关闭查看器）；确认后经 `stopAndSettle()` 中止 leader 与全体成员（SIGTERM→SIGKILL、有界等待落定），顶部横幅依次显示停止中→结果（settled → `run 已停止（aborted · Xs）；该 run 的报告不再送达`，未落定 → 提示稍后用 `/team:status` 确认终态）；run 已结束时按下仅提示，不进确认态 |
+| `D`（shift+d） | 停止整个 run（两步确认，对齐 fleet）：运行中按下进入确认态（右栏头部下方横幅 `确认停止 run <runId>？`），`Enter`/`Y` 确认、`N`/`Esc`/`ctrl+c`/`backspace` 取消（取消不关闭查看器）；确认后经 `stopAndSettle()` 中止 leader 与全体成员（SIGTERM→SIGKILL、有界等待落定），横幅依次显示停止中→结果（settled → `run 已停止（aborted · Xs）；该 run 的报告不再送达`，未落定 → 提示稍后用 `/team:status` 确认终态）；run 已结束时按下仅提示，不进确认态 |
 | `r` / `R` | 手动刷新：绕过 750ms 指纹门控强制重载重绘 |
 | `q` / `Esc` / `ctrl+c` | 关闭查看器（close 键集对齐 fleet） |
 
@@ -134,14 +134,14 @@ members:
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
 - 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、`/team:clear`、`/team:doctor`、动态 `/team:<name>`
 - Widget：输入栏下方可选中亮块（紧凑两行概要）——`alt+↓` 选中、`enter` 直达查看器（仅 TUI 模式，详见 §4）
-- `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
+- `/team:view`：全屏分栏会话记录查看器——左栏成员 roster、右栏成员对话/工具调用/错误实时可读（仅交互式 TUI）
 
 ## 开发与测试
 
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（196 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（223 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
