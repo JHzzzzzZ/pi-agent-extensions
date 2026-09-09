@@ -53,7 +53,7 @@ PWR（`pwr/`）分层组织，`src/types.ts` 是共享契约中枢（`RuntimeAda
 - `pwr/test/`、`pwr/tests/`、`pwr/runtime/test/`、`pwr/runner/test/` — node:test 套件（见"测试与 QA"）。
 - `pwr/vendor/` — 内置 acorn 8.18.0（`acorn.mjs` + 手写 `acorn.d.mts` + license）；生成文件，勿修改。仅被 `engine/parser.ts` 引入，使 PWR 运行时零 npm 依赖。
 - `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
-- 卫星扩展：`agent-team/`（扁平模块：types/config/runner/worktree/leader-prompt/dispatch/manage/cockpit/widget/session/index + test/ + examples/）、`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + index.ts，带 `pi.extensions` 清单的 package.json + test/discover.test.ts）、
+- 卫星扩展：`agent-team/`（扁平模块：types/config/runner/worktree/leader-prompt/dispatch/manage/cockpit/widget/session/index + test/ + examples/）、`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、
 
 ## 开发命令
 
@@ -75,7 +75,7 @@ node --experimental-strip-types --test run-timer/run-timer.test.ts              
 node --experimental-strip-types --test goal/index.test.ts                        # 39 个测试，此目录无 package.json
 node --experimental-strip-types --test human-notify/index.test.ts                # 18 个测试，此目录无 package.json
 node --experimental-strip-types --test provider-quota/index.test.ts              # 15 个测试，此目录无 package.json
-node --experimental-strip-types --test chatanywhere-provider/test/discover.test.ts  # 24 个测试，此目录无 package.json
+node --experimental-strip-types --test chatanywhere-provider/test/*.test.ts        # 28 个测试，此目录无 package.json
 cd loop && npm install && npm test                                               # 169 个测试；另有 npm run typecheck
 cd opencode-bridge && npm install && npm test                                    # 108 个测试（helper 集成测试派生真实 helper + 手写 fake SOCKS5）；另有 npm run typecheck
 cd deep-init && npm install && npm test                                               # 32 个测试（纯函数 + fake scanner）；另有 npm run typecheck
@@ -159,5 +159,5 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 137；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 108；chatanywhere-provider 24；deep-init 32；human-notify 18。
+- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 137；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 108；chatanywhere-provider 28；deep-init 32；human-notify 18。
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。
