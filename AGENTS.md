@@ -18,6 +18,15 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 4. **完成后标注完成** — 需求全部完成（代码 + README/AGENTS/package.json 同步，见交付节）后，改为 `- [x] <需求描述>` 并去掉 processing 标注。
 5. 取消/搁置的需求在条目上注明原因后还原为 `- [ ]` 或删除，`todos/` 始终反映真实状态。
 
+## 分支与 Worktree（强制）
+
+所有需求（todo 条目、bug 修复、重构）一律在独立 git worktree 里实现，自测通过后才合回主干。禁止直接在主干工作区改代码——主干工作区只做评审、只读命令与 `todos/` 登记。
+
+1. **开 worktree** — 从主干（当前为 `dev-laptop`）开，位置固定 `.worktrees/<短名>`（已在 `.gitignore`，不污染状态）：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`。
+2. **在里面做完** — 实现 + 自测：全量测试绿 + `npm run typecheck` 零错误（见“测试与 QA”质量门），达标前不合回。
+3. **合回主干** — 回主干工作区 `git merge --no-ff feat/<插件名>-<事项>`，有冲突就地解决不绕行。
+4. **删 worktree** — 合完确认没问题（主干状态正常）后 `git worktree remove .worktrees/<短名>`，保持工作区干净；如合完发现问题，可暂留 worktree 排查，解决后再删。分支可留可删（已推远端的按远端清理）。
+
 ## 架构与数据流
 
 PWR（`pwr/`）分层组织，`src/types.ts` 是共享契约中枢（`RuntimeAdapter`、`ScriptEngine`、`WorkflowRun`、`PwrErrorResult`、entry/自定义消息常量、上限值）。并非严格分层——`runtime/` 引用 `src/plan.ts` 与 `src/ui/types.ts`（RunEvent）；`engine/interpreter.ts` 再导出 `runner/errors.ts` 的 `RunnerError`。
