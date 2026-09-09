@@ -329,6 +329,10 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		// Track the current main-session model so `auto` mode follows it.
 		modelConfig.setSessionModel((ctx as { model?: { id?: string } | null }).model?.id);
 		deps.runtime = await resolveRuntime();
+		// 单例 runtime 跨会话复用：/new、/resume 后同一进程拿到的是上一次
+		// session_shutdown 关停的同一实例，先复活再服务本会话（见下方
+		// session_shutdown 接线）。
+		deps.runtime?.revive?.();
 		deps.engine = await getValidationEngine();
 		// JHL-14: inject the PiAgentRunner adapter (subagent child-pi mode).
 		// If it is unavailable, setRunner() is skipped and the runtime keeps
@@ -369,6 +373,13 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		for (const name of listSavedWorkflows(deps)) {
 			registerSavedCommand(name);
 		}
+	});
+
+	// 会话关闭（/new、/resume、/fork、/clone、exit 都触发，且先于新会话的
+	// session_start）：中止在途控制器、非终态 run 标记 cancelled。runtime
+	// 不可用（AGENT_RUNNER_UNAVAILABLE 降级面）时无操作，绝不阻塞关会话。
+	pi.on("session_shutdown", async () => {
+		deps.runtime?.shutdown?.();
 	});
 
 	// ----- approval records persisted as metadata-only session entries -----

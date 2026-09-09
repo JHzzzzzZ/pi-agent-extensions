@@ -1,28 +1,28 @@
 {
-  "name": "pi-agent-extensions",
-  "version": "2.13.1",
-  "private": true,
-  "type": "module",
-  "description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge / deep-init / human-notify",
-  "keywords": [
-    "pi-package"
-  ],
-  "engines": {
-    "node": ">=22.18"
-  },
-  "pi": {
-    "extensions": [
-      "./pwr/index.ts",
-      "./agent-team/index.ts",
-      "./stream-token-speed/index.ts",
-      "./chatanywhere-provider/index.ts",
-      "./provider-quota/index.ts",
-      "./run-timer/index.ts",
-      "./loop/index.ts",
-      "./goal/index.ts",
-      "./opencode-bridge/index.ts",
-      "./deep-init/index.ts",
-      "./human-notify/index.ts"
-    ]
-  }
+	"name": "pi-agent-extensions",
+	"version": "2.13.2",
+	"private": true,
+	"type": "module",
+	"description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge / deep-init / human-notify",
+	"keywords": [
+		"pi-package"
+	],
+	"engines": {
+		"node": ">=22.18"
+	},
+	"pi": {
+		"extensions": [
+			"./pwr/index.ts",
+			"./agent-team/index.ts",
+			"./stream-token-speed/index.ts",
+			"./chatanywhere-provider/index.ts",
+			"./provider-quota/index.ts",
+			"./run-timer/index.ts",
+			"./loop/index.ts",
+			"./goal/index.ts",
+			"./opencode-bridge/index.ts",
+			"./deep-init/index.ts",
+			"./human-notify/index.ts"
+		]
+	}
 }

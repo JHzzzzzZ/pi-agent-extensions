@@ -444,6 +444,16 @@ export class WorkflowRuntime implements RuntimeAdapter {
 		this.settleHandlers.clear();
 	}
 
+	/**
+	 * 复位 SESSION_SHUTDOWN 闩锁：runtime 是模块级单例，/new、/resume 后
+	 * 同一进程内拿到的是同一个实例；session_start 调用本方法让“新会话拿到
+	 * fresh runtime”的注释真正成立。历史 run 条目保留（与 session 水合模型
+	 * 一致，终态条目仍可查）。
+	 */
+	revive(): void {
+		this.shutDown = false;
+	}
+
 	// ------------------------------------------------------------------
 	// Execution
 	// ------------------------------------------------------------------

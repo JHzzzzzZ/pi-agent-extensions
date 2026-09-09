@@ -181,6 +181,14 @@ export interface RuntimeAdapter {
 	 * one run's settle never flushes another run's pending results.
 	 */
 	onRunSettled?(handler: (runId: string) => void): void;
+	/**
+	 * Optional session lifecycle (pi 0.85.1+，/new、/resume、/fork、/clone、
+	 * exit 都触发 session_shutdown）：中止在途控制器并把非终态 run 标记
+	 * cancelled。与 revive() 成对：单例 runtime 跨会话复用的收口/复位。
+	 */
+	shutdown?(): void;
+	/** 复位 shutdown() 留下的 SESSION_SHUTDOWN 闩锁——新会话 session_start 时调用。 */
+	revive?(): void;
 }
 
 /** Engine adapter contract (JHL-12 implements; JHL-16 consumes). */

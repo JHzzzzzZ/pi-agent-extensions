@@ -1,6 +1,6 @@
 - [x] 根 README 为每个插件增加效果示意图
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞
-- [ ] pwr 接线 `session_shutdown` 钩子调用 `runtime.shutdown()`：pi 0.85.1 已提供该钩子（/new、/resume、/fork、/clone、exit 都触发，见宿主 docs/extensions.md 生命周期图），AGENTS.md 已知怪癖"runtime.shutdown() 从未接线（无 session_shutdown 钩子）"的前提已不成立。接线后 FIFO 队列/缓存/调度器可在会话切换与退出时清理，不残留跨会话状态。TDD：先写伪造 session_shutdown 事件的失败测试再实现。agent-team/loop/goal/provider-quota/run-timer 均已接此钩子，pwr 是唯一缺口。（登记 2026-09-09，来源：定时任务调研 history/2026-09-09.md）
+- [x] pwr 接线 `session_shutdown` 钩子调用 `runtime.shutdown()`：pi 0.85.1 已提供该钩子（/new、/resume、/fork、/clone、exit 都触发，见宿主 docs/extensions.md 生命周期图），AGENTS.md 已知怪癖的前提已不成立。接线后 FIFO 队列/缓存/调度器可在会话切换与退出时清理，不残留跨会话状态。（完成 2026-09-10：TDD 新增生命周期接线测试；发现并修复配套缺口——runtime 是模块级单例，shutdown 后无复位路径，新增 `revive()` 在 session_start 复位 SESSION_SHUTDOWN 闩锁，否则 /new 一次后 start() 永久抛错；`RuntimeAdapter` 增加可选 `shutdown?()/revive?()` 契约。406 测试 + typecheck 绿；agent-team/loop/goal/provider-quota/run-timer 均已接此钩子，pwr 补齐为最后一个）
 - [ ] pwr 的 TUI 与 pi-agent 同步，代码层级对齐
 
   pwr 自带无宿主 TUI 层（`src/ui/`：`MemoryRunStore` / `views.ts` / 批准卡 / entry 渲染器 / widget-status），只有 `renderer.ts` 直接碰宿主 `pi-tui`（`Box`/`Text`）；宿主侧一改渲染或主题契约，pwr 的显示就可能悄悄跑偏。对照宿主 pi-agent/pi-tui 的实现逐项对齐，差异只留 PWR 特有语义。

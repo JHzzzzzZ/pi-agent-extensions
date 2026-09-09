@@ -160,6 +160,54 @@ test("approval card appears as soon as workflow_validate succeeds (no workflow_s
 	assert.ok(notifyCalls.some((n) => n.text.includes("Stages")), "approval card notifies the plan summary");
 });
 
+test("会话生命周期接线：session_shutdown 中止在途 run，新会话 session_start 复活单例 runtime", async () => {
+	// pi 0.85.1 在 /new、/resume、/fork、/clone、exit 时都会发 session_shutdown
+	// （顺序：shutdown 先于新 session_start）。接线契约：shutdown() 中止在途
+	// 控制器并把非终态 run 标记 cancelled；session_start 用 revive() 复位
+	// SESSION_SHUTDOWN 闩锁——模块级单例跨会话复用，不复位则 /new 一次后
+	// start() 永久抛 SESSION_SHUTDOWN。
+	const { handlers } = register();
+	const fakeCtx = {
+		sessionManager: { getEntries: () => [] },
+		isProjectTrusted: () => false,
+		model: undefined,
+		hasUI: true,
+		ui: {
+			select: async () => undefined,
+			notify() {},
+			setStatus() {},
+			setWidget() {},
+		},
+	};
+	const sessionStart = handlers.get("session_start")?.[0];
+	assert.ok(sessionStart, "session_start handler must be registered");
+	await (sessionStart as (e: unknown, ctx: unknown) => unknown)({}, fakeCtx);
+
+	const sessionShutdown = handlers.get("session_shutdown")?.[0];
+	assert.ok(sessionShutdown, "session_shutdown handler must be registered");
+
+	// 在途 run：runner 永不返回（真实 abort 语义下会被 SIGTERM/SIGKILL，
+	// 这里只验证状态迁移，不派真进程）。
+	rt.setRunner({
+		run: () => new Promise(() => {}),
+	});
+	const source = `export const meta = { name: 'a' }\nawait agent('x')`;
+	const script = { scriptId: "s", digest: "d", source, meta: { name: "a" }, astVersion: "1" };
+	await rt.start({ runId: "run-shutdown-1", script });
+	assert.equal(rt.view("run-shutdown-1").status, "running");
+
+	await (sessionShutdown as (e: unknown, ctx: unknown) => unknown)({}, fakeCtx);
+	assert.equal(rt.view("run-shutdown-1").status, "cancelled", "session_shutdown must cancel in-flight runs");
+
+	// 新会话：session_start 先于一切 run 请求触发，runtime 必须可用。
+	await (sessionStart as (e: unknown, ctx: unknown) => unknown)({}, fakeCtx);
+	const restarted = await rt.start({ runId: "run-shutdown-2", script });
+	assert.equal(restarted.status, "running", "new session must revive the singleton runtime (no SESSION_SHUTDOWN)");
+
+	// 收尾：中止测试自己拉起的在途 run，不泄漏到后续用例。
+	await (sessionShutdown as (e: unknown, ctx: unknown) => unknown)({}, fakeCtx);
+});
+
 test("运行时失败经磁盘桥写入富条目", async () => {
 	// 静态导入与入口 resolveRuntime() 的 `./runtime/index.ts` 动态导入解析到
 	// 同一模块 URL —— ESM 模块缓存保证拿到同一个单例 runtime，无需动态导入。

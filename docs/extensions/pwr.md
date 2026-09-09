@@ -30,7 +30,7 @@
 - 错误消息静态模板，绝不插值用户输入；脚本源码 / args 永不写盘；结果 ≤50KB（`RESULT_TOO_LARGE`）、summary ≤8KB。
 - trace 文本（v2.4.0）单行 + 尾部截断，绝不透传原始工具输出。
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
-- pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；`runtime.shutdown()` 未接线。
+- pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。
 
 ## 已知坑
 
@@ -42,7 +42,7 @@
 
 ## 改动清单
 
-- 必跑：`cd pwr && npm test`（405 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。
+- 必跑：`cd pwr && npm test`（406 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。
 - DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `pwr/DELIVERY.md` 版本历史。
 - 测试 fake：`test/helpers.ts` 的 `makeFakeRunner`（fake AgentRunner）、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn`（fake 子进程）。集成模式见 `runner/test/integration.test.ts`。
 - 完整架构 / 安全文档 / 版本历史 → `pwr/DELIVERY.md`（权威，勿在别处重复）。

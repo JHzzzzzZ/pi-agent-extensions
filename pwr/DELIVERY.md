@@ -1,6 +1,11 @@
-# DELIVERY — PWR 合并交付包 v2.4.0（运行实时 trace + saved workflow 列表 + key=value 参数输入）
+# DELIVERY — PWR 合并交付包 v2.4.2（会话生命周期接线）
 
 > 三项用户反馈改进：① 运行时只能看到 agent 行却看不到"它在干什么"——子 `pi --mode json` 一直在 stdout 吐完整事件流（`tool_execution_*`、`message_update`），但 runner 只解析 `message_end`/`tool_result_end` 且无实时回调；② saved workflow 无法列出，只能线下找 .js 文件；③ `/workflow:<name>` 参数必须写 JSON。安全不变量不变：trace 全部单行截断、args 仅摘要、错误静态模板，绝不透传原始工具输出（PRD §6.1）。
+
+## 本版变更（v2.4.2）
+
+- 接线 pi 0.85.1 `session_shutdown` 钩子 → `runtime.shutdown()`：/new、/resume、/fork、/clone、exit 时中止在途控制器、非终态 run 标记 cancelled；`RuntimeAdapter` 增加可选 `shutdown?()`/`revive?()` 契约。
+- 新增 `runtime.revive()`：runtime 是模块级单例，新会话 session_start 复位 SESSION_SHUTDOWN 闩锁——否则 /new 一次后 start() 永久抛 SESSION_SHUTDOWN。
 
 ## 本版变更（v2.4.0）
 
