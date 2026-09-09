@@ -52,7 +52,8 @@ PWR（`pwr/`）分层组织，`src/types.ts` 是共享契约中枢（`RuntimeAda
 - `pwr/src/` + `pwr/src/ui/` — 编排契约与 TUI 层。
 - `pwr/test/`、`pwr/tests/`、`pwr/runtime/test/`、`pwr/runner/test/` — node:test 套件（见"测试与 QA"）。
 - `pwr/vendor/` — 内置 acorn 8.18.0（`acorn.mjs` + 手写 `acorn.d.mts` + license）；生成文件，勿修改。仅被 `engine/parser.ts` 引入，使 PWR 运行时零 npm 依赖。
-- 卫星扩展：`agent-team/`（扁平模块：types/config/runner/worktree/leader-prompt/dispatch/manage/cockpit/widget/session/index + test/ + examples/）、`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + index.ts，带 `pi.extensions` 清单的 package.json + test/discover.test.ts）、`provider-quota/`（index.ts，无 package.json）、`run-timer/`（index.ts + test，无 package.json）、`loop/`（parse.ts + tasks.ts + tools.ts + runner.ts + index.ts + 带 `pi.extensions` 清单的 package.json + tsconfig）、`goal/`（单文件 + test，无 package.json：经 `agent_settled` + `pi.sendMessage({triggerTurn, deliverAs:"followUp"})` 链式续回合，状态持久化为 `goal-state-v1` 条目，评估器 = 一次小型 `ctx.modelRegistry` + pi-ai `provider.stream` 调用）、`opencode-bridge/`（index.ts + bridge.ts + opencode-bridge-helper.mjs + 带 `pi.extensions` 清单的 package.json + tsconfig + lockfile；探测/派生/fs/sleep/shutdown 边界经 `BridgeDeps` 注入、settings + 端口配置文件读写经 `ProxySyncDeps` 注入以便确定性测试）、`deep-init/`（单文件 + test + 带 `pi.extensions` 清单的 package.json + tsconfig：提示词驱动 thin 封装，`DirScanner`/`gitInfo`/`nowIso` 经 `DeepInitDeps` 注入）、`human-notify/`（单文件 + test，无 package.json：监听 `ui_prompt_start`/`agent_settled` 发 Windows Toast，派生/平台/时钟/环境经 `HumanNotifyDeps` 注入）。每个扩展目录都以 `index.ts` 为入口，纯目录复制后 pi 自动发现（`extensions/*/index.ts`）即可加载；根 `package.json` 的 `pi.extensions` 清单为 `pi install` 注册全部扩展。
+- `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
+- 卫星扩展：`agent-team/`（扁平模块：types/config/runner/worktree/leader-prompt/dispatch/manage/cockpit/widget/session/index + test/ + examples/）、`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + index.ts，带 `pi.extensions` 清单的 package.json + test/discover.test.ts）、
 
 ## 开发命令
 
@@ -126,6 +127,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 每次代码变更只有在其文档与清单在同一变更中同步更新后才算完成——绝不留到后续处理：
 
 - **README**：更新根 `README.md` 中受影响扩展的章节（PWR 另有 `pwr/README.md` / `pwr/DELIVERY.md`）——新增/变更的功能、用法与实测测试数。
+- **docs/ 知识库卡（强制）**：动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
 - **AGENTS.md**：架构、文件布局、约定、命令或实测测试数变化时同步更新（项目概览/关键目录中的卫星描述，开发命令与测试 QA 中的测试数）。
 - **`todos/`**：每个插件必须对应一份 `todos/<插件名>-todo.md`，与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应；**新增插件时必须在同一变更里同步创建该 todo 文件**，缺失视为交付不完整。
 - **package.json**：每个被触及的扩展 `package.json` bump `version`（若 description 提及特性则一并更新）；根 `package.json` 的 `version` 同步 bump（与发布特性版本对齐，如 loop v1.3.0 → 根 1.3.0）。
