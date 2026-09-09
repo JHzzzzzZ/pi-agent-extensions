@@ -8,7 +8,7 @@
 
 | 扩展 | 端口 | 替代的真实边界 |
 | --- | --- | --- |
-| pwr | `FlowDeps` / `ToolDeps`（src/flow.ts, src/tools.ts）、`SaveAdapter` / `SaveFlowDeps`、`UiRuntimeAdapter`、`RunPersister`（runtime/persist.ts） | 流程编排、保存加载、UI、持久化 |
+| pwr | `FlowDeps` / `ToolDeps`（src/flow.ts, src/tools.ts）、`SaveAdapter` / `SaveLibDeps`（src/save.ts，save.test.ts 实际注入口）、`SaveFlowDeps`、`UiRuntimeAdapter`、`RunPersister`（runtime/persist.ts） | 流程编排、保存加载、UI、持久化 |
 | agent-team | `CoordinatorDeps` / `DispatchDeps` / `ManageDeps`；入口接受 `{ spawn }` | 子进程 spawn、调度、团队文件管理 |
 | loop | `LoopToolDeps`（tools.ts）；runner.ts 派生边界 | 工具依赖、后台 pi 派生 |
 | goal | `GoalDeps`（index.ts） | 评估器调用、时钟 |
@@ -16,11 +16,11 @@
 | deep-init | `DeepInitDeps`（`DirScanner` / `gitInfo` / `nowIso`） | 目录扫描、git、时钟 |
 | human-notify | `HumanNotifyDeps`（派生 / 平台 / 时钟 / 环境） | 进程派生、平台探测 |
 | run-timer | 无显式 deps 口——测试经 before/after mock `setInterval` | 时钟（特例：timer 直接 mock） |
-| stream-token-speed | 无 deps 口；测试用 `RecordingStatusPort` 替身 | 状态上报端口 |
+| stream-token-speed | `StatusPort`（status-port.ts，状态上报端口；`createStatusPort()` 工厂） | 测试用 `RecordingStatusPort` 实现该接口（test/fixtures.ts） |
 
 ## 时钟约定
 
-- 一律注入 `now: () => string` / `nowMs`，禁止直接 `Date.now()`；测试固定 `2026-08-05T12:00:00Z`。
+- 时钟注入 `now: () => string` / `nowMs`，测试固定 `2026-08-05T12:00:00Z`。**已知例外：loop** —— 调度/倒计时直接用 `Date.now()`（loop/index.ts 多处），`LoopToolDeps` 无时钟口；测试经双 mock（setInterval + Date.now）覆盖，新插件勿模仿。
 - run-timer 是唯一 mock `setInterval` 的特例（timer 本身就是被测行为）。
 
 ## fake 选型规则

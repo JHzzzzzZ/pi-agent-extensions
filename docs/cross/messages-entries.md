@@ -34,4 +34,4 @@
 - pwr 持久化**仅元数据**：脚本源码 / args / 工具输出永不写盘；`pwr-tmp://`、`team-tmp://` 仅进程内物化，不落业务盘。
 - entry 读取一律 `ctx.sessionManager.getEntries()` 后按 `customType` 过滤（loop/goal 都这么做），并 try/catch 包裹——持久化失败绝不破坏会话。
 - 环境变量开关模式：`PI_AGENT_TEAM_WIDGET=0`、`PI_HUMAN_NOTIFY=0`、`PI_AGENT_TEAM_FILE`（模式切换）——新开关沿用 `PI_<扩展>_<开关>` 命名。
-- 子进程契约统一：`pi --mode json -p`，按行 JSON 事件，SIGTERM → 5s（pwr）/ 等价 grace（agent-team）后 SIGKILL。
+- 子进程契约统一：`pi --mode json -p --no-session`（pwr 固定追加 `--no-session`，见 pwr/runner/index.ts），按行 JSON 事件，SIGTERM → 5s（pwr）/ 等价 grace（agent-team）后 SIGKILL。loop 的 --bg 后台模式例外：不带 --no-session 以便 `pi --session <id>` 恢复。
