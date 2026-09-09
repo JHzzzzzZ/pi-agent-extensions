@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ c6d9048
+> last verified @ f9054cd
 
 ## 职责与边界
 
@@ -22,7 +22,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 3. 每任务物化 `team-tmp://` prompt → member 子 pi 执行 → 结果 ≤50KB / 摘要 ≤8KB 回 leader。
 4. leader 汇总 → 退出码 0 → 报告经 `deliverRunResult` 以 followUp 自动送达主会话。
 5. `wait: true` 保留同步契约（注意：同步 await 会阻塞主 agent 轮次）。
-6. `team_stop <runId>` 中止：`stopAndSettle()` SIGTERM→SIGKILL 后有界等待（默认 7s）落定，返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达，可立即重新派单。
+6. `team_stop <runId>` 中止：`stopAndSettle()` SIGTERM→SIGKILL 后有界等待（默认 7s）落定，返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达，可立即重新派单。viewer 内 `D` 停止共用同一停止语义：确认后经 `viewerStopAction` → `stopAndSettle()`（`index.ts` 导出仅供测试），结果映射为顶部 notice（settled → success、未落定 → warning、异常 → error，绝不上抛）；run 已结束/无活动 run 时纯渲染层 notice 拦截，不进确认态、回调不会被调。
 
 ## 不变量
 
@@ -45,11 +45,12 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - 组件工厂式逐帧重绘在某 bundle 宿主上产生逐秒追加残影行——亮块渲染回退为每秒 string[] setWidget（c87bd3f）；`PI_AGENT_TEAM_WIDGET=0` 整体关闭用于 A/B 诊断。
 - CJK/ANSI 行必须感知宽度截断补齐（`fitLine`）：曾因超宽行触发宿主 `doRender` 断言崩溃（d797975）。
 - viewer 帧高 ±1 行消抖、数据指纹门控刷新（elapsed 空转不重绘）、overlay 盒模型用 `VIEWER_OVERLAY_OPTIONS`（宽 96% / maxHeight 85% / margin 1，测试锁死）；close 键集对齐 fleet（`q`/`Esc`/`ctrl+c`，提示行仍只写 `q`——文案有意不变，别当成漏改）。
+- viewer 停止/刷新键位（`D`/`r`/`R`）锁在 `VIEWER_ACTION_KEYS`（tui-sync 测试对照 fleet `DEFAULT_FLEET_KEYBINDINGS`）；确认横幅/notice 占正文窗口顶部、窗口收缩、**帧总行数恒为 `bodyHeight + VIEWER_CHROME_ROWS`**（ghost-host 定高约束，差异条目 tui-sync §3.8）；busy 守卫防重复调 stop；notice 由按键清除或被新 notice 替换（不做自动淡出/指纹清除——停止结果 notice 会随 aborted 终态刷新立即变指纹，指纹清除会把它瞬间抹掉）。
 - 入口接受 `{ spawn }` 供工具级测试（`test/run-tool.test.ts`）。
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（147 个）。
+- 必跑：`cd agent-team && npm install && npm test`（166 个）。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
