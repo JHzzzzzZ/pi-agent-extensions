@@ -69,13 +69,14 @@ members:
 |---|---|
 | `/team:run <团队名> <任务>` | **后台运行**：命令立即返回，主会话可继续对话；输入栏下方亮块实时显示进度（见 §4），完成后报告自动送入会话 |
 | `/team:<团队名> <任务>` | 等价快捷方式（`/reload` 后对新团队生效） |
-| `team_run` 工具 | 让主 agent 自主派单——**默认后台**：立即返回，报告完成后自动送达会话（followUp）；`wait: true` 同步等待整个 run 并内联返回报告（阻塞主会话，不推荐） |
+| `team_run` 工具 | 让主 agent 自主派单——**默认后台**：立即返回（含 runId，`team_stop` 的中止句柄），报告完成后自动送达会话（followUp）；`wait: true` 同步等待整个 run 并内联返回报告（阻塞主会话，不推荐） |
+| `team_stop` 工具 | 让主 agent 按 runId 中止后台 run（与 `/team:stop` 同一停止原语 + **settle-aware**：有界等待 leader 落定后返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达；可立即重新派单）。runId 必填：省略 `RUN_ID_REQUIRED`、未知 `RUN_NOT_FOUND`、已结束 `RUN_ALREADY_FINISHED`（均类型化错误，不抛异常） |
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
-其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）。
+其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）。
 
 ### 4. 进度亮块（输入栏下方，可键盘选中）
 
@@ -119,7 +120,7 @@ members:
 
 ## 命令与工具一览
 
-- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态）、`team_transcript`（读成员/leader 会话记录）
+- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态，含 runId）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
 - 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、动态 `/team:<name>`
 - Widget：输入栏下方可选中亮块（紧凑两行概要）——`alt+↓` 选中、`enter` 直达查看器（仅 TUI 模式，详见 §4）
