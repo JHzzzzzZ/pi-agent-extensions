@@ -107,6 +107,8 @@ export interface ViewerData {
 }
 
 /** Interactive viewer state. */
+export type NoticeKind = "success" | "warning" | "error";
+
 export interface ViewerState {
   actorIndex: number;
   /**
@@ -122,10 +124,24 @@ export interface ViewerState {
   follow: boolean;
   /** Include tool call rows in the body. */
   showTools: boolean;
+  /**
+   * Two-step stop confirmation armed (D on a running run). Mirrors
+   * fleet's `stopConfirming` — confirm with Enter/Y, cancel with
+   * N/Esc/ctrl+c/backspace (cancel never closes the viewer).
+   */
+  stopConfirming: boolean;
+  /** A stop request is in flight (busy banner; repeated confirms ignored). */
+  stopping?: boolean;
+  /**
+   * Top banner notice (D-on-finished hint / stop result). Held as render
+   * state; the next keypress replaces or clears it. Mutually exclusive
+   * with the busy/confirm banners (busy > confirm > notice, like fleet).
+   */
+  notice?: { text: string; kind: NoticeKind };
 }
 
 export function initialViewerState(): ViewerState {
-  return { actorIndex: 0, scroll: 0, follow: true, showTools: true };
+  return { actorIndex: 0, scroll: 0, follow: true, showTools: true, stopConfirming: false };
 }
 
 type StatusStyle = "dim" | "accent" | "success" | "error" | "warning";
@@ -342,6 +358,19 @@ export function bodyLines(
 export const VIEWER_CHROME_ROWS = 3;
 
 /**
+ * Action key sets aligned with pi-subagents' `DEFAULT_FLEET_KEYBINDINGS`
+ * (v0.66.0 `fleet.ts:43/46`, spec table §4): `stop: ["D"]`, `refresh:
+ * ["r", "R"]`. Locked by test/tui-sync.test.ts.
+ */
+export const VIEWER_ACTION_KEYS = {
+  stop: ["D"],
+  refresh: ["r", "R"],
+} as const;
+
+/** Key legend for the bottom border (kept in sync with VIEWER_ACTION_KEYS). */
+export const VIEWER_LEGEND = "↑↓ 滚动 · ←→/1-9 成员 · g/G 首末 · x 工具行 · D 停止 · r 刷新 · q 关闭";
+
+/**
  * Frame height for a terminal with `rows` rows: ~82% of the screen,
  * at least 12 rows (very small terminals let the TUI clip).
  */
@@ -378,7 +407,7 @@ function tabsRow(data: ViewerData, state: ViewerState, width: number, styles: St
 }
 
 function bottomBorder(data: ViewerData, state: ViewerState, width: number, styles: Styles): string {
-  const legend = "↑↓ 滚动 · ←→/1-9 成员 · g/G 首末 · x 工具行 · q 关闭";
+  const legend = VIEWER_LEGEND;
   const hasPosition = data.actors.length > 0;
   const position = hasPosition ? `成员 ${Math.min(state.actorIndex + 1, data.actors.length)}/${data.actors.length}` : "";
   const segmentWidth = (legendText: string): number =>
@@ -413,10 +442,31 @@ export function fitLine(line: string, width: number): string {
 }
 
 /**
+ * Action banner/notice lines for the top of the body window (fleet's
+ * `actionLines` counterpart, priority busy > confirm > notice). Pure:
+ * derived entirely from the viewer state, mutually exclusive display.
+ */
+export function actionLines(data: ViewerData, state: ViewerState, styles: Styles): string[] {
+  if (state.stopping) return [styles.accent("停止中…")];
+  if (state.stopConfirming) {
+    return [
+      styles.warning(`确认停止 run ${data.runId || "(no run)"}？`),
+      styles.dim("停止会中止 leader 与所有成员子进程。Enter/Y 确认 · N 取消 · Esc 取消"),
+    ];
+  }
+  if (state.notice) {
+    const style = state.notice.kind === "error" ? styles.error : state.notice.kind === "warning" ? styles.warning : styles.success;
+    return [style(state.notice.text)];
+  }
+  return [];
+}
+
+/**
  * Renders the full bordered frame: title top border, member tabs, a
  * fixed-height continuous-transcript body window, and the key-legend
- * bottom border. Always returns exactly `bodyHeight + VIEWER_CHROME_ROWS`
- * lines.
+ * bottom border. Action lines (stop banner/notice) take the top of the
+ * body window and shrink it accordingly — the frame always returns
+ * exactly `bodyHeight + VIEWER_CHROME_ROWS` lines.
  */
 export function renderViewerFrame(
   data: ViewerData,
@@ -435,13 +485,16 @@ export function renderViewerFrame(
   const actor = data.actors[state.actorIndex];
   const entries = actor ? (data.entries.get(actor.actor) ?? []) : [];
   const lines = bodyLines(entries, state.showTools, inner, styles, opts.renderMarkdown);
-  const clamped = clampViewerState(state, lines.length, opts.bodyHeight);
-  const window = lines.slice(clamped.scroll, clamped.scroll + opts.bodyHeight);
-  while (window.length < opts.bodyHeight) window.push("");
+  const actions = actionLines(data, state, styles);
+  const effective = Math.max(1, opts.bodyHeight - actions.length);
+  const clamped = clampViewerState(state, lines.length, effective);
+  const window = lines.slice(clamped.scroll, clamped.scroll + effective);
+  while (window.length < effective) window.push("");
 
   return [
     topBorder(data, width, styles),
     sideWrap(tabsRow(data, state, inner, styles), inner, styles),
+    ...actions.map((line) => sideWrap(line, inner, styles)),
     ...window.map((line) => sideWrap(line, inner, styles)),
     bottomBorder(data, state, width, styles),
   ].map((line) => fitLine(line, width));
@@ -475,9 +528,17 @@ export interface ViewerKeyContext {
   bodyHeight: number;
   /** Transcript actor ids in tab order (pins selection by id when present). */
   actorIds?: string[];
+  /** True while the current run is running (gates the D stop action). */
+  runRunning?: boolean;
+  /** Latest known run status (used for the D-on-finished notice copy). */
+  runStatus?: string;
 }
 
-export type ViewerKeyResult = { type: "update"; state: ViewerState } | { type: "close" };
+export type ViewerKeyResult =
+  | { type: "update"; state: ViewerState }
+  | { type: "close" }
+  | { type: "refresh" }
+  | { type: "stop-confirm" };
 
 const KEY_UP = "\x1b[A";
 const KEY_DOWN = "\x1b[B";
@@ -491,8 +552,23 @@ const KEY_END = "\x1b[F";
 /**
  * Pure key reducer. Unrecognized keys leave the state unchanged (still an
  * update) so the component ignores them; `q`/Esc request close.
+ *
+ * 停止/刷新动作键位对齐 fleet `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0，
+ * `stop: ["D"]`、`refresh: ["r", "R"]`，规格表 §4）。确认态按键集对齐
+ * fleet.ts:1134-1150：Enter/Y 确认、Esc/ctrl+c/N/backspace 取消（取消不关
+ * 闭查看器）、其余键忽略。
  */
 export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKeyContext): ViewerKeyResult {
+  if (state.stopConfirming) {
+    if (matchesKey(data, "enter") || data === "y" || data === "Y") {
+      return { type: "stop-confirm" };
+    }
+    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "n" || data === "N" || matchesKey(data, "backspace")) {
+      return { type: "update", state: { ...state, stopConfirming: false } };
+    }
+    return { type: "update", state }; // 确认态下其余键一律忽略
+  }
+
   const bottom = Math.max(0, ctx.totalLines - ctx.bodyHeight);
   const next: ViewerState = { ...state };
   const switchActor = (index: number): void => {
@@ -511,6 +587,19 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
   // 判定（ctrl+c 编码契约 \x03），普通字符不受影响。
   if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
     return { type: "close" };
+  }
+
+  // 停止动作：运行中 → 两步确认；已结束/无 run → error notice（不进确认态，
+  // 停止回调不会被调）。
+  if (data === VIEWER_ACTION_KEYS.stop[0]) {
+    if (ctx.runRunning) return { type: "update", state: { ...next, stopConfirming: true } };
+    return {
+      type: "update",
+      state: { ...next, notice: { text: `run 已结束（${ctx.runStatus ?? "unknown"}），无需停止`, kind: "error" } },
+    };
+  }
+  if (data === VIEWER_ACTION_KEYS.refresh[0] || data === VIEWER_ACTION_KEYS.refresh[1]) {
+    return { type: "refresh" };
   }
 
   switch (data) {
@@ -565,6 +654,8 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
       break;
     }
   }
+  // 普通按键清除顶部 notice（下一次交互自然滚出）。
+  delete next.notice;
   return { type: "update", state: next };
 }
 
@@ -629,6 +720,12 @@ export function stabilizeBodyHeight(prev: number, next: number, tolerance: numbe
   return Math.abs(next - prev) <= tolerance ? prev : next;
 }
 
+/** Result of a viewer stop action, mapped to a top banner notice. */
+export interface ViewerStopResult {
+  text: string;
+  kind: NoticeKind;
+}
+
 export interface TranscriptViewerOptions {
   /** Reloads viewer data (run snapshot + transcripts) on each refresh tick. */
   load: () => ViewerData;
@@ -644,6 +741,13 @@ export interface TranscriptViewerOptions {
   /** Assistant-text renderer; defaults to plain wrapping. Host passes Markdown. */
   renderMarkdown?: (text: string, width: number) => string[];
   refreshMs?: number;
+  /**
+   * Stops the whole run (leader + all members) after the two-step D
+   * confirmation. Wired by the cockpit (`viewerStopAction`); maps the
+   * outcome to a top banner notice. Exceptions never escape (busy guard
+   * swallows repeats; rejections render an error notice).
+   */
+  stop?: () => Promise<ViewerStopResult>;
 }
 
 /** pi-tui component wrapper: gated refresh timer + key handling + rendering. */
@@ -738,14 +842,56 @@ export class TranscriptViewer implements Component {
       actorCount: this.data.actors.length,
       bodyHeight: this.lastBodyHeight,
       actorIds: this.data.actors.map((a) => a.actor),
+      runRunning: this.data.runStatus === "running",
+      runStatus: this.data.runStatus,
     });
     if (result.type === "close") {
       this.dispose();
       this.opts.done();
       return;
     }
+    if (result.type === "refresh") {
+      // 手动刷新：绕过 750ms 指纹门控强制重载重绘（render() 每次 load）。
+      this.requestRender();
+      return;
+    }
+    if (result.type === "stop-confirm") {
+      this.beginStop();
+      return;
+    }
     this.state = result.state;
     this.requestRender();
+  }
+
+  /**
+   * Runs the injected stop action once: busy banner immediately, notice
+   * on settle. Repeated confirms during the flight are ignored (busy
+   * guard); failures map to an error notice and never escape.
+   */
+  private beginStop(): void {
+    if (this.state.stopping) return;
+    const stop = this.opts.stop;
+    if (!stop) {
+      this.state = {
+        ...this.state,
+        stopConfirming: false,
+        notice: { text: "停止不可用：当前上下文没有接停止动作", kind: "error" },
+      };
+      this.requestRender();
+      return;
+    }
+    this.state = { ...this.state, stopConfirming: false, stopping: true };
+    this.requestRender();
+    void (async () => {
+      let result: ViewerStopResult;
+      try {
+        result = await stop();
+      } catch {
+        result = { text: "停止失败；稍后用 /team:stop 重试", kind: "error" };
+      }
+      this.state = { ...this.state, stopping: false, notice: { text: result.text, kind: result.kind } };
+      this.requestRender();
+    })();
   }
 
   invalidate(): void {
@@ -801,7 +947,7 @@ export const VIEWER_OVERLAY_OPTIONS: OverlayOptions = {
  */
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,
-  opts: { load: () => ViewerData; refreshMs?: number; initialActor?: string },
+  opts: { load: () => ViewerData; refreshMs?: number; initialActor?: string; stop?: () => Promise<ViewerStopResult> },
 ): Promise<void> {
   const renderMarkdown = markdownRenderer();
   await ui.custom<void>(
@@ -811,6 +957,7 @@ export async function openTranscriptViewer(
         done,
         styles: themeStyles(theme),
         ...(opts.initialActor !== undefined ? { initialActor: opts.initialActor } : {}),
+        ...(opts.stop ? { stop: opts.stop } : {}),
         requestRender: () => {
           try {
             tui.requestRender();

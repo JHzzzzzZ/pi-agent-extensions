@@ -9,6 +9,7 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   VIEWER_CHROME_ROWS,
+  actionLines,
   bodyLines,
   buildBlocks,
   blockLines,
@@ -339,6 +340,114 @@ test("handleViewerKey switches actors with arrows, hjl, tab and number jumps", (
   const tab = handleViewerKey(initialViewerState(), "\t", keyCtx(10));
   assert.ok(tab.type === "update");
   assert.equal(tab.state.actorIndex, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Stop/refresh actions（v1.4.0，fleet v0.66.0 stop/refresh 对齐）
+// ---------------------------------------------------------------------------
+
+function stopCtx(overrides: Partial<{ totalLines: number; actorCount: number; bodyHeight: number; runRunning: boolean; runStatus: string }> = {}) {
+  return { totalLines: 10, actorCount: 2, bodyHeight: 10, runRunning: true, runStatus: "running", ...overrides };
+}
+
+test("handleViewerKey D on a running run arms stop confirmation", () => {
+  const result = handleViewerKey(initialViewerState(), "D", stopCtx());
+  assert.ok(result.type === "update");
+  assert.equal(result.state.stopConfirming, true);
+  // 小写 d 不触发（fleet 键位 stop: ["D"]，shift+d）。
+  const lower = handleViewerKey(initialViewerState(), "d", stopCtx());
+  assert.ok(lower.type === "update");
+  assert.equal(lower.state.stopConfirming, false);
+});
+
+test("确认态 Enter/Y 请求停止，N/Esc/ctrl+c/backspace 取消且不关闭，q 被忽略", () => {
+  const armed = { ...initialViewerState(), stopConfirming: true };
+  for (const key of ["\r", "y", "Y"]) {
+    const r = handleViewerKey(armed, key, stopCtx());
+    assert.equal(r.type, "stop-confirm", `键 ${JSON.stringify(key)} 应 stop-confirm`);
+  }
+  for (const key of ["n", "N", "\x1b", "\x03", "\x7f"]) {
+    const r = handleViewerKey(armed, key, stopCtx());
+    assert.ok(r.type === "update", `键 ${JSON.stringify(key)} 应 update（取消不关闭）`);
+    if (r.type === "update") assert.equal(r.state.stopConfirming, false, `键 ${JSON.stringify(key)} 应退出确认态`);
+  }
+  const ignored = handleViewerKey(armed, "q", stopCtx());
+  assert.ok(ignored.type === "update", "确认态下 q 不关闭");
+  if (ignored.type === "update") assert.equal(ignored.state.stopConfirming, true, "确认态保持");
+  const other = handleViewerKey(armed, "\x1b[B", stopCtx());
+  assert.ok(other.type === "update");
+  if (other.type === "update") assert.equal(other.state.stopConfirming, true, "确认态下其余键被忽略");
+});
+
+test("handleViewerKey D on a finished run shows an error notice without arming", () => {
+  const result = handleViewerKey(initialViewerState(), "D", stopCtx({ runRunning: false, runStatus: "aborted" }));
+  assert.ok(result.type === "update");
+  if (result.type === "update") {
+    assert.equal(result.state.stopConfirming, false, "不进确认态");
+    assert.ok(result.state.notice, "D-on-finished 应产出 notice");
+    assert.equal(result.state.notice?.kind, "error");
+    assert.match(result.state.notice?.text ?? "", /run 已结束（aborted），无需停止/);
+  }
+});
+
+test("handleViewerKey r/R request refresh; any other keypress clears the notice", () => {
+  assert.equal(handleViewerKey(initialViewerState(), "r", stopCtx()).type, "refresh");
+  assert.equal(handleViewerKey(initialViewerState(), "R", stopCtx()).type, "refresh");
+
+  const noticed = handleViewerKey(initialViewerState(), "D", stopCtx({ runRunning: false, runStatus: "done" }));
+  assert.ok(noticed.type === "update");
+  const cleared = handleViewerKey(noticed.type === "update" ? noticed.state : initialViewerState(), "\x1b[A", stopCtx({ runRunning: false }));
+  assert.ok(cleared.type === "update");
+  if (cleared.type === "update") assert.equal(cleared.state.notice, undefined, "下一次按键清除 notice");
+});
+
+test("actionLines：确认横幅两行/busy 一行/notice 一行互斥（优先级 busy > 确认 > notice）", () => {
+  const armed = { ...initialViewerState(), stopConfirming: true };
+  const banner = actionLines(viewerData(), armed, styles);
+  assert.equal(banner.length, 2);
+  assert.match(banner[0], /确认停止 run run-42？/);
+  assert.match(banner[1], /Enter\/Y 确认 · N 取消 · Esc 取消/);
+
+  const busy = actionLines(viewerData(), { ...initialViewerState(), stopping: true }, styles);
+  assert.equal(busy.length, 1);
+  assert.match(busy[0], /停止中…/);
+
+  const notice = actionLines(viewerData(), { ...initialViewerState(), notice: { text: "run 已停止", kind: "success" } }, styles);
+  assert.equal(notice.length, 1);
+  assert.match(notice[0], /run 已停止/);
+
+  // busy 优先于确认与 notice（对齐 fleet actionLines 顺序）。
+  const busyWins = actionLines(viewerData(), { ...armed, stopping: true, notice: { text: "x", kind: "error" } }, styles);
+  assert.equal(busyWins.length, 1);
+  assert.match(busyWins[0], /停止中…/);
+});
+
+test("renderViewerFrame：action 行占正文窗口顶部，窗口收缩，帧总行数不变", () => {
+  const bodyHeight = 10;
+  const plain = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles, bodyHeight });
+  assert.equal(plain.length, bodyHeight + VIEWER_CHROME_ROWS);
+
+  const armed = { ...initialViewerState(), follow: false, scroll: 0, stopConfirming: true };
+  const frame = renderViewerFrame(viewerData(), armed, 80, { styles, bodyHeight });
+  assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS, "帧总行数恒定");
+  assert.match(frame[2], /确认停止 run run-42？/, "横幅第一行在正文窗口顶部");
+  assert.match(frame[3], /Enter\/Y 确认/, "横幅第二行");
+  assert.match(frame[4], /❯ 修复登录 bug/, "正文第一行被横幅下推");
+  for (const [index, line] of frame.entries()) {
+    assert.equal(visibleWidth(line), 80, `line ${index} fitLine 后行宽恒定`);
+  }
+
+  const noticeFrame = renderViewerFrame(viewerData(), { ...initialViewerState(), notice: { text: "run 已结束（done），无需停止", kind: "error" } }, 80, { styles, bodyHeight });
+  assert.equal(noticeFrame.length, bodyHeight + VIEWER_CHROME_ROWS);
+  assert.match(noticeFrame[2], /run 已结束（done），无需停止/);
+});
+
+test("底部图例含 D 停止与 r 刷新", () => {
+  // 窄终端截断逻辑不变（segmentWidth 溢出时截断）；宽终端下完整图例可见。
+  const frame = renderViewerFrame(viewerData(), initialViewerState(), 120, { styles, bodyHeight: 8 });
+  assert.match(frame[frame.length - 1], /D 停止 · r 刷新 · q 关闭/);
+  const narrow = renderViewerFrame(viewerData(), initialViewerState(), 60, { styles, bodyHeight: 8 });
+  assert.match(narrow[narrow.length - 1], /…/, "窄终端仍走截断");
 });
 
 test("handleViewerKey toggles tool rows and ignores unknown keys", () => {

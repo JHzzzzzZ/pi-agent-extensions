@@ -310,6 +310,99 @@ test("真实宿主中途改终端高度：重绘后仍为一组标题+页签", (
 });
 
 // ---------------------------------------------------------------------------
+// Slice 7：停止动作全链路（D→确认→busy→notice，真实 TranscriptViewer）
+// ---------------------------------------------------------------------------
+
+function deferredStop<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+test("停止全链路：D→Enter stop 回调恰调一次，busy 期间重复确认被忽略，结果 notice 上屏", async () => {
+  const stop = deferredStop<{ text: string; kind: "success" | "warning" | "error" }>();
+  let stopCalls = 0;
+  const viewer = new TranscriptViewer({
+    load: () => scenarioData(1, 0),
+    done: () => {},
+    styles: plainStyles(),
+    rows: () => 40,
+    refreshMs: 3600_000, // 定时器不参与：帧由显式 render 驱动
+    stop: () => {
+      stopCalls += 1;
+      return stop.promise;
+    },
+  });
+  try {
+    viewer.handleInput("D");
+    viewer.handleInput("\r");
+    assert.equal(stopCalls, 1, "确认后 stop 回调恰调一次");
+    assert.match(stripAnsi(viewer.render(100).join("\n")), /停止中…/, "busy 横幅上屏");
+
+    viewer.handleInput("\r"); // busy 期间重复确认
+    viewer.handleInput("Y");
+    assert.equal(stopCalls, 1, "busy 守卫：不重复调 stop");
+
+    stop.resolve({ text: "run 已停止（aborted · 3.2s）；该 run 的报告不再送达", kind: "success" });
+    await stop.promise;
+    const frame = stripAnsi(viewer.render(100).join("\n"));
+    assert.match(frame, /run 已停止（aborted · 3.2s）；该 run 的报告不再送达/, "停止结果 notice 上屏");
+    assert.doesNotMatch(frame, /停止中…/, "busy 横幅已撤");
+    assert.doesNotMatch(frame, /确认停止 run/, "确认横幅已撤");
+  } finally {
+    viewer.dispose();
+  }
+});
+
+test("停止确认态渲染：横幅两行占正文窗口顶部且帧总行数不变（真实宿主）", () => {
+  const viewer = new TranscriptViewer({
+    load: () => scenarioData(1, 0),
+    done: () => {},
+    styles: plainStyles(),
+    rows: () => 40,
+    refreshMs: 3600_000,
+  });
+  try {
+    const before = viewer.render(100).length;
+    viewer.handleInput("D");
+    const frame = stripAnsi(viewer.render(100).join("\n"));
+    assert.equal(viewer.render(100).length, before, "帧总行数不变");
+    assert.match(frame, /确认停止 run run-1788938207941？/);
+    assert.match(frame, /Enter\/Y 确认 · N 取消 · Esc 取消/);
+  } finally {
+    viewer.dispose();
+  }
+});
+
+test("stop 回调 reject：error notice 上屏且不上抛", async () => {
+  let rejectStop!: (err: Error) => void;
+  const stopPromise = new Promise<{ text: string; kind: "success" | "warning" | "error" }>((_, reject) => {
+    rejectStop = reject;
+  });
+  const viewer = new TranscriptViewer({
+    load: () => scenarioData(1, 0),
+    done: () => {},
+    styles: plainStyles(),
+    rows: () => 40,
+    refreshMs: 3600_000,
+    stop: () => stopPromise,
+  });
+  try {
+    viewer.handleInput("D");
+    viewer.handleInput("\r");
+    rejectStop(new Error("boom"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const frame = stripAnsi(viewer.render(100).join("\n"));
+    assert.match(frame, /停止失败；稍后用 \/team:stop 重试/, "reject 映射为 error notice");
+    assert.doesNotMatch(frame, /停止中…/);
+  } finally {
+    viewer.dispose();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Slice 6：组件关闭/销毁语义（seam E——真实 TranscriptViewer，真实定时器）
 // ---------------------------------------------------------------------------
 

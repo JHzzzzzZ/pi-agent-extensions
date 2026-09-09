@@ -29,6 +29,8 @@
 | open/close 互斥 | 单实例（`fleetInspectorOpen` 等守卫） | `openViewer` early-return + `viewerOpen` 门控 | 已对齐 |
 | widget 隐藏/恢复 | inspector 打开期间 `clearWidget` + 恢复时 `refresh`（`fleet-status.ts:543-596`） | `setPaused(true)` 隐藏 + `setPaused(false)` 立即重绘 | 已对齐 |
 | 销毁与重入 | 组件 `dispose` 清理订阅/timer | `dispose` 先停 timer 再调 done；幂等 | 已对齐（测试锁死） |
+| viewer 停止动作 | `stop: ["D"]` 两步确认（`stopConfirming`；确认态 Enter/Y 确认、Esc/ctrl+c/N/backspace 取消，取消不关闭；其余键忽略，`fleet.ts:46/1134-1150`） | `D` 运行中进确认态，确认后经 `viewerStopAction` → `stopAndSettle()`（与 team_stop 同语义）；已结束仅 error notice 不进确认态 | 已对齐（agent-team 特有：横幅占正文窗口顶部、窗口收缩、帧总高不变，见差异表 §3.8） |
+| viewer 刷新动作 | `refresh: ["r", "R"]`（`fleet.ts:43`） | `r`/`R` 绕过 750ms 指纹门控强制重载重绘 | 已对齐 |
 
 ## 3. 差异条目表
 
@@ -41,6 +43,8 @@
 | 3.5 | 行图标/文案映射 | **已对齐** | fleet ●/◦/■ 与 agent-team ✓/✗/⊘/·/▶ 的映射关系：fleet 运行中 ▶ spinner 语义 ≈ agent-team `running → ▶`；完成 ✓、失败 ✗、中止 ⊘、队列 ·。见 `viewer.ts statusDisplay` + `widget.ts recordIcon`。 |
 | 3.6 | 状态行文本（`formatStatusSnapshot`） | **已对齐** | 仅样式/文案参照 fleet-status 状态行，无行为差异。 |
 | 3.7 | 选中态 up 到顶再按 | **未采纳（agent-team 钳位）** | fleet-status `up` 在选中第 0 行时退出选中；agent-team 保持钳位（首行再按 up 不动），与现有交互一致，无重影风险。见 `widget.ts` `handleWidgetKey`。 |
+| 3.8 | 停止确认横幅/notice 占**正文窗口顶部**，窗口收缩、帧总高不变 | **特有语义保留** | fleet 的 `withActionLines` 是把 action 行插在 detail 正文之前（总高可变）；agent-team 帧是定高（ghost-host 稳定性约束，`fitLine` 逐行定宽），故改为横幅占窗口顶部 + 窗口 slice 少取对应行数，帧总行数恒为 `bodyHeight + VIEWER_CHROME_ROWS`。优先级 busy > 确认 > notice（对齐 fleet `actionLines` 顺序）。见 `viewer.ts` `actionLines` + `renderViewerFrame`。 |
+| 3.9 | 停止粒度 = 整个 run（`viewerStopAction` → `stopAndSettle()`） | **特有语义保留** | fleet 按选中的单个 async run 停；agent-team 的成员子进程归 leader 进程管，cockpit 只能停整个 run（与 team_stop 工具同一路径）。 |
 
 ## 4. 规格字面量表（测试期望值唯一来源）
 
@@ -59,6 +63,8 @@
 | 激活条件 | 编辑器文本为空（`getEditorText() === ""`） | `fleet-status.ts:607` |
 | 选中导航键集 | `down`/`j` 下移、`up`/`k` 上移（均钳位；fleet 的“up 到顶再按退出选中”未采纳，见差异表 §3.7） | `fleet.ts:36-37`、`fleet-status.ts:616-625` |
 | 无变化跳过 | 渲染串指纹相同且无 running 强制 → 跳过 | `fleet-status.ts:585-591` |
+| stop 键位 | `["D"]`（确认态按键：Enter/Y 确认；Esc/ctrl+c/N/backspace 取消） | `fleet.ts:46`、`fleet.ts:1134-1150` |
+| refresh 键位 | `["r", "R"]` | `fleet.ts:43` |
 
 ## 5. 同步记录
 
@@ -66,6 +72,7 @@
 |---|---|---|---|
 | 基线 | 2026-09-09 | v0.66.0 快照登记；首版矩阵 | — |
 | agent-team 1.2.0 | 2026-09-09 | viewer ctrl+c 关闭 + tick 750；widget 空编辑器激活门控 + j/k 导航 + 无变化跳过 setWidget；接线互斥/隐藏/销毁语义测试锁定 | `feat/agent-team-tui-sync` |
+| agent-team 1.4.0 | 2026-09-14 | viewer stop（D 两步确认，确认态按键集对齐 fleet.ts:1134-1150）+ refresh（r/R）；差异条目 §3.8（横幅占正文窗口顶部、帧总高不变）与 §3.9（停止粒度 = 整个 run）登记；tui-sync/viewer/viewer-host/viewer-stop 四文件测试锁定 | `feat/agent-team-view-stop` |
 
 ## 6. 范围外（明确不做）
 
