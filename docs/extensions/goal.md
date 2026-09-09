@@ -1,6 +1,6 @@
 # goal — 会话目标自动循环推进
 
-> last verified @ 0142e14
+> last verified @ 3029829
 
 ## 职责与边界
 
@@ -39,11 +39,12 @@
 - `parseVerdict` 只截第一个括号平衡的 JSON 对象（容忍 code fence/前后废话）；模型若输出多个 JSON 对象且第一个不是判定，会 `bad-verdict`（message 仅前 200 字符，排查时看这个）。
 - 中断后 elapsed/turns 不跨会话保留：水合把 startedAtMs 重置为 now、turns=0，/goal 显示的时长与轮数在 reload/resume 后不连续，属预期而非 bug。
 - 目录无 package.json，测试用 `node --experimental-strip-types --test` 直跑；缩进 2 空格（同多数卫星扩展，与 pwr 的 tab 不同）。
+- 评估器直调 `provider.stream(...)`，绕过宿主 streamFn 的请求头合并（`mergeProviderAttributionHeaders`）：opencode 系模型（provider `opencode`/`opencode-go` 或 baseUrl host `opencode.ai`）必须自注入 `x-opencode-session`/`x-opencode-client` 会话头（Console Go 缺失返回 400 `MissingSessionID`，评估器连败 3 次后 goal 被暂停）。`isOpencodeModel`/`buildOpencodeSessionHeaders` 已复刻宿主判定；仅注入会话头，不注入归因遥测头（HTTP-Referer 等）。若宿主 provider-attribution 判定逻辑变更，需同步这两处。
 - 仅一个 commit（c5e167e）无历史坑可挖；后续踩坑在此追加。
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test goal/index.test.ts`（39 个，goal/ 目录下执行，无 package.json 无 typecheck 脚本）。
+- 必跑：`node --experimental-strip-types --test goal/index.test.ts`（44 个，goal/ 目录下执行，无 package.json 无 typecheck 脚本）。
 - 必看测试：`index.test.ts` — `makeFakePi` 手写 fake pi 宿主（记录 sendMessage/sendUserMessage/entries/statuses）+ fake 评估器 + 注入 `nowMs`，全离线；评估器小调用边界只 fake 不真连。
 - fake 模式：沿 `GoalDeps` 注入口（评估器 + 时钟），对应 docs/cross/deps-ports.md 的 goal 行；新增进程/IO 边界才立新口，别加策略层。
 - 改上限值/消息文案/条目键 ⇒ 同步 README 的 goal 段与头部注释；改条目键 ⇒ 同步 docs/cross/messages-entries.md。
