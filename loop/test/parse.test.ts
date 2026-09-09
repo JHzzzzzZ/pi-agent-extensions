@@ -438,3 +438,51 @@ describe("parseSchedule — daily / 时间窗口（v1.2）", () => {
     }
   });
 });
+
+describe("parseLoopCommand — --bg --model 模型指定（v1.4）", () => {
+  it("--bg --model <provider/id> 5m + 任务 → background + model 透传", () => {
+    const r = parseLoopCommand("--bg --model opencode-go/deepseek-v4-flash 30m 巡检部署", BASE);
+    assert.ok(r.ok);
+    assert.equal(r.value.kind, "create");
+    const spec = (r.value as { spec: CreateSpec }).spec;
+    assert.equal(spec.background, true);
+    assert.equal(spec.model, "opencode-go/deepseek-v4-flash");
+    assert.equal(spec.task, "巡检部署");
+    assert.equal(spec.recurring, true);
+  });
+
+  it("各种创建形态都接受 --model（in / daily at / window）", () => {
+    for (const args of [
+      "--bg --model a/b in 30m 提醒",
+      "--bg --model a/b daily at 09:00 晨报",
+      "--bg --model a/b every 1h from 00:00 to 09:00 巡检",
+    ]) {
+      const r = parseLoopCommand(args, BASE);
+      assert.ok(r.ok, `${args} 应解析成功`);
+      const spec = (r.value as { spec: CreateSpec }).spec;
+      assert.equal(spec.model, "a/b", `${args} 应携带 model`);
+      assert.equal(spec.background, true);
+    }
+  });
+
+  it("不带 --model → spec.model 为 undefined（现状不变）", () => {
+    const r = parseLoopCommand("--bg 5m 任务", BASE);
+    assert.ok(r.ok);
+    const spec = (r.value as { spec: CreateSpec }).spec;
+    assert.equal(spec.model, undefined);
+  });
+
+  it("--model 缺 --bg → 显式报错（前台模式不支持模型指定）", () => {
+    const r = parseLoopCommand("--model a/b 5m 任务", BASE);
+    assert.ok(!r.ok);
+    assert.match(r.message, /--bg/);
+  });
+
+  it("--model 缺值 / 值像旗标 → 报错", () => {
+    const missing = parseLoopCommand("--bg --model", BASE);
+    assert.ok(!missing.ok);
+    const flagLike = parseLoopCommand("--bg --model --json 5m 任务", BASE);
+    assert.ok(!flagLike.ok);
+    assert.match(flagLike.message, /--model/);
+  });
+});

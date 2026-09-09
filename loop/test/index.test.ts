@@ -1052,3 +1052,44 @@ describe("后台模式（v1.3）— 生命周期", () => {
     assert.match(fake.lastNotification()!.message, /上次后台：中断/);
   });
 });
+
+describe("模型指定（v1.4）— loop_create model 参数", () => {
+  it("mode=background + model → 任务落快照、回执带模型标注", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const result = await fake.runTool("loop_create", {
+      task: "夜间巡检",
+      schedule: "5m",
+      mode: "background",
+      model: "opencode-go/deepseek-v4-flash",
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(toolText(result), /opencode-go\/deepseek-v4-flash/);
+    const data = fake._persisted[0]!.data as { tasks: LoopTask[] };
+    assert.equal(data.tasks[0]!.model, "opencode-go/deepseek-v4-flash");
+  });
+
+  it("前台模式带 model → 类型化报错，不创建任务", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const result = await fake.runTool("loop_create", { task: "前台", schedule: "5m", model: "a/b" });
+    assert.equal(result.isError, true);
+    assert.match(toolText(result), /background/);
+    assert.equal(fake._persisted.length, 0);
+  });
+
+  it("mode=background 不带 model → 现状不变", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const result = await fake.runTool("loop_create", { task: "后台", schedule: "5m", mode: "background" });
+    assert.equal(result.isError, undefined);
+    const data = fake._persisted[0]!.data as { tasks: LoopTask[] };
+    assert.equal(data.tasks[0]!.model, undefined);
+  });
+});

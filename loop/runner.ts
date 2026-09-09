@@ -94,6 +94,8 @@ export interface BgRunOptions {
   timeoutMs?: number;
   /** SIGTERM→SIGKILL 宽限期，默认 KILL_GRACE_MS；测试注入短值 */
   killGraceMs?: number;
+  /** v1.4：模型指定（provider/id 或 pi 模型 pattern），透传子 pi --model；缺省用 pi 默认模型 */
+  model?: string;
 }
 
 export type BgRunStatus = "done" | "failed" | "timeout";
@@ -171,6 +173,7 @@ export function runBgAgent(options: BgRunOptions): Promise<BgRunOutcome> {
     "-p",
     "--name",
     `loop-${options.taskId}`,
+    ...(options.model ? ["--model", options.model] : []),
     options.prompt,
   ]);
 

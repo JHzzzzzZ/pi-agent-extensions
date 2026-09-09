@@ -636,3 +636,50 @@ describe("后台任务模型（v1.3）", () => {
     assert.equal(formatBgRunLine(t), undefined);
   });
 });
+
+describe("模型指定（v1.4）— createTask / 序列化回环 / 列表展示", () => {
+  it("createTask 带 model → task.model 保存；不带 → 字段缺省", () => {
+    const withModel: LoopTask[] = [];
+    const r1 = createTask(
+      withModel,
+      { task: "巡检", recurring: true, intervalMs: 60_000, fireAtMs: BASE + 60_000, nowMs: BASE, background: true, model: "a/b" },
+      () => "mdltask1",
+    );
+    assert.ok(r1.ok);
+    assert.equal(r1.task.model, "a/b");
+
+    const without: LoopTask[] = [];
+    const r2 = createTask(
+      without,
+      { task: "巡检", recurring: true, intervalMs: 60_000, fireAtMs: BASE + 60_000, nowMs: BASE },
+      () => "mdltask2",
+    );
+    assert.ok(r2.ok);
+    assert.equal(r2.task.model, undefined);
+  });
+
+  it("serialize → hydrate 回环保留 model；旧快照无 model 零迁移兼容", () => {
+    const tasks: LoopTask[] = [];
+    createTask(
+      tasks,
+      { task: "巡检", recurring: true, intervalMs: 60_000, fireAtMs: BASE + 60_000, nowMs: BASE, background: true, model: "a/b" },
+      () => "mdltask3",
+    );
+    const roundtrip = hydrateTasks(JSON.parse(JSON.stringify(serializeTasks(tasks))), BASE + 1000);
+    assert.equal(roundtrip[0]!.model, "a/b");
+
+    const legacy = hydrateTasks(
+      { version: 1, tasks: [{ id: "old1", task: "x", recurring: true, intervalMs: 60_000, nextDueAt: BASE + 60_000, createdAt: BASE, paused: false, background: true }] },
+      BASE,
+    );
+    assert.equal(legacy[0]!.model, undefined, "旧快照无 model 字段必须兼容");
+  });
+
+  it("formatTaskLines：后台任务行附带 @model 模型标注", () => {
+    const t = makeRecurring(BASE + 60_000, { id: "mdlshow1", background: true, model: "opencode-go/deepseek-v4-flash" });
+    const lines = formatTaskLines([t], BASE);
+    assert.match(lines[0]!, /@opencode-go\/deepseek-v4-flash/);
+    const plain = formatTaskLines([makeRecurring(BASE + 60_000, { id: "mdlshow2", background: true })], BASE);
+    assert.doesNotMatch(plain[0]!, /@/);
+  });
+});

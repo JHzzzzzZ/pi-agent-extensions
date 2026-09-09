@@ -34,6 +34,8 @@ export interface LoopTask {
   paused: boolean;
   /** v1.3：后台模式——到期拉起独立子 pi 进程执行（会话落盘可 resume），不注入当前会话 */
   background?: boolean;
+  /** v1.4：后台任务模型指定（provider/id 或 pi 模型 pattern，透传子 pi --model）；缺省用 pi 默认模型 */
+  model?: string;
   /** v1.3：后台任务最近一次运行记录 */
   lastRun?: BgRunRecord;
 }
@@ -72,6 +74,8 @@ export type CreateTaskInput = {
   schedule?: RecurringSchedule;
   /** v1.3：后台模式（缺省 = 前台注入当前会话） */
   background?: boolean;
+  /** v1.4：后台任务模型指定（仅 background=true 时有意义） */
+  model?: string;
   /** 首次触发时刻（epoch ms） */
   fireAtMs: number;
   nowMs: number;
@@ -114,6 +118,8 @@ export function createTask(
   }
   const badSchedule = input.recurring ? validateSchedule(input.schedule) : undefined;
   if (badSchedule) return { ok: false, message: badSchedule };
+  const model = input.model?.trim();
+  if (input.model !== undefined && !model) return { ok: false, message: "模型参数不能为空" };
   const task: LoopTask = {
     id: genId(),
     task: input.task,
@@ -123,9 +129,10 @@ export function createTask(
     createdAt: input.nowMs,
     paused: false,
   };
-  // schedule/background/lastRun 依序追加在末尾，保证键顺序与 sanitizeTask 一致（快照 JSON 稳定可比）
+  // schedule/background/model/lastRun 依序追加在末尾，保证键顺序与 sanitizeTask 一致（快照 JSON 稳定可比）
   if (input.schedule !== undefined) task.schedule = input.schedule;
   if (input.background === true) task.background = true;
+  if (model) task.model = model;
   tasks.push(task);
   return { ok: true, task };
 }
@@ -342,6 +349,7 @@ function sanitizeTask(raw: unknown): LoopTask | undefined {
   // 依序追加在末尾，与 createTask 的键顺序一致（快照 JSON 稳定可比）
   if (schedule !== undefined) t.schedule = schedule;
   if (r.background === true) t.background = true;
+  if (typeof r.model === "string" && r.model) t.model = r.model;
   const lastRun = sanitizeLastRun(r.lastRun);
   if (lastRun !== undefined) t.lastRun = lastRun;
   return t;
@@ -419,7 +427,7 @@ export function formatBgRunLine(t: LoopTask): string | undefined {
 export function formatTaskLines(tasks: LoopTask[], nowMs: number): string[] {
   const sorted = [...tasks].sort((a, b) => a.nextDueAt - b.nextDueAt);
   return sorted.flatMap((t) => {
-    const schedule = t.paused ? "⏸ 已暂停" : describeRecurrence(t);
+    const schedule = t.paused ? "⏸ 已暂停" : `${describeRecurrence(t)}${t.model ? `@${t.model}` : ""}`;
     const next = t.paused ? "—" : formatClock(t.nextDueAt);
     const taskText = t.task.length > 40 ? `${t.task.slice(0, 39)}…` : t.task;
     const badge = t.background ? "[后台] " : "";

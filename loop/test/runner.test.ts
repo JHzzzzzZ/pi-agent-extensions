@@ -263,3 +263,27 @@ describe("常量", () => {
     assert.equal(BG_RUN_TIMEOUT_MS, 30 * 60 * 1000);
   });
 });
+
+describe("runBgAgent — 模型透传（v1.4）", () => {
+  it("model 选项 → 子 pi 参数带 --model <model>（在 prompt 之前）", async () => {
+    const { spawn, records, children } = makeSpawn();
+    const done = runBgAgent({ taskId: "mdl0001", prompt: "做事情", spawn, model: "opencode-go/deepseek-v4-flash" });
+    await sleep(0);
+    children[0]!.close(0);
+    await done;
+    const args = records[0]!.args;
+    const at = args.indexOf("--model");
+    assert.ok(at >= 0, "spawn args 必须包含 --model");
+    assert.equal(args[at + 1], "opencode-go/deepseek-v4-flash");
+    assert.equal(args[args.length - 1], "做事情", "--model 插在 prompt 之前");
+  });
+
+  it("无 model 选项 → 不出现 --model（现状不变）", async () => {
+    const { spawn, records, children } = makeSpawn();
+    const done = runBgAgent({ taskId: "mdl0002", prompt: "做事情", spawn });
+    await sleep(0);
+    children[0]!.close(0);
+    await done;
+    assert.ok(!records[0]!.args.includes("--model"));
+  });
+});

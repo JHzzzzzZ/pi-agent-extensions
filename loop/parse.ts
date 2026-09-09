@@ -28,6 +28,8 @@ export interface CreateSpec {
   schedule?: RecurringSchedule;
   /** v1.3：后台模式（缺省 = 前台注入当前会话） */
   background?: boolean;
+  /** v1.4：后台任务模型指定（provider/id 或 pi 模型 pattern，透传子 pi --model）；仅后台模式支持 */
+  model?: string;
   task: string;
 }
 
@@ -130,8 +132,25 @@ function takeBackgroundFlag(tokens: string[]): { background: boolean; rest: stri
   return { background: false, rest: tokens };
 }
 
-function specWithBackground(spec: CreateSpec, background: boolean): CreateSpec {
-  return background ? { ...spec, background: true } : spec;
+/**
+ * v1.4：--bg 后可选 --model <provider/id>——后台子 pi 的模型指定。
+ * 缺值/值像旗标 → 报错；不带 --bg 用 --model → 显式报错（前台注入当前会话，无法指定模型）。
+ */
+function takeModelFlag(tokens: string[], background: boolean): ParseResult<{ model?: string; rest: string[] }> {
+  if (tokens[0]?.toLowerCase() !== "--model") return { ok: true, value: { rest: tokens } };
+  const value = tokens[1];
+  if (value === undefined || value.startsWith("-")) {
+    return { ok: false, message: "--model 需要一个模型参数（provider/id 格式，如 opencode-go/deepseek-v4-flash）" };
+  }
+  if (!background) {
+    return { ok: false, message: "--model 仅后台模式支持：/loop --bg --model <provider/id> <创建形态>" };
+  }
+  return { ok: true, value: { model: value, rest: tokens.slice(2) } };
+}
+
+function specWithFlags(spec: CreateSpec, background: boolean, model?: string): CreateSpec {
+  if (!background) return spec;
+  return model !== undefined ? { ...spec, background: true, model } : { ...spec, background: true };
 }
 
 export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopCommand> {
@@ -151,7 +170,9 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
   }
 
   const bg = takeBackgroundFlag(tokens);
-  let rest = bg.rest;
+  const mdl = takeModelFlag(bg.rest, bg.background);
+  if (!mdl.ok) return mdl;
+  let rest = mdl.value.rest;
   let hadEvery = false;
   if (rest[0]?.toLowerCase() === "every") {
     hadEvery = true;
@@ -168,7 +189,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
     if (!task) return { ok: false, message: "请提供任务内容，例如：/loop in 30m 检查部署状态" };
     return {
       ok: true,
-      value: { kind: "create", spec: specWithBackground({ recurring: false, fireAtMs: nowMs + taken.durationMs, task }, bg.background) },
+      value: { kind: "create", spec: specWithFlags({ recurring: false, fireAtMs: nowMs + taken.durationMs, task }, bg.background, mdl.value.model) },
     };
   }
 
@@ -181,7 +202,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
     if (!task) return { ok: false, message: "请提供任务内容，例如：/loop at 15:00 发布版本" };
     return {
       ok: true,
-      value: { kind: "create", spec: specWithBackground({ recurring: false, fireAtMs, task }, bg.background) },
+      value: { kind: "create", spec: specWithFlags({ recurring: false, fireAtMs, task }, bg.background, mdl.value.model) },
     };
   }
 
@@ -199,9 +220,10 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
       ok: true,
       value: {
         kind: "create",
-        spec: specWithBackground(
+        spec: specWithFlags(
           { recurring: true, schedule: { kind: "daily", atMs }, fireAtMs: nextDailyOccurrence(atMs, nowMs), task },
           bg.background,
+          mdl.value.model,
         ),
       },
     };
@@ -228,7 +250,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
         ok: true,
         value: {
           kind: "create",
-          spec: specWithBackground(
+          spec: specWithFlags(
             {
               recurring: true,
               schedule: { kind: "window", intervalMs, startMs, endMs },
@@ -236,6 +258,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
               task,
             },
             bg.background,
+            mdl.value.model,
           ),
         },
       };
@@ -247,7 +270,7 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
         ok: true,
         value: {
           kind: "create",
-          spec: specWithBackground({ recurring: true, intervalMs: normalizeRecurringInterval(taken.durationMs), task }, bg.background),
+          spec: specWithFlags({ recurring: true, intervalMs: normalizeRecurringInterval(taken.durationMs), task }, bg.background, mdl.value.model),
         },
       };
     }

@@ -48,6 +48,12 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
       mode: Type.Optional(
         Type.Union([Type.Literal("foreground"), Type.Literal("background")], { description: MODE_HINT }),
       ),
+      model: Type.Optional(
+        Type.String({
+          description: "后台模式专用：模型指定（provider/id 格式，如 opencode-go/deepseek-v4-flash），透传子 pi 进程的 --model；不传用 pi 默认模型",
+          minLength: 1,
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const schedule = parseSchedule(params.schedule, Date.now());
@@ -55,6 +61,13 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
         return { content: [{ type: "text", text: schedule.message }], details: undefined, isError: true };
       }
       const background = params.mode === "background";
+      if (params.model !== undefined && !background) {
+        return {
+          content: [{ type: "text", text: 'model 仅 mode="background" 支持：后台任务拉起独立子 pi 时透传 --model；前台任务注入当前会话，无法指定模型。' }],
+          details: undefined,
+          isError: true,
+        };
+      }
       const spec = schedule.value;
       const result = createTask(
         deps.tasks,
@@ -64,6 +77,7 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
           intervalMs: spec.intervalMs,
           schedule: spec.schedule,
           background,
+          model: params.model,
           fireAtMs: spec.fireAtMs,
           nowMs: Date.now(),
         },
@@ -78,7 +92,7 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
       return {
         content: [{
           type: "text",
-          text: `已创建 loop ${t.id}：${describeRecurrence(t)}${background ? " · 后台执行" : ""} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`,
+          text: `已创建 loop ${t.id}：${describeRecurrence(t)}${background ? " · 后台执行" : ""}${t.model ? ` · 模型 ${t.model}` : ""} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`,
         }],
         details: {
           loopId: t.id,
