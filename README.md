@@ -7,7 +7,7 @@
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 405 个（node:test） |
 | [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏会话记录查看器） | 137 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
-| [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 模型提供商（OpenAI 兼容 + Anthropic API） | 无 |
+| [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式 | 169 个（node:test） |

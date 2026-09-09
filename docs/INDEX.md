@@ -24,7 +24,7 @@
 | --- | --- |
 | [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行 |
 | [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达；team_stop 按 runId 中止；TUI 对照 pi-subagents 矩阵同步（docs/tui-sync.md） |
-| chatanywhere-provider | OpenAI 兼容 + Anthropic Messages provider 适配器 |
+| chatanywhere-provider | 双 provider 运行时自动发现：探测 /models 按家族线归并注册，探测失败 fail-closed |
 | deep-init | `/deep-init` 提示词驱动四阶段深度初始化 |
 | goal | `/goal` 会话目标循环：agent 跨回合自动推进至评估器判定达成 |
 | human-notify | Windows Toast 人工介入通知（审批等待 / 完全结束） |
