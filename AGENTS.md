@@ -129,6 +129,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **README**：更新根 `README.md` 中受影响扩展的章节（PWR 另有 `pwr/README.md` / `pwr/DELIVERY.md`）——新增/变更的功能、用法与实测测试数。
 - **docs/ 知识库卡（强制）**：动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
 - **AGENTS.md**：架构、文件布局、约定、命令或实测测试数变化时同步更新（项目概览/关键目录中的卫星描述，开发命令与测试 QA 中的测试数）。
+- **任务收尾核对（强制）**：任务结束前逐项核对四处同步——AGENTS.md、README.md、根/扩展 `package.json`、`docs/` 中与本任务相关的全部内容。其中 `docs/`：不再成立的内容直接删除（不留注释尸体）；仍成立的更新其 `last verified @ <commit>` 行为最新 HEAD，保持卡片与代码一致。
 - **`todos/`**：每个插件必须对应一份 `todos/<插件名>-todo.md`，与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应；**新增插件时必须在同一变更里同步创建该 todo 文件**，缺失视为交付不完整。
 - **package.json**：每个被触及的扩展 `package.json` bump `version`（若 description 提及特性则一并更新）；根 `package.json` 的 `version` 同步 bump（与发布特性版本对齐，如 loop v1.3.0 → 根 1.3.0）。
 - 文档/清单更新在同一 push 中以独立 commit 提交（约定：`docs:` / `chore(pi):` 前缀）。
