@@ -72,6 +72,33 @@ test("buildWidgetRows live: compact header (status/elapsed/parallel count) + tas
   );
 });
 
+test("buildWidgetRows adds a remaining-cost hint when a cost cap is set", () => {
+  const base = liveSnapshot();
+  const budget = {
+    maxDispatchCalls: 12,
+    maxMemberRuns: 40,
+    maxCostUsd: 5,
+    maxTotalTokens: null,
+    spentCost: 0.42,
+    spentTokens: 113,
+    dispatchCalls: 1,
+    memberRuns: 2,
+  };
+  base.progress!.budget = budget;
+  const rows = buildWidgetRows(base, 65000);
+  assert.match(rows[0].text, /剩 \$4\.58/);
+
+  // No cap → no hint.
+  const uncapped = liveSnapshot();
+  uncapped.progress!.budget = { ...budget, maxCostUsd: null };
+  assert.doesNotMatch(buildWidgetRows(uncapped, 65000)[0].text, /剩 \$/);
+
+  // Cap already breached → no hint (the run aborts anyway).
+  const breached = liveSnapshot();
+  breached.progress!.budget = { ...budget, spentCost: 5.2 };
+  assert.doesNotMatch(buildWidgetRows(breached, 65000)[0].text, /剩 \$/);
+});
+
 test("buildWidgetRows terminal: status, duration, cost from the last record", () => {
   const rows = buildWidgetRows(doneSnapshot(), 0);
   assert.equal(rows.length, 2);

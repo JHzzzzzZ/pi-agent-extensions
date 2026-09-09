@@ -11,8 +11,9 @@
 
 import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
-import { parseDispatchMemberResults } from "./dispatch.ts";
+import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
+import { fileRunStore, RUN_STATUS_VERSION, type RunStoreWriter } from "./runstore.ts";
 import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, type GitRunner } from "./worktree.ts";
 import {
@@ -22,10 +23,12 @@ import {
   MAX_RESULT_BYTES,
   STOP_SETTLE_TIMEOUT_MS,
   truncateUtf8,
+  resolveRunBudget,
   type ChildEvent,
   type MemberProgress,
   type PiSpawn,
   type RunProgress,
+  type RunStatus,
   type TeamConfig,
   type TeamErrorCode,
   type TeamRunRecord,
@@ -49,6 +52,12 @@ export interface CoordinatorDeps {
   killGraceMs?: number;
   /** Root for per-run transcript artifacts (leader activity for /team:view). */
   transcriptRoot?: string;
+  /**
+   * Run status persistence (status.json per run dir). Defaults to a file
+   * store under `transcriptRoot` so a crashed session's runs can be
+   * reconciled on the next session_start.
+   */
+  runStore?: RunStoreWriter;
   /** Test seams. */
   now?: () => string;
   nowMs?: () => number;
@@ -123,6 +132,11 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     if (p.leaderNote) leaderBits.push(p.leaderNote);
     lines.push(line(`leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`));
     if (p.leaderActivity) lines.push(line(`  ↳ ${p.leaderActivity}`));
+    if (p.budget) {
+      const b = p.budget;
+      const costPart = b.maxCostUsd !== null ? `$${b.spentCost.toFixed(2)}/$${b.maxCostUsd.toFixed(2)}` : `$${b.spentCost.toFixed(2)}`;
+      lines.push(line(`预算: ${costPart} · ${b.dispatchCalls}/${b.maxDispatchCalls} 派发 · ${b.memberRuns}/${b.maxMemberRuns} 成员`));
+    }
     for (const member of p.members) {
       const bits = [`${icon(member.status)} ${member.name} ${member.status}`];
       if (member.note) bits.push(member.note);
@@ -175,6 +189,7 @@ export async function runTeamTask(deps: {
 
 export class TeamRunCoordinator {
   private readonly deps: CoordinatorDeps;
+  private readonly runStore: RunStoreWriter | undefined;
   private active: AbortController | null = null;
   private pending: Promise<StartRunResult> | null = null;
   private currentProgress: RunProgress | null = null;
@@ -182,6 +197,7 @@ export class TeamRunCoordinator {
 
   constructor(deps: CoordinatorDeps) {
     this.deps = deps;
+    this.runStore = deps.runStore ?? (deps.transcriptRoot ? fileRunStore(deps.transcriptRoot) : undefined);
   }
 
   isRunning(): boolean {
@@ -247,6 +263,39 @@ export class TeamRunCoordinator {
   }
 
   /**
+   * Best-effort status.json update (crash recovery for the next session).
+   * Never throws — status persistence must not break a run.
+   */
+  private persistRunStatus(input: {
+    runId: string;
+    team: string;
+    task: string;
+    startedAt: string;
+    status: RunStatus;
+    leaderPid?: number;
+    error?: string;
+    now: () => string;
+  }): void {
+    const store = this.runStore;
+    if (!store) return;
+    try {
+      store.write({
+        version: RUN_STATUS_VERSION,
+        runId: input.runId,
+        team: input.team,
+        task: input.task,
+        startedAt: input.startedAt,
+        status: input.status,
+        ...(input.leaderPid !== undefined ? { leaderPid: input.leaderPid } : {}),
+        ...(input.error !== undefined ? { error: input.error } : {}),
+        updatedAt: input.now(),
+      });
+    } catch {
+      /* status failures never break the run */
+    }
+  }
+
+  /**
    * Starts a team run. Resolves when the leader child finishes; progress
    * flows through `onProgress` (and the below-editor widget, which pulls
    * getStatus() on its own repaint ticks) while it runs. A run that fails
@@ -278,8 +327,24 @@ export class TeamRunCoordinator {
       task,
       startedAtMs,
       members: team.members.map((m) => ({ name: m.name, status: "queued" as const })),
+      budget: (() => {
+        const b = resolveRunBudget(team.budget);
+        return {
+          maxDispatchCalls: b.maxDispatchCalls,
+          maxMemberRuns: b.maxMemberRuns,
+          maxCostUsd: b.maxCostUsd,
+          maxTotalTokens: b.maxTotalTokens,
+          spentCost: 0,
+          spentTokens: 0,
+          dispatchCalls: 0,
+          memberRuns: 0,
+        };
+      })(),
     };
     this.currentProgress = progress;
+    // Crash-recovery snapshot: a running status.json on disk means the next
+    // session can reconcile this run if this session dies mid-run.
+    this.persistRunStatus({ runId, team: team.name, task, startedAt: now(), status: "running", now });
     if (options.signal) {
       if (options.signal.aborted) controller.abort();
       else options.signal.addEventListener("abort", () => controller.abort(), { once: true });
@@ -315,6 +380,41 @@ export class TeamRunCoordinator {
         /* transcript failures never break the run */
       }
     };
+    // Terminal status.json rewrite on every exit path — no exit may leave a
+    // stale "running" on disk (session_start reconcile depends on it). The
+    // leader PID is carried into the terminal snapshot for orphan diagnostics.
+    let leaderPid: number | undefined;
+    const writeTerminal = (status: RunStatus, error?: string): void =>
+      this.persistRunStatus({ runId, team: team.name, task, startedAt: now(), status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
+
+    // Budget accounting: leader turns are cumulative (event.usage), member
+    // dispatches accumulate per tool_execution_end (details.totalUsage).
+    // Cap breaches abort the run (children killed) and mark the terminal
+    // record aborted + BUDGET_EXCEEDED.
+    let leaderCost = 0;
+    let leaderTokens = 0;
+    let memberCost = 0;
+    let memberTokens = 0;
+    let budgetExceededReason: string | undefined;
+    const foldBudget = () => {
+      const b = progress.budget;
+      if (!b) return;
+      b.spentCost = Math.round((leaderCost + memberCost) * 1e6) / 1e6;
+      b.spentTokens = leaderTokens + memberTokens;
+    };
+    const checkBudgetCap = () => {
+      const b = progress.budget;
+      if (!b || budgetExceededReason !== undefined) return;
+      const maxCost = b.maxCostUsd;
+      const maxTokens = b.maxTotalTokens;
+      const overCost = maxCost !== null && b.spentCost > maxCost;
+      const overTokens = maxTokens !== null && b.spentTokens > maxTokens;
+      if (!overCost && !overTokens) return;
+      budgetExceededReason = overCost
+        ? `BUDGET_EXCEEDED: 累计费用 $${b.spentCost.toFixed(4)} 超过预算上限 $${maxCost.toFixed(2)}，run 已自动中止`
+        : `BUDGET_EXCEEDED: 累计 tokens ${b.spentTokens} 超过预算上限 ${maxTokens}，run 已自动中止`;
+      controller.abort();
+    };
     let ticker: ReturnType<typeof setInterval> | undefined;
 
     try {
@@ -324,10 +424,12 @@ export class TeamRunCoordinator {
       let sharedWorktree: { path: string; branch: string } | undefined;
       if (needsWorktree) {
         if (!(await isGitRepo(git, baseCwd))) {
+          const message = `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`;
+          writeTerminal("failed", message);
           return {
             ok: false,
             code: "WORKTREE_UNAVAILABLE",
-            message: `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`,
+            message,
           };
         }
         if (team.worktree) {
@@ -338,7 +440,9 @@ export class TeamRunCoordinator {
             branch: `team/${runId}`,
           });
           if (!created.ok) {
-            return { ok: false, code: created.code, message: `预检失败：创建团队共享 worktree 失败 — ${created.message}` };
+            const message = `预检失败：创建团队共享 worktree 失败 — ${created.message}`;
+            writeTerminal("failed", message);
+            return { ok: false, code: created.code, message };
           }
           sharedWorktree = created.value;
         }
@@ -360,7 +464,14 @@ export class TeamRunCoordinator {
       const onEvent = (event: ChildEvent) => {
         if (event.type === "message_end" && event.role === "assistant") {
           if (event.fullText) recordTranscript("assistant", event.fullText);
-          if (event.usage) progress.leaderNote = `turn ${event.usage.turns}`;
+          if (event.usage) {
+            progress.leaderNote = `turn ${event.usage.turns}`;
+            // event.usage is the leader's cumulative usage (runner folds it).
+            leaderCost = event.usage.cost;
+            leaderTokens = event.usage.input + event.usage.output;
+            foldBudget();
+            checkBudgetCap();
+          }
           if (event.model) progress.leaderModel = event.model;
           if (event.text) progress.leaderActivity = event.text;
           render();
@@ -371,6 +482,11 @@ export class TeamRunCoordinator {
           recordTranscript("tool", toolCallText(event.toolName, event.args));
           if (event.toolName !== "team_dispatch") return;
           const tasks = (event.args as { tasks?: Array<{ agent?: string; task?: string }> } | undefined)?.tasks;
+          const b = progress.budget;
+          if (b) {
+            b.dispatchCalls += 1;
+            b.memberRuns += Array.isArray(tasks) ? tasks.length : 0;
+          }
           if (Array.isArray(tasks)) {
             const names = new Set(tasks.map((t) => t.agent).filter((a): a is string => typeof a === "string"));
             for (const member of progress.members) {
@@ -387,6 +503,13 @@ export class TeamRunCoordinator {
         if (event.type === "tool_execution_end") {
           recordTranscript("tool", toolResultText(event.toolName, event.text));
           if (event.toolName !== "team_dispatch") return;
+          const totalUsage = parseDispatchTotalUsage(event.details);
+          if (totalUsage) {
+            memberCost += totalUsage.cost;
+            memberTokens += totalUsage.input + totalUsage.output;
+            foldBudget();
+            checkBudgetCap();
+          }
           const members = parseDispatchMemberResults(event.details);
           if (members) {
             for (const member of members) {
@@ -440,6 +563,13 @@ export class TeamRunCoordinator {
         signal: controller.signal,
         killGraceMs: this.deps.killGraceMs,
         onEvent,
+        // The PID lands in the running snapshot as soon as the OS assigns
+        // it — an orphaned leader is diagnosable after a crash.
+        onSpawn: (pid) => {
+          if (pid === undefined) return;
+          leaderPid = pid;
+          this.persistRunStatus({ runId, team: team.name, task, startedAt: now(), status: "running", leaderPid: pid, now });
+        },
       });
 
       const aborted = controller.signal.aborted;
@@ -493,6 +623,7 @@ export class TeamRunCoordinator {
               ),
             }
           : {}),
+        ...(aborted && budgetExceededReason !== undefined ? { error: budgetExceededReason } : {}),
         report: outcome.finalText ? truncateUtf8(outcome.finalText, MAX_RESULT_BYTES) : undefined,
         members,
         leaderUsage: outcome.usage,
@@ -504,11 +635,13 @@ export class TeamRunCoordinator {
       const runStatus = aborted ? "aborted" : failed ? "failed" : "completed";
       recordTranscript("system", `run ${runStatus} · ${Math.round((record.durationMs ?? 0) / 100) / 10}s · $${record.totalCost.toFixed(4)}`);
       if (record.error) recordTranscript("error", record.error);
+      writeTerminal(record.status, record.error);
       this.lastRecord = record;
       return { ok: true, value: record };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       recordTranscript("error", `CHILD_FAILED: failed to start leader process: ${message}`);
+      writeTerminal("failed", `failed to start leader process: ${message}`);
       return { ok: false, code: "CHILD_FAILED", message: `failed to start leader process: ${message}` };
     } finally {
       this.active = null;

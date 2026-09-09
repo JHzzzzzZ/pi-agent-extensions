@@ -23,6 +23,7 @@ import {
   toolExecutionStartLine,
   waitForChild,
   type FakeSpawnHandle,
+  isolateRunsDir,
 } from "./helpers.ts";
 
 // -- fake ExtensionAPI / ctx (same shape as run-tool.test.ts, kept local) --
@@ -83,6 +84,7 @@ async function setup(): Promise<{
   stop: Tool;
   cleanup: () => void;
 }> {
+  isolateRunsDir();
   resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-stoptool-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });

@@ -45,6 +45,7 @@
 | 3.7 | 选中态 up 到顶再按 | **未采纳（agent-team 钳位）** | fleet-status `up` 在选中第 0 行时退出选中；agent-team 保持钳位（首行再按 up 不动），与现有交互一致，无重影风险。见 `widget.ts` `handleWidgetKey`。 |
 | 3.8 | 停止确认横幅/notice 占**正文窗口顶部**，窗口收缩、帧总高不变 | **特有语义保留** | fleet 的 `withActionLines` 是把 action 行插在 detail 正文之前（总高可变）；agent-team 帧是定高（ghost-host 稳定性约束，`fitLine` 逐行定宽），故改为横幅占窗口顶部 + 窗口 slice 少取对应行数，帧总行数恒为 `bodyHeight + VIEWER_CHROME_ROWS`。优先级 busy > 确认 > notice（对齐 fleet `actionLines` 顺序）。见 `viewer.ts` `actionLines` + `renderViewerFrame`。 |
 | 3.9 | 停止粒度 = 整个 run（`viewerStopAction` → `stopAndSettle()`） | **特有语义保留** | fleet 按选中的单个 async run 停；agent-team 的成员子进程归 leader 进程管，cockpit 只能停整个 run（与 team_stop 工具同一路径）。 |
+| 3.10 | 亮块 running 头行可选余额提示（`· 剩 $X.XX`） | **特有语义新增** | fleet 无预算概念；仅当团队 frontmatter 配了 `budget.maxCostUsd` 且未超限时显示（超限即自动中止，不再显示）；无费用上限时头行与 fleet 对齐不变。 |
 
 ## 4. 规格字面量表（测试期望值唯一来源）
 
@@ -73,6 +74,7 @@
 | 基线 | 2026-09-09 | v0.66.0 快照登记；首版矩阵 | — |
 | agent-team 1.2.0 | 2026-09-09 | viewer ctrl+c 关闭 + tick 750；widget 空编辑器激活门控 + j/k 导航 + 无变化跳过 setWidget；接线互斥/隐藏/销毁语义测试锁定 | `feat/agent-team-tui-sync` |
 | agent-team 1.4.0 | 2026-09-14 | viewer stop（D 两步确认，确认态按键集对齐 fleet.ts:1134-1150）+ refresh（r/R）；差异条目 §3.8（横幅占正文窗口顶部、帧总高不变）与 §3.9（停止粒度 = 整个 run）登记；tui-sync/viewer/viewer-host/viewer-stop 四文件测试锁定 | `feat/agent-team-view-stop` |
+| agent-team 1.5.0 | 2026-09-09 | 亮块 running 头行新增可选余额提示（仅当团队配了 `budget.maxCostUsd` 且未超限：`· 剩 $X.XX`；fleet 无此概念，agent-team 特有语义）——差异条目 §3.10 登记；widget.test 锁定 | `feat/agent-team-reliability` |
 
 ## 6. 范围外（明确不做）
 

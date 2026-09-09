@@ -35,6 +35,11 @@ Member 子进程 ×N：pi --mode json -p --no-session --model <member.model> [--
 name: dev-team
 description: 全栈开发小队
 worktree: true              # 可选：整个团队在共享 git worktree 中工作（每次 run 独立分支）
+budget:                     # 可选：每次 run 的预算上限（不配用默认：12 次 dispatch / 40 次成员运行，费用与 tokens 无限）
+  maxDispatchCalls: 20      # 最多派发多少次 team_dispatch
+  maxMemberRuns: 60         # 最多多少次成员运行（含派发失败）
+  maxCostUsd: 5.0           # 累计费用超限 → 自动中止（BUDGET_EXCEEDED）
+  maxTotalTokens: 1000000   # 累计 tokens（input+output）超限 → 自动中止
 leader:
   model: anthropic/claude-opus-4-5
   prompt: |
@@ -61,6 +66,7 @@ members:
 - **leader.prompt 是整个功能的核心入口**——你在这里教 leader 如何完成任务（拆解策略、派发规则、验收标准）。扩展会自动追加团队花名册、`team_dispatch` 用法与最终报告格式。
 - **leader 默认拥有全部内置工具**（读写文件、bash 等）。若要限制 leader 亲自动手（例如只让它拆解派发），在团队文件里设置 `leader.tools`（如 `tools: [read, grep, find, ls]`）。实测中 leader 可能会用编辑工具自行"降级代写"或修订团队配置——不希望如此就收紧它的工具。
 - **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team/<runId>`）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
+- **模型预检**：派单前会先对 leader + 全体成员的 `provider/id` 做一次注册表预检——引用不存在的模型直接报 `MODEL_NOT_FOUND`（不启动任何子进程，提示先调 `team_models`）；存在但未配置鉴权的模型放行并警告。成员不配 model 则用 pi 默认模型（无从预检）。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（`/reload` 后动态命令消失）。
 
 ### 3. 派单与复用
@@ -76,7 +82,7 @@ members:
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
-其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、轮次、费用、worktree）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 清除输入栏下方的 run 亮块（见 §4）。
+其它命令：`/team` 列出全部团队（含无效文件警告）；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、轮次、费用、worktree、预算消耗）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 清除输入栏下方的 run 亮块（见 §4）；`/team:doctor` **自检报告**（运行模式/团队发现/逐团队模型预检/运行目录残留/逐团队预算/worktree 可用性）。
 
 ### 4. 进度亮块（输入栏下方，可键盘选中）
 
@@ -118,13 +124,15 @@ members:
 
 - 每个成员的失败会显示**具体原因**（不只错误码），Widget、进度流和派发报告中都可见。
 - 派发报告对环境级失败（worktree/git 不可用、成员/模型不存在）附带指令：重试无效，不要再次派发同一成员。
-- **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
+- **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行（可用团队文件 `budget:` 块调整）；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
+- **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块头行在设了费用上限时显示余额提示。
+- **崩溃恢复**：每个 run 的元数据快照（`status.json`，含 leader PID）落盘在 `~/.pi/agent/teams/runs/<runId>/`；主会话中断后下次启动自动把残留 running 翻成 failed 记录并警告（孤儿 leader **只诊断不杀**，PID 可能复用，请人工确认后处理）；`/team:doctor` 可查看全部残留与损坏文件。
 
 ## 命令与工具一览
 
-- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单）、`team_status`（查运行状态，含 runId）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
+- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_status`（查运行状态，含 runId 与预算）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
-- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、`/team:clear`、动态 `/team:<name>`
+- 命令：`/team`、`/team:run`、`/team:status`、`/team:stop`、`/team:view`、`/team:clear`、`/team:doctor`、动态 `/team:<name>`
 - Widget：输入栏下方可选中亮块（紧凑两行概要）——`alt+↓` 选中、`enter` 直达查看器（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏会话记录查看器——每个成员的对话、工具调用、错误实时可读（仅交互式 TUI）
 
@@ -133,9 +141,11 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（147 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（196 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
+
+测试可用 `PI_AGENT_TEAM_RUNS_DIR` 把 run artifacts 根（status.json + transcripts）重定向到临时目录，避免污染真实的 `~/.pi/agent/teams/runs`（host 级测试已内置）。
 
 ### 与 pi-subagents 的 TUI 同步
 

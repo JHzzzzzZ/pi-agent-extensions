@@ -30,6 +30,7 @@ import {
   err,
   ok,
   type Result,
+  type RunBudgetConfig,
   type TeamConfig,
   type TeamErrorCode,
   type TeamMemberConfig,
@@ -60,6 +61,34 @@ function normalizeTools(value: unknown): string[] | undefined {
 
 function invalid(message: string): Result<never> {
   return err(TeamErrorCodes.INVALID_TEAM_FILE, message);
+}
+
+/** Recognized budget cap keys (unknown keys are rejected — typo protection). */
+const BUDGET_KEYS = new Set(["maxDispatchCalls", "maxMemberRuns", "maxCostUsd", "maxTotalTokens"]);
+
+/** Validates the frontmatter `budget:` block (all caps optional, positive numbers). */
+function normalizeBudget(value: unknown): Result<RunBudgetConfig | undefined> {
+  if (value === undefined) return ok(undefined);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return invalid("budget must be a mapping of numeric caps");
+  }
+  const raw = value as Record<string, unknown>;
+  const keys = Object.keys(raw);
+  if (keys.length === 0) {
+    return invalid("budget must set at least one cap (maxDispatchCalls/maxMemberRuns/maxCostUsd/maxTotalTokens)");
+  }
+  const budget: RunBudgetConfig = {};
+  for (const key of keys) {
+    if (!BUDGET_KEYS.has(key)) {
+      return invalid(`unknown budget cap "${key}" (expected maxDispatchCalls/maxMemberRuns/maxCostUsd/maxTotalTokens)`);
+    }
+    const num = raw[key];
+    if (typeof num !== "number" || !Number.isFinite(num) || num <= 0) {
+      return invalid(`budget.${key} must be a positive finite number`);
+    }
+    (budget as Record<string, number>)[key] = num;
+  }
+  return ok(budget);
 }
 
 /**
@@ -101,6 +130,10 @@ export function validateTeam(
 
   // Team-level shared worktree (opt-in; members can override with their own).
   const worktree = rawMap.worktree === true;
+
+  // Per-run budget caps (frontmatter `budget:` block).
+  const budget = normalizeBudget(rawMap.budget);
+  if (!budget.ok) return budget;
 
   // Members
   if (!Array.isArray(rawMap.members) || rawMap.members.length === 0) {
@@ -153,6 +186,7 @@ export function validateTeam(
     },
     members,
     ...(worktree ? { worktree: true } : {}),
+    ...(budget.value !== undefined ? { budget: budget.value } : {}),
     notes: meta.body && meta.body.trim().length > 0 ? meta.body : undefined,
     filePath: meta.filePath,
     source: meta.source,
@@ -308,6 +342,14 @@ export function serializeTeam(team: Omit<TeamConfig, "filePath" | "source" | "no
   const lines: string[] = ["---", `name: ${yamlScalar(team.name)}`];
   if (team.description) lines.push(`description: ${yamlScalar(team.description)}`);
   if (team.worktree) lines.push("worktree: true");
+  if (team.budget) {
+    lines.push("budget:");
+    const caps = team.budget as Record<string, number | undefined>;
+    for (const key of ["maxDispatchCalls", "maxMemberRuns", "maxCostUsd", "maxTotalTokens"]) {
+      const cap = caps[key];
+      if (cap !== undefined) lines.push(`  ${key}: ${cap}`);
+    }
+  }
   lines.push("leader:");
   if (team.leader.model) lines.push(`  model: ${yamlScalar(team.leader.model)}`);
   if (team.leader.tools && team.leader.tools.length > 0) {

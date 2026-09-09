@@ -18,7 +18,7 @@ import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { serializeTeam } from "../config.ts";
 import { RUN_ENTRY_TYPE } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
-import { makeFakeSpawn, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
+import { makeFakeSpawn, waitForChild, type FakeSpawnHandle, isolateRunsDir } from "./helpers.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -77,6 +77,8 @@ function hydratedSessionCtx() {
     },
   };
 }
+
+isolateRunsDir();
 
 test("team:view 互斥：viewer 打开期间再进入不开第二个 overlay", async () => {
   resetDoubleLoadGuardForTests();

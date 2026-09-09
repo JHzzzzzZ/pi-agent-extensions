@@ -52,6 +52,7 @@ export function defaultSpawn(): PiSpawn {
       stdio: ["ignore", "pipe", "pipe"],
     });
     const adapter: PiChildProcess = {
+      pid: child.pid,
       stdout: {
         on(event, cb) {
           if (event === "data") child.stdout?.on("data", (chunk: Buffer) => cb(chunk));
@@ -88,6 +89,8 @@ export interface RunChildOptions {
   signal?: AbortSignal;
   /** Live event callback (called as events are parsed, before resolution). */
   onEvent?: (event: ChildEvent) => void;
+  /** Called once right after a successful spawn with the child's OS pid. */
+  onSpawn?: (pid: number | undefined) => void;
   /** Test seam: SIGTERM→SIGKILL grace period (default 5000ms). */
   killGraceMs?: number;
 }
@@ -156,7 +159,7 @@ export function textTail(text: string, max = 160): string {
  * the child (SIGTERM, then SIGKILL after `killGraceMs`).
  */
 export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome> {
-  const { command, args, cwd, env, spawn: spawnFn, signal, onEvent } = options;
+  const { command, args, cwd, env, spawn: spawnFn, signal, onEvent, onSpawn } = options;
   const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
   const outcome: ChildOutcome = {
     exitCode: 0,
@@ -199,6 +202,12 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
       spawned = spawnFn(command, args, { cwd, env });
     } catch (err) {
       throw err instanceof Error ? err : new Error(String(err));
+    }
+    if (spawned.pid !== undefined) outcome.pid = spawned.pid;
+    try {
+      onSpawn?.(spawned.pid);
+    } catch {
+      /* observer failures never break the run */
     }
 
     let buffer = "";

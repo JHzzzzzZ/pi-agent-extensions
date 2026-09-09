@@ -21,6 +21,7 @@ import {
   toolExecutionStartLine,
   waitForChild,
   type FakeSpawnHandle,
+  isolateRunsDir,
 } from "./helpers.ts";
 
 // -- fake ExtensionAPI / ctx (same shape as entry.test.ts, kept local) -----
@@ -80,6 +81,7 @@ async function setup(): Promise<{
   run: RunTool;
   cleanup: () => void;
 }> {
+  isolateRunsDir();
   resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-runtool-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });

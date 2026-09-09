@@ -126,6 +126,52 @@ test("serializeTeam keeps special characters and colons in prompts", () => {
   assert.ok(parsed.value?.members[0].prompt.includes('{"a": 1}'));
 });
 
+test("parseTeamFile parses the budget block into team.budget", () => {
+  const parsed = parseTeamFile(
+    "---\nname: budgeted\nbudget:\n  maxDispatchCalls: 20\n  maxMemberRuns: 60\n  maxCostUsd: 5.5\n  maxTotalTokens: 1000000\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n",
+    { filePath: "/x/budgeted.md", source: "global" },
+  );
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.message);
+  assert.deepEqual(parsed.value?.budget, {
+    maxDispatchCalls: 20,
+    maxMemberRuns: 60,
+    maxCostUsd: 5.5,
+    maxTotalTokens: 1000000,
+  });
+});
+
+test("a team without a budget block has no budget config", () => {
+  const parsed = parseTeamFile(VALID_TEAM_MD, { filePath: "/x/dev-team.md", source: "global" });
+  assert.ok(parsed.ok);
+  assert.equal(parsed.value?.budget, undefined);
+});
+
+test("invalid budget blocks are rejected with INVALID_TEAM_FILE", () => {
+  const cases: Array<[string, string]> = [
+    ["budget not a mapping", "---\nname: t\nbudget: 20\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n"],
+    ["string cap", "---\nname: t\nbudget:\n  maxDispatchCalls: many\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n"],
+    ["negative cap", "---\nname: t\nbudget:\n  maxCostUsd: -1\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n"],
+    ["zero cap", "---\nname: t\nbudget:\n  maxMemberRuns: 0\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n"],
+    ["unknown key", "---\nname: t\nbudget:\n  maxTasks: 5\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n"],
+    ["empty budget block", "---\nname: t\nbudget: {}\nleader:\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n"],
+  ];
+  for (const [label, content] of cases) {
+    const parsed = parseTeamFile(content, { filePath: "/x/bad.md", source: "global" });
+    assert.ok(!parsed.ok, `expected rejection: ${label}`);
+    assert.equal(parsed.code, TeamErrorCodes.INVALID_TEAM_FILE, label);
+  }
+});
+
+test("serializeTeam round-trips the budget block", () => {
+  const team = fixtureTeam({ budget: { maxCostUsd: 5, maxDispatchCalls: 30 } });
+  const serialized = serializeTeam(team);
+  assert.match(serialized, /^budget:/m);
+  assert.match(serialized, /maxCostUsd: 5/);
+  const parsed = parseTeamFile(serialized, { filePath: team.filePath, source: team.source });
+  assert.ok(parsed.ok);
+  assert.deepEqual(parsed.value?.budget, { maxCostUsd: 5, maxDispatchCalls: 30 });
+});
+
 test("discoverTeams scans global+project dirs with project precedence", () => {
   const root = tmpDir();
   const globalDir = path.join(root, "global");

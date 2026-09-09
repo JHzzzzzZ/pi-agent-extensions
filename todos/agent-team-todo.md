@@ -7,7 +7,13 @@
 - [x] 补齐 `view` 视角下的功能，例如停止 agent。（v1.4.0：viewer 内 `D` 停止整个 run——两步确认横幅占正文窗口顶部、帧总高不变，busy 守卫防重复，`stopAndSettle()` 与 team_stop 同语义，settled/未落定/异常分别映射 success/warning/error notice；`r`/`R` 手动刷新绕过指纹门控。停止粒度 = 整个 run，按成员停不可行——成员子进程归 leader 进程管。19 个新测试，全量 166）
 - [x] 根 README 为每个插件增加效果示意图
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞
-- [ ] 参照 pi-subagents（v0.66.0）对齐 agent-team 可靠性：async-first 统一 + run 落盘/reconcile + 预算可配可见 + doctor 自检 + model 预检。（processing：方案待审批，未动手）
+- [x] 参照 pi-subagents（v0.66.0）对齐 agent-team 可靠性：async-first 统一 + run 落盘/reconcile + 预算可配可见 + doctor 自检 + model 预检。v1.5.0（feat/agent-team-reliability；与 viewer D 停止的 1.4.0 错峰）：
+  - [x] run 落盘 + reconcile：`runstore.ts` 每 run `status.json` 元数据快照（`teams/runs/<runId>/`，与 transcript 同 retention）；coordinator claim 即写 running（含 leaderPid，runner 经 `onSpawn` 暴露 pid），每条退出路径落终态；`session_start` 把残留 running 翻成 failed 合成记录 + 孤儿 leader PID 警告（**只报告不杀**，PID 复用风险；排除 in-memory run）；损坏 status 文件隔离不抛错（doctor/reconcile 报告）。
+  - [x] 预算可配可见：frontmatter `budget:` 块（`maxDispatchCalls`/`maxMemberRuns`/`maxCostUsd`/`maxTotalTokens`，非法值 `INVALID_TEAM_FILE`；协议级上限 8 任务/4 并发不可配）；leader executor 消费 resolved budget；cockpit 折叠 leader usage + dispatch `details.totalUsage` 进 `RunBudgetSnapshot`，费用/token 超限 → abort + `BUDGET_EXCEEDED`；`/team:status` 运行态预算行 + 亮块余额提示 + doctor 列出全部 caps 与来源（default/frontmatter）。
+  - [x] model 预检：`preflight.ts` 纯函数（注入 registry lookup）——坏引用 `MODEL_NOT_FOUND` 硬失败不 spawn（新错误码）；无鉴权 warning 放行；成员无 model 跳过；`team_run` 与 `/team:run` 两入口接线。
+  - [x] doctor 自检：`doctor.ts` 纯函数 `buildDoctorReport`（deps 注入发现/状态读取/lookup/fs 探测，分节独立容错）+ `/team:doctor` 命令（doctor 进 reserved 名单防团队名遮蔽；先 `modelRegistry.refresh()` 再读）。
+  - [x] async-first 收尾：wait/后台两条终态处理收口为单一 `finalizeRun(record, delivery)`（appendRunRecord + 通知/交付），行为不变。
+  - 测试 147→196（runstore 9、cockpit-runstore 6、cockpit-budget 6、preflight 5、doctor 8、reliability-host 8、config/dispatch/widget 扩展）；typecheck 零错误；真机 pi 加载 smoke 通过（7 工具注册、团队枚举可用）；`PI_AGENT_TEAM_RUNS_DIR` 测试隔离（host 级测试不再污染真实 runs 目录）。
 - [x] 修复每次 `/reload` 后 team 相关工具消失的问题（globalThis 双加载守卫跨 reload 常驻，entry 直接 return）。（v1.3.1：守卫命中后注册 session_shutdown 处理器删标志——pi 保证重绑扩展（reload/new/resume/fork/switch）前必发该事件，下次加载重新注册全部工具/命令/widget；同进程真双加载（无 shutdown 间隔）仍被抑制。新增 3 测试：reload 重注册 / 双加载抑制 / shutdown 幂等；147 测试 + typecheck 全绿；并入 feat/agent-team-clear 后测试断言同步 /team:clear）
 - [x] 新增停止工具并暴露给 agent（如 `team_stop`：按 runId 停止运行中的团队派单）
 

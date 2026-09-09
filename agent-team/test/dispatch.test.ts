@@ -272,6 +272,47 @@ test("dispatch budget cuts off an endlessly retrying leader", async () => {
   assert.equal(spawn.records.length, 12);
 });
 
+test("injected budget lowers the dispatch-call cap", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({ ...deps, budget: { maxDispatchCalls: 2, maxMemberRuns: 100, maxCostUsd: null, maxTotalTokens: null, source: "frontmatter" as const } });
+  for (let i = 0; i < 2; i++) {
+    const promise = executor({ tasks: [{ agent: "frontend", task: `t${i}` }] }, undefined, undefined);
+    const child = await waitForChild(spawn, i);
+    child.autoRespond([assistantLine("ok")], 0, 2);
+    await unwrap(promise);
+  }
+  const exceeded = await executor({ tasks: [{ agent: "frontend", task: "again" }] }, undefined, undefined);
+  assert.ok(!exceeded.ok);
+  assert.equal(exceeded.code, "BUDGET_EXCEEDED");
+  assert.match(exceeded.message, /2 次 dispatch/);
+  assert.equal(spawn.records.length, 2);
+});
+
+test("injected budget lowers the member-run cap", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({ ...deps, budget: { maxDispatchCalls: 100, maxMemberRuns: 3, maxCostUsd: null, maxTotalTokens: null, source: "frontmatter" as const } });
+  const first = executor(
+    { tasks: [{ agent: "frontend", task: "a" }, { agent: "backend", task: "b" }, { agent: "ghost", task: "c" }] },
+    undefined,
+    undefined,
+  );
+  const child0 = await waitForChild(spawn, 0);
+  const child1 = await waitForChild(spawn, 1);
+  child0.autoRespond([assistantLine("ok")], 0, 2);
+  child1.autoRespond([assistantLine("ok")], 0, 2);
+  await unwrap(first);
+  // 3 member runs consumed (the unknown member still counts toward the cap).
+  const exceeded = await executor({ tasks: [{ agent: "frontend", task: "again" }] }, undefined, undefined);
+  assert.ok(!exceeded.ok);
+  assert.equal(exceeded.code, "BUDGET_EXCEEDED");
+  assert.match(exceeded.message, /3 次成员运行/);
+  assert.equal(spawn.records.length, 2, "nothing spawned past the cap (2 real members in the first dispatch)");
+});
+
+// ---------------------------------------------------------------------------
+// buildProgressText / buildDispatchReport (pure)
+// ---------------------------------------------------------------------------
+
 test("buildProgressText renders status icons, notes and latest activity", () => {
   const text = buildProgressText([
     { name: "a", status: "running", note: "turn 2", latest: "正在编辑 login.tsx" },
