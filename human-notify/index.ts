@@ -6,6 +6,9 @@
  * - `tool_execution_start` 且 `toolName` 在 `WAITING_TOOL_NAMES` 名单(首批:`plan_mode_question`)
  *   →“Pi 等待你确认”(宿主内置审批/提问不走 `ui_prompt_start`,只能按工具名特判)
  * - `agent_settled`(已完全 settle,无自动重试/压缩/续跑)→“Pi 任务完成”
+ *   但用户主动取消(Esc / Ctrl+C 中断回合)后的结算不弹 Toast——人都走了还喊人回来看，
+ *   纯打扰；信号沿用 goal 扩展已验证的取消标记模式(`turn_end` / `agent_end` 记录
+ *   `ctx.signal?.aborted`,`agent_start` 重置,`agent_settled` 触发前检查)。
  *
  * 仅 Windows 生效(`process.platform === "win32"`),Linux / macOS 直接 no-op。
  * Windows Toast 经内联 WinRT PowerShell 发送,零 npm 依赖;`child_process.spawn`
@@ -182,6 +185,8 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
   let lastSentMs = Number.NEGATIVE_INFINITY;
   /** 最新一条 assistant 消息的尾部文本(已截到 MAX_SUMMARY_TAIL);session_start 重置防跨会话泄漏 */
   let latestAssistantTail = "";
+  /** 用户在当前 run 中主动取消(Esc / Ctrl+C)的标记;agent_start 重置,agent_settled 触发前检查 */
+  let userInterrupted = false;
 
   function fire(title: string, body: string): void {
     try {
@@ -216,6 +221,32 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
       // 防御性兜底:通知链路任何异常都不破坏会话
     }
   }
+
+  pi.on("agent_start", async () => {
+    try {
+      // 重置取消标记:上一次 run 被取消不得抑制下一次正常完成的结算 Toast
+      userInterrupted = false;
+    } catch {
+      /* 忽略 */
+    }
+  });
+
+  pi.on("turn_end", async (_event, ctx) => {
+    try {
+      if ((ctx as { signal?: { aborted?: boolean } } | undefined)?.signal?.aborted) userInterrupted = true;
+    } catch {
+      /* 忽略 */
+    }
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
+    try {
+      // agent_settled 晚于 agent_end,此处标记在 settle 触发前已可见
+      if ((ctx as { signal?: { aborted?: boolean } } | undefined)?.signal?.aborted) userInterrupted = true;
+    } catch {
+      /* 忽略 */
+    }
+  });
 
   pi.on("session_start", () => {
     try {
@@ -265,6 +296,8 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
 
   pi.on("agent_settled", () => {
     try {
+      // 用户主动取消后的结算不弹 Toast;在 fire 之前返回,不消耗 5s 防抖窗口
+      if (userInterrupted) return;
       fire(DONE_TITLE, buildDoneBody(latestAssistantTail));
     } catch {
       /* 忽略 */
