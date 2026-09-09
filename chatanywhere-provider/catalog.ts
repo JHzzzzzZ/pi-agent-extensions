@@ -994,3 +994,36 @@ export const MODEL_LINES: ModelLine[] = [
   { name: "claude-haiku", prefix: "claude-haiku", version: "dash", tiers: [], cap: LINE_TIER_CAP },
   { name: "claude-fable", prefix: "claude-fable", version: "dash", tiers: [], cap: LINE_TIER_CAP },
 ];
+
+/** 非 chat 模型 id：不参与注册（embedding/tts/whisper/生图/转写/旧 completions/斜杠重复别名） */
+export const NON_CHAT_ID_PATTERNS: RegExp[] = [
+  /^text-embedding-/,
+  /^tts-/,
+  /^whisper-/,
+  /^gpt-image-/,
+  /-transcribe$/,
+  /-image-preview$/,
+  /^davinci-/,
+  /\//, // openai/gpt-oss-120b 这类斜杠前缀是重复别名
+];
+
+export const isNonChatId = (id: string): boolean => NON_CHAT_ID_PATTERNS.some((re) => re.test(id));
+
+/** 旧代整代过滤：家族前缀版本低于 min 一律不注册（“同系列旧版全删，仅保留最新代”） */
+export interface GenerationFloor {
+  versionRe: RegExp;
+  min: readonly number[];
+  /** 家族名下无版本号的旧代命名（如 deepseek-chat）也视为低于下限 */
+  bare?: RegExp;
+}
+
+export const GENERATION_FLOORS: GenerationFloor[] = [
+  { versionRe: /^gpt-(\d+(?:\.\d+)*)/, bare: /^gpt-/, min: [5, 6] }, // GPT-4.x/3.5/oss 旧代删除；5.6 与 6 保留
+  { versionRe: /^o(\d+(?:\.\d+)*)/, min: [4] }, // o1/o3 删除；o4-mini（当前代）保留
+  { versionRe: /^gemini-(\d+(?:\.\d+)*)/, min: [3] }, // gemini-2.x 删除
+  { versionRe: /^deepseek-v(\d+(?:\.\d+)*)/, bare: /^deepseek-/, min: [4] }, // v3.2 / deepseek-chat 删除
+  { versionRe: /^qwen(\d+(?:\.\d+)*)/, min: [3, 5] }, // qwen3 旧代删除；3.5/3.8 保留
+  { versionRe: /^kimi-k(\d+(?:\.\d+)*)/, min: [3] }, // k2.x 删除；k3 保留
+  { versionRe: /^glm-(\d+(?:\.\d+)*)/, min: [5] }, // glm-4.7 删除
+  { versionRe: /^minimax-m(\d+(?:\.\d+)*)/, min: [3] }, // m2.x 删除
+];

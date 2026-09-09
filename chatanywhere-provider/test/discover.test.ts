@@ -76,7 +76,7 @@ test("目录：每个定义都能被家族线解析（目录与 MODEL_LINES 自�
 test("classifyId：dot 版本（gpt-5.6-sol、gpt-5.5）、日期快照与 -ca 渠道", () => {
 	const sol = classifyId("gpt-5.6-sol", MODEL_LINES);
 	assert.ok(sol.ok);
-	assert.deepEqual(sol.parsed, { line: "gpt-5", tier: "sol", version: [5, 6], date: null, channel: "std" });
+	assert.deepEqual(sol.parsed, { line: "gpt-5", tier: "sol", version: [5, 6], date: null, channel: "std", variant: null });
 
 	const ca = classifyId("gpt-5.6-sol-ca", MODEL_LINES);
 	assert.ok(ca.ok);
@@ -154,6 +154,25 @@ test("classifyId：无前缀/档位不可识别的 id 返回 lineName（未知�
 
 	const unknown = classifyId("qwen3.5-ultra", MODEL_LINES);
 	assert.deepEqual(unknown, { ok: false, lineName: "qwen3.5" });
+});
+
+test("classifyId：-thinking/-nothinking 变体尾缀（日期在变体之前被正确剥离）", () => {
+	const c = classifyId("claude-opus-4-5-20251101-thinking", MODEL_LINES);
+	assert.ok(c.ok);
+	assert.deepEqual(c.parsed.version, [4, 5]);
+	assert.equal(c.parsed.date, "20251101");
+	assert.equal(c.parsed.variant, "thinking");
+
+	const q = classifyId("qwen3-235b-a22b-thinking-2507", MODEL_LINES);
+	assert.ok(q.ok);
+	assert.equal(q.parsed.tier, "235b-a22b");
+	assert.equal(q.parsed.date, "2507");
+	assert.equal(q.parsed.variant, "thinking");
+
+	const g = classifyId("gpt-5.6-sol-nothinking", MODEL_LINES);
+	assert.ok(g.ok);
+	assert.equal(g.parsed.tier, "sol");
+	assert.equal(g.parsed.variant, "nothinking");
 });
 
 // ---------------------------------------------------------------------------
@@ -256,13 +275,13 @@ test("claude 族：同种取最新（探测 opus-4-8 + opus-5 → 只注册 opus
 	assert.deepEqual(opus.compat, { forceAdaptiveThinking: true });
 });
 
-test("gpt-5：别名胜日期快照（探测顺序无关，只留 gpt-5.4）", () => {
-	const r = collapse(pm(["gpt-5.4-2026-03-05", "gpt-5.4"]), MODEL_DEFS, MODEL_LINES);
-	assert.equal(r.openai.length, 1);
-	assert.equal(r.openai[0].id, "gpt-5.4");
-	assert.equal(r.openai[0].name, "GPT-5.4");
-	assert.equal(r.openai[0].cost.input, 17.5);
-	assert.deepEqual(r.claude, []);
+test("claude：别名胜日期快照（探测顺序无关，只留 claude-sonnet-5）", () => {
+	const r = collapse(pm(["claude-sonnet-5-2026-01-01", "claude-sonnet-5"]), MODEL_DEFS, MODEL_LINES);
+	assert.equal(r.claude.length, 1);
+	assert.equal(r.claude[0].id, "claude-sonnet-5");
+	assert.equal(r.claude[0].name, "Claude Sonnet 5");
+	assert.equal(r.claude[0].cost.input, defById.get("claude-sonnet-5")!.cost.input);
+	assert.deepEqual(r.openai, []);
 });
 
 test("gpt-5：探测含最新代全套 + 旧档 → 只留 std 渠道最新代三档（sol/terra/luna，价格降序）", () => {
@@ -280,9 +299,64 @@ test("gpt-5：探测含最新代全套 + 旧档 → 只留 std 渠道最新代�
 	assert.deepEqual(r.claude, []);
 });
 
-test("gpt-5：跨档排序版本优先于价格（5.4-mini 在 5.2-pro 之前；价格 0 的兜底档位不挤占）", () => {
-	const r = collapse(pm(["gpt-5.2-pro", "gpt-5.4-mini", "gpt-5.5", "gpt-5-nano"]), MODEL_DEFS, MODEL_LINES);
-	assert.deepEqual(r.openai.map((m) => m.id), ["gpt-5.5", "gpt-5.4-mini", "gpt-5.2-pro"]);
+test("旧代整代删除：GPT-4.x/o3/gemini-2.x 等不注册，每家族只留最新代", () => {
+	const r = collapse(
+		pm([
+			"gpt-5.5", "gpt-5.4", "gpt-4.1", "gpt-4o", "gpt-4", "gpt-3.5-turbo",
+			"o3", "o1", "gemini-2.5-flash", "gemini-3.5-flash", "deepseek-v3.2",
+			"deepseek-v4-flash", "qwen3-coder-plus", "qwen3.5-plus", "kimi-k2.7-code",
+			"kimi-k3", "glm-4.7", "glm-5.2", "minimax-m2.5", "minimax-m3",
+		]),
+		MODEL_DEFS,
+		MODEL_LINES,
+	);
+	// 只留下最新代：gpt-4.x/3.5、o1/o3、gemini-2.x、deepseek-v3.2、qwen3、kimi-k2.x、glm-4.x、minimax-m2.x 全删
+	assert.deepEqual(r.openai.map((m) => m.id), [
+		"deepseek-v4-flash", "qwen3.5-plus", "glm-5.2", "minimax-m3",
+		"gemini-3.5-flash", "kimi-k3",
+	]);
+	assert.deepEqual(r.claude, []);
+});
+
+test("旧代整代删除：gpt-5 线内旧版与未知模型同样按代过滤（deepseek-chat/v3.2-thinking 不注册）", () => {
+	const r = collapse(
+		pm(["gpt-5.5", "gpt-5.4-mini", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "deepseek-chat", "deepseek-v3.2-thinking", "gpt-oss-120b"]),
+		MODEL_DEFS,
+		MODEL_LINES,
+	);
+	assert.deepEqual(r.openai.map((m) => m.id), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
+});
+
+test("非 chat 模型不注册：embedding/tts/whisper/生图/transcribe/斜杠重复 id 全过滤", () => {
+	const r = collapse(
+		pm([
+			"text-embedding-3-small", "tts-1", "whisper-1", "gpt-image-2", "gpt-4o-mini-transcribe",
+			"davinci-002", "openai/gpt-oss-120b", "gpt-4o-audio-preview", "gpt-5.6-sol",
+		]),
+		MODEL_DEFS,
+		MODEL_LINES,
+	);
+	// gpt-4o-audio-preview 不在此处命中非 chat 规则，但属 gpt-4o 旧代，被代际下限删除
+	assert.deepEqual(r.openai.map((m) => m.id), ["gpt-5.6-sol"]);
+});
+
+test("thinking 变体：同系列同版本只留 1 个，默认保留 -thinking 版（nothinking 优先级最低）", () => {
+	const haiku = collapse(pm(["claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001-thinking"]), MODEL_DEFS, MODEL_LINES);
+	assert.equal(haiku.claude.length, 1);
+	const m = haiku.claude[0];
+	assert.equal(m.id, "claude-haiku-4-5-20251001-thinking");
+	assert.equal(m.name, "Claude Haiku 4.5 (20251001) (thinking)");
+	assert.equal(m.cost.input, 5); // 同版本目录价兑底
+	assert.equal(m.reasoning, true);
+
+	const plain = collapse(pm(["gpt-5.6-sol-nothinking", "gpt-5.6-sol"]), MODEL_DEFS, MODEL_LINES);
+	assert.equal(plain.openai.length, 1);
+	assert.equal(plain.openai[0].id, "gpt-5.6-sol");
+
+	const solo = collapse(pm(["gpt-5.6-sol", "gpt-5.6-sol-thinking"]), MODEL_DEFS, MODEL_LINES);
+	assert.equal(solo.openai.length, 1);
+	assert.equal(solo.openai[0].id, "gpt-5.6-sol-thinking");
+	assert.equal(solo.openai[0].name, "GPT-5.6 Sol (thinking)");
 });
 
 test("gpt-5：标准渠道缺失时保留 -ca 变体（目录价）", () => {
@@ -294,15 +368,15 @@ test("gpt-5：标准渠道缺失时保留 -ca 变体（目录价）", () => {
 	assert.equal(r.openai[0].reasoning, true);
 });
 
-test("gpt-5：只探测日期快照 → 以快照 id 注册、取同版本别名目录价并标注日期", () => {
-	// gpt-5.2-codex-2025-12-11 无目录定义（目录只有别名 gpt-5.2-codex）
-	const r = collapse(pm(["gpt-5.2-codex-2025-12-11"]), MODEL_DEFS, MODEL_LINES);
+test("只探测日期快照 → 以快照 id 注册、取同版本别名目录价并标注日期", () => {
+	// gpt-5.6-sol-2026-08-01 无目录定义（目录只有别名 gpt-5.6-sol）
+	const r = collapse(pm(["gpt-5.6-sol-2026-08-01"]), MODEL_DEFS, MODEL_LINES);
 	assert.equal(r.openai.length, 1);
 	const m = r.openai[0];
-	assert.equal(m.id, "gpt-5.2-codex-2025-12-11");
-	assert.equal(m.name, "GPT-5.2 Codex (2025-12-11)");
-	assert.equal(m.cost.input, defById.get("gpt-5.2-codex")!.cost.input); // 12.25
-	assert.equal(m.reasoning, defById.get("gpt-5.2-codex")!.reasoning);
+	assert.equal(m.id, "gpt-5.6-sol-2026-08-01");
+	assert.equal(m.name, "GPT-5.6 Sol (2026-08-01)");
+	assert.equal(m.cost.input, defById.get("gpt-5.6-sol")!.cost.input); // 35
+	assert.equal(m.reasoning, defById.get("gpt-5.6-sol")!.reasoning);
 });
 
 test("claude：老版本快照（无对应版本目录定义）→ 兜底注册（未定价，无 thinkingLevelMap）", () => {

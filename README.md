@@ -192,7 +192,7 @@ node e2e/run-e2e.mjs                                    # 真实 pi 进程端到
 
 ## chatanywhere-provider
 
-通过 [ChatAnywhere](https://docs.chatanywhere.tech) 的 OpenAI 兼容 API 与 Anthropic Messages API 接入模型（`chatanywhere` + `chatanywhere-claude` 两个 provider）。**v1.1.0 起模型运行时自动发现**：加载时探测 `GET {base}/models`，按“家族线 + 档位”归并去重注册——同种（同线同档）取最新、每条线最多保留 3 个档位、标准渠道优先于 `-ca`；命中内置定价目录（catalog.ts：GPT-5.6/5.x/4.x、DeepSeek、Qwen、Kimi、GLM、MiniMax、Gemini、Claude 等，CA币/1K 换算为 Pi 成本跟踪）取目录价，目录外新模型自动注册为“未定价”（默认规格 + 接口窗口值）。探测失败 fail-closed：两个 provider 均不注册模型，绝不回退静态目录。
+通过 [ChatAnywhere](https://docs.chatanywhere.tech) 的 OpenAI 兼容 API 与 Anthropic Messages API 接入模型（`chatanywhere` + `chatanywhere-claude` 两个 provider）。**模型运行时自动发现**：加载时探测 `GET {base}/models`，按“家族线 + 档位”归并去重注册——同种（同线同档）取最新（thinking 变体优先）、每条线最多保留 3 个档位、标准渠道优先于 `-ca`；**非 chat 模型（embedding/tts/whisper/生图等）一律不注册**，**旧代系列（GPT-4.x/o3/gemini-2.x 等）整代删除、每家族只保留最新代**（v1.2.0）。命中内置定价目录（catalog.ts：GPT-5.6/5.x、DeepSeek、Qwen、Kimi、GLM、MiniMax、Gemini、Claude 等，CA币/1K 换算为 Pi 成本跟踪）取目录价，目录外新模型自动注册为“未定价”（默认规格 + 接口窗口值）。探测失败 fail-closed：两个 provider 均不注册模型，绝不回退静态目录。
 
 ```bash
 # 设置 API Key（两种方式任选；探测自动按 环境变量 → ~/.pi/agent/auth.json 顺序读取）
