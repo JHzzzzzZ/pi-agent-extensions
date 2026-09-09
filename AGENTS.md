@@ -70,7 +70,7 @@ node --test runtime/test/scheduler.test.ts
 
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 43 个测试
-cd agent-team && npm install && npm test                                        # 137 个测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test                                        # 140 个测试（node --test test/*.test.ts）
 node --experimental-strip-types --test run-timer/run-timer.test.ts               # 此目录无 package.json
 node --experimental-strip-types --test goal/index.test.ts                        # 39 个测试，此目录无 package.json
 node --experimental-strip-types --test human-notify/index.test.ts                # 18 个测试，此目录无 package.json
@@ -160,5 +160,5 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 137；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 108；chatanywhere-provider 28；deep-init 32；human-notify 18。
+- **数量（grep 实测）：** pwr 405 个测试，分布在 33 个 `*.test.ts`（test/ 100、tests/ 204、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 140；run-timer 47；loop 169；goal 39；provider-quota 15；opencode-bridge 108；chatanywhere-provider 28；deep-init 32；human-notify 18。
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。

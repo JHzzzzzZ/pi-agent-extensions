@@ -18,7 +18,7 @@ Member 子进程 ×N：pi --mode json -p --no-session --model <member.model> [--
 
 ## 安装
 
-把本目录复制到 `~/.pi/agent/extensions/`（全局）或受信任项目的 `.pi/extensions/`，然后在 Pi 中 `/reload`。也可 `pi -e ./agent-team` 临时加载。无构建步骤（Node ≥ 22.18 原生 type-stripping），无运行时 npm 依赖。
+把本目录复制到 `~/.pi/agent/extensions/`（全局）或受信任项目的 `.pi/extensions/`，然后在 Pi 中 `/reload`。也可 `pi -e ./agent-team` 临时加载。无构建步骤（Node ≥ 22.18 原生 type-stripping），无运行时 npm 依赖。`/reload`（以及 new/resume/fork/switch）后扩展会重新注册全部工具与命令——双加载守卫在 `session_shutdown` 时自动复位。
 
 ## 用法
 
@@ -131,7 +131,7 @@ members:
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（137 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（140 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

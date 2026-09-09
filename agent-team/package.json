@@ -1,6 +1,6 @@
 {
   "name": "pi-extension-agent-team",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "type": "module",
   "description": "agent-team — 可复用的多 agent 团队：独立 leader 子进程调度成员协同完成任务；输入栏下方可选中进度亮块（空编辑器 ↓/← 或 alt+↓ 选中、j/k/↑/↓ 移动、enter 直达会话查看器）；team_run 默认后台派单（报告 followUp 自动送达）、team_stop 按 runId 中止（settle-aware，终态可靠）",

@@ -8,7 +8,7 @@
 - [x] 根 README 为每个插件增加效果示意图
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞
 - [ ] 参照 pi-subagents（v0.66.0）对齐 agent-team 可靠性：async-first 统一 + run 落盘/reconcile + 预算可配可见 + doctor 自检 + model 预检。（processing：方案待审批，未动手）
-- [ ] 修复每次 `/reload` 后 team 相关工具消失的问题（globalThis 双加载守卫跨 reload 常驻，entry 直接 return）。
+- [x] 修复每次 `/reload` 后 team 相关工具消失的问题（globalThis 双加载守卫跨 reload 常驻，entry 直接 return）。（v1.2.1：守卫命中后注册 session_shutdown 处理器删标志——pi 保证重绑扩展（reload/new/resume/fork/switch）前必发该事件，下次加载重新注册全部工具/命令/widget；同进程真双加载（无 shutdown 间隔）仍被抑制。新增 3 测试：reload 重注册 / 双加载抑制 / shutdown 幂等；140 测试 + typecheck 全绿）
 - [x] 新增停止工具并暴露给 agent（如 `team_stop`：按 runId 停止运行中的团队派单）
 
   现状只能从 view 手动停（且该条还没做）；leader / 主 agent 在派单变卦、超预算、跑偏时停不掉，只能等跑完。
