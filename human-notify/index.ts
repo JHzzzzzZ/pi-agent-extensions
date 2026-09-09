@@ -11,7 +11,9 @@
  * Windows Toast 经内联 WinRT PowerShell 发送,零 npm 依赖;`child_process.spawn`
  * detached + unref 派生,不阻塞会话、不持有会话资源。发送失败静默吞掉,
  * 绝不抛错、不破坏会话、不写敏感信息。
- * 文案为静态模板 + 截断摘要,不透传工具原始输出与密钥。
+ * 文案为差异化模板 + 截断摘要:审批/等人工具/结束三类正文各带一句话摘要
+ * (摘要取最新 assistant 尾部文本或等人工具 args 中的问题文本),
+ * 统一经 80 码点尾部截断 + 120 码点整体截断 + XML 转义,不透传工具原始输出与密钥。
  * 全局 5s 防抖窗口:窗口内重复事件只发第一次。
  * `PI_HUMAN_NOTIFY=0` 一键关闭(精确匹配,大小写敏感)。
  *
@@ -32,12 +34,14 @@ export const DONE_TITLE = "Pi 任务完成";
 export const DEBOUNCE_MS = 5000;
 /** 通知正文最长字符数(按码点计,超限截断并追加 …) */
 export const MAX_SUMMARY = 120;
+/** 摘要最长字符数(按码点计):摘要先截到 80 再拼入正文,正文整体仍受 MAX_SUMMARY 约束 */
+export const MAX_SUMMARY_TAIL = 80;
 /** 会触发通知的 ui_prompt kind(以宿主 UIPromptKind 定义为准) */
 export const NOTIFY_KINDS = ["confirm", "select", "input", "editor", "custom"] as const;
 /** 会触发通知的工具名名单:这类工具启动即意味着在等人工(须显式维护) */
 export const WAITING_TOOL_NAMES = ["plan_mode_question"] as const;
 
-/** agent 结束通知正文(静态模板,无事件载荷) */
+/** agent 结束通知正文(静态模板,无摘要可用时回退) */
 const DONE_BODY = "Agent 运行已结束，请回到终端查看结果。";
 
 /** 等人工具的中文标签(仅用于正文模板,名单外工具不用) */
@@ -72,12 +76,26 @@ export function shouldNotify(platform: string, env: Record<string, string | unde
   return platform === "win32" && env?.PI_HUMAN_NOTIFY !== "0";
 }
 
+/** 压单行:换行/制表符折叠为单空格,连续空格合并,去两端空白 */
+function squeeze(text: string): string {
+  return (text ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+/** 按码点截断到 max(超限追加 …),入参须已压单行 */
+function clamp(single: string, max: number): string {
+  const chars = Array.from(single);
+  if (chars.length <= max) return single;
+  return chars.slice(0, Math.max(1, max - 1)).join("") + "…";
+}
+
 /** 压单行 + 按码点截断到 MAX_SUMMARY(超限追加 …) */
 export function truncateSummary(text: string): string {
-  const single = (text ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
-  const chars = Array.from(single);
-  if (chars.length <= MAX_SUMMARY) return single;
-  return chars.slice(0, Math.max(1, MAX_SUMMARY - 1)).join("") + "…";
+  return clamp(squeeze(text), MAX_SUMMARY);
+}
+
+/** 压单行 + 按码点截断到 MAX_SUMMARY_TAIL(超限追加 …);摘要拼入正文前的第一道截断 */
+export function truncateTailSummary(text: string): string {
+  return clamp(squeeze(text), MAX_SUMMARY_TAIL);
 }
 
 /** XML 转义(Toast 正文经 XmlDocument.LoadXml 解析,必须先转义) */
@@ -97,17 +115,55 @@ export function buildToastScript(title: string, body: string): string {
   return `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('${psXml}'); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Pi Coding Agent').Show($toast)`;
 }
 
-/** 等人工具通知正文:静态模板 + 工具标签,不透传工具参数原文 */
-function buildWaitingBody(toolName: string): string {
+/**
+ * 提取 assistant 消息 content 中的文本块(忽略 thinking/toolResult 等非文本块),
+ * 拼接返回;不做截断与压行(调用方负责)。对齐 goal 的证据提取思路。
+ */
+export function extractAssistantText(content: unknown): string {
+  const parts: string[] = [];
+  if (!Array.isArray(content)) return "";
+  for (const block of content) {
+    const item = block as { type?: unknown; text?: unknown } | null;
+    if (item?.type === "text" && typeof item.text === "string" && item.text.trim()) parts.push(item.text);
+  }
+  return parts.join("\n\n");
+}
+
+/**
+ * 从等人工具 args 提取用户可读的问题文本(防御式收窄,unknown 入参):
+ * 目前仅 plan_mode_question 的 questions[0].question;取不到返回 undefined,由调用方回退。
+ */
+export function extractWaitingQuestion(toolName: string, args: unknown): string | undefined {
+  if (!(WAITING_TOOL_NAMES as readonly string[]).includes(toolName)) return undefined;
+  if (!args || typeof args !== "object") return undefined;
+  const questions = (args as { questions?: unknown }).questions;
+  if (!Array.isArray(questions) || questions.length === 0) return undefined;
+  const first = questions[0] as { question?: unknown } | null;
+  if (!first || typeof first !== "object") return undefined;
+  const question = first.question;
+  if (typeof question !== "string" || !question.trim()) return undefined;
+  return question;
+}
+
+/** 等人工具通知正文:有摘要(工具问题或 assistant 尾部)拼入,否则回退静态模板 */
+function buildWaitingBody(toolName: string, summary: string | undefined): string {
   const label = WAITING_TOOL_LABELS[toolName] ?? "请求";
+  if (summary && summary.trim()) return truncateSummary(`收到${label}，请回到终端处理：${summary}`);
   return truncateSummary(`收到${label}，请回到终端处理`);
 }
 
-/** 审批/输入通知正文:静态模板 + 事件自带的安全摘要(标题),整体再截断一次 */
-function buildPromptBody(kind: string, title?: string): string {
+/** 审批/输入通知正文:有摘要(assistant 尾部)拼入,否则回退现事件标题后缀模板 */
+function buildPromptBody(kind: string, title: string | undefined, summary: string | undefined): string {
   const label = KIND_LABELS[kind] ?? kind;
+  if (summary && summary.trim()) return truncateSummary(`收到${label}请求，请回到终端处理：${summary}`);
   const suffix = title && title.trim() ? `：${truncateSummary(title)}` : "";
   return truncateSummary(`收到${label}请求，请回到终端处理${suffix}`);
+}
+
+/** 结束通知正文:有摘要(assistant 尾部)出本轮结论,否则回退静态模板 */
+function buildDoneBody(summary: string | undefined): string {
+  if (summary && summary.trim()) return truncateSummary(`本轮结论：${summary}`);
+  return DONE_BODY;
 }
 
 // ===== 扩展工厂 =====
@@ -124,6 +180,8 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
   const env = deps.env ?? process.env;
 
   let lastSentMs = Number.NEGATIVE_INFINITY;
+  /** 最新一条 assistant 消息的尾部文本(已截到 MAX_SUMMARY_TAIL);session_start 重置防跨会话泄漏 */
+  let latestAssistantTail = "";
 
   function fire(title: string, body: string): void {
     try {
@@ -159,12 +217,34 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
     }
   }
 
+  pi.on("session_start", () => {
+    try {
+      latestAssistantTail = "";
+    } catch {
+      /* 忽略 */
+    }
+  });
+
+  pi.on("message_end", (event) => {
+    try {
+      const message = (event as { message?: unknown }).message;
+      if (!message || typeof message !== "object") return;
+      const msg = message as { role?: unknown; content?: unknown };
+      if (msg.role !== "assistant") return;
+      const text = extractAssistantText(msg.content);
+      if (!text.trim()) return;
+      latestAssistantTail = truncateTailSummary(text);
+    } catch {
+      /* 忽略 */
+    }
+  });
+
   pi.on("ui_prompt_start", (event) => {
     try {
       const kind = (event as { kind?: unknown }).kind;
       if (typeof kind !== "string" || !(NOTIFY_KINDS as readonly string[]).includes(kind)) return;
       const rawTitle = (event as { title?: unknown }).title;
-      fire(PROMPT_TITLE, buildPromptBody(kind, typeof rawTitle === "string" ? rawTitle : undefined));
+      fire(PROMPT_TITLE, buildPromptBody(kind, typeof rawTitle === "string" ? rawTitle : undefined, latestAssistantTail));
     } catch {
       /* 忽略 */
     }
@@ -175,7 +255,9 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
       const toolName = (event as { toolName?: unknown }).toolName;
       // 先查名单再进 fire:非名单工具直接返回,不消耗全局防抖窗口
       if (typeof toolName !== "string" || !(WAITING_TOOL_NAMES as readonly string[]).includes(toolName)) return;
-      fire(PROMPT_TITLE, buildWaitingBody(toolName));
+      // 摘要优先取 args 中用户可读的问题文本,取不到回退 assistant 尾部
+      const question = extractWaitingQuestion(toolName, (event as { args?: unknown }).args) ?? latestAssistantTail;
+      fire(PROMPT_TITLE, buildWaitingBody(toolName, question));
     } catch {
       /* 忽略 */
     }
@@ -183,7 +265,7 @@ export function createHumanNotifyExtension(pi: ExtensionAPI, deps: HumanNotifyDe
 
   pi.on("agent_settled", () => {
     try {
-      fire(DONE_TITLE, DONE_BODY);
+      fire(DONE_TITLE, buildDoneBody(latestAssistantTail));
     } catch {
       /* 忽略 */
     }

@@ -33,12 +33,17 @@
 
 ## 个性化提醒（待排期）
 
-- [ ] 不同对话发送差异化通知，不再统一用 ready for input
+- [x] 不同对话发送差异化通知，不再统一用 ready for input
 
   现状：审批等待 / agent 结束 / 等人工具全部共用固定标题 + 静态模板，用户看到的都是同一句“等你处理”，分不清是哪件事。
-  - [ ] 按触发类型出差异化文案：审批→待确认事项一句话摘要；结束→本轮结论一句话；等人工具→具体要问的问题。
-  - [ ] 摘要来源只取回合尾部 assistant 文本（类似 goal 的证据提取思路），截断后拼入正文；绝不透传工具原始输出与密钥。
-  - [ ] 现有约束保留：平台门控、防抖、`PI_HUMAN_NOTIFY=0`、失败静默；Linux / macOS 仍 no-op（如届时还没支持）。
+  - [x] 按触发类型出差异化文案：审批→待确认事项一句话摘要；结束→本轮结论一句话；等人工具→具体要问的问题。
+  - [x] 摘要来源只取回合尾部 assistant 文本（类似 goal 的证据提取思路），截断后拼入正文；绝不透传工具原始输出与密钥。
+  - [x] 现有约束保留：平台门控、防抖、`PI_HUMAN_NOTIFY=0`、失败静默；Linux / macOS 仍 no-op（如届时还没支持）。
+
+  交付备注（feat/human-notify-personalized → dev-laptop，根 2.11.3）：
+  - 三类正文差异化：审批 `收到确认请求，请回到终端处理：<摘要>`；等人工具 `收到问题，请回到终端处理：<args 问题文本>`；结束 `本轮结论：<摘要>`；标题不变，摘要空时逐级回退（args 问题 → assistant 尾部 → 现静态模板）。
+  - 实现：`message_end`（assistant）滚动缓存尾部文本 `latestAssistantTail`（80 码点 `truncateTailSummary`），`session_start` 重置防跨会话泄漏；`extractAssistantText` / `extractWaitingQuestion` / `truncateTailSummary` 导出纯函数；`MAX_SUMMARY_TAIL = 80`，正文整体仍受 `MAX_SUMMARY = 120` 约束。
+  - 单测 32 个全绿（原 18 + 新增 14）+ strict tsc --noEmit 0 错误 + strip-types 加载正常；Windows Toast 通道沿用已验证形态，未改脚本拼装。
 
 ## 取消抑制（待排期）
 
