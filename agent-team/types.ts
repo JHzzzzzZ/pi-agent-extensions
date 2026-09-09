@@ -115,6 +115,8 @@ export interface TeamConfig {
    * the caller's working directory.
    */
   worktree?: boolean;
+  /** Optional per-run budget caps (frontmatter `budget:` block). */
+  budget?: RunBudgetConfig;
   /** Markdown body under the frontmatter (team-level notes for the leader). */
   notes?: string;
   /** Absolute path of the source definition file. */
@@ -141,6 +143,7 @@ export const TeamErrorCodes = {
   RUN_NOT_FOUND: "RUN_NOT_FOUND",
   RUN_ALREADY_FINISHED: "RUN_ALREADY_FINISHED",
   BUDGET_EXCEEDED: "BUDGET_EXCEEDED",
+  MODEL_NOT_FOUND: "MODEL_NOT_FOUND",
 } as const;
 
 export type TeamErrorCode = (typeof TeamErrorCodes)[keyof typeof TeamErrorCodes];
@@ -153,6 +156,65 @@ export function ok<T>(value: T): Result<T> {
 
 export function err(code: TeamErrorCode, message: string): Result<never> {
   return { ok: false, code, message };
+}
+
+// ---------------------------------------------------------------------------
+// Run budget (per-run loop/cost guards)
+// ---------------------------------------------------------------------------
+
+/**
+ * Configurable run budget (team frontmatter `budget:` block). Dispatch/
+ * member-run caps default to the protocol constants; cost/token caps are
+ * unlimited unless set. Schema-level limits (max tasks per dispatch,
+ * parallel members) stay protocol constants — see MAX_TASKS_PER_DISPATCH /
+ * MAX_PARALLEL_MEMBERS.
+ */
+export interface RunBudgetConfig {
+  maxDispatchCalls?: number;
+  maxMemberRuns?: number;
+  maxCostUsd?: number;
+  maxTotalTokens?: number;
+}
+
+/** Resolved budget consumed by the leader executor and the cockpit. */
+export interface RunBudget {
+  maxDispatchCalls: number;
+  maxMemberRuns: number;
+  /** null = unlimited. */
+  maxCostUsd: number | null;
+  /** null = unlimited. */
+  maxTotalTokens: number | null;
+  /** Where the caps came from (doctor/status display). */
+  source: "default" | "frontmatter";
+}
+
+/** Resolves the frontmatter budget block onto the protocol defaults. */
+export function resolveRunBudget(config?: RunBudgetConfig): RunBudget {
+  const configured =
+    config !== undefined &&
+    (config.maxDispatchCalls !== undefined ||
+      config.maxMemberRuns !== undefined ||
+      config.maxCostUsd !== undefined ||
+      config.maxTotalTokens !== undefined);
+  return {
+    maxDispatchCalls: config?.maxDispatchCalls ?? MAX_DISPATCH_CALLS_PER_RUN,
+    maxMemberRuns: config?.maxMemberRuns ?? MAX_MEMBER_RUNS_PER_RUN,
+    maxCostUsd: typeof config?.maxCostUsd === "number" ? config.maxCostUsd : null,
+    maxTotalTokens: typeof config?.maxTotalTokens === "number" ? config.maxTotalTokens : null,
+    source: configured ? "frontmatter" : "default",
+  };
+}
+
+/** Live budget accounting for a running run (status display + caps). */
+export interface RunBudgetSnapshot {
+  maxDispatchCalls: number;
+  maxMemberRuns: number;
+  maxCostUsd: number | null;
+  maxTotalTokens: number | null;
+  spentCost: number;
+  spentTokens: number;
+  dispatchCalls: number;
+  memberRuns: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +250,8 @@ export function addUsage(target: AgentUsage, source: AgentUsage): void {
 
 /** Minimal child-process surface (testable without real processes). */
 export interface PiChildProcess {
+  /** OS pid when known (leader diagnostics for orphaned processes). */
+  readonly pid?: number;
   stdout: { on(event: "data", cb: (chunk: unknown) => void): void };
   stderr: { on(event: "data", cb: (chunk: unknown) => void): void };
   on(event: "close", cb: (code: number | null) => void): void;
@@ -222,6 +286,8 @@ export interface ChildOutcome {
   usage: AgentUsage;
   finalText: string;
   stderr: string;
+  /** OS pid of the child when known (persisted for orphan diagnostics). */
+  pid?: number;
   errorMessage?: string;
   stopReason?: string;
   model?: string;
@@ -307,6 +373,8 @@ export interface RunProgress {
   /** Leader's latest activity tail (progress display only). */
   leaderActivity?: string;
   members: MemberProgress[];
+  /** Live budget accounting (caps + spent) when the run tracks a budget. */
+  budget?: RunBudgetSnapshot;
 }
 
 /** UTF-8 safe truncation (same semantics as pwr's runner). */

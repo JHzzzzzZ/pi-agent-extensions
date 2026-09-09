@@ -26,8 +26,11 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import { Type } from "typebox";
 import { discoverTeams, findTeam, parseTeamFile } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
+import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
+import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
+import { orphanRunError, reconcileStaleRuns } from "./runstore.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
 import { RunWidgetController } from "./widget.ts";
 import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData } from "./viewer.ts";
@@ -47,11 +50,13 @@ import {
   RUN_ENTRY_TYPE,
   STOP_SETTLE_TIMEOUT_MS,
   WIDGET_ID,
+  resolveRunBudget,
   truncateUtf8,
   type PiSpawn,
   type TeamConfig,
   type TeamRunRecord,
 } from "./types.ts";
+import { defaultGitRunner, isGitRepo } from "./worktree.ts";
 
 function extensionEntryPath(): string | undefined {
   try {
@@ -68,14 +73,17 @@ function worktreeRoot(): string {
 
 /** Root of per-run transcript artifacts (leader + member JSONL files). */
 function transcriptRoot(): string {
-  return path.join(getAgentDir(), "teams", "runs");
+  // Test/isolation override: keeps run artifacts (status.json + transcripts)
+  // out of the real ~/.pi/agent/teams/runs during automated tests.
+  const override = process.env.PI_AGENT_TEAM_RUNS_DIR;
+  return override ? path.resolve(override) : path.join(getAgentDir(), "teams", "runs");
 }
 
 /** Transcript directories older than this are pruned on session start. */
 const TRANSCRIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** /team:<name> dynamic registrations never shadow these built-ins. */
-const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view", "clear"]);
+const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view", "clear", "doctor"]);
 
 /** Builds the guarded UI port over ctx.ui (repo TUI conventions). */
 function uiPortFrom(ctx: ExtensionContext): UiPort {
@@ -131,6 +139,7 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
           worktreeRoot: worktreeRoot(),
           runId,
           killGraceMs: 5000,
+          budget: resolveRunBudget(parsed.value.budget),
           transcript: new FileTranscriptSink(transcriptRoot(), runId),
         })
       : undefined;
@@ -411,6 +420,56 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   };
 
   /**
+   * Model preflight before any spawn: unresolvable provider/id references
+   * fail typed (MODEL_NOT_FOUND, nothing spawns); resolvable models without
+   * configured auth pass with a ui warning. Without a host registry
+   * (non-interactive contexts) there is nothing to check — pass through.
+   */
+  const runModelPreflight = (
+    ctx: ExtensionContext,
+    ui: UiPort,
+    team: TeamConfig,
+  ): { ok: true } | { ok: false; code: string; message: string } => {
+    const lookup = modelLookupFrom((ctx as unknown as { modelRegistry?: unknown }).modelRegistry);
+    if (!lookup) return { ok: true };
+    const result = preflightTeamModels(team, lookup);
+    if (!result.ok) return { ok: false, code: result.code, message: result.message };
+    for (const warning of result.warnings) ui.notify(warning, "warning");
+    return { ok: true };
+  };
+
+  /**
+   * Single terminal path for both delivery modes (async-first
+   * unification): persists the run record, then either delivers the report
+   * as a followUp turn (background) or produces the inline tool result
+   * (wait:true). Shared so the two flows cannot drift.
+   */
+  const finalizeRun = (
+    record: TeamRunRecord,
+    ui: UiPort,
+    delivery: "inline" | "followUp",
+  ): { text: string; isError: boolean } => {
+    appendRunRecord(pi as unknown as SessionPort, record);
+    if (delivery === "followUp") {
+      if (record.status === "completed") {
+        const secs = Math.round((record.durationMs ?? 0) / 100) / 10;
+        ui.notify(`team ${record.team} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
+        deliverRunResult(pi as unknown as SessionPort, record.report ?? "(leader 未返回报告)");
+      } else {
+        ui.notify(
+          `team ${record.team} ${record.status}: ${record.error ?? "已中止"}`,
+          record.status === "aborted" ? "warning" : "error",
+        );
+      }
+      return { text: "", isError: false };
+    }
+    if (record.status !== "completed") {
+      return { text: `team run ${record.status}: ${record.error ?? "(no error detail)"}`, isError: record.status === "failed" };
+    }
+    return { text: record.report ?? "(leader 未返回报告)", isError: false };
+  };
+
+  /**
    * Background run flow shared by /team:run and the team_run tool: fire and
    * forget — persists the record and delivers the final report as a
    * followUp turn so the user can keep talking to the main agent while the
@@ -423,6 +482,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     task: string,
   ): { ok: false; code: string; message: string } | { ok: true; team: string; members: number; runId: string } => {
     ensureRunWidget(ctx);
+    const preflight = runModelPreflight(ctx, ui, team);
+    if (!preflight.ok) {
+      return { ok: false, code: preflight.code, message: preflight.message };
+    }
     if (state.coordinator.isRunning()) {
       return { ok: false, code: "RUN_IN_PROGRESS", message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。" };
     }
@@ -439,18 +502,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           ui.notify(result.message, "error");
           return;
         }
-        const record = result.value;
-        appendRunRecord(pi as unknown as SessionPort, record);
-        if (record.status === "completed") {
-          const secs = Math.round((record.durationMs ?? 0) / 100) / 10;
-          ui.notify(`team ${team.name} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
-          deliverRunResult(pi as unknown as SessionPort, record.report ?? "(leader 未返回报告)");
-        } else {
-          ui.notify(
-            `team ${team.name} ${record.status}: ${record.error ?? "已中止"}`,
-            record.status === "aborted" ? "warning" : "error",
-          );
-        }
+        finalizeRun(result.value, ui, "followUp");
       })
       .catch((e: unknown) => {
         ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
@@ -503,6 +555,14 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         };
       }
       const ui = uiPortFrom(ctx);
+      const preflight = runModelPreflight(ctx, ui, found.value);
+      if (!preflight.ok) {
+        return {
+          content: [{ type: "text" as const, text: preflight.message }],
+          details: { code: preflight.code },
+          isError: true,
+        };
+      }
       if (params.wait !== true) {
         // Default: background dispatch — the main agent's turn ends right
         // away so the user can keep talking; the report arrives later as a
@@ -556,17 +616,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         };
       }
       const record = result.value;
-      appendRunRecord(pi as unknown as SessionPort, record);
-      if (record.status !== "completed") {
-        return {
-          content: [{ type: "text" as const, text: `team run ${record.status}: ${record.error ?? "(no error detail)"}` }],
-          details: record,
-          isError: record.status === "failed",
-        };
-      }
+      const outcome = finalizeRun(record, ui, "inline");
       return {
-        content: [{ type: "text" as const, text: record.report ?? "(leader 未返回报告)" }],
+        content: [{ type: "text" as const, text: outcome.text }],
         details: record,
+        ...(outcome.isError ? { isError: true } : {}),
       };
     },
   });
@@ -817,6 +871,43 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     },
   });
 
+  pi.registerCommand("team:doctor", {
+    description: "自检：运行模式/团队发现/模型预检/运行目录/预算/worktree 一览",
+    handler: async (_args, ctx) => {
+      const ui = uiPortFrom(ctx);
+      const registry = (ctx as unknown as {
+        modelRegistry?: { refresh?: () => Promise<void>; getError?: () => string | undefined };
+      }).modelRegistry;
+      if (registry?.refresh) {
+        try {
+          await registry.refresh();
+        } catch {
+          /* refresh is best-effort */
+        }
+      }
+      let gitRepo = false;
+      try {
+        gitRepo = await isGitRepo(defaultGitRunner(), state.cwd);
+      } catch {
+        gitRepo = false;
+      }
+      const report = buildDoctorReport(
+        {
+          mode: "cockpit",
+          cwd: state.cwd,
+          projectTrusted: state.projectTrusted,
+          scope: state.projectTrusted ? "both" : "global",
+          widgetEnabled: process.env.PI_AGENT_TEAM_WIDGET !== "0",
+          ...(registry?.getError ? { registryError: registry.getError() } : {}),
+          runsRoot: transcriptRoot(),
+          worktreeRoot: worktreeRoot(),
+        },
+        { isGitRepo: () => gitRepo },
+      );
+      ui.notify(report, "info");
+    },
+  });
+
   // -- Session lifecycle --------------------------------------------------
 
   pi.on("session_start", async (_event, ctx) => {
@@ -841,6 +932,44 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       }
     } catch {
       /* hydration is best-effort */
+    }
+
+    // Crash recovery: stale `running` status files left by a previous
+    // session (main session died mid-run) are reconciled into failed
+    // records — report only, the possibly-orphaned leader process is
+    // NEVER killed here (PID reuse risk; the diagnostic tells the user
+    // what to check).
+    try {
+      // Runs still claimed by this coordinator (e.g. a mid-run re-bind) are
+      // live and must not be reconciled away.
+      const inMemoryRunIds = new Set<string>();
+      const activeRunId = state.coordinator.activeRunId();
+      if (activeRunId) inMemoryRunIds.add(activeRunId);
+      const stale = reconcileStaleRuns({
+        root: transcriptRoot(),
+        inMemoryRunIds,
+        now: () => new Date().toISOString(),
+      });
+      for (const run of stale) {
+        const record: TeamRunRecord = {
+          runId: run.runId,
+          team: run.team,
+          task: run.task,
+          startedAt: run.startedAt,
+          status: "failed",
+          error: orphanRunError(run.leaderPid),
+          members: [],
+          totalCost: 0,
+          totalTokens: 0,
+        };
+        state.coordinator.restoreLastRecord(record);
+        uiPortFrom(ctx).notify(
+          `发现上次会话残留的未终态 run：team ${run.team}（runId ${run.runId}）已标记为 failed。${record.error}`,
+          "warning",
+        );
+      }
+    } catch {
+      /* reconcile is best-effort */
     }
 
     // Below-editor run widget: only mount right away when hydration found a

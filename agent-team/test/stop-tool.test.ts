@@ -23,6 +23,7 @@ import {
   toolExecutionStartLine,
   waitForChild,
   type FakeSpawnHandle,
+  isolateRunsDir,
 } from "./helpers.ts";
 
 // -- fake ExtensionAPI / ctx (same shape as run-tool.test.ts, kept local) --
@@ -77,6 +78,7 @@ type Tool = (params: Record<string, unknown>) => Promise<{
 }>;
 
 async function setup(): Promise<{
+  isolateRunsDir();
   pi: ReturnType<typeof fakePi>;
   spawn: FakeSpawnHandle;
   run: Tool;

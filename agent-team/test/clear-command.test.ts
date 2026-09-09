@@ -30,6 +30,7 @@ import {
   toolExecutionStartLine,
   waitForChild,
   type FakeSpawnHandle,
+  isolateRunsDir,
 } from "./helpers.ts";
 
 // -- fake ExtensionAPI / ctx (TUI ui port with recorders) -------------------
@@ -117,6 +118,7 @@ interface Setup {
 
 async function setup(opts: { entries?: Array<{ type?: string; customType?: string; data?: unknown }>; extraTeamFile?: string } = {}): Promise<Setup> {
   resetDoubleLoadGuardForTests();
+  isolateRunsDir();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-clear-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
   const team = fixtureTeam({ name: "proj-team", description: "项目团队", filePath: "", notes: undefined });

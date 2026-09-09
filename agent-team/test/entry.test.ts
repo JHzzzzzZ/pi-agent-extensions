@@ -11,6 +11,9 @@ import { buildLeaderSystemPrompt } from "../leader-prompt.ts";
 import { serializeTeam } from "../config.ts";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { VALID_TEAM_MD, fixtureTeam } from "./fixtures.ts";
+import { isolateRunsDir } from "./helpers.ts";
+
+isolateRunsDir();
 
 test("leader prompt embeds the user strategy verbatim, then roster and tool rules", () => {
   const team = fixtureTeam({
@@ -157,7 +160,7 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     assert.ok(pi.tools.has("team_transcript"));
     assert.ok(pi.tools.has("team_stop"));
     assert.ok(!pi.tools.has("team_dispatch"));
-    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear"]) {
+    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear", "team:doctor"]) {
       assert.ok(pi.commands.has(name), `command ${name} registered`);
     }
     assert.ok(pi.entryRenderers.has("agent-team-run-v1"));
@@ -189,7 +192,7 @@ test("after session_shutdown the guard resets and a fresh load registers everyth
     for (const name of ["team_run", "team_status", "team_transcript", "team_stop"]) {
       assert.ok(second.tools.has(name), `tool ${name} re-registered after reload`);
     }
-    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear"]) {
+    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear", "team:doctor"]) {
       assert.ok(second.commands.has(name), `command ${name} re-registered after reload`);
     }
     assert.ok(second.entryRenderers.has("agent-team-run-v1"));
@@ -224,7 +227,7 @@ test("repeated session_shutdown keeps the guard usable", async () => {
     const second = fakePi();
     agentTeamExtension(second as never);
     assert.ok(second.tools.has("team_run"), "tool registered after two shutdowns");
-    assert.equal(second.commands.size, 6);
+    assert.equal(second.commands.size, 7);
   });
 });
 
@@ -235,6 +238,6 @@ test("double load is a no-op (installed package + -e copy)", () => {
   const toolsAfterFirst = pi.tools.size;
   agentTeamExtension(pi as never);
   assert.equal(pi.tools.size, toolsAfterFirst, "second instance registers nothing");
-  assert.equal(pi.commands.size, 6);
+  assert.equal(pi.commands.size, 7);
   resetDoubleLoadGuardForTests();
 });

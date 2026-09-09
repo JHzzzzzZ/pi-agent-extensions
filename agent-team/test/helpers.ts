@@ -5,7 +5,23 @@
  * auto-response scheduling for multi-child scenarios (leader + members).
  */
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { PiChildProcess, PiSpawn } from "../types.ts";
+
+/**
+ * Redirects the extension's per-run artifact root (status.json + run
+ * transcripts) to a fresh temp dir for the current test FILE. Host-level
+ * tests that fire session_start or dispatch runs must call this at module
+ * scope — otherwise runs pollute (and get reconciled from) the real
+ * `~/.pi/agent/teams/runs`, making tests order-dependent.
+ */
+export function isolateRunsDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-runs-"));
+  process.env.PI_AGENT_TEAM_RUNS_DIR = dir;
+  return dir;
+}
 
 export interface SpawnRecord {
   command: string;
@@ -20,6 +36,8 @@ export class FakeChild implements PiChildProcess {
   private readonly closeCbs: Array<(code: number | null) => void> = [];
   private readonly errorCbs: Array<(err: Error) => void> = [];
   readonly killed: string[] = [];
+  /** Fake OS pid (assigned by the spawn factory when nextPid is set). */
+  pid: number | undefined = undefined;
 
   stdout = {
     on: (_event: "data", cb: (chunk: unknown) => void) => {
@@ -83,6 +101,8 @@ export interface FakeSpawnHandle {
   children: FakeChild[];
   /** If set, spawn throws this error instead of returning a child. */
   spawnError?: Error;
+  /** If set, assigns a fake pid to each spawned child (by index). */
+  nextPid?: (index: number) => number | undefined;
 }
 
 export function makeFakeSpawn(): FakeSpawnHandle {
@@ -90,6 +110,7 @@ export function makeFakeSpawn(): FakeSpawnHandle {
     spawn: (command, args, opts) => {
       if (handle.spawnError) throw handle.spawnError;
       const child = new FakeChild();
+      child.pid = handle.nextPid?.(handle.children.length);
       handle.records.push({ command, args, cwd: opts.cwd, env: opts.env });
       handle.children.push(child);
       return child;

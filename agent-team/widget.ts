@@ -53,8 +53,15 @@ export function buildWidgetRows(snapshot: RunStatusSnapshot, nowMs: number): Wid
     const progress = snapshot.progress;
     const running = progress.members.filter((member) => member.status === "running").length;
     const counts = progress.members.length > 0 ? ` · ${running}/${progress.members.length} 并行` : "";
+    // Single-line lean: only a remaining-balance hint when a cost cap is set
+    // and not yet breached (a breach aborts the run anyway).
+    let budgetHint = "";
+    const budget = progress.budget;
+    if (budget?.maxCostUsd !== null && budget?.maxCostUsd !== undefined && budget.spentCost < budget.maxCostUsd) {
+      budgetHint = ` · 剩 $${(budget.maxCostUsd - budget.spentCost).toFixed(2)}`;
+    }
     rows.push({
-      text: `agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}`,
+      text: `agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`,
       actor: LEADER_ACTOR,
     });
     rows.push({ text: `任务: ${truncateTask(progress.task)}`, actor: LEADER_ACTOR });

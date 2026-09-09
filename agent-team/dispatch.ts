@@ -17,12 +17,11 @@ import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { type TranscriptEntryKind, type TranscriptSink } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, type GitRunner } from "./worktree.ts";
 import {
-  MAX_DISPATCH_CALLS_PER_RUN,
-  MAX_MEMBER_RUNS_PER_RUN,
   MAX_PARALLEL_MEMBERS,
   MAX_RESULT_BYTES,
   MAX_SUMMARY_BYTES,
   MAX_TASKS_PER_DISPATCH,
+  resolveRunBudget,
   emptyUsage,
   truncateUtf8,
   type AgentUsage,
@@ -31,6 +30,7 @@ import {
   type MemberProgressStatus,
   type MemberRunResult,
   type PiSpawn,
+  type RunBudget,
   type TeamConfig,
   type TeamErrorCode,
 } from "./types.ts";
@@ -71,6 +71,8 @@ export interface DispatchDeps {
   killGraceMs?: number;
   /** Run transcript writer (member activity artifacts for /team:view). */
   transcript?: TranscriptSink;
+  /** Resolved per-run budget (defaults to the protocol constants). */
+  budget?: RunBudget;
 }
 
 export interface ToolUpdatePayload {
@@ -225,6 +227,7 @@ function truncateMessage(text: string, max = 2000): string {
 export function createDispatchExecutor(deps: DispatchDeps) {
   const git = deps.gitRunner ?? defaultGitRunner();
   const spawn = deps.spawn ?? defaultSpawn();
+  const budget = deps.budget ?? resolveRunBudget();
   let dispatchCalls = 0;
   let memberRuns = 0;
 
@@ -235,12 +238,12 @@ export function createDispatchExecutor(deps: DispatchDeps) {
   ): Promise<DispatchExecResult> {
     // Loop guard: a leader that keeps dispatching (e.g. retrying an
     // environmental failure forever) is cut off and told to wrap up.
-    if (dispatchCalls >= MAX_DISPATCH_CALLS_PER_RUN || memberRuns >= MAX_MEMBER_RUNS_PER_RUN) {
+    if (dispatchCalls >= budget.maxDispatchCalls || memberRuns >= budget.maxMemberRuns) {
       return {
         ok: false,
         code: "BUDGET_EXCEEDED",
         message: [
-          `已达本次 run 的派发预算上限（${dispatchCalls} 次 dispatch / ${memberRuns} 次成员运行）。`,
+          `已达本次 run 的派发预算上限（${dispatchCalls} 次 dispatch / 上限 ${budget.maxDispatchCalls}；${memberRuns} 次成员运行 / 上限 ${budget.maxMemberRuns}）。`,
           "不要再调用 team_dispatch。立即基于已收到的结果输出最终报告（含已完成部分与未完成原因）。",
         ].join(""),
       };
@@ -452,6 +455,20 @@ export function createDispatchExecutor(deps: DispatchDeps) {
 
     return { ok: true, value: { results, text: buildDispatchReport(results) } };
   };
+}
+
+/**
+ * Extracts the dispatch's combined member usage from a team_dispatch tool
+ * `details` payload as seen in the leader's JSON event stream (cockpit-side
+ * budget folding). Lenient: malformed shapes yield undefined.
+ */
+export function parseDispatchTotalUsage(details: unknown): { input: number; output: number; cost: number } | undefined {
+  if (details === null || typeof details !== "object") return undefined;
+  const raw = (details as { totalUsage?: unknown }).totalUsage;
+  if (raw === null || typeof raw !== "object") return undefined;
+  const usage = raw as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return { input: num(usage.input), output: num(usage.output), cost: num(usage.cost) };
 }
 
 /**
