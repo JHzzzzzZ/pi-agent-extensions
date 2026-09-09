@@ -16,3 +16,4 @@
   - 硬原则：只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄代码、不列 API；每份 ≤100 行、bullet 为主。
   - 实施步骤：先搭骨架 + agent-team、pwr 两张样板卡给用户过目，认可后再铺满其余 9 个插件。
 - [x] team_stop（agent-team 1.2.0）落地后同步 docs/ 知识库：agent-team 卡（职责/数据流/不变量/改动清单 109→137 + last verified）与 INDEX 摘要行。
+- [ ] 根 README 增加「5 分钟上手」章节：对标 Claude Code / OpenCode / Gemini CLI 的 onboarding 结构（编号旅程 + 每步可验证成功判据），补齐外部用户"从零装到跑通"缺口：Step 0 前置条件（pi 本体安装命令 + /login 认证）、装后验证判据、第一个真实任务（loop 提醒 → workflow 派单）、排障 FAQ（扩展没加载 /reload、pi list 自检、human-notify 仅 Windows）。（processing 2026-09-09，来源：定时任务调研 history/2026-09-09.md）
