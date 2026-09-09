@@ -9,6 +9,7 @@
 - 症状：查看器顶部标题 + 成员页签逐帧重影堆叠；用户截图实锤。
 - 根因：纯函数单测全绿但真机照样坏——堆叠只存在于 pi-tui 真实合成 / previousLines diff 路径，fake 结构断言不到。三轮渐进修：overlay maxHeight 对齐 + widget 暂停 → 照抄 fleet 壳 + 打开互斥。
 - 教训：**宿主/进程边界风险必须接真实实现测**（`viewer-host.test.ts`：真实 TuiMainScreen headless 渲染 + VT 仿真还原屏幕字节流）；纯函数绿 ≠ 真机对。见 AGENTS.md「测试与 QA」。
+- 后续（1.2.0）：重影反复出现的根源是 agent-team 抄 fleet 后两边各自漂移——已建立代码级同步矩阵 `agent-team/docs/tui-sync.md`（基线 pi-subagents v0.66.0），逐细节测试锁死；pi-subagents 每升版跟进一次，TUI 期望值只认矩阵。
 
 ## 亮块逐秒追加残影（agent-team widget）
 
