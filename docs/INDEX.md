@@ -27,7 +27,7 @@
 | chatanywhere-provider | 双 provider 运行时自动发现：探测 /models 按家族线归并注册，探测失败 fail-closed |
 | deep-init | `/deep-init` 提示词驱动四阶段深度初始化 |
 | goal | `/goal` 会话目标循环：agent 跨回合自动推进至评估器判定达成 |
-| human-notify | Windows Toast 人工介入通知（审批等待 / 完全结束） |
+| human-notify | Windows Toast 人工介入通知（审批/等人工具/结束，正文带差异化摘要） |
 | loop | `/loop` 定时任务：固定间隔 / 每日定时 / 每日窗口 / 一次性 / 后台 agent |
 | opencode-bridge | 本地 HTTP CONNECT → SOCKS5 桥，让 Pi 的 httpProxy 走 v2rayN |
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
