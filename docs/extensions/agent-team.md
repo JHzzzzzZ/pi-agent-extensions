@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ __MERGE__
+> last verified @ 007d9e4
 
 ## 职责与边界
 
