@@ -45,6 +45,16 @@ export const WIDGET_ID = "agent-team";
 /** Repaint interval of the below-editor run widget (elapsed labels). */
 export const WIDGET_TICK_MS = 1000;
 
+/** Refresh interval of the full-screen transcript viewer overlay. */
+export const VIEWER_TICK_MS = 800;
+
+/**
+ * Frame-height jitter tolerance (rows): terminal-row reports that wobble
+ * by this much keep the previous body height instead of resizing the
+ * overlay frame (resizes on a trail-prone host leave ghost chrome rows).
+ */
+export const VIEWER_HEIGHT_JITTER_ROWS = 1;
+
 /** Env var that switches the extension into leader mode inside a child pi. */
 export const LEADER_ENV_FILE = "PI_AGENT_TEAM_FILE";
 

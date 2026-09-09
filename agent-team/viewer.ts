@@ -22,6 +22,7 @@
 import { Markdown, truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { type TranscriptEntry } from "./transcript.ts";
+import { VIEWER_HEIGHT_JITTER_ROWS, VIEWER_TICK_MS } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Style port (identity in tests; theme-backed in the host)
@@ -108,6 +109,13 @@ export interface ViewerData {
 /** Interactive viewer state. */
 export interface ViewerState {
   actorIndex: number;
+  /**
+   * Selected transcript actor id (e.g. `_leader`, `frontend`). Kept
+   * alongside `actorIndex` so the selection survives actor-list changes
+   * (new transcript files after a dispatch); the index is re-resolved
+   * from this id on every refresh. Absent = follow the index.
+   */
+  actor?: string;
   /** Row offset into the rendered transcript body (0 = top). */
   scroll: number;
   /** Stick to the bottom while new rows arrive. */
@@ -462,6 +470,8 @@ export interface ViewerKeyContext {
   totalLines: number;
   actorCount: number;
   bodyHeight: number;
+  /** Transcript actor ids in tab order (pins selection by id when present). */
+  actorIds?: string[];
 }
 
 export type ViewerKeyResult = { type: "update"; state: ViewerState } | { type: "close" };
@@ -484,6 +494,11 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
   const next: ViewerState = { ...state };
   const switchActor = (index: number): void => {
     next.actorIndex = Math.min(Math.max(0, index), Math.max(0, ctx.actorCount - 1));
+    if (ctx.actorIds !== undefined) {
+      const id = ctx.actorIds[next.actorIndex];
+      if (id !== undefined) next.actor = id;
+      else delete next.actor;
+    }
     next.scroll = 0;
     next.follow = true;
   };
@@ -557,6 +572,56 @@ export function clampViewerState(state: ViewerState, totalLines: number, bodyHei
   return { ...state, scroll: Math.min(Math.max(0, state.scroll), maxScroll) };
 }
 
+/**
+ * Resolves the selected tab from the pinned actor id. Falls back to the
+ * stored index (clamped) when no id is pinned or the actor is gone —
+ * pure, so actor-list growth after a dispatch never steals the selection.
+ */
+export function resolveActorIndex(data: ViewerData, state: ViewerState): number {
+  const clamped = Math.min(Math.max(0, state.actorIndex), Math.max(0, data.actors.length - 1));
+  if (state.actor === undefined) return clamped;
+  const found = data.actors.findIndex((a) => a.actor === state.actor);
+  return found >= 0 ? found : clamped;
+}
+
+/** State with actorIndex re-resolved from the pinned actor id (pure). */
+export function withResolvedActor(data: ViewerData, state: ViewerState): ViewerState {
+  if (data.actors.length === 0) return state.actorIndex === 0 ? state : { ...state, actorIndex: 0 };
+  const index = resolveActorIndex(data, state);
+  return index === state.actorIndex ? state : { ...state, actorIndex: index };
+}
+
+/**
+ * Refresh-gate fingerprint: everything the frame shows EXCEPT the
+ * wall-clock `elapsed` label. The label ticks every second while the
+ * transcript is idle; repainting on it alone repaints ~1/s and — on a
+ * host whose overlay repaint appends instead of replacing — stacks a new
+ * title+tabs pair per tick (the reported 15s/16s/17s… ghost). Elapsed
+ * still refreshes on every content-driven repaint.
+ */
+export function viewerDataFingerprint(data: ViewerData): string {
+  const actors = data.actors.map((a) => `${a.actor}=${a.label}=${a.status ?? ""}`).join(",");
+  const entries = data.actors
+    .map((a) => {
+      const list = data.entries.get(a.actor) ?? [];
+      const last = list[list.length - 1];
+      const tail = last ? `${last.kind}:${last.ts}:${last.text.slice(-64)}` : "-";
+      return `${a.actor}:${list.length}:${tail}`;
+    })
+    .join(",");
+  return `${data.team}|${data.runId}|${data.runStatus}|${actors}|${entries}`;
+}
+
+/**
+ * Frame-height stabilizer: terminal-row reports that wobble within
+ * `tolerance` keep the previous body height instead of resizing the
+ * overlay frame (each resize is a full repaint on a trail-prone host).
+ */
+export function stabilizeBodyHeight(prev: number, next: number, tolerance: number = VIEWER_HEIGHT_JITTER_ROWS): number {
+  if (prev <= 0) return next;
+  return Math.abs(next - prev) <= tolerance ? prev : next;
+}
+
 export interface TranscriptViewerOptions {
   /** Reloads viewer data (run snapshot + transcripts) on each refresh tick. */
   load: () => ViewerData;
@@ -574,13 +639,15 @@ export interface TranscriptViewerOptions {
   refreshMs?: number;
 }
 
-/** pi-tui component wrapper: refresh timer + key handling + rendering. */
+/** pi-tui component wrapper: gated refresh timer + key handling + rendering. */
 export class TranscriptViewer implements Component {
   private readonly opts: TranscriptViewerOptions;
   private data: ViewerData;
   private state: ViewerState = initialViewerState();
   private lastTotalLines = 0;
   private lastBodyHeight = 22;
+  private lastFingerprint: string | null = null;
+  private disposed = false;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: TranscriptViewerOptions) {
@@ -588,12 +655,38 @@ export class TranscriptViewer implements Component {
     this.data = opts.load();
     if (opts.initialActor !== undefined) {
       const index = this.data.actors.findIndex((a) => a.actor === opts.initialActor);
-      if (index >= 0) this.state.actorIndex = index;
+      if (index >= 0) {
+        this.state.actorIndex = index;
+        this.state.actor = this.data.actors[index]?.actor;
+      }
+    } else if (this.data.actors[this.state.actorIndex]?.actor !== undefined) {
+      this.state.actor = this.data.actors[this.state.actorIndex]?.actor;
     }
-    const refreshMs = opts.refreshMs ?? 800;
+    try {
+      const rows = this.opts.rows?.() ?? 30;
+      this.lastBodyHeight = computeFrameHeight(rows) - VIEWER_CHROME_ROWS;
+    } catch {
+      /* keep the default height */
+    }
+    this.lastFingerprint = viewerDataFingerprint(this.data);
+    const refreshMs = opts.refreshMs ?? VIEWER_TICK_MS;
     this.timer = setInterval(() => {
+      if (this.disposed) return;
       try {
-        this.data = this.opts.load();
+        const next = this.opts.load();
+        let bodyHeight = this.lastBodyHeight;
+        try {
+          const rows = this.opts.rows?.() ?? 30;
+          bodyHeight = stabilizeBodyHeight(this.lastBodyHeight, computeFrameHeight(rows) - VIEWER_CHROME_ROWS);
+        } catch {
+          /* keep the previous height */
+        }
+        const fingerprint = viewerDataFingerprint(next);
+        this.data = next;
+        this.state = withResolvedActor(this.data, this.state);
+        if (fingerprint === this.lastFingerprint && bodyHeight === this.lastBodyHeight) return;
+        this.lastFingerprint = fingerprint;
+        this.lastBodyHeight = bodyHeight;
         this.requestRender();
       } catch {
         /* refresh failures never break the viewer */
@@ -613,9 +706,11 @@ export class TranscriptViewer implements Component {
 
   render(width: number): string[] {
     const rows = this.opts.rows?.() ?? 30;
-    const bodyHeight = computeFrameHeight(rows) - VIEWER_CHROME_ROWS;
+    const bodyHeight = stabilizeBodyHeight(this.lastBodyHeight, computeFrameHeight(rows) - VIEWER_CHROME_ROWS);
     this.lastBodyHeight = bodyHeight;
     this.data = this.opts.load();
+    this.state = withResolvedActor(this.data, this.state);
+    this.lastFingerprint = viewerDataFingerprint(this.data);
     const actor = this.data.actors[this.state.actorIndex];
     const entries = actor ? (this.data.entries.get(actor.actor) ?? []) : [];
     this.lastTotalLines =
@@ -635,6 +730,7 @@ export class TranscriptViewer implements Component {
       totalLines: this.lastTotalLines,
       actorCount: this.data.actors.length,
       bodyHeight: this.lastBodyHeight,
+      actorIds: this.data.actors.map((a) => a.actor),
     });
     if (result.type === "close") {
       this.dispose();
@@ -651,6 +747,7 @@ export class TranscriptViewer implements Component {
 
   /** Stops the refresh timer (called on close and by the host on teardown). */
   dispose(): void {
+    this.disposed = true;
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
