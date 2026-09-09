@@ -10,13 +10,17 @@ import {
   DEBOUNCE_MS,
   DONE_TITLE,
   MAX_SUMMARY,
+  MAX_SUMMARY_TAIL,
   NOTIFY_KINDS,
   PROMPT_TITLE,
   WAITING_TOOL_NAMES,
   buildToastScript,
   createHumanNotifyExtension,
+  extractAssistantText,
+  extractWaitingQuestion,
   shouldNotify,
   truncateSummary,
+  truncateTailSummary,
 } from "./index.ts";
 
 // ===== 手写 fake =====
@@ -84,8 +88,20 @@ function fireSettled(fake: ReturnType<typeof makeFakePi>, ctx: unknown = {}) {
   return fake.handlers.get("agent_settled")!({ type: "agent_settled" }, ctx);
 }
 
-function fireTool(fake: ReturnType<typeof makeFakePi>, toolName: string, ctx: unknown = {}) {
-  return fake.handlers.get("tool_execution_start")!({ type: "tool_execution_start", toolCallId: "call_1", toolName, args: {} }, ctx);
+function fireTool(fake: ReturnType<typeof makeFakePi>, toolName: string, args: unknown = {}, ctx: unknown = {}) {
+  return fake.handlers.get("tool_execution_start")!({ type: "tool_execution_start", toolCallId: "call_1", toolName, args }, ctx);
+}
+
+function fireMessageEnd(fake: ReturnType<typeof makeFakePi>, role: string, content: unknown, ctx: unknown = {}) {
+  return fake.handlers.get("message_end")!({ type: "message_end", message: { role, content } }, ctx);
+}
+
+function fireSessionStart(fake: ReturnType<typeof makeFakePi>, ctx: unknown = {}) {
+  return fake.handlers.get("session_start")!({ type: "session_start" }, ctx);
+}
+
+function lastScript(spawned: ReturnType<typeof makeFakeSpawn>): string {
+  return (spawned.calls.at(-1)?.args.at(-1) ?? "") as string;
 }
 
 // ===== 接线 =====
@@ -258,6 +274,138 @@ test("buildToastScript:XML 元字符被转义,不透传原始尖括号", () => {
   assert.ok(script.includes("&lt;script&gt;"), "应转义尖括号");
   assert.ok(script.includes("&amp;"), "应转义 &");
   assert.ok(!script.includes("\n") || script.length > 0, "脚本为单次 -Command 参数");
+});
+
+// ===== 差异化通知:纯函数 =====
+
+test("extractAssistantText:拼接 text 块,忽略 thinking/非文本块,非数组返回空", () => {
+  const content = [
+    { type: "thinking", thinking: "内心独白不应出现" },
+    { type: "text", text: "第一段" },
+    { type: "toolResult", content: "工具输出不应出现" },
+    { type: "text", text: "第二段" },
+    { type: "text", text: "   " },
+  ];
+  assert.equal(extractAssistantText(content), "第一段\n\n第二段");
+  assert.equal(extractAssistantText("不是数组"), "");
+  assert.equal(extractAssistantText([{ type: "text", text: 42 }]), "");
+});
+
+test("extractWaitingQuestion:plan_mode_question 取 questions[0].question,其余形态回退 undefined", () => {
+  assert.equal(extractWaitingQuestion("plan_mode_question", { questions: [{ question: "选哪个方案？" }] }), "选哪个方案？");
+  assert.equal(extractWaitingQuestion("plan_mode_question", { questions: [{ question: "   " }] }), undefined);
+  assert.equal(extractWaitingQuestion("plan_mode_question", { questions: [{ question: 42 }] }), undefined);
+  assert.equal(extractWaitingQuestion("plan_mode_question", { questions: [] }), undefined);
+  assert.equal(extractWaitingQuestion("plan_mode_question", { questions: "nope" }), undefined);
+  assert.equal(extractWaitingQuestion("plan_mode_question", null), undefined);
+  assert.equal(extractWaitingQuestion("plan_mode_question", {}), undefined);
+  assert.equal(extractWaitingQuestion("bash", { questions: [{ question: "不该提取" }] }), undefined);
+});
+
+test("truncateTailSummary:按码点截到 80 并追加 …,多行压单行", () => {
+  assert.equal(truncateTailSummary("短的"), "短的");
+  const long = truncateTailSummary("z".repeat(MAX_SUMMARY_TAIL + 30));
+  assert.equal(Array.from(long).length, MAX_SUMMARY_TAIL);
+  assert.ok(long.endsWith("…"));
+  assert.equal(truncateTailSummary("第一行\n第二行"), "第一行 第二行");
+});
+
+// ===== 差异化通知:缓存与正文 =====
+
+test("message_end(assistant)更新缓存:settle 正文含本轮结论摘要", () => {
+  const { fake, spawned } = boot();
+  fireMessageEnd(fake, "assistant", [{ type: "text", text: "已修复 3 个测试" }]);
+  fireSettled(fake);
+  assert.equal(spawned.calls.length, 1);
+  assert.ok(lastScript(spawned).includes("本轮结论：已修复 3 个测试"), "settle 正文应含摘要");
+});
+
+test("message_end:多段 text 拼接进摘要,thinking 块不透传", () => {
+  const { fake, spawned } = boot();
+  fireMessageEnd(fake, "assistant", [
+    { type: "thinking", thinking: "秘密推理" },
+    { type: "text", text: "全部通过" },
+  ]);
+  fireSettled(fake);
+  const script = lastScript(spawned);
+  assert.ok(script.includes("本轮结论：全部通过"));
+  assert.ok(!script.includes("秘密推理"), "thinking 不应透传");
+});
+
+test("message_end:user/无 text 块不更新缓存", () => {
+  const { fake, spawned } = boot();
+  fireMessageEnd(fake, "user", [{ type: "text", text: "用户消息不算结论" }]);
+  fireMessageEnd(fake, "assistant", [{ type: "thinking", thinking: "只有思考没有正文" }]);
+  fireSettled(fake);
+  assert.equal(spawned.calls.length, 1);
+  assert.ok(lastScript(spawned).includes("Agent 运行已结束"), "缓存为空应回退静态模板");
+});
+
+test("session_start 重置摘要缓存,不跨会话泄漏", () => {
+  const { fake, spawned } = boot();
+  fireMessageEnd(fake, "assistant", [{ type: "text", text: "上一轮结论" }]);
+  fireSessionStart(fake);
+  fireSettled(fake);
+  assert.ok(lastScript(spawned).includes("Agent 运行已结束"), "重置后应回退静态模板");
+});
+
+test("审批通知正文含 assistant 尾部摘要;缓存为空回退现模板", () => {
+  const withCache = boot();
+  fireMessageEnd(withCache.fake, "assistant", [{ type: "text", text: "需要你确认删除范围" }]);
+  firePrompt(withCache.fake, "confirm", "请确认");
+  assert.equal(withCache.spawned.calls.length, 1);
+  assert.ok(lastScript(withCache.spawned).includes("收到确认请求，请回到终端处理：需要你确认删除范围"));
+
+  const empty = boot();
+  firePrompt(empty.fake, "confirm", "请确认");
+  assert.ok(lastScript(empty.spawned).includes("收到确认请求，请回到终端处理：请确认"), "无缓存回退现标题后缀模板");
+});
+
+test("等人工具:args 有 question 用问题文本", () => {
+  const { fake, spawned } = boot();
+  fireTool(fake, "plan_mode_question", { questions: [{ question: "选 A 还是 B？" }] });
+  assert.equal(spawned.calls.length, 1);
+  assert.ok(lastScript(spawned).includes("收到问题，请回到终端处理：选 A 还是 B？"));
+});
+
+test("等人工具:args 缺失/非 string 回退 assistant 尾部", () => {
+  const fromArgs = boot();
+  fireMessageEnd(fromArgs.fake, "assistant", [{ type: "text", text: "计划已就绪" }]);
+  fireTool(fromArgs.fake, "plan_mode_question", { questions: [{ question: 42 }] });
+  assert.equal(fromArgs.spawned.calls.length, 1);
+  assert.ok(lastScript(fromArgs.spawned).includes("收到问题，请回到终端处理：计划已就绪"));
+});
+
+test("等人工具:args 与缓存皆空回退现静态正文", () => {
+  const { fake, spawned } = boot();
+  fireTool(fake, "plan_mode_question");
+  assert.equal(spawned.calls.length, 1);
+  assert.ok(lastScript(spawned).includes("收到问题，请回到终端处理"));
+  assert.ok(!lastScript(spawned).includes("：收到"), "不应出现空摘要残留");
+});
+
+test("settle 缓存为空回退 DONE 静态正文", () => {
+  const { fake, spawned } = boot();
+  fireSettled(fake);
+  assert.ok(lastScript(spawned).includes("Agent 运行已结束"));
+  assert.ok(!lastScript(spawned).includes("本轮结论"));
+});
+
+test("摘要超长:先截到 80 码点,正文整体仍受 120 约束", () => {
+  const { fake, spawned } = boot();
+  fireMessageEnd(fake, "assistant", [{ type: "text", text: "长".repeat(200) }]);
+  fireSettled(fake);
+  const script = lastScript(spawned);
+  assert.ok(script.includes("…"), "摘要应有截断标记");
+  assert.ok(!script.includes("长".repeat(85)), "摘要不应超过 80 码点");
+});
+
+test("摘要照旧 XML 转义,不透传原始尖括号", () => {
+  const { fake, spawned } = boot();
+  fireTool(fake, "plan_mode_question", { questions: [{ question: "<b>加粗</b> & \"引号\"?" }] });
+  const script = lastScript(spawned);
+  assert.ok(script.includes("&lt;b&gt;加粗&lt;/b&gt; &amp; &quot;引号&quot;?"));
+  assert.ok(!script.includes("<b>"));
 });
 
 test("shouldNotify:仅 win32 且未精确关闭时为真", () => {
