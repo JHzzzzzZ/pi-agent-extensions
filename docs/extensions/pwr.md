@@ -1,6 +1,6 @@
 # pwr — Pi Workflow Runtime
 
-> last verified @ 0142e14
+> last verified @ fbae313
 
 ## 职责与边界
 
