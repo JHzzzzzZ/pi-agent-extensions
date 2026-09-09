@@ -53,6 +53,61 @@ pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
 
 > 两种方式不要混用同一扩展，否则会重复加载（命令/状态条重复注册）。从手动复制切换到 `pi install` 时，先删除 `extensions/` 下的旧拷贝。
 
+## 5 分钟上手
+
+从零到跑通第一个真实任务。每一步都有可验证的成功判据——看到判据再走下一步。
+
+**Step 0 · 前置条件**（还没装 pi 的先做这步）
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent   # 安装 pi 本体
+pi                                                                 # 首次启动按提示 /login 配置任意一个模型 provider
+```
+
+✅ 判据：`pi` 启动后能正常对话（发一句“你好”有回复）。
+
+**Step 1 · 装本扩展包并验证**
+
+```bash
+pi install git:github.com/JHzzzzzZ/pi-agent-extensions
+pi                                                                 # 重新启动 pi
+```
+
+✅ 判据：在输入框敲 `/loop list`，看到任务列表或“没有定时任务”提示——说明扩展已加载。若命令不存在，先在 pi 里执行 `/reload`，再用 `pi list` 确认包已登记。
+
+**Step 2 · 第一个定时任务（loop）**
+
+```text
+/loop in 1m 说一句“安装成功，恭喜”
+```
+
+✅ 判据：约 1 分钟后 agent 主动向你道喜；输入 `/loop delete <id>`（或 `/loop clear`）清掉测试任务。
+
+**Step 3 · 派第一个 agent 团队（agent-team）**
+
+直接对 agent 说：“建一个两人团队 reviewer+writer，让 writer 写一首关于终端的短诗，reviewer 审完后汇报”。agent 会调 `team_create` 建团、`team_run` 派单；输入栏下方出现可选中亮块，`↓` 进入选中、`enter` 打开查看器看每个成员的完整会话记录。
+
+✅ 判据：亮块显示 run 结束终态（`✓ · 耗时 · 费用`），报告自动送达会话。
+
+**Step 4 · 跑第一个工作流（pwr）**
+
+```text
+/workflow 扫描当前仓库并生成一份架构概述
+```
+
+agent 生成脚本后弹出批准卡，选 `Run once`；`/workflows:view` 可实时观看每个子 agent 的执行轨迹。
+
+✅ 判据：批准后运行完成，结果以 `pwr-workflow-result` 消息回传。
+
+**排障 FAQ**
+
+| 现象 | 处理 |
+| --- | --- |
+| `/loop` 等命令不存在 | pi 里执行 `/reload`；`pi list` 确认包已装；两种安装方式不要混用（重复加载会互相覆盖） |
+| 模型不可用 / 无响应 | pi 里 `/login` 检查 provider 配置；`/model` 切换模型 |
+| Windows Toast 不弹 | human-notify 仅 Windows 生效（Linux/macOS no-op）；`PI_HUMAN_NOTIFY=0` 会整体关闭 |
+| 状态条没出现 stream-token-speed / provider-quota / run-timer | 这三个是状态 widget，需对应事件（流式回复 / 支持的 provider / 会话计时）才显示 |
+
 ---
 
 ## pwr — Pi Workflow Runtime（主项目）
