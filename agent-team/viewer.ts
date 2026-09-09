@@ -138,6 +138,15 @@ export interface ViewerState {
    * with the busy/confirm banners (busy > confirm > notice, like fleet).
    */
   notice?: { text: string; kind: NoticeKind };
+  /**
+   * Single-line message input mode (`m` from the normal state). While set,
+   * every key feeds the input state machine first — no other viewer action
+   * fires; Esc/ctrl+c leave input mode (never close the viewer); Enter
+   * submits as a `chat-submit` key result.
+   */
+  inputMode?: boolean;
+  /** Message input buffer (text typed so far; empty when not in input mode). */
+  inputBuffer?: string;
 }
 
 export function initialViewerState(): ViewerState {
@@ -368,7 +377,7 @@ export const VIEWER_ACTION_KEYS = {
 } as const;
 
 /** Key legend for the bottom border (kept in sync with VIEWER_ACTION_KEYS). */
-export const VIEWER_LEGEND = "↑↓ 滚动 · ←→/1-9 成员 · g/G 首末 · x 工具行 · D 停止 · r 刷新 · q 关闭";
+export const VIEWER_LEGEND = "↑↓ 滚动 · ←→/1-9 成员 · g/G 首末 · x 工具行 · m 发消息 · D 停止 · r 刷新 · q 关闭";
 
 /**
  * Frame height for a terminal with `rows` rows: ~82% of the screen,
@@ -443,16 +452,22 @@ export function fitLine(line: string, width: number): string {
 
 /**
  * Action banner/notice lines for the top of the body window (fleet's
- * `actionLines` counterpart, priority busy > confirm > notice). Pure:
- * derived entirely from the viewer state, mutually exclusive display.
+ * `actionLines` counterpart, priority busy > confirm > input > notice).
+ * Pure: derived entirely from the viewer state, mutually exclusive display.
+ * `width` (display columns) truncates the input line to the pane; CJK
+ * aware via truncateVisible.
  */
-export function actionLines(data: ViewerData, state: ViewerState, styles: Styles): string[] {
+export function actionLines(data: ViewerData, state: ViewerState, styles: Styles, width?: number): string[] {
   if (state.stopping) return [styles.accent("停止中…")];
   if (state.stopConfirming) {
     return [
       styles.warning(`确认停止 run ${data.runId || "(no run)"}？`),
       styles.dim("停止会中止 leader 与所有成员子进程。Enter/Y 确认 · N 取消 · Esc 取消"),
     ];
+  }
+  if (state.inputMode) {
+    const line = `❯ ${state.inputBuffer ?? ""}▏`;
+    return [styles.accent(width !== undefined ? truncateVisible(line, width) : line)];
   }
   if (state.notice) {
     const style = state.notice.kind === "error" ? styles.error : state.notice.kind === "warning" ? styles.warning : styles.success;
@@ -485,7 +500,7 @@ export function renderViewerFrame(
   const actor = data.actors[state.actorIndex];
   const entries = actor ? (data.entries.get(actor.actor) ?? []) : [];
   const lines = bodyLines(entries, state.showTools, inner, styles, opts.renderMarkdown);
-  const actions = actionLines(data, state, styles);
+  const actions = actionLines(data, state, styles, inner);
   const effective = Math.max(1, opts.bodyHeight - actions.length);
   const clamped = clampViewerState(state, lines.length, effective);
   const window = lines.slice(clamped.scroll, clamped.scroll + effective);
@@ -538,7 +553,8 @@ export type ViewerKeyResult =
   | { type: "update"; state: ViewerState }
   | { type: "close" }
   | { type: "refresh" }
-  | { type: "stop-confirm" };
+  | { type: "stop-confirm" }
+  | { type: "chat-submit"; text: string; state: ViewerState };
 
 const KEY_UP = "\x1b[A";
 const KEY_DOWN = "\x1b[B";
@@ -548,6 +564,16 @@ const KEY_PGUP = "\x1b[5~";
 const KEY_PGDN = "\x1b[6~";
 const KEY_HOME = "\x1b[H";
 const KEY_END = "\x1b[F";
+
+/** 可打印输入判定：非转义序列、无控制字符（含 CJK 多字节字符与粘贴串）。 */
+function isPrintableInput(data: string): boolean {
+  if (data.length === 0 || data.startsWith("\x1b")) return false;
+  for (const ch of data) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
 
 /**
  * Pure key reducer. Unrecognized keys leave the state unchanged (still an
@@ -559,6 +585,31 @@ const KEY_END = "\x1b[F";
  * 闭查看器）、其余键忽略。
  */
 export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKeyContext): ViewerKeyResult {
+  // 输入模式分支在最前面：优先于一切现有按键——输入模式中 j/k/D/r/q 等都
+  // 进 buffer；Esc/ctrl+c 只退出输入（绝不关 viewer）；Enter 提交。
+  if (state.inputMode) {
+    if (matchesKey(data, "enter")) {
+      return {
+        type: "chat-submit",
+        text: state.inputBuffer ?? "",
+        state: { ...state, inputMode: false, inputBuffer: "" },
+      };
+    }
+    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+      return { type: "update", state: { ...state, inputMode: false, inputBuffer: "" } };
+    }
+    if (matchesKey(data, "backspace")) {
+      const chars = Array.from(state.inputBuffer ?? "");
+      return { type: "update", state: { ...state, inputBuffer: chars.slice(0, -1).join("") } };
+    }
+    // 可打印字符（含 CJK 多字节）追加；控制序列（\x1b 开头的方向键等）与
+    // 其余控制字符一律忽略。
+    if (isPrintableInput(data)) {
+      return { type: "update", state: { ...state, inputBuffer: (state.inputBuffer ?? "") + data } };
+    }
+    return { type: "update", state }; // 其余键一律忽略
+  }
+
   if (state.stopConfirming) {
     if (matchesKey(data, "enter") || data === "y" || data === "Y") {
       return { type: "stop-confirm" };
@@ -645,6 +696,10 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
       break;
     case "x":
       next.showTools = !state.showTools;
+      break;
+    case "m":
+      next.inputMode = true;
+      next.inputBuffer = "";
       break;
     default: {
       if (/^[1-9]$/.test(data)) {
@@ -748,6 +803,13 @@ export interface TranscriptViewerOptions {
    * swallows repeats; rejections render an error notice).
    */
   stop?: () => Promise<ViewerStopResult>;
+  /**
+   * Delivers a message typed in the viewer (m → input line → Enter) to the
+   * selected actor (leader or member). Wired by the cockpit; dispatches a
+   * new background run (or queues it) and returns the banner notice.
+   * Exceptions never escape (mapped to an error notice).
+   */
+  onMessage?: (target: { actor: string; label: string }, message: string) => { text: string; kind: NoticeKind };
 }
 
 /** pi-tui component wrapper: gated refresh timer + key handling + rendering. */
@@ -859,7 +921,35 @@ export class TranscriptViewer implements Component {
       this.beginStop();
       return;
     }
+    if (result.type === "chat-submit") {
+      this.state = result.state;
+      this.submitChat(result.text);
+      return;
+    }
     this.state = result.state;
+    this.requestRender();
+  }
+
+  /**
+   * Runs the injected onMessage action for a submitted viewer message:
+   * notice maps to the top banner. Without a callback (or a resolvable
+   * selected actor) an error notice renders; failures never escape.
+   */
+  private submitChat(text: string): void {
+    const onMessage = this.opts.onMessage;
+    const actor = this.data.actors[this.state.actorIndex];
+    if (!onMessage || !actor) {
+      this.state = { ...this.state, notice: { text: "发消息不可用：当前上下文没有接消息动作", kind: "error" } };
+      this.requestRender();
+      return;
+    }
+    let notice: { text: string; kind: NoticeKind };
+    try {
+      notice = onMessage({ actor: actor.actor, label: actor.label }, text);
+    } catch {
+      notice = { text: "发送失败：消息处理异常，请重试", kind: "error" };
+    }
+    this.state = { ...this.state, notice };
     this.requestRender();
   }
 
@@ -947,7 +1037,13 @@ export const VIEWER_OVERLAY_OPTIONS: OverlayOptions = {
  */
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,
-  opts: { load: () => ViewerData; refreshMs?: number; initialActor?: string; stop?: () => Promise<ViewerStopResult> },
+  opts: {
+    load: () => ViewerData;
+    refreshMs?: number;
+    initialActor?: string;
+    stop?: () => Promise<ViewerStopResult>;
+    onMessage?: (target: { actor: string; label: string }, message: string) => { text: string; kind: NoticeKind };
+  },
 ): Promise<void> {
   const renderMarkdown = markdownRenderer();
   await ui.custom<void>(
@@ -958,6 +1054,7 @@ export async function openTranscriptViewer(
         styles: themeStyles(theme),
         ...(opts.initialActor !== undefined ? { initialActor: opts.initialActor } : {}),
         ...(opts.stop ? { stop: opts.stop } : {}),
+        ...(opts.onMessage ? { onMessage: opts.onMessage } : {}),
         requestRender: () => {
           try {
             tui.requestRender();

@@ -26,6 +26,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import { Type } from "typebox";
 import { discoverTeams, findTeam, parseTeamFile } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
+import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
@@ -277,6 +278,28 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   };
 
   /**
+   * Viewer 直接对话（派单语义）：FIFO 队列 + 链式派出门控（chat.ts，纯逻辑
+   * 层）。startRun 包装 startBackgroundRun（含 model 预检与 widget 复挂）；
+   * contextTail 在派出时刻从当前/最近 run 的 transcript 现读（不随消息缓
+   * 存）。队列驻留在本闭包内，不落盘——会话重启丢队列可接受。
+   */
+  const chat = new ChatCoordinator({
+    resolveTeam: (name) => resolveTeam(name),
+    isRunning: () => state.coordinator.isRunning(),
+    startRun: (sessionCtx, team, task) => {
+      const ui = uiPortFrom(sessionCtx as ExtensionContext);
+      const started = startBackgroundRun(sessionCtx as ExtensionContext, ui, team, task);
+      return started.ok ? { ok: true, runId: started.runId } : { ok: false, code: started.code, message: started.message };
+    },
+    contextTail: (actor) => {
+      const snapshot = state.coordinator.getStatus();
+      const runId = snapshot.progress?.runId ?? snapshot.lastRecord?.runId ?? "";
+      if (!runId) return "";
+      return transcriptContextTail(readTranscript(transcriptRoot(), runId, actor));
+    },
+  });
+
+  /**
    * Loads the viewer model for the current/most recent run: leader first,
    * then members (status from live progress or the last record), then any
    * extra transcript files. Transcripts are read per actor on each load —
@@ -351,7 +374,20 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       await openTranscriptViewer(ctx.ui, {
         load: buildViewerData,
         ...(initialActor !== undefined ? { initialActor } : {}),
-        stop: () => viewerStopAction(state.coordinator),
+        stop: () => viewerStopAndClearChat(),
+        onMessage: (target, message) =>
+          chatSubmitNotice(
+            chat.submit(
+              {
+                teamName: buildViewerData().team,
+                ctx,
+                notify: (text, level) => uiPortFrom(ctx).notify(text, level),
+              },
+              { actor: target.actor, label: target.label, isLeader: target.actor === LEADER_ACTOR },
+              message,
+            ),
+            target.label,
+          ),
       });
     } finally {
       state.viewerOpen = false;
@@ -361,6 +397,18 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         /* widget failures never break the session */
       }
     }
+  };
+
+  /**
+   * Viewer 停止动作 + 对话队列清理：停止成功（非 error notice）时丢弃队列
+   * 内排队的消息（用户变卦语义，与 team_stop / /team:stop 一致），丢弃条
+   * 数追加进 notice 文案。
+   */
+  const viewerStopAndClearChat = async (): Promise<ViewerStopResult> => {
+    const result = await viewerStopAction(state.coordinator);
+    if (result.kind === "error") return result;
+    const dropped = chat.clear();
+    return dropped > 0 ? { ...result, text: `${result.text}；已丢弃排队的 ${dropped} 条对话消息` } : result;
   };
 
   /**
@@ -496,17 +544,21 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     const runId = state.coordinator.activeRunId() ?? "";
     ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
     // Completion still persists the record and wakes the session with the
-    // report (followUp turn).
+    // report (followUp turn), then drives the viewer chat queue: completed
+    // → chain-dispatch the next queued message; failed/aborted → drop it.
     void runPromise
       .then((result) => {
         if (!result.ok) {
           ui.notify(result.message, "error");
+          chat.onRunFinalized("failed");
           return;
         }
         finalizeRun(result.value, ui, "followUp");
+        chat.onRunFinalized(result.value.status);
       })
       .catch((e: unknown) => {
         ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
+        chat.onRunFinalized("failed");
       });
     return { ok: true, team: team.name, members: team.members.length, runId };
   };
@@ -706,6 +758,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       const activeRunId = snapshot.progress?.runId ?? null;
       if (activeRunId === runId) {
         const outcome = await state.coordinator.stopAndSettle();
+        const dropped = chat.clear();
+        const droppedNote = dropped > 0 ? `已丢弃排队的 ${dropped} 条 viewer 对话消息。` : "";
         if (outcome.settled) {
           const record = outcome.record;
           const secs = record?.durationMs !== undefined ? `（${Math.round(record.durationMs / 100) / 10}s）` : "";
@@ -713,7 +767,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
             content: [
               {
                 type: "text" as const,
-                text: `run ${runId}（team ${record?.team ?? "?"}）已停止${secs}，状态 aborted。该 run 的报告不再送达；可立即重新派单。`,
+                text: `run ${runId}（team ${record?.team ?? "?"}）已停止${secs}，状态 aborted。该 run 的报告不再送达；可立即重新派单。${droppedNote}`,
               },
             ],
             details: {
@@ -730,7 +784,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           content: [
             {
               type: "text" as const,
-              text: `已向 run ${runId} 发送中止信号，leader 仍在收尾（超过 ${Math.round(STOP_SETTLE_TIMEOUT_MS / 1000)}s 等待窗口未落定）。稍后用 team_status 确认终态。`,
+              text: `已向 run ${runId} 发送中止信号，leader 仍在收尾（超过 ${Math.round(STOP_SETTLE_TIMEOUT_MS / 1000)}s 等待窗口未落定）。稍后用 team_status 确认终态。${droppedNote}`,
             },
           ],
           details: {
@@ -820,7 +874,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     handler: async (_args, ctx) => {
       const ui = uiPortFrom(ctx);
       if (state.coordinator.stop()) {
-        ui.notify("已发送中止信号（SIGTERM → SIGKILL）", "warning");
+        const dropped = chat.clear();
+        ui.notify(dropped > 0 ? `已发送中止信号（SIGTERM → SIGKILL）；已丢弃排队的 ${dropped} 条 viewer 对话消息` : "已发送中止信号（SIGTERM → SIGKILL）", "warning");
       } else {
         ui.notify("当前没有正在进行的 team run", "info");
       }
@@ -868,7 +923,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       state.widget = undefined;
       state.widgetMounted = false;
       clearWidget(ctx);
-      ui.notify("已清除下方亮块；/team:status、/team:view 仍可回看。", "info");
+      const dropped = chat.clear();
+      ui.notify(dropped > 0 ? `已清除下方亮块与排队的 ${dropped} 条对话消息；/team:status、/team:view 仍可回看。` : "已清除下方亮块；/team:status、/team:view 仍可回看。", "info");
     },
   });
 
