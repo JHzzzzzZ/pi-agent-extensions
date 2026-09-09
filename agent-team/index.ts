@@ -13,7 +13,10 @@
  *   persistence.
  *
  * Install: copy this directory into `~/.pi/agent/extensions/` (or the
- * project's `.pi/extensions/`), then `/reload`.
+ * project's `.pi/extensions/`), then `/reload`. The double-load guard at
+ * the bottom resets on `session_shutdown` (pi guarantees it fires before
+ * re-binding extensions on reload/new/resume/fork/switch), so reload
+ * re-registers everything instead of silently no-op'ing.
  */
 
 import * as fs from "node:fs";
@@ -865,6 +868,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
  * cockpit spawns the leader child). pi treats the copies as different
  * extensions and fails on duplicate tool names, so the first instance wins
  * and later ones become no-ops.
+ *
+ * 复位时机 = session_shutdown：pi 宿主保证在重新绑定扩展（/reload、new、
+ * resume、fork、switch）之前必先发 session_shutdown，因此在这里删掉标志，
+ * 下一次 factory 调用就能重新注册（修复 /reload 后 team 工具全部消失）。
+ * 同一进程生命周期内的真双加载（两份之间没有 shutdown）依旧被抑制。
  */
 const LOADER_FLAG = "__piAgentTeamExtensionLoaded";
 
@@ -872,6 +880,12 @@ export default function agentTeamExtension(pi: ExtensionAPI, opts?: { spawn?: Pi
   const loader = globalThis as { [LOADER_FLAG]?: boolean };
   if (loader[LOADER_FLAG]) return;
   loader[LOADER_FLAG] = true;
+
+  // 复位双加载守卫：宿主在重绑扩展前必发 session_shutdown（见上方注释）。
+  // delete 对不存在的键是 no-op，不可能抛异常。
+  pi.on("session_shutdown", async () => {
+    delete loader[LOADER_FLAG];
+  });
 
   const teamFile = process.env[LEADER_ENV_FILE];
   if (teamFile) {

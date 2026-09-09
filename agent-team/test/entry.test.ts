@@ -169,6 +169,65 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
   });
 });
 
+// /reload 场景：pi 宿主在同一进程里先发 session_shutdown 再重新调用扩展
+// factory，globalThis 守卫必须被复位，否则第二份 entry 直接 return，
+// team_* 工具、/team* 命令、widget 钩子全部消失。
+test("after session_shutdown the guard resets and a fresh load registers everything", async () => {
+  resetDoubleLoadGuardForTests();
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-reload-"));
+  await withEnv(undefined, async () => {
+    const first = fakePi();
+    agentTeamExtension(first as never);
+    assert.ok(first.tools.has("team_run"));
+
+    // pi 宿主在重绑扩展（reload/new/resume/fork/switch）前保证先发
+    // session_shutdown —— 复位时机就挂在这个事件上。
+    await first.fire("session_shutdown", { reason: "reload" }, fakeCtx(projectDir));
+
+    const second = fakePi();
+    agentTeamExtension(second as never);
+    for (const name of ["team_run", "team_status", "team_transcript", "team_stop"]) {
+      assert.ok(second.tools.has(name), `tool ${name} re-registered after reload`);
+    }
+    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view"]) {
+      assert.ok(second.commands.has(name), `command ${name} re-registered after reload`);
+    }
+    assert.ok(second.entryRenderers.has("agent-team-run-v1"));
+  });
+});
+
+// 真双加载（leader 子进程 -e + 自动发现，两份之间没有 shutdown）仍被守卫抑制。
+test("double load without shutdown stays suppressed", async () => {
+  resetDoubleLoadGuardForTests();
+  await withEnv(undefined, () => {
+    const first = fakePi();
+    agentTeamExtension(first as never);
+    const toolsAfterFirst = first.tools.size;
+    const second = fakePi();
+    agentTeamExtension(second as never);
+    assert.equal(second.tools.size, 0, "second instance registers no tools");
+    assert.equal(second.commands.size, 0, "second instance registers no commands");
+    assert.equal(first.tools.size, toolsAfterFirst, "first instance untouched");
+  });
+});
+
+// 幂等：连发两次 shutdown（如 reload 后又 new session）守卫仍可用。
+test("repeated session_shutdown keeps the guard usable", async () => {
+  resetDoubleLoadGuardForTests();
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-reload-"));
+  await withEnv(undefined, async () => {
+    const first = fakePi();
+    agentTeamExtension(first as never);
+    await first.fire("session_shutdown", { reason: "reload" }, fakeCtx(projectDir));
+    await first.fire("session_shutdown", { reason: "new" }, fakeCtx(projectDir));
+
+    const second = fakePi();
+    agentTeamExtension(second as never);
+    assert.ok(second.tools.has("team_run"), "tool registered after two shutdowns");
+    assert.equal(second.commands.size, 5);
+  });
+});
+
 test("double load is a no-op (installed package + -e copy)", () => {
   resetDoubleLoadGuardForTests();
   const pi = fakePi();
