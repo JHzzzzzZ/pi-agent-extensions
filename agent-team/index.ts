@@ -324,6 +324,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
    * the viewer.
    */
   const openViewer = async (ctx: ExtensionContext, initialActor?: string): Promise<void> => {
+    // 互斥：连点 enter（widget confirm）或在 viewer 打开时再敲 /team:view
+    // 会开出第二个 overlay，上一个不消失——标题+页签成双成对堆叠。fleet
+    // 检查器同样只认单实例（`fleetInspectorOpen`），这里直接 early-return。
+    if (state.viewerOpen) return;
     state.viewerOpen = true;
     try {
       state.widget?.setPaused(true);

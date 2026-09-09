@@ -351,8 +351,11 @@ export function computeFrameHeight(rows: number): number {
 }
 
 function topBorder(data: ViewerData, width: number, styles: Styles): string {
-  const status = data.elapsed ? `${data.runStatus} · ${data.elapsed}` : data.runStatus;
-  const title = `agent-team · team ${data.team} · ${status} · ${data.runId || "(no run)"}`;
+  // 标题刻意保持静态（对标 fleet 检查器的静态标题行）：真机截图实锤——
+  // 每秒跳动的 `elapsed` 时钟行就是纵向堆叠物本身（53s/54s、1m26s/1m27s
+  // 标题并存）。存活秒表只放在输入栏下方的 widget 里（宿主渲染的纯字符
+  // 串表面，已证明稳定），绝不放进这个 overlay——chrome 区零每秒文本。
+  const title = `agent-team · team ${data.team} · ${data.runStatus} · ${data.runId || "(no run)"}`;
   const room = Math.max(4, width - 5);
   const shown = truncateVisible(title, room);
   const pad = Math.max(1, width - visibleWidth(`╭─ ${shown} `) - 1);
@@ -770,25 +773,25 @@ function markdownRenderer(): ((text: string, width: number) => string[]) | undef
 }
 
 /**
- * Overlay geometry for the transcript viewer: centered, ~96% wide, height
- * capped at 85% of the terminal with a 1-row margin. The `maxHeight`
- * cap keeps the overlay box stable across refresh repaints — without it
- * the geometry is recomputed from content every frame and, combined with
- * the 1s widget repaint underneath, the host leaves ghost title+tabs rows
- * on top (same shape as pi-subagents' fleet inspector overlay).
+ * Overlay geometry for the transcript viewer, copied verbatim from
+ * pi-subagents' fleet inspector (`openSubagentFleet` in
+ * `pi-subagents/src/tui/fleet.ts`) — that inspector repaints
+ * unconditionally every 750ms on the same host family without ghosting,
+ * so any deviation here is a ghosting suspect. Do not "improve" it.
  */
 export const VIEWER_OVERLAY_OPTIONS: OverlayOptions = {
   anchor: "center",
-  width: "96%",
+  width: "95%",
+  minWidth: 60,
   maxHeight: "85%",
   margin: 1,
 };
 
 /**
- * Opens the transcript viewer as a centered capturing overlay (~96% wide,
- * ~82% of the terminal height with a full border). Resolves when the user
- * closes it (q/Esc). Host failures are the caller's to guard (index.ts
- * checks hasUI/mode and exception-isolates).
+ * Opens the transcript viewer as a centered capturing overlay (geometry:
+ * `VIEWER_OVERLAY_OPTIONS`, verbatim from pi-subagents' fleet inspector).
+ * Resolves when the user closes it (q/Esc). Host failures are the
+ * caller's to guard (index.ts checks hasUI/mode and exception-isolates).
  */
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,

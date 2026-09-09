@@ -183,7 +183,8 @@ test("renderViewerFrame returns a complete bordered box of the requested height"
   const bodyHeight = 10;
   const frame = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles, bodyHeight });
   assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS);
-  assert.match(frame[0], /^╭─ agent-team · team dev-team · running · 5s · run-42 ─+╮$/);
+  // 标题静态（elapsed 只留 widget）：含时钟的行就是真机堆叠物，见 viewer-ghost.test.ts。
+  assert.match(frame[0], /^╭─ agent-team · team dev-team · running · run-42 ─+╮$/);
   assert.match(frame[frame.length - 1], /^╰─ .*╯$/);
   assert.match(frame[frame.length - 1], /↑↓ 滚动/);
   assert.match(frame[frame.length - 1], /成员 1\/2/);

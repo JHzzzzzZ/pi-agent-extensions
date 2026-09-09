@@ -178,13 +178,28 @@ test("切换成员时同时钉住 actor id", () => {
   assert.ok(!("actor" in legacy.state), "旧路径不新增字段");
 });
 
-test("overlay 盒模型与参考对齐：maxHeight 约束 + margin", () => {
-  // 无 maxHeight 时 overlay 几何每帧随内容重算，主屏 churn 下旧行残留
-  // 堆叠（与 elapsed 同频追加的观感）。与 pi-subagents 检查器同形。
-  assert.equal(VIEWER_OVERLAY_OPTIONS.anchor, "center");
-  assert.equal(VIEWER_OVERLAY_OPTIONS.width, "96%");
-  assert.equal(VIEWER_OVERLAY_OPTIONS.maxHeight, "85%");
-  assert.equal(VIEWER_OVERLAY_OPTIONS.margin, 1);
+test("overlay 盒模型与 pi-subagents fleet 检查器一字不差", () => {
+  // 那边 750ms 无条件重绘不鬼影；这边任何偏离都是堆叠嫌疑，不许"优化"。
+  assert.deepEqual(VIEWER_OVERLAY_OPTIONS, {
+    anchor: "center",
+    width: "95%",
+    minWidth: 60,
+    maxHeight: "85%",
+    margin: 1,
+  });
+});
+
+test("顶边标题静态：elapsed 跳动不进标题行", () => {
+  // 真机实锤：53s/54s、1m26s/1m27s 标题并存——每秒时钟就是堆叠物。
+  // 秒表只留 widget，overlay chrome 区零每秒文本。
+  for (const elapsed of ["53s", "54s", "1m26s"]) {
+    const frame = renderViewerFrame(ghostData({ elapsed }), initialViewerState(), 80, { styles, bodyHeight: 10 });
+    assert.ok(!frame[0].includes(elapsed), `标题行不应含 ${elapsed}：${frame[0]}`);
+    assert.ok(
+      frame.every((line) => !line.includes(elapsed)),
+      `整帧无一处含 ${elapsed}（body 时间戳是内容本身，不受此限）`,
+    );
+  }
 });
 
 test("帧高消抖吸收 1 行抖动，大变化才跟随", () => {
