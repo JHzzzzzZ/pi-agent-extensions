@@ -9,6 +9,10 @@
  *   PI_BRIDGE_PORT        桥监听端口，默认 10899（仅绑定 127.0.0.1）
  *   PI_BRIDGE_SOCKS_HOST  上游 SOCKS5 主机，默认 127.0.0.1
  *   PI_BRIDGE_SOCKS_PORT  上游 SOCKS5 端口，默认 10808（v2rayN 默认值）
+ *
+ * settings.json httpProxy 同步（v1.1.0）：桥确认在监听后自动写入
+ *   httpProxy = http://127.0.0.1:<port>；已有其它代理地址不碰；桥不通且
+ *   设置指向本桥时自动移除（自愈）。PI_BRIDGE_AUTO_PROXY=0 可关闭。
  */
 
 import { spawn } from "node:child_process";
@@ -27,6 +31,46 @@ export const HELPER_FILE_NAME = "opencode-bridge-helper.mjs";
 export const PROBE_TIMEOUT_MS = 600;
 export const START_ATTEMPTS = 25;
 export const START_POLL_DELAY_MS = 120;
+
+/** settings.json httpProxy 同步动作（静态、可诊断） */
+export const ProxySyncActions = {
+  /** 设置已是本桥地址，无需改动 */
+  UNCHANGED: "unchanged",
+  /** 已写入本桥地址 */
+  SET: "set",
+  /** 桥不通且原值指向本桥，已移除（自愈） */
+  REMOVED: "removed",
+  /** 检测到其它代理地址，未改动 */
+  KEPT_FOREIGN: "kept-foreign",
+} as const;
+export type ProxySyncAction = (typeof ProxySyncActions)[keyof typeof ProxySyncActions];
+
+export type ProxySyncResult =
+  | { ok: true; action: ProxySyncAction; message: string }
+  | { ok: false; message: string };
+
+/** settings.json 读写边界；测试注入 fake，生产用 createDefaultProxySyncDeps()。 */
+export interface ProxySyncDeps {
+  /** 文件不存在返回 undefined；读失败抛异常由调用方隔离 */
+  readTextFile(path: string): string | undefined;
+  writeTextFile(path: string, content: string): void;
+}
+
+/** 生产依赖：真实 fs 读写（写失败/读失败向上抛，由 syncHttpProxy 归一为 Result）。 */
+export function createDefaultProxySyncDeps(): ProxySyncDeps {
+  return {
+    readTextFile(path) {
+      try {
+        return fs.readFileSync(path, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    writeTextFile(path, content) {
+      fs.writeFileSync(path, content, "utf8");
+    },
+  };
+}
 
 /** ensureBridge 错误码（静态、可诊断，调用方据此提示用户） */
 export const EnsureErrorCodes = {
@@ -173,6 +217,78 @@ export function createDefaultBridgeDeps(): BridgeDeps {
 }
 
 // ===== ensureBridge =====
+
+/**
+ * 同步 settings.json 的 httpProxy：
+ *   - 桥在监听：确保 httpProxy 指向本桥（已对则不动）；已有其它代理不碰；
+ *   - 桥不通：若原值指向本桥则移除（自愈，避免死代理拖垮全部模型请求）。
+ * 写入只影响下一次 Pi 启动（settings 在启动时转 HTTP(S)_PROXY），
+ * 调用方需在通知里向用户说明。
+ */
+export function syncHttpProxy(
+  options: { settingsPath: string; proxyUrl: string; bridgeAlive: boolean },
+  deps: ProxySyncDeps,
+): ProxySyncResult {
+  const { settingsPath, proxyUrl, bridgeAlive } = options;
+
+  let settings: Record<string, unknown> = {};
+  const raw = deps.readTextFile(settingsPath);
+  if (raw !== undefined && raw.trim() !== "") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        parsed === null || typeof parsed !== "object" || Array.isArray(parsed)
+      ) {
+        return { ok: false, message: `settings.json 根不是对象，未改动（${settingsPath}）` };
+      }
+      settings = parsed as Record<string, unknown>;
+    } catch {
+      return { ok: false, message: `settings.json 解析失败，未改动（${settingsPath}）` };
+    }
+  }
+
+  const existing = typeof settings.httpProxy === "string" ? settings.httpProxy : undefined;
+
+  if (!bridgeAlive) {
+    if (existing === proxyUrl) {
+      delete settings.httpProxy;
+      try {
+        deps.writeTextFile(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+      } catch (err) {
+        return { ok: false, message: `桥未运行但移除 httpProxy 失败：${err instanceof Error ? err.message : String(err)}` };
+      }
+      return { ok: true, action: ProxySyncActions.REMOVED, message: "桥未运行，已移除指向本桥的 httpProxy（自愈）" };
+    }
+    return {
+      ok: true,
+      action: ProxySyncActions.KEPT_FOREIGN,
+      message: "桥未运行，settings.json 未改动",
+    };
+  }
+
+  if (existing === proxyUrl) {
+    return { ok: true, action: ProxySyncActions.UNCHANGED, message: "httpProxy 已指向本桥，无需改动" };
+  }
+  if (existing !== undefined) {
+    return {
+      ok: true,
+      action: ProxySyncActions.KEPT_FOREIGN,
+      message: `检测到已有 httpProxy（${existing}），未改动`,
+    };
+  }
+
+  settings.httpProxy = proxyUrl;
+  try {
+    deps.writeTextFile(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  } catch (err) {
+    return { ok: false, message: `写入 settings.json 失败：${err instanceof Error ? err.message : String(err)}` };
+  }
+  return {
+    ok: true,
+    action: ProxySyncActions.SET,
+    message: `已写入 httpProxy: ${proxyUrl}（本次会话不生效，重启 Pi 后生效）`,
+  };
+}
 
 /** 确保桥在运行：已在监听则复用，否则拉起 helper 并轮询端口就绪。 */
 export async function ensureBridge(

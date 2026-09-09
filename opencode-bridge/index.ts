@@ -14,11 +14,16 @@
  *  - 本扩展自身除探测 socket 外不持有任何资源（spawn 后 unref，不持有子进程）；
  *  - session_start / 命令处理全部 try/catch 包裹，失败只提示、不抛出。
  *
+ * httpProxy 自动同步：桥确认在监听后，自动把 settings.json 的 httpProxy
+ *       指向本桥（幂等；已有其它代理地址不碰；桥不通且原值指向本桥则自动
+ *       移除自愈）。写入在下次 Pi 启动才生效，通知里会说明。
+ *       PI_BRIDGE_AUTO_PROXY=0/false/off 可关闭。
+ *
  * 命令：/opencode-bridge — 查看状态（必要时尝试启动），显示监听地址、
  *       上游 SOCKS5 地址和所需 httpProxy 配置。
  *
- * 环境变量：PI_BRIDGE_PORT / PI_BRIDGE_SOCKS_HOST / PI_BRIDGE_SOCKS_PORT
- *           （helper 另支持 PI_BRIDGE_LOG 指定日志文件路径）
+ * 环境变量：PI_BRIDGE_PORT / PI_BRIDGE_SOCKS_HOST / PI_BRIDGE_SOCKS_PORT /
+ *           PI_BRIDGE_AUTO_PROXY（helper 另支持 PI_BRIDGE_LOG 指定日志文件路径）
  *
  * 安装：复制本目录到 ~/.pi/agent/extensions/opencode-bridge/ 或
  *       <项目>/.pi/extensions/opencode-bridge/，在 Pi 中执行 /reload。
@@ -33,9 +38,12 @@ import {
   PROBE_TIMEOUT_MS,
   type BridgeConfig,
   type BridgeDeps,
+  type ProxySyncDeps,
   createDefaultBridgeDeps,
+  createDefaultProxySyncDeps,
   ensureBridge,
   parseBridgeConfig,
+  syncHttpProxy,
 } from "./bridge.ts";
 
 // ===== 常量 =====
@@ -53,6 +61,10 @@ export interface BridgeExtensionDeps {
   helperPaths?: string[];
   /** 环境变量来源覆盖（缺省 process.env） */
   env?: Record<string, string | undefined>;
+  /** settings.json 读写边界；缺省用 createDefaultProxySyncDeps() */
+  proxySync?: ProxySyncDeps;
+  /** settings.json 路径覆盖（缺省 ~/.pi/agent/settings.json） */
+  settingsPath?: string;
 }
 
 // ===== 内部工具 =====
@@ -65,6 +77,69 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
   } catch {
     /* ignore */
   }
+}
+
+/** PI_BRIDGE_AUTO_PROXY 解析：未设置默认开；0/false/off（不分大小写）关。 */
+export function isAutoProxyEnabled(env: Record<string, string | undefined>): boolean {
+  const raw = env.PI_BRIDGE_AUTO_PROXY;
+  if (raw === undefined || raw.trim() === "") return true;
+  return !/^(0|false|off)$/i.test(raw.trim());
+}
+
+/**
+ * 确保桥在跑并同步 settings.json 的 httpProxy（session_start 与命令共用）。
+ * 所有异常都在内部消化，不外抛；配置无效时返回 parsed: false。
+ */
+async function ensureBridgeAndSync(
+  ctx: ExtensionContext,
+  deps: {
+    bridge: BridgeDeps;
+    proxySync: ProxySyncDeps;
+    helperPaths: string[];
+    env: Record<string, string | undefined>;
+    settingsPath: string;
+    /** 拉起失败时是否发 error 通知（session_start 用；命令走状态行，不开） */
+    reportError: boolean;
+  },
+): Promise<{ parsed: false } | { parsed: true; alive: boolean; note: string; config: BridgeConfig }> {
+  const parsed = parseBridgeConfig(deps.env);
+  if (!parsed.ok) {
+    notify(ctx, `opencode-bridge 配置无效：${parsed.errors.join("；")}`, "error");
+    return { parsed: false };
+  }
+  const config = parsed.config;
+
+  let alive = await deps.bridge.probe(config.bridgeHost, config.bridgePort, PROBE_TIMEOUT_MS);
+  let note = "";
+  if (!alive) {
+    const result = await ensureBridge(
+      { config, helperPaths: deps.helperPaths, execPath: process.execPath, env: deps.env },
+      deps.bridge,
+    );
+    alive = result.ok;
+    note = result.ok ? "（已自动启动）" : `（启动失败：${result.message}）`;
+    if (!result.ok && deps.reportError) {
+      notify(ctx, `opencode-bridge: ${result.message}`, "error");
+    }
+  }
+
+  if (isAutoProxyEnabled(deps.env)) {
+    try {
+      const sync = syncHttpProxy(
+        { settingsPath: deps.settingsPath, proxyUrl: config.proxyUrl, bridgeAlive: alive },
+        deps.proxySync,
+      );
+      notify(
+        ctx,
+        `opencode-bridge httpProxy 同步：${sync.message}`,
+        sync.ok && sync.action !== "kept-foreign" ? "info" : "warning",
+      );
+    } catch (err) {
+      notify(ctx, `opencode-bridge httpProxy 同步异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+    }
+  }
+
+  return { parsed: true, alive, note, config };
 }
 
 /** helper 候选路径：扩展目录（import.meta.url 同目录）优先，其余为常见安装位置。 */
@@ -98,7 +173,7 @@ export function formatStatusLines(config: BridgeConfig, alive: boolean, note: st
     `状态: ${alive ? "运行中" : "未运行"}${note}`,
     `监听: ${config.proxyUrl}`,
     `上游: socks5://${config.socksHost}:${config.socksPort}`,
-    `pi 配置: settings.json 需含 "httpProxy": "${config.proxyUrl}"（扩展不会自动修改 settings.json）`,
+    `pi 配置: settings.json 的 httpProxy 由扩展自动同步（PI_BRIDGE_AUTO_PROXY=0 可关闭）`,
   ];
 }
 
@@ -106,24 +181,22 @@ export function formatStatusLines(config: BridgeConfig, alive: boolean, note: st
 
 export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExtensionDeps = {}): void {
   const bridgeDeps = deps.bridge ?? createDefaultBridgeDeps();
+  const proxySyncDeps = deps.proxySync ?? createDefaultProxySyncDeps();
   const env = deps.env ?? process.env;
   const helperPaths =
     deps.helperPaths ?? resolveHelperCandidates(deps.metaUrl ?? (import.meta as unknown as { url?: string }).url);
+  const settingsPath = deps.settingsPath ?? path.join(os.homedir(), ".pi", "agent", "settings.json");
 
   pi.on("session_start", async (_event, ctx) => {
     try {
-      const parsed = parseBridgeConfig(env);
-      if (!parsed.ok) {
-        notify(ctx, `opencode-bridge 配置无效：${parsed.errors.join("；")}`, "error");
-        return;
-      }
-      const result = await ensureBridge(
-        { config: parsed.config, helperPaths, execPath: process.execPath, env },
-        bridgeDeps,
-      );
-      if (!result.ok) {
-        notify(ctx, `opencode-bridge: ${result.message}`, "error");
-      }
+      await ensureBridgeAndSync(ctx, {
+        bridge: bridgeDeps,
+        proxySync: proxySyncDeps,
+        helperPaths,
+        env,
+        settingsPath,
+        reportError: true,
+      });
     } catch (err) {
       notify(ctx, `opencode-bridge 异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
     }
@@ -133,23 +206,16 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
     description: "查看/启动本地代理桥（HTTP CONNECT → 本地 SOCKS5）",
     handler: async (_args, ctx) => {
       try {
-        const parsed = parseBridgeConfig(env);
-        if (!parsed.ok) {
-          notify(ctx, `opencode-bridge 配置无效：${parsed.errors.join("；")}`, "error");
-          return;
-        }
-        const config = parsed.config;
-        let alive = await bridgeDeps.probe(config.bridgeHost, config.bridgePort, PROBE_TIMEOUT_MS);
-        let note = "";
-        if (!alive) {
-          const result = await ensureBridge(
-            { config, helperPaths, execPath: process.execPath, env },
-            bridgeDeps,
-          );
-          alive = result.ok;
-          note = result.ok ? "（已自动启动）" : `（启动失败：${result.message}）`;
-        }
-        notify(ctx, formatStatusLines(config, alive, note).join("\n"), alive ? "info" : "warning");
+        const state = await ensureBridgeAndSync(ctx, {
+          bridge: bridgeDeps,
+          proxySync: proxySyncDeps,
+          helperPaths,
+          env,
+          settingsPath,
+          reportError: false,
+        });
+        if (!state.parsed) return;
+        notify(ctx, formatStatusLines(state.config, state.alive, state.note).join("\n"), state.alive ? "info" : "warning");
       } catch (err) {
         notify(ctx, `opencode-bridge 异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
       }

@@ -16,6 +16,9 @@ import {
   createDefaultBridgeDeps,
   ensureBridge,
   parseBridgeConfig,
+  ProxySyncActions,
+  type ProxySyncDeps,
+  syncHttpProxy,
 } from "./bridge.ts";
 
 // ===== fake 依赖 =====
@@ -180,4 +183,109 @@ test("createDefaultBridgeDeps 提供 probe/fileExists/spawnDetached/sleep 全套
   assert.equal(typeof deps.spawnDetached, "function");
   assert.equal(typeof deps.sleep, "function");
   assert.equal(deps.fileExists("/definitely/not/a/real/path/xyz"), false);
+});
+
+// ===== syncHttpProxy（内存 fake，不碰真实 settings.json） =====
+
+const SETTINGS_PATH = "/fake/settings.json";
+const PROXY_URL = "http://127.0.0.1:10899";
+
+function makeFakeSyncDeps(initial?: string) {
+  const files = new Map<string, string>();
+  if (initial !== undefined) files.set(SETTINGS_PATH, initial);
+  const writeCalls: Array<{ path: string; content: string }> = [];
+  const deps: ProxySyncDeps = {
+    readTextFile(path) {
+      return files.get(path);
+    },
+    writeTextFile(path, content) {
+      writeCalls.push({ path, content });
+      files.set(path, content);
+    },
+  };
+  return { deps, writeCalls, files };
+}
+
+test("syncHttpProxy 桥在监听且无 httpProxy：写入并提示重启生效", () => {
+  const { deps, writeCalls, files } = makeFakeSyncDeps('{"theme":"dark"}');
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  assert.ok(r.ok);
+  assert.equal(r.action, ProxySyncActions.SET);
+  assert.match(r.message, /重启/);
+  assert.equal(writeCalls.length, 1);
+  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+  assert.equal(saved.theme, "dark");
+  assert.equal(saved.httpProxy, PROXY_URL);
+});
+
+test("syncHttpProxy 已指向本桥：幂等不动", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps(JSON.stringify({ httpProxy: PROXY_URL }));
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  assert.ok(r.ok);
+  assert.equal(r.action, ProxySyncActions.UNCHANGED);
+  assert.equal(writeCalls.length, 0);
+});
+
+test("syncHttpProxy 已有其它代理地址：不碰，仅提示", () => {
+  const { deps, writeCalls, files } = makeFakeSyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  assert.ok(r.ok);
+  assert.equal(r.action, ProxySyncActions.KEPT_FOREIGN);
+  assert.match(r.message, /7890/);
+  assert.equal(writeCalls.length, 0);
+  assert.match(files.get(SETTINGS_PATH)!, /7890/);
+});
+
+test("syncHttpProxy 桥不通且原值指向本桥：自愈移除", () => {
+  const { deps, writeCalls, files } = makeFakeSyncDeps(JSON.stringify({ theme: "dark", httpProxy: PROXY_URL }));
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: false }, deps);
+  assert.ok(r.ok);
+  assert.equal(r.action, ProxySyncActions.REMOVED);
+  const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+  assert.equal(saved.theme, "dark");
+  assert.equal(saved.httpProxy, undefined);
+});
+
+test("syncHttpProxy 桥不通且原值是其它代理：不动", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps(JSON.stringify({ httpProxy: "http://127.0.0.1:7890" }));
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: false }, deps);
+  assert.ok(r.ok);
+  assert.equal(r.action, ProxySyncActions.KEPT_FOREIGN);
+  assert.equal(writeCalls.length, 0);
+});
+
+test("syncHttpProxy 文件不存在视作空设置：桥通则写入", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps(undefined);
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  assert.ok(r.ok);
+  assert.equal(r.action, ProxySyncActions.SET);
+  assert.equal(writeCalls.length, 1);
+});
+
+test("syncHttpProxy settings.json 解析失败：报错不写", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps("{ not json");
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  assert.ok(!r.ok);
+  assert.match(r.message, /解析失败/);
+  assert.equal(writeCalls.length, 0);
+});
+
+test("syncHttpProxy 根是数组：报错不写（防整体覆盖）", () => {
+  const { deps, writeCalls } = makeFakeSyncDeps("[]");
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  assert.ok(!r.ok);
+  assert.match(r.message, /根不是对象/);
+  assert.equal(writeCalls.length, 0);
+});
+
+test("syncHttpProxy 写入抛异常：归一为 ok:false", () => {
+  const deps: ProxySyncDeps = {
+    readTextFile: () => undefined,
+    writeTextFile: () => {
+      throw new Error("disk full");
+    },
+  };
+  const r = syncHttpProxy({ settingsPath: SETTINGS_PATH, proxyUrl: PROXY_URL, bridgeAlive: true }, deps);
+  assert.ok(!r.ok);
+  assert.match(r.message, /disk full/);
 });
