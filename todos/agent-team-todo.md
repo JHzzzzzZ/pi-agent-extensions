@@ -77,11 +77,24 @@
   - 现状差距（`agent-team/widget.ts`）：`buildWidgetRows` 直接产出常显 rows；`renderWidgetView` 在 `state.selected === false` 时把 rows 全量 `dim` 输出——没有折叠态概念。改动点：行投影拆「折叠单行」/「展开 rows」两支，`renderWidgetView` 按 `selected` 选分支；`RunWidgetController.refresh` 的指纹门控与 `setWidget(key, string[])` 推送路径不变。
   - 约束：① 保持字符串 `setWidget` 路径，不做组件工厂化（`tui-sync.md` §3.1 残影教训）；② 时间类刷新继续走 `aligned-ticker`（当前 1s tick，§3.4）；③ 同步更新 `agent-team/docs/tui-sync.md`（§2 门控行、差异表新增折叠/展开行、§4 几何/文案字面量）；④ 版本 bump + AGENTS.md + 根 README（截图/用法）同步。
   - 验收：默认态只占 1 行且含激活提示；`↓`/`←` 展开出现 rows + 提示行；`esc` 收起回折叠；选择器/对话框场景不抢键；widget 纯函数测试 + 真宿主路径（`widget-focus-host.test.ts` 的 TuiMainScreen 仿真）锁定；全量测试 + typecheck 绿；真机截图复核。
-- [ ] widget 展开态改 roster（team/成员行；多 team 呈现待定，未领取）
-  - 需求原话（用户 2026-09-10，折叠态交付后跟进）：展开不想只看「状态行 + 任务行」，要「不同 team + teammate 的行」。
-  - 事实前提：一个会话可定义/保存任意多个 team，但**同时只能跑一个 run**（`TeamRunCoordinator` 单 active 实例，第二个 `/team run` 返回 `RUN_IN_PROGRESS`）；协调器仅保留 `lastRecord` 一条终态。因此「不同 team 的行」目前只能来自「active run + 最近终态」，要同时展示多终态 team 需新增 run 历史保留（或从 session entries / runstore 现读）；真并发多 run 是大改（多 active registry、按 runId 状态/停止、widget 多快照）。
+- [ ] 真正并发跑多个 team run（未领取）
+  - 需求（用户 2026-09-10）：一个会话里可同时运行多个 team，各自 leader/成员子进程并行推进（当前第二个派单会被拒）。
+  - 现状差距：`TeamRunCoordinator` 单 active（`this.active`/`this.pending` 各一个句柄），第二个 `/team run` 直接返回 `RUN_IN_PROGRESS`；只保留 `lastRecord` 一条终态；`getStatus()` 返回单个 `RunStatusSnapshot`；widget 取单快照。`team_stop`/`stopAndSettle` 虽按 runId 对外暴露，但内部只有这一个句柄。
+  - 改动要点（实现时定）：多 run registry（Map<runId, controller/pending/progress/record>）；按 runId 的 status/stop/settle/预算独立；runstore 已按 runId 落盘，`session_start` reconcile 需处理多条残留；跨 run 的总并发上限与子进程资源（成员 4 并发是单 dispatch 协议上限，需另定）；报告 followUp 交错；`/team status`、`team_status`、viewer 选中 run 的定位；`RUN_IN_PROGRESS` 契约去留（保留为并发上限？改为可配？）；`team_stop` 省略 runId 的行为待重定。
+  - 依赖/关系：与「widget 展开态改 team + 成员树」配套（多 team 行才有真实数据源）；`/team clear`、终态常驻与水合语义需随之重定。
+- [ ] widget 展开态改 team + 成员树（未领取）
+  - 需求（用户 2026-09-10）：展开不再只是「状态行 + 任务行」，显示 team 与 teammate 的行；多 team 时用树形层级。
+  - 树形格式（用户给定；`main` = 主 agent 对话框，即根节点；每个 team 一个 leader 节点，`|-` 下为其成员）：
+    ```text
+    main
+    leader
+      |- teammate1
+      |- teammate2
+    leader2
+      |- teammate3
+    ```
+  - 事实前提：一个会话可定义/保存任意多个 team，但**当前同时只能跑一个 run**（见上一条；多 team 行需等真并发或历史保留）；协调器仅保留 `lastRecord` 一条终态。
   - 可行性：active 的 `progress.members[]`（name/status/note/latest）与终态 `record.members[]`（status/model/usage/summary）数据齐备；`WidgetRowSpec.actor` 已支持逐行 actor，`enter` 可直达查看器对应成员（`handleWidgetKey` → `onConfirm(actor)` 现成接线）。
-  - 设计选项（待用户确认，实现前定）：A. 展开 = 单 active roster（team 头行 + 每成员一行 + 底部提示；任务行去留待定）；B. A + 「最近终态 team」一行摘要；C. 多终态 team 的全成员明细（需新增 run 历史保留）；D. 真并发多 run（另立条目评估）。
-  - 与「状态条对齐 pi-subagents fleet-status」条目的「逐成员行/树/滚动/展开」重叠，实现时二者一并决策；折叠态与键盘门控不变，组件工厂式渲染硬约束（`tui-sync.md` §3.1）仍适用。
+  - 实现时定：`main` 行显示什么（主 agent 活动文本？可否 `enter` 进入？）；单 team 时是否也保留 `main`/`leader` 层级；任务行去留；折叠态是否显示活跃 team 数；树连接符/缩进/窄宽度退化；行光标与 `enter` 的 actor 映射；与「状态条对齐 pi-subagents fleet-status」条目的「逐成员行/树/滚动/展开」一并决策；组件工厂式渲染硬约束（`tui-sync.md` §3.1 残影教训）仍适用（先证残影再考虑换渲染路径）。
 - [ ] 命令面改冒号形式（跨插件，全量任务一部分）：`/team run|status|stop|view|clear|doctor` → `/team:run` 等；`/team <团队名> <任务>` 参数路由去留与保留字冲突（团队名撞 `run` 等）待定。全量清单与待定项见 `todos/commands-colon-todo.md`。（processing）
 - [ ] 上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件下方亮块（belowEditor 独立栈）与 cockpit 进度 ticker 直接受影响。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。（processing 2026-09-10 @ route A：材料已备，待提交上游）
