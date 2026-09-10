@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="720" viewBox="0 0 1260 720" font-family="'Cascadia Mono','JetBrains Mono',Consolas,Menlo,monospace" font-size="14">
+<rect width="100%" height="100%" fill="#17191e"/>
+<text x="42.0" y="13" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">⏺</text>
+<text x="50.4" y="13" fill="#d7dae0" textLength="243.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> /workflow:view nightly-audit</text>
+<text x="42.0" y="49" fill="#6b7280" textLength="277.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">run 9f1e7c40 · stage scan 进行中…</text>
+<text x="33.6" y="67" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
+<text x="33.6" y="85" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="42.0" y="85" fill="#d7dae0" textLength="1033.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> PWR viewer · nightly-audit · run 9f1e7c40                                                                                 </text>
+<text x="1075.2" y="85" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▶</text>
+<text x="1083.6" y="85" fill="#d7dae0" textLength="134.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 结构 · running </text>
+<text x="1218.0" y="85" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="103" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">├──────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────┤</text>
+<text x="33.6" y="121" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="42.0" y="121" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">›</text>
+<text x="58.8" y="121" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▶</text>
+<text x="75.6" y="121" fill="#d7dae0" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">结构</text>
+<text x="369.6" y="121" fill="#6b7280" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">running</text>
+<text x="428.4" y="121" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="121" fill="#d7dae0" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">Run:</text>
+<text x="470.4" y="121" fill="#d7dae0" textLength="747.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 9f1e7c40-2b5a-4d18-9a33-77c1e0f2ab44                                                    </text>
+<text x="1218.0" y="121" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="139" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="58.8" y="139" fill="#98c379" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">✓</text>
+<text x="67.2" y="139" fill="#d7dae0" textLength="285.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 准备                             </text>
+<text x="352.8" y="139" fill="#6b7280" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">completed</text>
+<text x="428.4" y="139" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="139" fill="#d7dae0" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">State:</text>
+<text x="487.2" y="139" fill="#d7dae0" textLength="730.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> running                                                                               </text>
+<text x="1218.0" y="139" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="157" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="58.8" y="157" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▶</text>
+<text x="67.2" y="157" fill="#d7dae0" textLength="302.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 扫描模块                           </text>
+<text x="369.6" y="157" fill="#6b7280" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">running</text>
+<text x="428.4" y="157" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="157" fill="#d7dae0" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">条目:</text>
+<text x="478.8" y="157" fill="#d7dae0" textLength="739.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 结构（running） · 1/6                                                                  </text>
+<text x="1218.0" y="157" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="175" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="58.8" y="175" fill="#6b7280" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">··</text>
+<text x="75.6" y="175" fill="#d7dae0" textLength="302.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 汇总                               </text>
+<text x="378.0" y="175" fill="#6b7280" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">queued</text>
+<text x="428.4" y="175" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="175" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▶ running nightly-audit · digest 3ac1f0d2e59b                                                </text>
+<text x="1218.0" y="175" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="193" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="58.8" y="193" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">≡</text>
+<text x="67.2" y="193" fill="#d7dae0" textLength="302.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 结果                               </text>
+<text x="369.6" y="193" fill="#6b7280" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">running</text>
+<text x="428.4" y="193" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="193" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">agents 1/4 · tokens 27k · cost $0.02 · elapsed 38s                                           </text>
+<text x="1218.0" y="193" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="211" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="58.8" y="211" fill="#6b7280" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">{}</text>
+<text x="75.6" y="211" fill="#d7dae0" textLength="319.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 脚本                                 </text>
+<text x="394.8" y="211" fill="#6b7280" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">只读</text>
+<text x="428.4" y="211" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="211" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="229" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="229" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="229" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">脚本结构:                                                                                    </text>
+<text x="1218.0" y="229" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="247" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="247" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="247" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  ├─ ✓ 准备 · agent · 1/1                                                                    </text>
+<text x="1218.0" y="247" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="265" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="265" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="265" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  ├─ ▶ 扫描模块 · parallel ×3 · 0/3                                                          </text>
+<text x="1218.0" y="265" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="283" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="283" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="283" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  └─ ·· 汇总 · agent · 0/0                                                                   </text>
+<text x="1218.0" y="283" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="301" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="301" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="301" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="319" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="319" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="319" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="337" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="337" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="337" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="355" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="355" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="355" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="373" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="373" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="373" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="391" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="391" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="391" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="409" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="409" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="409" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="427" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="427" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="427" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="445" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="445" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="445" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="463" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="463" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="463" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="481" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="481" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="481" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="499" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="499" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="499" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="517" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="517" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="517" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="535" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="535" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="535" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="553" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="553" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="553" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="571" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="571" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="571" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="589" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="589" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="589" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="607" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="607" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="607" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="625" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">├──────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┤</text>
+<text x="33.6" y="643" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="42.0" y="643" fill="#6b7280" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">↑↓ 条目 · J/K 滚动 · PgUp/PgDn 翻页 · x trace · D 停止 · r 刷新 · [/] run · q 关闭 · 条目 1/6</text>
+<text x="1218.0" y="643" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="661" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+</svg>

@@ -22,3 +22,15 @@ export declare function captureViewerScene(opts?: { cols?: number; rows?: number
 };
 export declare function assertFrame(lines: string[]): true;
 export declare function capture(): { name: string; svg: string };
+
+/** pwr 场景：真实 `RunViewer`（/workflow:view）帧。 */
+export declare function capturePwrViewerScene(opts?: { cols?: number; rows?: number }): {
+  grid: (VtCell | null)[][];
+  lines: string[];
+  cols: number;
+  rows: number;
+};
+/** pwr 帧自检（标题/脚本名/结构页锚点）。 */
+export declare function assertPwrFrame(lines: string[]): true;
+/** 全部文档截图（agent-team + pwr，同一 VT/SVG 管线）。 */
+export declare function captureAll(): { name: string; svg: string }[];

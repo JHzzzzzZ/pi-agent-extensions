@@ -194,6 +194,8 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 
 `tools/capture-screens.mjs` 把真实 `TuiMainScreen` + 真实 `TranscriptViewer` 接到一个记录字节流的 headless 终端上，把渲染器写出的 ANSI 还原成字符网格并输出 SVG 到 `../docs/assets/`（根 README 内嵌）。不需要真机终端窗口、不需要人工抓屏，产物可重复生成、可 diff；`tools/vt-screen.mjs` 是带样式追踪的最小 VT 仿真屏（与 `test/viewer-host.test.ts` 的 FakeScreen 同源、互不依赖）。帧锚点自检失败时工具直接报错退出——渲染路径变了，截图就不许悄悄过期。
 
+同一工具也是**工作区级**截图管线：第二个场景导入 `../pwr/src/ui/viewer.ts` 的真实 `RunViewer`，输出 `../docs/assets/pwr-viewer.svg`（pwr 卡「改动清单」指向它）。为第二个插件复制一份 VT 仿真屏不值得——跨插件只发生在 dev 工具里，运行时仍互不 import。
+
 ## 设计说明
 
 - 零构建 TS ESM；entry `index.ts` 默认导出工厂；通过环境变量 `PI_AGENT_TEAM_FILE` 区分 leader 模式（只注册 `team_dispatch`）与驾驶舱模式（注册命令/工具/Widget）——同一份代码两种形态。

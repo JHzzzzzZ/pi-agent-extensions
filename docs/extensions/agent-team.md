@@ -66,9 +66,9 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（337 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（339 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
 - 涉及团队文件格式：同步 `types.ts` + `examples/` + README。
-- 改 viewer/widget/cockpit 外观：跑 `node tools/capture-screens.mjs` 重生成 `docs/assets/agent-team-viewer.svg`（帧锚点自检失败即报错，说明渲染路径已变）。
+- 改 viewer/widget/cockpit 外观：跑 `node tools/capture-screens.mjs` 重生成 `docs/assets/agent-team-viewer.svg`（帧锚点自检失败即报错，说明渲染路径已变）；同一命令也重生成 `docs/assets/pwr-viewer.svg`（pwr `RunViewer` 场景，同一 VT/SVG 管线）。

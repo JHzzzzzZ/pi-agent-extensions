@@ -9,7 +9,15 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { capture, captureViewerScene, svgFromGrid, assertFrame } from "../tools/capture-screens.mjs";
+import {
+  capture,
+  captureAll,
+  captureViewerScene,
+  capturePwrViewerScene,
+  svgFromGrid,
+  assertFrame,
+  assertPwrFrame,
+} from "../tools/capture-screens.mjs";
 import { VtScreen, ansi256, DEFAULT_BG } from "../tools/vt-screen.mjs";
 
 test("vt-screen: truecolor / 256 / reset 解析到单元格样式", () => {
@@ -63,4 +71,22 @@ test("产物确定性：两次捕获字节一致（文档可 diff）", () => {
   assert.equal(a.name, "agent-team-viewer.svg");
   assert.equal(a.svg, b.svg);
   assert.ok(a.svg.length > 12_000, `SVG 过小，疑似空帧：${a.svg.length}`);
+});
+
+test("pwr 场景：真实 RunViewer 帧含锚点（脚本名/结构页/roster）", () => {
+  const scene = capturePwrViewerScene();
+  assert.equal(assertPwrFrame(scene.lines), true);
+  assert.throws(() => assertPwrFrame(["nothing here"]), /缺少锚点/);
+});
+
+test("pwr 产物：revision 稳定 + 与 agent-team 帧同管线产出", () => {
+  const a = capturePwrViewerScene();
+  const b = capturePwrViewerScene();
+  assert.equal(a.lines.join("\n"), b.lines.join("\n"));
+  const shots = captureAll();
+  assert.deepEqual(
+    shots.map((s) => s.name),
+    ["agent-team-viewer.svg", "pwr-viewer.svg"],
+  );
+  for (const shot of shots) assert.ok(shot.svg.length > 12_000, `${shot.name} 过小：${shot.svg.length}`);
 });

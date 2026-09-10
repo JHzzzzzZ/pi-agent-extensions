@@ -7,11 +7,16 @@
  * 记录字节流的 headless 终端，再把字节流还原为字符网格写成 SVG（GitHub 可
  * 直接渲染）。产物可重复生成、可 diff、可在 CI/无人值守环境跑。
  *
- * 诚实边界（写进 README 图注）：场景数据是示例 run（count-duet），助手正文按
- * 纯文本渲染（未接宿主 Markdown 主题），主屏背景为示意文本；除此之外的布局、
- * 边框、页签、状态色、widget 文字全部来自被测组件本身。
+ * 诚实边界（写进 README 图注）：场景数据是示例 run（count-duet / nightly-audit），
+ * 助手正文按纯文本渲染（未接宿主 Markdown 主题），主屏背景为示意文本；除此之外的
+ * 布局、边框、页签、状态色、widget 文字全部来自被测组件本身。
  *
- * 用法（需先在 agent-team/ 下 npm install）：
+ * 本工具是工作区级文档截图管线（住在 agent-team/tools/，但产出两个插件的图）：
+ * `agent-team-viewer.svg`（真实 `TranscriptViewer`）与 `pwr-viewer.svg`（真实
+ * `pwr/src/ui/viewer.ts` 的 `RunViewer`）——同一 VT/SVG 管线，避免为第二个插件
+ * 复制一份仿真屏代码。
+ *
+ * 用法（需 agent-team/ 与 pwr/ 都 npm install）：
  *   node agent-team/tools/capture-screens.mjs [outDir]
  */
 
@@ -21,6 +26,11 @@ import { fileURLToPath } from "node:url";
 
 import { TuiMainScreen } from "@earendil-works/pi-tui";
 import { VIEWER_OVERLAY_OPTIONS, TranscriptViewer } from "../viewer.ts";
+import {
+  VIEWER_OVERLAY_OPTIONS as PWR_VIEWER_OVERLAY_OPTIONS,
+  RunViewer,
+  assembleViewerData,
+} from "../../pwr/src/ui/viewer.ts";
 import { DEFAULT_BG, DEFAULT_FG, VtScreen } from "./vt-screen.mjs";
 
 // ---------------------------------------------------------------------------
@@ -235,6 +245,165 @@ export function assertFrame(lines) {
 }
 
 // ---------------------------------------------------------------------------
+// Scene: pwr run viewer (/workflow:view) over the same real host stack
+// ---------------------------------------------------------------------------
+
+/**
+ * 示例 run 数据：冒烟脚本 nightly-audit（准备 → 扫描 fan-out → 汇总），
+ * 第二个 stage 运行中、带实时 trace 行；三个 stage 都已建 roster 条目。
+ * 与 pwr 真机结构同形（run 元信息 + plan tree + agents + 事件尾巴）。
+ */
+function pwrDetail(elapsedSec) {
+  const stages = [
+    { stageId: "prepare", label: "准备", kind: "agent", status: "completed", agentCount: 1 },
+    { stageId: "scan", label: "扫描模块", kind: "parallel", status: "running", agentCount: 3, dynamic: true },
+    { stageId: "summarize", label: "汇总", kind: "agent", status: "queued", agentCount: 1 },
+  ];
+  const agents = [
+    {
+      taskId: "prepare-task-0000-0000-000000000000",
+      stageId: "prepare",
+      label: "收集改动清单",
+      status: "completed",
+      attempt: 1,
+      tokens: 12_400,
+      cost: 0.0081,
+      elapsedMs: 9_400,
+      resultSummary: "改动文件 14 个，待审模块 3 个",
+      recentEvents: [],
+    },
+    {
+      taskId: "scan-task-0000-0000-000000000001",
+      stageId: "scan",
+      label: "审计 agent-team",
+      status: "running",
+      attempt: 1,
+      tokens: 8_900,
+      elapsedMs: 12_600,
+      recentEvents: ["▶ read agent-team/widget.ts", "… 正在比对状态条刷新路径"],
+    },
+    {
+      taskId: "scan-task-0000-0000-000000000002",
+      stageId: "scan",
+      label: "审计 pwr",
+      status: "running",
+      attempt: 1,
+      tokens: 5_300,
+      elapsedMs: 11_100,
+      recentEvents: ["▶ bash: npm test", "… 等待测试输出"],
+    },
+    { taskId: "scan-task-0000-0000-000000000003",
+      stageId: "scan",
+      label: "审计 loop",
+      status: "queued",
+      attempt: 1,
+      recentEvents: [],
+    },
+  ];
+  return {
+    runId: "9f1e7c40-2b5a-4d18-9a33-77c1e0f2ab44",
+    scriptId: "wf-nightly-audit",
+    scriptName: "nightly-audit",
+    status: "running",
+    digest: "3ac1f0d2e59b7788",
+    createdAt: "2026-09-11T08:40:02Z",
+    startedAt: "2026-09-11T08:40:03Z",
+    plan: {
+      stages: stages.map((s) => ({
+        stageId: s.stageId,
+        label: s.label,
+        kind: s.kind,
+        agentCount: s.agentCount,
+        writeRisk: false,
+      })),
+      budget: {
+        agentCalls: 5,
+        pipelineCalls: 0,
+        parallelCalls: 1,
+        estimatedAgents: 5,
+        writeRisk: false,
+        warnLargeRun: false,
+      },
+      tree: stages.map((s) => ({
+        label: s.label,
+        kind: s.kind,
+        agentCount: s.agentCount,
+        writeRisk: false,
+        stageId: s.stageId,
+      })),
+    },
+    stages,
+    agents,
+    totalTokens: 26_600,
+    totalCost: 0.0174,
+    elapsedMs: elapsedSec * 1_000,
+    warnings: [],
+  };
+}
+
+/**
+ * 跑 pwr 场景：真实 `RunViewer`（默认选中「结构」条目）+ 真实 `TuiMainScreen`
+ * 合成路径，与 agent-team 场景共用同一 VT/SVG 管线。
+ */
+export function capturePwrViewerScene({ cols = 150, rows = 40 } = {}) {
+  const screen = new VtScreen(cols, rows);
+  const term = {
+    columns: cols,
+    rows,
+    write: (data) => screen.feed(data),
+    hideCursor: () => {},
+    showCursor: () => {},
+  };
+  const tui = new TuiMainScreen(term);
+  const baseLines = [
+    `${BASE_PAD}${fgStyle(DARK.accent)("⏺")} /workflow:view nightly-audit`,
+    "",
+    `${BASE_PAD}${fgStyle(DARK.dim)("run 9f1e7c40 · stage scan 进行中…")}`,
+  ];
+  const base = { render: () => [...baseLines], handleInput: () => {}, invalidate: () => {} };
+  tui.addChild(base);
+
+  let elapsedSec = 34;
+  const runId = pwrDetail(elapsedSec).runId;
+  const runs = [
+    { runId, scriptName: "nightly-audit", status: "running" },
+    { runId: "5c2a88b1-0f3d-4e77-b1aa-93d4e6f7c201", scriptName: "doc-sync", status: "completed" },
+  ];
+  const viewer = new RunViewer({
+    load: () => assembleViewerData(pwrDetail(elapsedSec), "await parallel(['agent-team', 'pwr', 'loop'])", runs),
+    initialRunId: runId,
+    done: () => {},
+    styles: ansiStyles(),
+    rows: () => term.rows,
+    refreshMs: 3600_000, // 定时器不参与：帧由 renderNow 精确驱动
+  });
+  tui.showOverlay(viewer, PWR_VIEWER_OVERLAY_OPTIONS);
+  tui.renderNow();
+  for (let tick = 1; tick <= 4; tick++) {
+    elapsedSec += 1;
+    baseLines.push(`${BASE_PAD}${fgStyle(DARK.dim)("stage scan · agent 输出片段 " + tick)}`);
+    tui.renderNow();
+  }
+  try {
+    return { grid: screen.grid(), lines: screen.text(), cols, rows };
+  } finally {
+    viewer.dispose?.();
+    tui.dispose?.();
+  }
+}
+
+/** pwr 帧自检：标题/脚本名/结构页锚点缺一即失败。 */
+export function assertPwrFrame(lines) {
+  const text = lines.join("\n");
+  const anchors = ["PWR viewer", "nightly-audit", "脚本结构", "准备", "扫描模块", "汇总", "State:"];
+  const missing = anchors.filter((a) => !text.includes(a));
+  if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
+  const titles = lines.filter((l) => l.includes("PWR viewer")).length;
+  if (titles !== 1) throw new Error(`overlay 帧标题应恰好 1 行，实得 ${titles}`);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -247,10 +416,22 @@ export function capture() {
   return { name: "agent-team-viewer.svg", svg: svgFromGrid(scene.grid) };
 }
 
+function capturePwr() {
+  const scene = capturePwrViewerScene();
+  assertPwrFrame(scene.lines);
+  return { name: "pwr-viewer.svg", svg: svgFromGrid(scene.grid) };
+}
+
+/** 全部文档截图（同一管线；CLI 与测试共用）。 */
+export function captureAll() {
+  return [capture(), capturePwr()];
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const outDir = path.resolve(process.argv[2] ?? path.join(ROOT, "docs", "assets"));
-  const { name, svg } = capture();
   fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, name), svg, "utf8");
-  console.log(`✓ docs/assets/${name}（${svg.split("\n").length} 行 SVG）`);
+  for (const { name, svg } of captureAll()) {
+    fs.writeFileSync(path.join(outDir, name), svg, "utf8");
+    console.log(`✓ docs/assets/${name}（${svg.split("\n").length} 行 SVG）`);
+  }
 }
