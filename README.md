@@ -15,7 +15,7 @@
 | [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
-| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`） | 15 个 |
+| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
 
 ## 安装
 
@@ -466,11 +466,12 @@ node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测�
 
 - **仅当前会话** — 状态写在本进程独占文件 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`（`{pid, activatedAt}`，读者校验 `pid === process.pid`）；`/reload`、`/new`、`/resume`、`/fork` 与退出即复位，子 pi 进程（PWR sub-agent / agent-team 成员 / loop `--bg`）天然不继承
 - **开启需确认** — `/solo` 开启时弹一次确认（列出受影响的门）；无 UI 环境拒绝激活（fail-closed）；状态条显示 `⚡ solo`（最前段无前缀，多段时为 `… │ ⚡ solo`）
+- **`pi --solo` 启动即开启** — 经宿主原生 CLI flag 通道（`pi.registerFlag`/`getFlag`）读取，显式意图跳过确认、无 UI 也能生效（无头 `-p` / `--mode json` 可用）；`/solo:off` 在会话内生效，`/reload` 等新会话按启动 flag 重新启用
 - **命令** — `/solo` 切换、`/solo:on|:off|:status`（旧空格写法只提示改名）、未知参数提示用法
 - **跨扩展契约** — 状态文件与 fail-closed 口径见 `docs/cross/solo-approval-gate.md`（pwr / opencode-bridge / deep-init 各一份同构 `solo-gate.ts` 只读实现）
 
 ```bash
-node --experimental-strip-types --test solo-mode/index.test.ts   # 15 个测试
+node --experimental-strip-types --test solo-mode/index.test.ts   # 22 个测试
 ```
 
 ---

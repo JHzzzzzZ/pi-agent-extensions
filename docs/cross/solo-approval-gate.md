@@ -15,7 +15,7 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 
 **为什么用 pid 而不是存在性**：扩展运行在 Pi 主进程内，子 pi 进程（PWR sub-agent、agent-team 成员、loop `--bg`）pid 不同 ⇒ 天然不继承 solo；崩溃残留文件在下次启动因 pid 不匹配而失效；并发 Pi 实例互不干扰。solo-mode 的 `session_start` / `session_shutdown` 只清自己的 pid 文件，绝不删除异 pid 文件。
 
-**写者生命周期**：状态只在"当前会话进程 + 当前扩展实例"内成立——`/reload`、`/new`、`/resume`、`/fork` 与进程退出都会复位为关闭；开启需一次 `ctx.ui.confirm`，无 UI 环境拒绝激活。
+**写者生命周期**：状态只在"当前会话进程 + 当前扩展实例"内成立——`/reload`、`/new`、`/resume`、`/fork` 与进程退出都会复位为关闭（带 `pi --solo` 启动时，新会话按该 flag 重新启用）；开启需一次 `ctx.ui.confirm`，无 UI 环境拒绝激活——**例外**：`pi --solo` 经宿主原生 flag 通道显式声明意图，跳过确认且无 UI 也生效（无头 `-p` / `--mode json` 可用）。
 
 ## 读者实现约定（三份同构 `solo-gate.ts` 是刻意重复）
 
@@ -44,7 +44,7 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 
 ## 测试锚点
 
-- solo-mode：`solo-mode/index.test.ts`（14 个）——写读/生命周期/fail-closed/写失败。
+- solo-mode：`solo-mode/index.test.ts`（22 个）——写读/生命周期/fail-closed/写失败/启动 flag。
 - pwr：`pwr/tests/solo-gate.test.ts` + `pwr/test/entry.test.ts` 的 solo 集成（弹卡点、workflow_start、已保存命令）。
 - opencode-bridge：`solo-gate.test.ts` + `index.test.ts` 的 sync/端口切换/restore 三条 solo 路径。
 - deep-init：`solo-gate.test.ts` + `index.test.ts` 的 `planDispatch` 与命令接线。
