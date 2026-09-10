@@ -126,9 +126,10 @@
 | agent-team 1.13.3 | 2026-09-15 | viewer 帧行单行不变量（“重复行第四轮”根因）：多行 tool 条目（`team_dispatch 派发 →\n  - 成员: 任务`）按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 兜底折叠残余 CR/LF——旧实现帧行携带原始 `\n`，宿主按物理行写屏时尾巴落到下一行同列，overlay 左缘残行 + 帧几何漂移且 diff 渲染器无法清理（computer-use 全分辨率真机实锤）。差异条目 §3.12 + §4 新增行；viewer（拆行/帧不变量）、viewer-host（真实宿主多行派发条目）、widget（同类护栏）测试锁定 | `fix/agent-team-viewer-newline` |
 | agent-team 1.14.0 | 2026-09-11 | viewer detail 元信息头新增第 4 行 `模型:`（leader 实际/成员声明，未声明 `（默认）`）+ `team_transcript` details 同步带 model；差异条目 §3.13 登记；`MemberProgress.model` 由 cockpit 启动时写入（viewer 不重读团队文件）；截图管线 countDuet 场景补模型、`agent-team-viewer.svg` 重生成并加 `模型:` 锚点；viewer 头部测试与 run-tool 集成测试锁定 | `feat/agent-team-viewer-model` |
 | agent-team 1.14.2 | 2026-09-11 | widget 展开态窗口化（大团队真机截断修复）：`WIDGET_MAX_LINES = 10`（= 宿主 string[] widget 上限）+ `widgetRowWindow`（选中行恒可见、窗口 7..9 行、隐藏侧 `  … 上方/下方还有 N 行`）；宿主常量漂移由测试直读宿主 dist 源码锁定；差异条目 §3.14 + §4 新增两行；widget 测试 4 个新增（全 cursor 行数上限/选中行在帧内、两侧折叠提示、宽度约束、宿主常量等值） | `feat/agent-team-widget-window` |
+| agent-team 1.15.0 | 2026-09-11 | viewer 发消息语义拆分（不涉布局/键位/帧几何）：目标 = leader 且 run 运行中 → RPC `steer` 插话（notice「已插话给 leader（steer）：不打断当前任务，leader 会在当前回合结束后尽快回应」，回复入本 run transcript）；成员/已落定仍为派单语义（排队 + 链式）。leader 子进程改 `--mode rpc`（stdin `prompt`/`steer`，`agent_settled` 关 stdin 收尾），widget/viewer 渲染路径不变 | `feat/agent-team-steer` |
 
 ## 6. 范围外（明确不做）
 
 - 不修 /reload 工具消失、team_stop、view 内停止、可靠性对齐、动态对话等其余 todo 条目。
 - 不引入 pi-subagents 运行时依赖；不做 widget 组件工厂化改造。
-- 不抄 fleet 的 prompt audit/steer/herdr 控制面（agent-team 无对应语义；roster+detail 双栏已于 1.6.0 对齐）。
+- 不抄 fleet 的 prompt audit/herdr 控制面；steer 仅按本仓语义（cockpit → leader stdin 的 RPC 命令）实现，不引入 fleet 的多 agent 协同 steer/广播。
