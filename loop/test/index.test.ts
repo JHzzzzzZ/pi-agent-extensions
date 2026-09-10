@@ -898,7 +898,7 @@ describe("后台模式（v1.3）— 创建", () => {
     assert.equal(data2.tasks[1]!.background, undefined);
   });
 
-  it("/loop list：后台徽标与上次运行行", async () => {
+  it("/loop:list：后台徽标与上次运行行", async () => {
     const fake = createFakePi();
     seedSnapshot(fake, [
       rawTask({

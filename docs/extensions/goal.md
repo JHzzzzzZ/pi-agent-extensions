@@ -1,6 +1,6 @@
 # goal — 会话目标自动循环推进
 
-> last verified @ 1db39e3
+> last verified @ 4ef27b6
 
 ## 职责与边界
 
@@ -17,7 +17,7 @@
 
 ## 核心数据流
 
-1. `/goal <条件>` → `ctx.waitForIdle()` → 状态置 active + `persistState` → `pi.sendUserMessage(条件本身)` 立即开第一回合。
+1. `/goal <条件>` → `ctx.waitForIdle()` → 状态置 active + `persistState` → `pi.sendUserMessage(条件本身)` 立即开第一回合；裸 `/goal` 空参=状态。
 2. `agent_end` → `extractAssistantText` 截最近回合 assistant 文本（忽略 thinking/toolResult）存 `evidenceTail`（超限取尾部）。
 3. `agent_settled` → 评估器小调用（goal + evidence + lastReason）→ 严格判定：部分进展/未验证声明不算 met。
 4. 未达成 → `goal-continue` 自定义消息（含评估器反馈）followUp 续回合；达成 → 写 `goal-result-v1` 条目 + 清状态。
@@ -29,8 +29,9 @@
 - 无轮次硬上限是设计决策（对齐 Claude Code /goal）——不要"顺手"加 cap，要加先改头部注释的契约说明。
 - `evaluating` 布尔防 agent_settled 重入；评估期间若 `state !== snapshot`（目标被替换/清除）本轮作废——评估结果绝不写回旧目标。
 - 评估器瞬时失败按未达成继续（不杀循环）；连续 `MAX_EVALUATOR_FAILURES=3` 次才 paused。`evaluatorFailures` 仅在成功判定后清零。
-- 检测到手动中断（`ctx.signal.aborted`，turn_end/agent_end 记 `userInterrupted`）→ 转 paused 而非续跑，只能 `/goal resume`。
-- 水合恢复目标但轮数与计时归零（对齐 /goal resume 语义）；已清除（null）不恢复。
+- 检测到手动中断（`ctx.signal.aborted`，turn_end/agent_end 记 `userInterrupted`）→ 转 paused 而非续跑，只能 `/goal:resume`。
+- 水合恢复目标但轮数与计时归零（对齐 `/goal:resume` 语义）；已清除（null）不恢复。
+- 命令面（v1.3.0）：裸 `/goal` 空参=状态、其余=目标文本（`/goal status` 也是目标文本，不是子命令）；`/goal:status` 状态副本；`/goal:clear|:stop|:off|:reset|:none|:cancel` 共享同一清除动作；`/goal:resume` 恢复。旧空格管理词经裸入口只提示改名、绝不执行。
 - 所有 notify/setStatus/appendEntry 调用均 try/catch——持久化或 UI 失败绝不破坏会话、绝不中断循环链。
 - 状态条目幂等可重放：恢复只信最后一条 `goal-state-v1`，结果条目 `goal-result-v1` 仅记录、不参与水合。
 - 状态行键 `10:goal` 带排序带前缀（宿主按 key localeCompare 逐行渲染 footer；逐行 + 超宽续行依赖本地宿主补丁 `docs/pi-footer-status-patch.md`，不可改回 `goal`）；节拍器随 idle/无 UI/shutdown 停止，不留残留定时器。
@@ -47,7 +48,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts`（60 个，goal/ 目录下执行，无 package.json 无 typecheck 脚本）。
+- 必跑：`node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts`（61 个，goal/ 目录下执行，无 package.json 无 typecheck 脚本）。
 - 必看测试：`index.test.ts` — `makeFakePi` 手写 fake pi 宿主（记录 sendMessage/sendUserMessage/entries/statuses/statusKeys）+ fake 评估器 + 注入 `nowMs`，全离线；节拍用全局 `setTimeout` mock + `fireTick()`；评估器小调用边界只 fake 不真连。
 - fake 模式：沿 `GoalDeps` 注入口（评估器 + 时钟），对应 docs/cross/deps-ports.md 的 goal 行；新增进程/IO 边界才立新口，别加策略层。
 - 改上限值/消息文案/条目键 ⇒ 同步 README 的 goal 段与头部注释；改条目键 ⇒ 同步 docs/cross/messages-entries.md。

@@ -4,4 +4,4 @@
 - [ ] 根 README 效果示意图：效果在网络链路上（代理转发），无可见 UI，暂搁置（如需可补 /opencode-bridge 状态输出示意）
 - [x] 端口自定义待支持：目前桥监听端口靠 `PI_BRIDGE_PORT` 环境变量，希望支持不依赖环境变量的自定义方式（如 /opencode-bridge-sync 交互式询问端口并持久化，或扩展自身配置文件），修改后 httpProxy 写入值与探测端口需联动（v1.4.0：`/opencode-bridge-sync [port]` 跟参/交互询问 + `opencode-bridge.json` 持久化 + 指纹确认自动迁移，108 测试）
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞
-- [ ] 命令面改冒号形式（跨插件，全量任务一部分）：`/opencode-bridge sync [port]|restore` → `/opencode-bridge:sync|:restore`（无参状态面去留待定）。全量清单与待定项见 `todos/commands-colon-todo.md`。（processing）
+- [x] 命令面改冒号形式（跨插件，全量任务一部分）：`/opencode-bridge sync [port]|restore` → `/opencode-bridge:sync|:restore`；无参状态保留并新增 `/opencode-bridge:status` 副本。全量清单与待定项见 `todos/commands-colon-todo.md`。（完成 2026-09-14 @ feat/commands-colon：opencode-bridge v1.7.0——裸 `/opencode-bridge` 无参=状态、带参非旧词=用法；`:status`/`:sync [port]`/`:restore` 独立静态注册；旧空格子命令只提示改名。114 测试 + typecheck 绿；真实 pi loader 冒烟通过）

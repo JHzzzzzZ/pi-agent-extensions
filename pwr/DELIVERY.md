@@ -1,3 +1,18 @@
+# DELIVERY — PWR 合并交付包 v2.8.0（命令面冒号化）
+
+> 把命令面从 v2.6.0 的空格子命令式改回冒号命名空间式（每个子命令一条独立静态注册命令）：`/workflow` 增加独立命令 `/workflow:run|:delete|:model`；`/workflows` 增加独立命令 `/workflows:list|:view|:open|:pause|:resume|:stop|:restart|:save|:saved|:script|:approve|:help`。裸 `/workflow` 保留生成入口（`/workflow <任务>` 与 `workflow:` 前缀），裸 `/workflows` 保留无参=列表、`<runId>`=详情、`--filter <状态>`、`help|--help|-h`=帮助。旧空格写法不再执行——裸命令命中旧子命令词时只提示改名（防止 `/workflow run …` 误触发生成回合）。`parseWorkflowCommandRoute`/`parseWorkflowsCommand` 退役；功能与安全不变量不变。
+
+## 本版变更（v2.8.0）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| 冒号命令面 | `/workflow` 裸命令（空参=用法；旧词 `run|delete|model` 只提示改名；其余=生成）+ 3 条独立命令；新增 `parseWorkflowRunArgs` 解析 `<name> [args]`；新增常表 `WORKFLOW_SUBCOMMANDS`/`RETIRED_WORKFLOW_SUBCOMMANDS`/`firstToken` | `src/intent.ts`、`index.ts` |
+| /workflows 冒号化 | 裸命令保留 `parseWorkflowsArgs` 自由形态（列表/详情/--filter/help）；12 条独立命令各有 handler；新增 `parseRunRefArgs` 收敛单 runId 参数；`parseControlArgs` usage 文案改冒号；新增常表 `WORKFLOWS_SUBCOMMANDS`/`RETIRED_WORKFLOWS_SUBCOMMANDS`（`help` 不入退役表） | `src/ui/commands.ts`、`src/ui/index.ts` |
+| 文案 | help/详情 Actions/saved 列表/保存回执/Usage 全部改冒号形式；快捷键与 solo 批准门接线不变 | `src/ui/views.ts`、`src/ui/save-flow.ts`、`src/tools.ts`、`index.ts` |
+| 测试（437） | intent 路由测试改常表/运行参数；ui-commands 删 router 测试、加 `parseRunRefArgs` 与退役词映射；ui-views 断言冒号 Actions；entry 断言完整 17 条命令集 + 裸 `/workflow` 改名提示不生成 | `tests/intent.test.ts`、`tests/ui-commands.test.ts`、`tests/ui-views.test.ts`、`test/entry.test.ts` |
+
+---
+
 # DELIVERY — PWR 合并交付包 v2.7.0（TUI 对齐 A2–A4：/workflows view 分栏化）
 
 > `/workflows view` 从「单栏 + 页签」重做为 fleet/agent-team 同款分栏外壳：左 roster（结构 / stage / 结果 / 脚本，选中钉 itemId 跨刷新）+ 右 detail（三行元信息头 Run/State/条目 + 可滚动正文 + busy>confirm>notice 横幅）。键位/几何/刷新全面对齐 pi-subagents fleet inspector（v0.66.0）：`VIEWER_OVERLAY_OPTIONS` verbatim、`computeFrameHeight`/`computeViewerLayout`/`VIEWER_CHROME_ROWS=6`、`D` 两步停止（Enter/Y 确认；Esc/ctrl+c/N/backspace 取消）、750ms 指纹门控 + 帧高消抖、每帧 `fitLine` 精确列宽；旧键 `←→/h/l/Tab/1-9/g/G` 退役。顺带完成 tui-sync 矩阵 A2（删自写 `src/ui/text.ts`，改用宿主 `truncateToWidth`/`wrapTextWithAnsi`/`visibleWidth`）、A3（750ms）、A4（overlay 几何）；A5（结果页 Markdown）缓办。安全不变量不变（脚本源码/args 不落盘、trace 单行截断、错误静态模板）。

@@ -352,7 +352,7 @@ test("/goal 查询:idle 与 active 两种文案", async () => {
   assert.ok(fake.notifications[0].message.includes("已评估轮数"));
 });
 
-test("/goal clear:落盘 {goal:null} 并清状态行;idle 时只提示", async () => {
+test("/goal:clear:落盘 {goal:null} 并清状态行;idle 时只提示", async () => {
   const { fake } = boot();
   await fake.commands.get("goal")!.handler("任务", fake.makeCtx());
   await fake.commands.get("goal:stop")!.handler("", fake.makeCtx());
@@ -365,7 +365,7 @@ test("/goal clear:落盘 {goal:null} 并清状态行;idle 时只提示", async (
   assert.ok(fake.notifications.at(-1)!.message.includes("没有活跃"));
 });
 
-test("/goal resume:paused 恢复并立即续跑;active 时提示无需恢复", async () => {
+test("/goal:resume:paused 恢复并立即续跑;active 时提示无需恢复", async () => {
   const { fake, evaluateCalls } = boot();
   const ctx = fake.makeCtx();
   await fake.commands.get("goal")!.handler("任务", ctx);
