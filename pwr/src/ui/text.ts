@@ -3,7 +3,7 @@
  *
  * Ported from the sibling agent-team extension's viewer (same workspace,
  * battle-tested against East-Asian double-width output). Shared by the
- * /workflows:view frame renderer and the structure diagram so every line
+ * /workflows view frame renderer and the structure diagram so every line
  * fills the bordered frame exactly regardless of Chinese text or ANSI
  * styling.
  *

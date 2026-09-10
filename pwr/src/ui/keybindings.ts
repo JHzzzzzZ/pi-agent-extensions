@@ -33,19 +33,19 @@ export const PWR_SHORTCUTS = {
 		key: "ctrl+alt+z",
 		action: "pause",
 		description: "Pause the last viewed PWR run",
-		command: "workflows:pause",
+		command: "workflows pause",
 	},
 	stop: {
 		key: "ctrl+alt+x",
 		action: "stop",
 		description: "Stop the last viewed PWR run",
-		command: "workflows:stop",
+		command: "workflows stop",
 	},
 	restart: {
 		key: "ctrl+alt+r",
 		action: "restart agent",
 		description: "Restart an agent of the last viewed PWR run",
-		command: "workflows:restart",
+		command: "workflows restart",
 	},
 } as const satisfies Record<string, ShortcutSpec>;
 

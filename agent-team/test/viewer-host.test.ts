@@ -392,7 +392,7 @@ test("stop 回调 reject：error notice 上屏且不上抛", async () => {
     rejectStop(new Error("boom"));
     await new Promise((resolve) => setTimeout(resolve, 10));
     const frame = stripAnsi(viewer.render(100).join("\n"));
-    assert.match(frame, /停止失败；稍后用 \/team:stop 重试/, "reject 映射为 error notice");
+    assert.match(frame, /停止失败；稍后用 \/team stop 重试/, "reject 映射为 error notice");
     assert.doesNotMatch(frame, /停止中…/);
   } finally {
     viewer.dispose();

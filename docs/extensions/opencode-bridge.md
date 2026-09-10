@@ -1,6 +1,6 @@
 # opencode-bridge — HTTP CONNECT → SOCKS5 桥 helper 的拉起与 settings 联动
 
-> last verified @ 0260f89
+> last verified @ 0241c35
 
 ## 职责与边界
 
@@ -10,15 +10,15 @@ opencode-go 等模型按出口 IP 限区，Pi 又只支持 HTTP 代理（不认 
 
 - `opencode-bridge-helper.mjs` — 零依赖独立进程，HTTP CONNECT → SOCKS5 桥本体；协议行为注释即契约。改协议必看这里。
 - `bridge.ts` — 可测试核心逻辑（配置解析、端口探测、ensureBridge 生命周期、sync/restore 的 plan/apply），**不 import Pi 宿主 API**。
-- `index.ts` — Pi 宿主接线：session_start 探测/拉起、`/opencode-bridge`（状态）、`/opencode-bridge-sync [port]`、`/opencode-bridge-restore`；审批门经 `solo-gate.ts`（只读，fail-closed）。
+- `index.ts` — Pi 宿主接线：session_start 探测/拉起、单 `/opencode-bridge` 命令 + 子命令（无参=状态、`sync [port]`、`restore`；v1.6.0 合并，旧 `-sync`/`-restore` 不再注册）；审批门经 `solo-gate.ts`（只读，fail-closed）。
 - `helper.test.ts`（真实子进程集成）、`bridge.test.ts`（全 fake 单测）、`index.test.ts`（fake Pi 宿主 + fake deps）。
 
 ## 核心数据流
 
 1. session_start → 探测 `127.0.0.1:<port>` → 已有桥直接复用（多 Pi/subagent 实例共享一个桥），否则 detached + unref 派生 helper，Pi 不持有子进程。
-2. `/opencode-bridge-sync` → planHttpProxySync 只读出 plan（SET / REMOVE / NOOP / FOREIGN）→ ctx.ui.confirm 人工确认（solo 激活时自动批准）→ applyHttpProxySync 备份原文后落盘 → 重启 Pi 才生效。
+2. `/opencode-bridge sync` → planHttpProxySync 只读出 plan（SET / REMOVE / NOOP / FOREIGN）→ ctx.ui.confirm 人工确认（solo 激活时自动批准）→ applyHttpProxySync 备份原文后落盘 → 重启 Pi 才生效。
 3. 改端口：一次确认覆盖全部动作——指纹确认停旧桥（shutdown 响应体含自家 BRIDGE_SHUTDOWN_MARKER）→ 起新桥 → httpProxy 写入联动；端口持久化到 settings.json 同目录 opencode-bridge.json。
-4. `/opencode-bridge-restore` → 从备份列表选择恢复（人工确认）；恢复前先把当前配置再备份一份，保证恢复本身可撤销。
+4. `/opencode-bridge restore` → 从备份列表选择恢复（人工确认）；恢复前先把当前配置再备份一份，保证恢复本身可撤销。
 
 ## 不变量
 
@@ -42,6 +42,6 @@ opencode-go 等模型按出口 IP 限区，Pi 又只支持 HTTP 代理（不认 
 
 ## 改动清单
 
-- 必跑：`cd opencode-bridge && npm install && npm test`（113 个）+ `npm run typecheck`。
+- 必跑：`cd opencode-bridge && npm install && npm test`（114 个）+ `npm run typecheck`。
 - 协议/进程契约改动 → 必看 `helper.test.ts`（真实 helper + 手写 fake SOCKS5，无外部网络）；配置/生命周期 → `bridge.test.ts`；宿主接线 → `index.test.ts`。
 - fake 模式（docs/cross/deps-ports.md）：进程/IO 边界手写 fake BridgeDeps / ProxySyncDeps；宿主交互 fake pi（对齐 goal 手写风格）；协议契约接真实 helper 子进程——文件系统/子进程行为纯函数测试抓不住。
