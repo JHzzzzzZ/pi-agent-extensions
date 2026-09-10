@@ -34,8 +34,8 @@ import * as path from "node:path";
 
 /** 状态文件路径覆盖环境变量（测试隔离 / 多实例隔离） */
 export const SOLO_STATE_FILE_ENV = "PI_SOLO_MODE_FILE";
-/** 状态条键（每扩展一个） */
-export const SOLO_STATUS_KEY = "solo-mode";
+/** 状态条键（每扩展一个；带 `40:` 排序前缀，见 docs/cross/status-bar.md） */
+export const SOLO_STATUS_KEY = "40:solo-mode";
 /** 状态条文本（纯字符串,宿主 ExtensionUIContext 无 theme 字段） */
 export const SOLO_STATUS_TEXT = "⚡ solo";
 /** 命令行用法 */

@@ -13,6 +13,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
 	QUOTA_ENDPOINTS,
+	STATUS_ID,
 	parseZhipuQuotaLimit,
 	parseOpencodeGoUsage,
 } from "./index.ts";
@@ -439,4 +440,10 @@ test("opencode-go adapter: parse 委托 parseOpencodeGoUsage（走 adapter 默�
 	);
 	assert.equal(QUOTA_ENDPOINTS["opencode-go"].parse(null), null);
 	assert.equal(QUOTA_ENDPOINTS["opencode-go"].url, "https://opencode.ai/zen/go/v1/usage");
+});
+
+// ---- footer 排序带键（docs/cross/status-bar.md） ----
+
+test("STATUS_ID 带排序带前缀（20:provider-quota）", () => {
+	assert.equal(STATUS_ID, "20:provider-quota");
 });

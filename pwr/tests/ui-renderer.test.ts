@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MemoryRunStore } from "../src/ui/run-store.ts";
 import { RunRegistry } from "../src/flow.ts";
-import { runCardSummaryLine, runStatusText, runWidgetLines } from "../src/ui/renderer.ts";
+import { refreshUiStatus, runCardSummaryLine, runStatusText, runWidgetLines } from "../src/ui/renderer.ts";
 
 function makeRun(registry: RunRegistry, source: string, name: string, createdAt: string, agentCalls = 3): string {
 	const plan = {
@@ -57,6 +57,21 @@ test("runWidgetLines empty store", () => {
 	const store = storeWith([]);
 	const lines = runWidgetLines(store);
 	assert.ok(lines.some((l) => l.includes("no runs")));
+});
+
+test("refreshUiStatus 写 footer 排序带键 30:pwr（docs/cross/status-bar.md）", () => {
+	const store = storeWith([{ name: "a", at: "2026-08-05T12:00:00Z", status: "running" }]);
+	const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+	const widgetCalls: Array<{ key: string; lines: string[] }> = [];
+	refreshUiStatus(
+		{
+			setStatus: (key: string, text: string | undefined) => statusCalls.push({ key, text }),
+			setWidget: (key: string, lines: string[]) => widgetCalls.push({ key, lines }),
+		} as never,
+		store,
+	);
+	assert.ok(statusCalls.some((c) => c.key === "30:pwr"), "footer 状态键带排序前缀");
+	assert.ok(widgetCalls.some((c) => c.key === "pwr-runs"), "widget 键不变");
 });
 
 test("runStatusText counts only active runs; undefined when none", () => {

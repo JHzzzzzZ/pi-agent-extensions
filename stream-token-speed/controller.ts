@@ -36,7 +36,7 @@ import {
   type ClockMs,
   type MetricRun,
 } from "./metrics.ts";
-import type { StatusPort } from "./status-port.ts";
+import { STATUS_KEY, type StatusPort } from "./status-port.ts";
 
 export class TokenSpeedController {
   private readonly adapter: PiEventAdapter;
@@ -67,7 +67,7 @@ export class TokenSpeedController {
     const start = this.adapter.onAssistantStart(event);
     if (start === null) return;
     this.run = createRun(start.messageId, start.at);
-    status.setStatus("stream-token-speed", formatWaitingStatus());
+    status.setStatus(STATUS_KEY, formatWaitingStatus());
   }
 
   /** message_update：仅可计量 delta 计数；250ms 节流刷新（v4：热身期后 EMA 平滑）。 */
@@ -110,9 +110,9 @@ export class TokenSpeedController {
     this.run = null;
     if (!status.available()) return;
     if (summary.hasStreamingData) {
-      status.setStatus("stream-token-speed", formatSummary(summary));
+      status.setStatus(STATUS_KEY, formatSummary(summary));
     } else {
-      status.setStatus("stream-token-speed", NO_DATA_STATUS);
+      status.setStatus(STATUS_KEY, NO_DATA_STATUS);
     }
   }
 
@@ -120,17 +120,17 @@ export class TokenSpeedController {
     if (!status.available()) return;
     const first = run.firstEligibleDeltaAt;
     if (first === undefined) {
-      status.setStatus("stream-token-speed", formatWaitingStatus());
+      status.setStatus(STATUS_KEY, formatWaitingStatus());
       return;
     }
     const ttft = Math.round(first - run.startAt);
     if (isWarmingUp(run, now)) {
       // v4 热身期：TTFT 已确定，瞬时速度保持 `—`。
-      status.setStatus("stream-token-speed", formatWarmupStatus(ttft));
+      status.setStatus(STATUS_KEY, formatWarmupStatus(ttft));
       return;
     }
     status.setStatus(
-      "stream-token-speed",
+      STATUS_KEY,
       formatStreamingStatus(ttft, run.lastInstantTps ?? 0),
     );
   }

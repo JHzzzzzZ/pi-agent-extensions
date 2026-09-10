@@ -9,7 +9,7 @@
 |---|---|
 | 事件适配 | `adapter.ts`（文本/thinking/tool call 增量纳入，tool result 与执行进度排除） |
 | 节流/状态机 | `controller.ts` + `metrics.ts`（TTFT、瞬时、平均） |
-| UI 端口 | `status-port.ts`（`ctx.hasUI` 守卫，异常隔离，每扩展一状态键） |
+| UI 端口 | `status-port.ts`（`ctx.hasUI` 守卫，异常隔离，每扩展一状态键；键 `50:stream-token-speed` 带排序带，见 `docs/cross/status-bar.md`） |
 | 入口 | `index.ts`（运行时零依赖，无需 npm install） |
 | 测试固件 | `test/fixtures.ts` `RecordingStatusPort` |
 
@@ -23,7 +23,8 @@
 ## ANTI-PATTERNS
 - 实例化真实 pi-tui 测试 —— 实证：结构 fake 以 `as never` 断言，从不实例化。
 - tool result 计入 tokens/s —— 实证：`adapter.test.ts` 断言排除项。
-- 跨扩展复用状态键 —— 实证：键 `stream-token-speed` 独占，复用即互相覆盖。
+- 跨扩展复用状态键 —— 实证：键 `50:stream-token-speed` 独占，复用即互相覆盖。
+- 给流式刷新套对齐秒节拍 —— 250ms 节流是内容驱动的，不是墙钟时间类状态。
 
 ## COMMANDS
 ```bash

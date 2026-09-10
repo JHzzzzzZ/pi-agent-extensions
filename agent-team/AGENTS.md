@@ -14,6 +14,7 @@
 | 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，4 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
 | 隔离分支 | `worktree.ts`（每次 run 独立分支，不碰当前目录） |
+| 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界；契约 `docs/cross/status-bar.md`） |
 | 错误码 | `types.ts` `TeamErrorCodes` |
 
 ## CONVENTIONS
@@ -23,6 +24,7 @@
 - cockpit/widget/entry 键 `agent-team-run-v1` —— 改键则旧会话渲染器失配。
 - start() 在首个 await 前同步 claim（controller + progress + pending）且 finally 清空 —— 并发 start 竞态与终态后残留 progress 均由此拦截；aborted 终态必须补全 roster（否则 widget/status 少报成员）。
 - 缩进 2 空格（pwr 用 tab）—— 混用即 diff 噪音。
+- 时间类刷新走 `aligned-ticker.ts`（widget 重绘 + cockpit 进度 ticker，勿用裸 `setInterval`）—— 相位漂移会让多个 widget 逐秒换位；`tickMs` 仅测试覆盖。
 
 ## ANTI-PATTERNS
 - 从 pwr import 复用 —— 实证：自包含声明，`runner.ts` 另写一份子 pi 适配，不引 `pwr/runner`。
@@ -32,6 +34,6 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 137 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 288 测试（node --test test/*.test.ts）
 npm run typecheck
 ```

@@ -363,7 +363,8 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 	},
 };
 
-const STATUS_ID = "provider-quota";
+/** footer 键带 `20:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md） */
+export const STATUS_ID = "20:provider-quota";
 const REFRESH_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;

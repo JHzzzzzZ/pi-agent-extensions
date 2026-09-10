@@ -20,6 +20,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
+import { startAlignedTicker } from "./aligned-ticker.ts";
 
 // ===== 常量 =====
 
@@ -30,7 +31,10 @@ export const GOAL_STATE_ENTRY = "goal-state-v1";
 export const GOAL_RESULT_ENTRY = "goal-result-v1";
 /** 续跑自定义消息类型 */
 export const GOAL_CONTINUE_MESSAGE = "goal-continue";
-export const STATUS_KEY = "goal";
+/** 排序带前缀：宿主按 key localeCompare 拼接 footer 状态行（docs/cross/status-bar.md） */
+export const STATUS_KEY = "10:goal";
+/** 活动 goal 期间的状态行刷新间隔（对齐秒边界） */
+const STATUS_TICK_MS = 1000;
 
 /** 对齐 Claude Code /goal:条件最长 4000 字符 */
 export const MAX_GOAL_LENGTH = 4000;
@@ -320,6 +324,18 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
   let userInterrupted = false;
   let evaluating = false;
   let evaluatorFailures = 0;
+  /** 最近一次状态写入所绑定的 ctx（ticker 每秒重算“已运行”时长）。 */
+  let statusCtx: ExtensionContext | undefined;
+  let stopStatusTicker: (() => void) | undefined;
+  /** 上次写入的状态文本指纹：相同则跳过 setStatus。 */
+  let lastStatusText: string | null = null;
+
+  function stopStatusClock(): void {
+    if (stopStatusTicker) {
+      stopStatusTicker();
+      stopStatusTicker = undefined;
+    }
+  }
 
   function notify(ctx: ExtensionContext, message: string, type: "info" | "warning" | "error" = "info"): void {
     try {
@@ -330,17 +346,34 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
   }
 
   function updateStatus(ctx: ExtensionContext): void {
-    if (!ctx.hasUI) return;
+    statusCtx = ctx;
+    if (!ctx.hasUI) {
+      stopStatusClock();
+      return;
+    }
     try {
       if (state.phase === "idle") {
-        ctx.ui.setStatus(STATUS_KEY, undefined);
+        stopStatusClock();
+        if (lastStatusText !== null) {
+          lastStatusText = null;
+          ctx.ui.setStatus(STATUS_KEY, undefined);
+        }
         return;
+      }
+      // 活动/暂停期间按对齐秒节拍刷新“已运行”时长（此前只靠事件点更新）。
+      if (!stopStatusTicker) {
+        stopStatusTicker = startAlignedTicker(() => {
+          if (statusCtx) updateStatus(statusCtx);
+        }, { intervalMs: STATUS_TICK_MS });
       }
       const line = buildStatusLine(
         { phase: state.phase, goal: state.goal, turns: state.turns, startedAtMs: state.startedAtMs },
         nowMs(),
       );
-      ctx.ui.setStatus(STATUS_KEY, ctx.mode === "tui" && ctx.ui.theme ? ctx.ui.theme.fg("dim", line) : line);
+      const text = ctx.mode === "tui" && ctx.ui.theme ? ctx.ui.theme.fg("dim", line) : line;
+      if (text === lastStatusText) return;
+      lastStatusText = text;
+      ctx.ui.setStatus(STATUS_KEY, text);
     } catch {
       /* 状态行失败不破坏会话 */
     }
@@ -541,6 +574,9 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
     // 新会话/退出/重载都回到 idle;reload/resume 场景由 session_start 重新水合
     state = { phase: "idle" };
     evaluating = false;
+    stopStatusClock();
+    statusCtx = undefined;
+    lastStatusText = null;
     try {
       if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
     } catch {

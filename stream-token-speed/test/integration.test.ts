@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createStreamAdapter } from "../adapter.ts";
 import { TokenSpeedController } from "../controller.ts";
-import { createStatusPort } from "../status-port.ts";
+import { createStatusPort, STATUS_KEY } from "../status-port.ts";
 import {
   assistantMessage,
   messageEndEvent,
@@ -266,7 +266,8 @@ test("AC-09：setStatus 抛错被端口隔离，不中断度量与后续渲染",
   assert.equal(h.ui.last(), "生成中：TTFT 等待中｜速度 —");
 });
 
-test("状态键固定为 stream-token-speed（原位更新，不与其他扩展冲突）", () => {
+test("状态键固定为 50:stream-token-speed（排序带前缀，原位更新）", () => {
+  assert.equal(STATUS_KEY, "50:stream-token-speed");
   const h = makeHarness();
   const m = msg("m1");
   h.at(0);
@@ -276,7 +277,7 @@ test("状态键固定为 stream-token-speed（原位更新，不与其他扩展�
   h.at(200);
   h.controller.onMessageEnd(messageEndEvent(m), h.status);
   assert.ok(h.ui.calls.length > 0);
-  assert.ok(h.ui.calls.every((c) => c.key === "stream-token-speed"));
+  assert.ok(h.ui.calls.every((c) => c.key === STATUS_KEY));
 });
 
 test("修复#2 回归：真实 provider 时序（start 无 responseId，update/end 有）完整计量", () => {

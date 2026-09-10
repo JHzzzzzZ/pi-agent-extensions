@@ -1,1 +1,2 @@
 - [x] 根 README 为每个插件增加效果示意图
+- [x] 状态条时钟统一与排序（跨插件）：footer 状态键 → `50:stream-token-speed`（调用点统一用 `STATUS_KEY` 常量；250ms 流式节流不变）；契约 `docs/cross/status-bar.md`（完成 2026-09-10 @ feat/status-clock b9d397e，stream-token-speed 43 测试绿）。

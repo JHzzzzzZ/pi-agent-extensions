@@ -3,7 +3,7 @@
  * 运行:node --experimental-strip-types --test goal/index.test.ts
  */
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { EvaluatorResult } from "./index.ts";
 import {
@@ -11,6 +11,7 @@ import {
   GOAL_RESULT_ENTRY,
   GOAL_STATE_ENTRY,
   MAX_GOAL_LENGTH,
+  STATUS_KEY,
   buildContinueMessage,
   buildEvaluatorPrompt,
   buildStatusLine,
@@ -39,6 +40,7 @@ function makeFakePi(sessionEntries: unknown[] = []) {
   const userMessages: string[] = [];
   const entries: Array<{ customType: string; data?: unknown }> = [];
   const statuses: Array<string | undefined> = [];
+  const statusKeys: string[] = [];
   const notifications: Array<{ message: string; type?: string }> = [];
   const pi = {
     on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void> | void) => {
@@ -61,7 +63,8 @@ function makeFakePi(sessionEntries: unknown[] = []) {
     hasUI: true,
     mode: "tui",
     ui: {
-      setStatus: (_key: string, text: string | undefined) => {
+      setStatus: (key: string, text: string | undefined) => {
+        statusKeys.push(key);
         statuses.push(text);
       },
       notify: (message: string, type?: string) => {
@@ -84,6 +87,7 @@ function makeFakePi(sessionEntries: unknown[] = []) {
     userMessages,
     entries,
     statuses,
+    statusKeys,
     notifications,
     makeCtx,
     waitForIdleCalls: () => waitForIdleCalls,
@@ -95,6 +99,45 @@ function makeClock() {
   let now = Date.parse("2026-08-05T12:00:00Z");
   return () => (now += 1000);
 }
+
+// ---------- 定时器 mock：对齐节拍器（aligned-ticker）捕获回调，测试手动触发 tick ----------
+
+const timers = new Map<number, () => void>();
+let timerSeq = 0;
+let origSetTimeout: typeof globalThis.setTimeout | undefined;
+let origClearTimeout: typeof globalThis.clearTimeout | undefined;
+
+function installTimerMocks(): void {
+  origSetTimeout = globalThis.setTimeout;
+  origClearTimeout = globalThis.clearTimeout;
+  timerSeq = 0;
+  timers.clear();
+  globalThis.setTimeout = ((fn: () => void, _ms?: number) => {
+    const id = ++timerSeq;
+    timers.set(id, fn);
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((id: number) => {
+    timers.delete(id as number);
+  }) as typeof globalThis.clearTimeout;
+}
+
+function restoreTimerMocks(): void {
+  if (origSetTimeout) globalThis.setTimeout = origSetTimeout;
+  if (origClearTimeout) globalThis.clearTimeout = origClearTimeout;
+  timers.clear();
+}
+
+function fireTick(): void {
+  for (const fn of [...timers.values()]) fn();
+}
+
+function timerCount(): number {
+  return timers.size;
+}
+
+before(() => installTimerMocks());
+after(() => restoreTimerMocks());
 
 function boot(options: { sessionEntries?: unknown[]; evaluate?: (input: any, ctx: any) => Promise<any> } = {}) {
   const fake = makeFakePi(options.sessionEntries ?? []);
@@ -682,4 +725,81 @@ test("createModelEvaluator:无 sessionId(缺失/抛异常)时不注入会话头�
   const r2 = await evaluate({ goal: "g", evidence: "e" }, throwing);
   assert.ok(r2.ok);
   assert.equal(captured[1]?.headers?.["x-opencode-session"], undefined);
+});
+
+// ===== 状态条对齐节拍（docs/cross/status-bar.md） =====
+
+test("STATUS_KEY 带排序带前缀（10:goal）", () => {
+  assert.equal(STATUS_KEY, "10:goal");
+});
+
+test("active 期间启动对齐节拍：tick 刷新“已运行”时长", async () => {
+  const { fake } = boot();
+  const ctx = fake.makeCtx();
+  timers.clear();
+  await fake.commands.get("goal")!.handler("写文档", ctx);
+  assert.equal(timerCount(), 1, "active 后开启节拍");
+  const writes = fake.statuses.length;
+  fireTick();
+  assert.ok(fake.statuses.length > writes, "tick 写新状态");
+  assert.ok(fake.statuses.at(-1)!.includes("◎ goal"));
+  assert.ok(
+    fake.statusKeys.every((key) => key === STATUS_KEY),
+    "所有状态都写排序带键",
+  );
+});
+
+test("clear 后节拍停止并清状态", async () => {
+  const { fake } = boot();
+  const ctx = fake.makeCtx();
+  timers.clear();
+  await fake.commands.get("goal")!.handler("任务", ctx);
+  assert.equal(timerCount(), 1);
+  await fake.commands.get("goal")!.handler("clear", ctx);
+  assert.equal(timerCount(), 0, "idle 后节拍停止");
+  assert.equal(fake.statuses.at(-1), undefined);
+});
+
+test("session_shutdown 停止节拍并清状态", async () => {
+  const { fake } = boot();
+  const ctx = fake.makeCtx();
+  timers.clear();
+  await fake.commands.get("goal")!.handler("任务", ctx);
+  assert.equal(timerCount(), 1);
+  await fake.handlers.get("session_shutdown")!({}, ctx);
+  assert.equal(timerCount(), 0);
+  assert.equal(fake.statuses.at(-1), undefined);
+});
+
+test("无 UI 不开节拍", async () => {
+  const { fake } = boot();
+  timers.clear();
+  await fake.commands.get("goal")!.handler("任务", fake.makeCtx({ hasUI: false }));
+  assert.equal(timerCount(), 0);
+});
+
+test("状态文本不变时 tick 不重复写（setStatus 指纹）", async () => {
+  const fake = makeFakePi();
+  createGoalExtension(fake.pi as unknown as ExtensionAPI, {
+    evaluate: async () => ({ ok: true, met: false, reason: "尚未达成" }),
+    nowMs: () => Date.parse("2026-08-05T12:00:00Z"),
+  });
+  const ctx = fake.makeCtx();
+  timers.clear();
+  await fake.commands.get("goal")!.handler("任务", ctx);
+  const writes = fake.statuses.length;
+  fireTick();
+  fireTick();
+  assert.equal(fake.statuses.length, writes, "固定时钟下文本不变 → 跳过 setStatus");
+});
+
+test("session_start 水合出 active：立即恢复节拍", async () => {
+  const { fake } = boot({
+    sessionEntries: [{ type: "custom", customType: GOAL_STATE_ENTRY, data: { goal: "历史目标" } }],
+  });
+  const ctx = fake.makeCtx();
+  timers.clear();
+  await fake.handlers.get("session_start")!({ reason: "resume" }, ctx);
+  assert.equal(timerCount(), 1, "水合 active 后开启节拍");
+  assert.ok(fake.statuses.at(-1)!.includes("历史目标"));
 });

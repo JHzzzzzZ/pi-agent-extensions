@@ -7,6 +7,9 @@
   "keywords": [
     "pi-package"
   ],
+  "scripts": {
+    "test:contract": "node --test test/status-bar-contract.test.ts"
+  },
   "engines": {
     "node": ">=22.18"
   },

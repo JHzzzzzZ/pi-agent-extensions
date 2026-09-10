@@ -15,7 +15,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
 - `doctor.ts` — `/team doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
 - `dispatch.ts`（leader 模式工具）、`cockpit.ts`（cockpit 模式工具）、`manage.ts`（team_create/list）、`chat.ts`（viewer 发消息：task 模板 + transcript 尾部截断 + FIFO 队列/链式门控，纯逻辑层，宿主接线在 index.ts）。
-- `widget.ts` — 输入栏下方可选中亮块（`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新 + `onTerminalInput` 选中；激活门控 = 焦点在主编辑器（`editorFocus` 端口 + `probeEditorFocus` 结构判定，宿主无焦点信息降级）× 编辑器为空（`editorState` 端口）；选中态到顶再按 `↑`/`k` 退出选中）；`viewer.ts` — `/team view` 全屏左右分栏查看器（左 roster/右 detail，fleet inspector 布局，v1.8.0 起动作键位全集对齐 fleet）；`transcript.ts` — 成员转写物化；`docs/tui-sync.md` — TUI 行为对照 pi-subagents 的同步矩阵（**TUI 期望值唯一事实来源**）。
+- `widget.ts` — 输入栏下方可选中亮块（`setWidget(key, string[], { placement: "belowEditor" })` 按对齐秒节拍刷新 + `onTerminalInput` 选中；激活门控 = 焦点在主编辑器（`editorFocus` 端口 + `probeEditorFocus` 结构判定，宿主无焦点信息降级）× 编辑器为空（`editorState` 端口）；选中态到顶再按 `↑`/`k` 退出选中）；`aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，widget 与 cockpit 进度 ticker 共用，契约见 `docs/cross/status-bar.md`）；`viewer.ts` — `/team view` 全屏左右分栏查看器（左 roster/右 detail，fleet inspector 布局，v1.8.0 起动作键位全集对齐 fleet）；`transcript.ts` — 成员转写物化；`docs/tui-sync.md` — TUI 行为对照 pi-subagents 的同步矩阵（**TUI 期望值唯一事实来源**）。
 - 两种模式一套代码，以 `PI_AGENT_TEAM_FILE` 环境变量区分；leader 模式只注册 `team_dispatch`。`PI_AGENT_TEAM_RUNS_DIR` 可重定向 run artifacts 根（测试隔离用）。
 
 ## 核心数据流
@@ -47,6 +47,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - **不偷编辑器按键**：亮块非选中态只有激活键被消费，其余（含 esc）原样交还编辑器；**焦点门控**（对齐 fleet-status `editorHasFocus`，v1.9.1）：`ensureRunWidget` 挂载时经 factory 形态 `setWidget` 一次性捕获宿主 TUI（宿主同步调用 factory，空组件被 controller 首帧同步替换、无可见变化），`editorFocus: () => probeEditorFocus(state.tui)`——`getFocusedComponent()` 优先、`focusedComponent` 字段回退、五方法结构判定编辑器形状（`isEditorComponentLike`，不用 `instanceof`：跨 jiti 模块边界不可靠）；焦点确定非编辑器（`/login`、`/model`、`/settings` 选择器，`ctx.ui.select`，overlay 对话框）时 widget 完全不介入（含 alt 通道）且选中态退出让行；宿主无焦点信息/取用抛错 → `undefined`，降级为旧门控（仅空编辑器）。bare `↓`/`←` 仅当焦点在主编辑器且编辑器为空才激活（`editorState` 端口注入 `getEditorText`，宿主缺该 API 时降级为仅 alt 通道）；选中态 `↑`/`k` 在第 0 行再按退出选中（fleet-status 同构，后续键到达编辑器，退出保持 cursor 供再次激活恢复）。
 - **TUI 同步 ≠ 依赖**：viewer/widget 行为对照 pi-subagents（基线 v0.66.0，`agent-team/docs/tui-sync.md`）代码级同步，但不 import 它；测试期望只能从矩阵来，不从实现反推；同步后登记新版本号。
 - 渲染串指纹相同跳过 `setWidget`（renderKey 对齐）；但 `setPaused(false)` 必须重置指纹强制重绘——否则恢复帧被跳过，亮块卡在隐藏态。
+- 时间类刷新一律走 `aligned-ticker.ts`（widget 重绘、cockpit `onProgress` 进度 ticker）对齐墙钟秒边界；`tickMs` 仅测试可覆盖，生产 1000；节拍器 `unref()` 不阻宿主退出。
 - 双加载守卫（`globalThis.__piAgentTeamExtensionLoaded`）**复位时机 = session_shutdown**：pi 宿主保证重绑扩展（reload/new/resume/fork/switch）前必发该事件，entry 在此删标志，下一次 factory 调用重新注册全部工具/命令；同一进程内两份之间无 shutdown 的真双加载（leader 子 `-e` + 自动发现）依旧被抑制。没有复位的话 `/reload` 后 team_* 工具全部消失。
 - 组件工厂式逐帧重绘在某 bundle 宿主上产生逐秒追加残影行
 
@@ -63,7 +64,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（290 个）。
+- 必跑：`cd agent-team && npm install && npm test`（299 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。

@@ -15,13 +15,13 @@
 | opencode-bridge | `BridgeDeps`（bridge.ts，探测/派生/fs/sleep/shutdown）、`ProxySyncDeps`（settings + 端口配置读写，plan/apply 两阶段）、`BridgeExtensionDeps`（入口） | socket / 文件系统 / 进程生命周期 |
 | deep-init | `DeepInitDeps`（`DirScanner` / `gitInfo` / `nowIso`） | 目录扫描、git、时钟 |
 | human-notify | `HumanNotifyDeps`（派生 / 平台 / 时钟 / 环境） | 进程派生、平台探测 |
-| run-timer | 无显式 deps 口——测试经 before/after mock `setInterval` | 时钟（特例：timer 直接 mock） |
+| run-timer | 无显式 deps 口——`aligned-ticker` 的 `now` 可注入，工厂测试经 before/after mock `setTimeout` + `fireTick()` | 时钟（特例：timer 直接 mock） |
 | stream-token-speed | `StatusPort`（status-port.ts，状态上报端口；`createStatusPort()` 工厂） | 测试用 `RecordingStatusPort` 实现该接口（test/fixtures.ts） |
 
 ## 时钟约定
 
-- 时钟注入 `now: () => string` / `nowMs`，测试固定 `2026-08-05T12:00:00Z`。**已知例外：loop** —— 调度/倒计时直接用 `Date.now()`（loop/index.ts 多处），`LoopToolDeps` 无时钟口；测试经双 mock（setInterval + Date.now）覆盖，新插件勿模仿。
-- run-timer 是唯一 mock `setInterval` 的特例（timer 本身就是被测行为）。
+- 时钟注入 `now: () => string` / `nowMs`，测试固定 `2026-08-05T12:00:00Z`。**已知例外：loop** —— 调度/倒计时直接用 `Date.now()`（loop/index.ts 多处），`LoopToolDeps` 无时钟口；测试经双 mock（setTimeout + Date.now）覆盖，新插件勿模仿。
+- run-timer/loop/goal/agent-team 的节拍器（`aligned-ticker.ts`）同样是 mock `setTimeout` 的特例（timer 本身就是被测行为）；节拍对齐语义在 `aligned-ticker.test.ts` 用注入 `now` 覆盖。跨插件契约见 `docs/cross/status-bar.md`。
 
 ## fake 选型规则
 

@@ -9,3 +9,4 @@
   - 跨扩展契约：状态文件 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}` = `{pid, activatedAt}`，读者校验 `pid === process.pid`（fail-closed），故子 pi 进程不继承 solo；契约卡 `docs/cross/solo-approval-gate.md`。
   - 非目标：不禁用委派工具、不自动处理 pi `project_trust` 提示、不做跨会话持久化。
   - 实现注意：与其它卫星扩展形态一致（目录 + `index.ts` 入口，复制进 `extensions/` 后 `/reload` 生效）；TUI 写入前 `ctx.hasUI` 守卫；新增插件需在同一变更内同步 docs/ 卡片、README、根 package.json 与本 todo 文件。
+- [x] 状态条时钟统一与排序（跨插件）：footer 状态键 → `40:solo-mode`（静态写入不变）；契约 `docs/cross/status-bar.md`（完成 2026-09-10 @ feat/status-clock b9d397e，solo-mode 12 测试绿）。

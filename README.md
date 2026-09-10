@@ -1,21 +1,21 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十一个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十一个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列（契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows view` fleet 式分栏查看器；`/workflows` 与 `/workflow run|delete|model` 子命令式命令面） | 436 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；单一 `/team` 命令 + 子命令路由） | 290 个 |
+| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows view` fleet 式分栏查看器；`/workflows` 与 `/workflow run|delete|model` 子命令式命令面） | 437 个（node:test） |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；单一 `/team` 命令 + 子命令路由） | 299 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
-| [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
-| [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
-| [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定） | 182 个（node:test） |
-| [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 44 个 |
+| [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 25 个（node:test） |
+| [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
+| [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定） | 192 个（node:test） |
+| [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 60 个 |
 | [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；单 `/opencode-bridge` 命令 + 子命令 `sync [port]`/`restore` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
-| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话 | 11 个 |
+| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话 | 12 个 |
 
 ## 安装
 
@@ -196,7 +196,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ```bash
 cd pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 436 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 437 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflows UI（无宿主）
 ```
@@ -238,7 +238,7 @@ leader: claude-opus-4 · 已派发 3 个子任务
 
 ```bash
 cd agent-team
-npm install && npm test        # 290 个测试（含真实 git worktree 用例）
+npm install && npm test        # 299 个测试（含真实 git worktree 用例）
 npm run typecheck
 ```
 
@@ -294,7 +294,7 @@ node --experimental-strip-types --test provider-quota/index.test.ts
 
 ## run-timer
 
-终端底部状态行计时：当前任务耗时、本轮对话耗时、会话总耗时（每秒 tick）。含 CJK 视觉宽度处理，避免中文导致布局错位。
+终端底部状态行计时：当前任务耗时、本轮对话耗时、会话总耗时（按对齐墙钟秒边界刷新，与其他状态条不抢相位）。含 CJK 视觉宽度处理，避免中文导致布局错位。
 
 效果示意（widget，实测格式）：
 
@@ -304,12 +304,12 @@ node --experimental-strip-types --test provider-quota/index.test.ts
 ```
 
 ```bash
-node --experimental-strip-types --test run-timer/run-timer.test.ts
+node --experimental-strip-types --test run-timer/run-timer.test.ts run-timer/aligned-ticker.test.ts
 ```
 
 ## loop
 
-定时任务扩展（精简版，参考 Claude Code `/loop`）：固定间隔循环 + 每天定时循环 + 每日时间窗口循环 + 一次性提醒 + 后台 agent 模式。到期任务经 `deliverAs: "followUp"` 在回合间送达——agent 空闲则开新 turn，正在响应则排队到当前 turn 结束；错过的时间点不补跑。任务以全量快照持久化为会话条目（`loop-tasks-v1`，不进 LLM 上下文），随会话恢复；重复任务 7 天过期、每会话上限 50 个、widget 显示下次倒计时。
+定时任务扩展（精简版，参考 Claude Code `/loop`）：固定间隔循环 + 每天定时循环 + 每日时间窗口循环 + 一次性提醒 + 后台 agent 模式。到期任务经 `deliverAs: "followUp"` 在回合间送达——agent 空闲则开新 turn，正在响应则排队到当前 turn 结束；错过的时间点不补跑。任务以全量快照持久化为会话条目（`loop-tasks-v1`，不进 LLM 上下文），随会话恢复；重复任务 7 天过期、每会话上限 50 个、widget 显示下次倒计时（按对齐秒节拍刷新，文本无变化时跳过重绘）。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -343,7 +343,7 @@ daily/window 调度与固定间隔共用同一套语义：错过的时间点不�
 ```bash
 cd loop
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
-npm test           # 182 个测试（node:test）
+npm test           # 192 个测试（node:test）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 
@@ -353,6 +353,7 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 
 - `/goal` 查看状态（目标/已评估轮数/时长/评估器最近判定）；`/goal clear|stop|off|reset|none|cancel` 停止；`/goal resume` 在手动中断或评估器连续失败暂停后恢复
 - 每会话一个活跃目标，条件最长 4000 字符；恢复会话时目标保留但轮数/计时重置；不改变任何工具权限语义
+- 状态行「已运行」时长在目标活动/暂停期间每秒刷新（对齐秒节拍，与计时/循环状态条同帧）
 - 手动中断（Esc）自动暂停；评估器连续 3 次失败暂停（瞬时失败不杀循环）
 
 效果示意（终端状态行，实测格式）：
@@ -363,7 +364,7 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 
 ```bash
-node --experimental-strip-types --test goal/index.test.ts   # 44 个测试
+node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts   # 60 个测试
 ```
 
 ---
@@ -437,7 +438,7 @@ node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测�
 - **跨扩展契约** — 状态文件与 fail-closed 口径见 `docs/cross/solo-approval-gate.md`（pwr / opencode-bridge / deep-init 各一份同构 `solo-gate.ts` 只读实现）
 
 ```bash
-node --experimental-strip-types --test solo-mode/index.test.ts   # 11 个测试
+node --experimental-strip-types --test solo-mode/index.test.ts   # 12 个测试
 ```
 
 ---

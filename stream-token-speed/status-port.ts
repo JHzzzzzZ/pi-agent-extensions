@@ -2,7 +2,8 @@
  * TUI 状态端口：对 ctx.ui.setStatus 的薄封装，负责可用性检查、样式与异常隔离。
  *
  * 契约见 JHL-10-Design-v2.md §4：
- * - 固定状态键 "stream-token-speed"；
+ * - 固定状态键 "50:stream-token-speed"（`50:` 为 footer 排序带，见
+ *   docs/cross/status-bar.md）；
  * - available() === false 时跳过渲染；
  * - setStatus 抛出的异常必须在端口内部捕获，不得影响 pi 的消息流。
  *
@@ -12,12 +13,12 @@
  * 一样做异常隔离——theme.fg 或 setStatus 任一抛错都不影响度量流程。
  */
 
+export const STATUS_KEY = "50:stream-token-speed" as const;
+
 export interface StatusPort {
   available(): boolean;
-  setStatus(key: "stream-token-speed", text: string | undefined): void;
+  setStatus(key: typeof STATUS_KEY, text: string | undefined): void;
 }
-
-export const STATUS_KEY = "stream-token-speed" as const;
 
 export interface UiLike {
   setStatus(key: string, text: string | undefined): void;

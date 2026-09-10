@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { startAlignedTicker } from "./aligned-ticker.ts";
 
 const WIDGET_ID = "run-timer";
 const TICK_MS = 1000;
@@ -112,14 +113,18 @@ export default function (pi: ExtensionAPI) {
     accountedTaskIds: new Set(),
   };
 
-  let tickTimer: ReturnType<typeof setInterval> | undefined;
+  let stopTicker: (() => void) | undefined;
   let savedCtx: ExtensionContext | undefined;
+  /** 上次写入的纯文本指纹：tick 驱动下内容不变就跳过 setWidget。 */
+  let lastLine: string | null = null;
 
   function flushWidget(): void {
     if (!savedCtx || !savedCtx.hasUI) return;
     try {
       const maxWidth = process.stdout.columns ?? 80;
       const line = buildDisplayLine(state, now(), maxWidth);
+      if (line === lastLine) return;
+      lastLine = line;
       savedCtx.ui.setWidget(WIDGET_ID, [savedCtx.ui.theme.fg("dim", line)]);
     } catch {
       stopWidget();
@@ -127,10 +132,11 @@ export default function (pi: ExtensionAPI) {
   }
 
   function stopWidget(): void {
-    if (tickTimer) {
-      clearInterval(tickTimer);
-      tickTimer = undefined;
+    if (stopTicker) {
+      stopTicker();
+      stopTicker = undefined;
     }
+    lastLine = null;
     if (savedCtx?.hasUI) {
       try {
         savedCtx.ui.setWidget(WIDGET_ID);
@@ -165,7 +171,7 @@ export default function (pi: ExtensionAPI) {
 
     if (ctx.hasUI) {
       flushWidget();
-      tickTimer = setInterval(() => flushWidget(), TICK_MS);
+      stopTicker = startAlignedTicker(() => flushWidget(), { intervalMs: TICK_MS });
     }
   });
 

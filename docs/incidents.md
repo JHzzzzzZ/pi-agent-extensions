@@ -67,3 +67,9 @@
 - 症状：`/login`（及 `/model`、`/settings` 等选择器）打开时，team 亮块的 widget 抢走 ↑/↓——选择器收不到键，无法选择提供方。
 - 根因：v1.8.0「widget 激活门控对齐 fleet-status」只抄了「编辑器为空」半条，漏掉前半条 `editorHasFocus()` 短路（`fleet-status.ts:701/965`）。宿主 `/login` 是 `showSelector()` 把主编辑器替换为选择器并 `setFocus(selector)`（不是 overlay），而 pi-tui 输入分发是扩展 `onTerminalInput` 监听器**先于**聚焦组件（`TuiBase.handleTerminalInput`）——widget consume 则选择器永远收不到键。
 - 教训：① 对照实现要**逐行比对，不能只抄可见条件/字面量**——"对齐完成"的判据是核心判定链一致；② 抢占式输入通道（`onTerminalInput`）必须自证"何时不该抢"：焦点归属是宿主的存在性事实（`getFocusedComponent()`/`focusedComponent` 结构判定），widget 只在焦点 = 主编辑器时介入；③ 这类宿主边界 bug 的回归测试必须走真实分发路径（`widget-focus-host.test.ts`：真 `TuiMainScreen` + 假终端 + 真 `CustomEditor`/`OAuthSelectorComponent`），纯函数单测锁不住监听器顺序。
+
+## 状态条各跑各的节拍 + 排序靠碰巧，导致逐秒换位与挤占（状态条统一会话）
+
+- 症状：run-timer 计时行与 loop 倒计时各自 `setInterval`，相位互不相关；同屏时 widget 相对顺序逐秒翻转（宿主 `setExtensionWidget` 每次 delete+set 移到底部）；footer 排序靠 key 字母序的巧合，随时加插件就变；倒计时粗粒度（>1h 只到分钟）时还每秒无意义重绘。
+- 根因：刷新节拍没有跨插件契约；widget 栈顺序依赖宿主按注册序派发但从未被锁定/断言；footer 顺序依赖字母序巧合；UI 写入无内容指纹去重。
+- 教训：跨插件「同屏时间类状态」必须显式契约化（`docs/cross/status-bar.md`）——统一对齐秒边界节拍（`aligned-ticker.ts`）+ 文本指纹跳过 + footer 两位排序带键 + 根契约测试锁定 `pi.extensions` 相对顺序与键带序；宿主 widget 保序仍需本地补丁兜底（`docs/pi-widget-order-patch.md`）。
