@@ -1,6 +1,22 @@
+# DELIVERY — PWR 合并交付包 v2.5.0（命令面统一为子命令式）
+
+> 在 v2.4.2 基础上统一命令面：13 个 `/workflows:*` 合并为单 `/workflows` + 子命令（原各 handler 逻辑不变），`/workflow` 增加 `run|delete|model` 子命令，动态 `/workflow:<name>` 注册退役（saved 调用运行时现读盘，保存/删除即时生效）。旧冒号/连字符写法不再注册（pi 无 unregisterCommand API，直接替换）。功能与安全不变量不变。
+
+## 本版变更（v2.5.0）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| /workflows 合并 | `parseWorkflowsCommand()` 路由：list/view/open/pause/resume/stop/restart/save/saved/script/approve/help + usage；无参=列表；`<runId>`/`--filter` 自由形态保留 | `src/ui/commands.ts`、`src/ui/index.ts` |
+| /workflow 子命令 | `parseWorkflowCommandRoute()`：`run <name> [args]`（仅命中已保存名才走 saved 调用，否则整段按生成任务：文档注明歧义可用 `workflow:` 前缀绕开）；`delete <name>`；`model [auto|<id>]`；`workflow:` 输入前缀不变 | `src/intent.ts`、`index.ts` |
+| 动态注册退役 | 删除 `registerSavedCommand`/`registeredCommands`/`workflow:<name>` 注册与 session_start 扫描；saved 名判定 `isSavedWorkflowName` 现读盘（信任门控同 load） | `index.ts` |
+| 文案 | help/详情 Actions/saved 列表/保存提示全部改子命令式；Usage 文案随 `parseControlArgs` 同步 | `src/ui/*` |
+| 测试（新增 6，共 412） | intent 3（run 命中/未命中回退/delete/model）+ ui-commands 3（旧 13 命令逐一对映/缺参 usage/自由形态保留）；entry 断言命令集只有 `workflow`/`workflows` | `tests/intent.test.ts`、`tests/ui-commands.test.ts`、`test/entry.test.ts` |
+
+---
+
 # DELIVERY — PWR 合并交付包 v2.4.2（会话生命周期接线）
 
-> 三项用户反馈改进：① 运行时只能看到 agent 行却看不到"它在干什么"——子 `pi --mode json` 一直在 stdout 吐完整事件流（`tool_execution_*`、`message_update`），但 runner 只解析 `message_end`/`tool_result_end` 且无实时回调；② saved workflow 无法列出，只能线下找 .js 文件；③ `/workflow:<name>` 参数必须写 JSON。安全不变量不变：trace 全部单行截断、args 仅摘要、错误静态模板，绝不透传原始工具输出（PRD §6.1）。
+> 三项用户反馈改进：① 运行时只能看到 agent 行却看不到"它在干什么"——子 `pi --mode json` 一直在 stdout 吐完整事件流（`tool_execution_*`、`message_update`），但 runner 只解析 `message_end`/`tool_result_end` 且无实时回调；② saved workflow 无法列出，只能线下找 .js 文件；③ `/workflow run <name>` 参数必须写 JSON。安全不变量不变：trace 全部单行截断、args 仅摘要、错误静态模板，绝不透传原始工具输出（PRD §6.1）。
 
 ## 本版变更（v2.4.2）
 
@@ -19,15 +35,15 @@ pwr 侧 TUI 触点与宿主 pi-tui/extension-UI 原语的代码级对照矩阵�
 | spec 透传 | `AgentRunSpec.onEvent?`（engine→runner 既有互引环上加纯类型导入）；脚本 `agent()` 白名单参数不含 onEvent，只能由 runtime 注入（安全不变量）；`PiAgentRunner.launch` 透传 | `engine/interpreter.ts`、`runner/index.ts` |
 | runtime 转发 | `dispatch()` 构造 spec 时注入 onEvent → `formatProgressLine()` 纯函数格式化（`▶ bash: npm test` / `✓ tool 尾部` / `✗ 失败` / `… 文本尾部` / `› 助手尾部`）→ `task_event` 事件（`tokens` 搭载在 message_end 行，累计 input+output）；superseded executor（generation 变更）后抑制转发 | `runtime/index.ts`、`src/ui/types.ts` |
 | UI 消费 | store `task_event` 分支更新 `agent.tokens`；`applyRuntimeView` 对无 usage 的 running 任务**保留**实时 tokens（否则 800ms 刷新清掉）；viewer `stagePageLines` 在 running agent 行下渲染最近 2 条 `└ <trace>`；widget running 行追加最新活动；`formatRunDetail` 原有 events 渲染开始有数据 | `src/ui/run-store.ts`、`src/ui/viewer.ts`、`src/ui/renderer.ts` |
-| saved workflow 列表（新命令） | `describeSavedWorkflows()`：listSavedWorkflows + 逐个 load + `readMetaFromSource()`（JSON.parse meta 字面量，不跑引擎）→ `{ name, scope, description, version, argsHint }`（项目 scope 排前标注 shadows user）；`/workflows:saved` 命令；`/workflow-delete` 无参时列同一列表；`/workflow:<name>` 命令描述附 argsSchema 派生的静态参数提示（`files=string[] depth?=number`） | `src/save.ts`、`src/args.ts`（argsSchemaHint）、`src/ui/views.ts`、`src/ui/index.ts`、`index.ts` |
+| saved workflow 列表（新命令） | `describeSavedWorkflows()`：listSavedWorkflows + 逐个 load + `readMetaFromSource()`（JSON.parse meta 字面量，不跑引擎）→ `{ name, scope, description, version, argsHint }`（项目 scope 排前标注 shadows user）；`/workflows saved` 命令；`/workflow delete` 无参时列同一列表；`/workflow run <name>` 命令描述附 argsSchema 派生的静态参数提示（`files=string[] depth?=number`） | `src/save.ts`、`src/args.ts`（argsSchemaHint）、`src/ui/views.ts`、`src/ui/index.ts`、`index.ts` |
 | key=value 参数（新语法） | `parseCommandArgsSmart(raw, schema)`：空 → undefined；`{`/`[` 开头走原 JSON 路径（完全兼容）；否则引号感知分词解析 `key=value`——number/integer/boolean 按 schema 强转、重复键累积数组、array 属性接受 `key=a,b`、布尔属性裸键 = true、引号值保留空格；仅一个必填 string/array\<string\> 属性时整段文本位置填入；失败 → ARGS_INVALID（静态模板 + 语法示例，不回显原文，PRD §6.2）；结果仍走 `validateArgsAgainstSchema`，校验行为不变；ARGS_INVALID 文案更新为双语法示例 | `src/args.ts`、`src/save.ts`、`src/errors.ts` |
 | 测试（新增 25，共 405） | runner trace 8（工具事件解析/审计累积/节流注入时钟/message_end 尾部/观察者异常隔离/textTail/summarizeArgs/PiAgentRunner 透传）、runtime 2（dispatch 转发 task_event+tokens/generation 守卫）、store 2（task_event trace+实时 tokens/applyRuntimeView 保留）、viewer 1（running 行 trace 渲染）、args 8（smart 解析全路径/位置糖/hint）、save 4（kv 调用/非法输入不建 run/readMeta/describeSaved） | `runner/test/trace.test.ts`（新）、`runtime/test/runtime.test.ts`、`tests/ui-run-store.test.ts`、`tests/ui-viewer.test.ts`、`tests/args.test.ts`、`tests/save.test.ts` |
 
 ## v2.3.0 及之前版本
 
-# DELIVERY — PWR 合并交付包 v2.3.0（JHL-18：/workflows:view 全屏运行查看器 + 脚本结构图）
+# DELIVERY — PWR 合并交付包 v2.3.0（JHL-18：/workflows view 全屏运行查看器 + 脚本结构图）
 
-> 在 v2.2.0 基础上新增 JHL-18「全屏运行状态查看器」：`/workflows:view [runId]` 以捕获式 overlay 打开全屏边框页——第一页是脚本结构树图（agent/pipeline/parallel 嵌套 + 实时状态叠加），随后每个运行时 stage 一页，末尾是最终结果页与脚本源码页。运行中每 800ms 拉取 `runtime.view()` 快照实时刷新；重启后 rehydrated 的 run 以纯 store 快照冻结可看。参考同工作区 agent-team 扩展的 `/team:view` 模式（手绘边框、Component 注入端口、纯函数 key reducer）。
+> 在 v2.2.0 基础上新增 JHL-18「全屏运行状态查看器」：`/workflows view [runId]` 以捕获式 overlay 打开全屏边框页——第一页是脚本结构树图（agent/pipeline/parallel 嵌套 + 实时状态叠加），随后每个运行时 stage 一页，末尾是最终结果页与脚本源码页。运行中每 800ms 拉取 `runtime.view()` 快照实时刷新；重启后 rehydrated 的 run 以纯 store 快照冻结可看。参考同工作区 agent-team 扩展的 `/team view` 模式（手绘边框、Component 注入端口、纯函数 key reducer）。
 
 ## 本版变更（v2.3.0）
 
@@ -37,7 +53,7 @@ pwr 侧 TUI 触点与宿主 pi-tui/extension-UI 原语的代码级对照矩阵�
 | 脚本结构图（新功能） | `extractPlan` 增量构建结构树（span 包含关系：父 = 最小包含容器；扁平 stages 不变）；树形渲染 `├─ └─` + 状态图标（▶✓✗⊘⏸⋅）+ kind 徽标（pipeline ×N≈/✎write）+ 实时进度 n/m + ⚡cache；**按 label 精确关联** plan↔运行时 stage，synthesized 节点（未标注调用）只做静态展示、未匹配的运行时 stage 进「未标注/动态派发」尾部分组；容器状态由子节点 rollup（镜像 deriveStageStatus 优先级） | `src/plan.ts`、`src/types.ts`（PlanNode/WorkflowPlan.tree）、`src/ui/diagram.ts` |
 | 查看器供数 | `MemoryRunStore.applyRuntimeView()`：全量合并 runtime 富视图（stages 状态/耗时/usage、tasks 摘要/attempt/错误/⚡cacheHit），totals 按 tasks **重算**（事件通道与 apply 路径不双计）；`UiRuntimeAdapter` 增加可选 `view()/list()` 端口（结构化满足，无运行时环）；runtime 不可用或 run 未知（重启后）退化为 store 快照 | `src/ui/run-store.ts`、`src/ui/types.ts` |
 | cache 命中可见性 | `AgentTask.cacheHit` 标记：`recordCacheHit` 两个分支置 true（真实重派发时清除）；持久化 entry tasks 与 store 恢复均带该字段 | `runtime/types.ts`、`runtime/index.ts`、`src/ui/types.ts`、`src/ui/run-store.ts` |
-| 命令与菜单 | `/workflows:view [runId]`（默认 lastViewed ?? 最近非终态 run；TUI/custom overlay 不可用时 notify 降级）；`/workflows` 详情菜单首项「View live (full-screen)」；help 文本与详情 Actions 补充条目 | `src/ui/index.ts`、`src/ui/commands.ts`、`src/ui/views.ts` |
+| 命令与菜单 | `/workflows view [runId]`（默认 lastViewed ?? 最近非终态 run；TUI/custom overlay 不可用时 notify 降级）；`/workflows` 详情菜单首项「View live (full-screen)」；help 文本与详情 Actions 补充条目 | `src/ui/index.ts`、`src/ui/commands.ts`、`src/ui/views.ts` |
 | 测试（新增 24，共 380） | ui-diagram 7（树提取/合成 label/label 关联/rollup/平铺退化/渲染/未匹配桶）、ui-viewer 13（帧形状正则/页面装配/四类页面体/key reducer 全键/clamp）、ui-run-store +5（applyRuntimeView 合并与幂等/cacheHit 恢复/plan 暴露）、runtime cache 命中标记断言、entry 命令注册 | `tests/ui-*.test.ts`、`runtime/test/runtime.test.ts`、`test/entry.test.ts` |
 
 ## v2.2.0 之前版本
@@ -51,10 +67,10 @@ pwr 侧 TUI 触点与宿主 pi-tui/extension-UI 原语的代码级对照矩阵�
 | 模块 | 变更 | 位置 |
 | --- | --- | --- |
 | 逐调用模型（新功能） | `agent(prompt, { model })` DSL 选项接线：解释器校验并透传 `AgentRunSpec.model`，runner 单点解析 `agent.model ?? spec.model ?? defaultModel`（定义钉 > 逐调用 > PWR 默认 > 子 pi 默认），`--model` 仅在非空时下发 | `engine/interpreter.ts`、`runner/index.ts` |
-| 删除保存的工作流（新命令） | `deleteSavedWorkflow()`（项目范围优先、可信门控、用户范围兜底，镜像 load 解析）；新增错误码 `DELETE_IO_ERROR`；`/workflow-delete <name>` 命令；已注册命令在 `/reload` 前保留并报 `WORKFLOW_NOT_FOUND`（pi 无 unregisterCommand API，不实现） | `src/save.ts`、`src/errors.ts`、`index.ts` |
+| 删除保存的工作流（新命令） | `deleteSavedWorkflow()`（项目范围优先、可信门控、用户范围兜底，镜像 load 解析）；新增错误码 `DELETE_IO_ERROR`；`/workflow delete <name>` 命令；已注册命令在 `/reload` 前保留并报 `WORKFLOW_NOT_FOUND`（pi 无 unregisterCommand API，不实现） | `src/save.ts`、`src/errors.ts`、`index.ts` |
 | 批准卡即时弹出（修复） | `tool_result` 钩子在 `workflow_validate` 成功后立即弹卡（per-run `approvalCards` map），决策（once/remember/reject）记录供 `workflow_start` 复用——agent 不调 `workflow_start` 也必有卡；`workflow_start` 钩子先等同一 pending 决策再兜底新卡；生成约束改为「校验后调用 workflow_start」 | `index.ts`、`src/constraints.ts` |
-| 手动批准（新命令） | `/workflows:approve <runId>`：对 awaiting_approval 运行弹卡（已 remember/once 直接启动），Reject 取消、Esc 保持等待；帮助文本补充 approve/delete 条目 | `src/ui/commands.ts`、`src/ui/index.ts` |
-| 文档 | README 新增命令章节（/pwr-model 用法与模型优先级、/workflow-delete、/workflows:approve） | `README.md` |
+| 手动批准（新命令） | `/workflows approve <runId>`：对 awaiting_approval 运行弹卡（已 remember/once 直接启动），Reject 取消、Esc 保持等待；帮助文本补充 approve/delete 条目 | `src/ui/commands.ts`、`src/ui/index.ts` |
+| 文档 | README 新增命令章节（/workflow model 用法与模型优先级、/workflow delete、/workflows approve） | `README.md` |
 | 测试（新增 13） | runner 模型优先级（3 断言组）、解释器 model 透传/校验、删除 4 例、入口批准卡即时弹出、approve 命令 6 例；另将 runner「child args」与 discover「builtin scout」两例改为 hermetic（不再依赖本机真实 agent 发现） | `runner/test/`、`test/`、`tests/` |
 
 ## v2.1.1 审查修复内容（对应 Reviewer 2 Major + 1 Minor）
@@ -112,7 +128,7 @@ npm run typecheck   # tsc --noEmit（strict + erasableSyntaxOnly）：0 错误
 
 1. 将 `pwr/` 的**运行必需部分**复制到 `C:\Users\<user>\.pi\agent\extensions\pwr\`（全局）或可信项目 `.pi/extensions/pwr/`：`index.ts` + `src/` + `engine/` + `runner/` + `runtime/` + `vendor/`（不含 `test/`、`tests/`、`tsconfig.json`、`package.json`、文档 —— 目录由 `index.ts` 自动发现，package.json 无 `pi.extensions` 清单时非必需；workspace 副本保持完整含测试）；
 2. 重启 pi 或 `/reload`；
-3. 使用：`/workflow <任务>` 生成 → 批准卡 → 后台运行（runner 自动注入，child pi 执行 agent）→ `/workflows` 查看/控制 → `/workflow:<name> <args>` 复用已保存命令；
+3. 使用：`/workflow <任务>` 生成 → 批准卡 → 后台运行（runner 自动注入，child pi 执行 agent）→ `/workflows` 查看/控制 → `/workflow run <name> <args>` 复用已保存命令；
 4. 前置：本机 `pi` 命令可解析（PATH 含 pi），`~/.pi/agent/agents` 有 agent 定义（无则用内置 scout/planner/reviewer/worker）。
 
 ## 安全要点（历轮审查收敛 + 本版）

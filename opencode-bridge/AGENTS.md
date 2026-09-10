@@ -9,9 +9,7 @@
 |---|---|
 | 桥进程 | `opencode-bridge-helper.mjs`（零依赖，socket 错误/ECONNRESET 下存活，端口被占以 0 退出） |
 | 探测/派生 | `bridge.ts`（`session_start` 先探 `127.0.0.1:<port>`，多实例共享同一桥，detached+unref） |
-| settings 同步 | `index.ts` `/opencode-bridge-sync`（人工确认，仅增/删 `httpProxy`，余字段不动） |
-| 恢复 | `/opencode-bridge-restore`（备选列表恢复，恢复前再备一份当前配置） |
-| 状态 | `/opencode-bridge` 状态命令 |
+| 命令面 | 单 `/opencode-bridge` 命令 + 子命令：无参=状态、`sync [port]`（人工确认，仅增/删 `httpProxy`，余字段不动）、`restore`（备选列表恢复，恢复前再备一份当前配置） |
 | 端口配置 | `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT` |
 
 ## CONVENTIONS
@@ -29,5 +27,5 @@
 
 ## COMMANDS
 ```bash
-cd opencode-bridge && npm install && npm test   # 70 测试；另有 npm run typecheck
+cd opencode-bridge && npm install && npm test   # 109 测试；另有 npm run typecheck
 ```

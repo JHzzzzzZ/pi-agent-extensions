@@ -28,9 +28,9 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
   - 用户范围：`~/.pi/agent/workflows/<name>.js`（当前用户全部项目）
   - 项目范围：`<项目>/.pi/workflows/<name>.js`（**仅可信项目**；未受信任返回 `PROJECT_NOT_TRUSTED` 且不写入）
 - 同名冲突：目标文件已存在且未传 `overwrite: true` → `NAME_CONFLICT`；显式确认后可覆盖
-- 保存成功后注册 `/workflow:<name>` 命令；**会话启动时扫描两个目录重新注册**，重启后命令仍可用
+- 保存成功后无需注册命令：`/workflow run <name> [args]` 子命令在调用时**现读盘**（项目优先），保存/删除/覆盖即时生效（v2.5.0 起动态 `workflow:<name>` 注册退役）
 
-### 加载与参数（`/workflow:<name> <args>`）
+### 加载与参数（`/workflow run <name> [args]`）
 - 加载顺序：项目脚本优先于同名全局脚本（可信项目）；未受信任项目跳过项目目录、回退全局
 - 参数解析（v2.4.0 双语法）：空参数 → `args` 为 `undefined`；`{`/`[` 开头按 JSON 解析（对象/数组/标量）；其余按 **`key=value`** 解析——数字/布尔按 schema 自动转类型、重复键或逗号分隔累积为数组、布尔属性裸键为 `true`、引号保留空格；仅一个必填 string/array 属性时整段文本按位置填入；两种语法都失败 → `ARGS_INVALID`（静态模板，不回显原文）且**不启动**
 - 脚本通过 `meta.argsSchema` 声明参数 schema（JSON-schema 子集：type/properties/required/items/enum/min/max），非法参数返回 `ARGS_SCHEMA_VIOLATION` 且**不创建运行**
@@ -38,7 +38,7 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 
 ### 批准记忆（复用 JHL-16 ApprovalStore）
 - 批准键 = **项目 canonical path + script digest**；保存命令的启动同样走该记忆
-- 已记住的脚本被编辑（digest 变化）→ 再次调用 `/workflow:<name>` 时**必须重新批准**（重新展示批准卡），批准记录以新 digest 落库
+- 已记住的脚本被编辑（digest 变化）→ 再次调用 `/workflow run <name>` 时**必须重新批准**（重新展示批准卡），批准记录以新 digest 落库
 
 ### 覆盖确认（`NAME_CONFLICT` 处理）
 - 重名保存返回 `NAME_CONFLICT`（不覆盖任何现有文件）；工具契约新增可选 `overwrite: boolean`，确认后替换
@@ -51,28 +51,28 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 
 ## 命令
 
-### 工作流默认模型（`/pwr-model`）
-- `/pwr-model`（无参数）显示当前配置：`auto (follow main session)` / 固定模型 id / 生效模型
-- `/pwr-model auto`：跟随主会话当前模型（`model_select` 事件实时同步，运行中切换也生效）
-- `/pwr-model <model-id>`：固定模型 id（需是子 pi 可解析的 id，见 `pi --list-models`）
-- **模型优先级**：agent 定义 frontmatter 的 `model:` > 脚本 `agent(..., { model })` 逐调用覆盖 > `/pwr-model` 默认 > 子 pi 自身配置（settings.json）
+### 工作流默认模型（`/workflow model`）
+- `/workflow model`（无参数）显示当前配置：`auto (follow main session)` / 固定模型 id / 生效模型
+- `/workflow model auto`：跟随主会话当前模型（`model_select` 事件实时同步，运行中切换也生效）
+- `/workflow model <model-id>`：固定模型 id（需是子 pi 可解析的 id，见 `pi --list-models`）
+- **模型优先级**：agent 定义 frontmatter 的 `model:` > 脚本 `agent(..., { model })` 逐调用覆盖 > `/workflow model` 默认 > 子 pi 自身配置（settings.json）
 - 内置 scout/planner/reviewer/worker 定义了 model 钉住（claude-haiku-4-5 / claude-sonnet-4-5），故默认模型对它们不生效；用户自己的 agent 无 model frontmatter 时默认模型生效
 
-### 已保存工作流列表（`/workflows:saved`，v2.4.0）
-- 列出全部已保存工作流：`/workflow:<name> [scope] — 描述 · args: <用法提示>`（项目范围排前并标注 shadows user）；args 提示由 `meta.argsSchema` 派生（如 `files=string[] depth?=integer`）
-- `/workflow-delete` **不带名称**时输出同一列表 + 用法行
+### 已保存工作流列表（`/workflows saved`，v2.4.0）
+- 列出全部已保存工作流：`/workflow run <name> — 描述 · args: <用法提示>`（项目范围排前并标注 shadows user）；args 提示由 `meta.argsSchema` 派生（如 `files=string[] depth?=integer`）
+- `/workflow delete` **不带名称**时输出同一列表 + 用法行
 
-### 删除保存的工作流（`/workflow-delete <name>`）
+### 删除保存的工作流（`/workflow delete <name>`）
 - 删除顺序与加载一致：项目范围文件优先（仅可信项目），否则用户范围；返回 `Deleted workflow "<name>" (project|user scope)`
 - 文件不存在或名字非法 → `WORKFLOW_NOT_FOUND`；文件系统错误 → `DELETE_IO_ERROR`
-- 已注册的 `/workflow:<name>` 命令在 `/reload` 前仍保留，调用时报告 `WORKFLOW_NOT_FOUND`（pi 无 unregisterCommand API）
+- 删除后立即生效：`/workflow run <name>` 调用时现读盘，无需 `/reload`（v2.5.0 起无动态命令注册）
 
-### 手动批准（`/workflows:approve <runId>`）
+### 手动批准（`/workflows approve <runId>`）
 - 对停在 `awaiting_approval` 的运行重新展示批准卡；Run once / Remember 后启动该运行
 - 已 remember 或已 once 批准的直接启动（不再弹卡）；Reject 取消运行；Esc 保持等待
 - 批准卡在 `workflow_validate` 成功后立即弹出（无需等 agent 调用 `workflow_start`）；生成约束已指示 agent 校验后调用 `workflow_start { runId, approval: 'once' }`
 
-### 全屏运行查看器（`/workflows:view [runId]`）
+### 全屏运行查看器（`/workflows view [runId]`）
 - 以全屏边框页（捕获式 overlay，约 82% 终端高度）实时查看一个流程的运行状态；不传 runId 时默认查看最近查看过 / 最近活跃的运行
 - **第一页「结构」是脚本结构图**：`agent / pipeline / parallel` 调用树（├─ └─ 连接符）+ 每个节点实时状态（▶ 运行 ✓ 完成 ✗ 失败 ⊘ 排队 ⋅ 未开始）+ 进度 `n/m` + 耗时/tokens；带 `label` 的调用与运行时 stage 精确关联，未标注调用静态展示、其实际派发进「未标注/动态派发」分组
 - 之后**每个 stage 一页**：任务表（状态 · taskId · attempt · ⚡cache 命中 · tokens · 耗时 · 错误码）+ 失败详情 + 最近结果摘要；**运行中 agent 行下方实时滚动最近活动 trace**（工具步骤/文本尾部，v2.4.0）；末两页为**最终结果**与**脚本源码**（只读；历史会话的 run 不保留源码）
@@ -105,15 +105,15 @@ pwr/
 │   ├── intent.ts          # /workflow 与 workflow: 前缀解析
 │   ├── notify.ts          # 按 runId 隔离的结果回传（RunNotifier；成功/失败 settle 后 followUp 唤起主 agent）
 │   ├── plan.ts            # AST 调用节点阶段聚合/预算/写入风险 + 结构树（JHL-18）
-│   ├── save.ts            # JHL-17：保存/加载/命令注册扫描/调用编排（saveWorkflowCommand/loadSavedWorkflow/invokeSavedWorkflow）
+│   ├── save.ts            # JHL-17：保存/加载/现读盘调用编排（saveWorkflowCommand/loadSavedWorkflow/invokeSavedWorkflow）
 │   ├── tools.ts           # Pi 工具定义（workflow_save 增加 overwrite 参数）
 │   ├── types.ts           # 共享契约类型与常量（WorkflowMeta.argsSchema）
 │   └── ui/                # JHL-15/JHL-18 宿主无关 UI 层
-│       ├── index.ts       # /workflows* 命令、快捷键、widget/entry renderer 接线（含 /workflows:view）
+│       ├── index.ts       # /workflows 子命令路由（旧 /workflows:* 合并）、快捷键、widget/entry renderer 接线（含 /workflows view）
 │       ├── run-store.ts   # MemoryRunStore（事件 reducer + applyRuntimeView 快照合并）
 │       ├── views.ts       # 纯文本视图（列表/详情/卡片）
 │       ├── diagram.ts     # 脚本结构图（label 关联 + 容器 rollup + 树形渲染）
-│       ├── viewer.ts      # /workflows:view 全屏查看器（Component 注入端口 + 纯函数渲染/按键）
+│       ├── viewer.ts      # /workflows view 全屏查看器（Component 注入端口 + 纯函数渲染/按键）
 │       └── text.ts        # ANSI/CJK 宽度辅助（边框精确填充）
 ├── test/                  # 引擎/入口契约单测（100 个）+ helpers/perf 门禁
 └── tests/                 # 流程/引擎/UI 套件单测（189 个用例）
@@ -124,7 +124,7 @@ pwr/
 ```powershell
 cd pwr
 npm install        # 仅开发依赖（typescript、@types/node、typebox、pi 宿主类型）
-npm test           # 406 个单测（test/ 101 + tests/ 204 + runtime/test/ 56 + runner/test/ 45）
+npm test           # 412 个单测（test/ 101 + tests/ 210 + runtime/test/ 56 + runner/test/ 45）
 npm run typecheck  # tsc --noEmit（strict）
 ```
 
@@ -135,14 +135,14 @@ npm run typecheck  # tsc --noEmit（strict）
 ```text
 # 保存：主 agent 完成 workflow_validate 后调用工具
 workflow_save { runId, scope: 'user', name: 'audit-routes' }
-→ Saved as /workflow:audit-routes (user)
+→ Saved as /workflow run audit-routes (user)
 
 # 调用（key=value 或 JSON；脚本内以 args 全局读取）
-/workflow:audit-routes files=src/routes depth=2
-/workflow:audit-routes {"files": ["src/routes"], "depth": 2}
+/workflow run audit-routes files=src/routes depth=2
+/workflow run audit-routes {"files": ["src/routes"], "depth": 2}
 
 # 查看已保存的工作流
-/workflows:saved
+/workflows saved
 
 # 重名保存需确认
 workflow_save { runId, scope: 'project', name: 'audit-routes' }   # NAME_CONFLICT
@@ -177,9 +177,9 @@ export const meta = {
 
 | 接口 | 位置 | 说明 |
 | --- | --- | --- |
-| `SaveAdapter.save({ runId, scope, name, overwrite? })` | `src/flow.ts` | 由 index.ts 接 `saveWorkflowCommand`（自动补齐 meta + 校验 + 注册命令） |
-| `invokeSavedWorkflow(deps, { name, rawArgs }, approve)` | `src/save.ts` | `/workflow:<name>` 调用编排；approve 回调由 index.ts 接批准卡 |
-| `listSavedWorkflows(deps)` / `describeSavedWorkflows(deps)` | `src/save.ts` | session_start 扫描注册命令；`/workflows:saved` 列表（scope/描述/args 提示） |
+| `SaveAdapter.save({ runId, scope, name, overwrite? })` | `src/flow.ts` | 由 index.ts 接 `saveWorkflowCommand`（自动补齐 meta + 校验 + 落盘） |
+| `invokeSavedWorkflow(deps, { name, rawArgs }, approve)` | `src/save.ts` | `/workflow run <name>` 调用编排；approve 回调由 index.ts 接批准卡 |
+| `listSavedWorkflows(deps)` / `describeSavedWorkflows(deps)` | `src/save.ts` | `/workflow run` 的 saved 名判定（现读盘）；`/workflows saved` 列表（scope/描述/args 提示） |
 | `RuntimeAdapter.start({ runId, script, args?, onFinalResult })` | `src/types.ts` | args 经 run 传入解释器 `args` 全局 |
 | `ApprovalStore`（canonical path + digest） | `src/approval.ts` | 保存命令复用同一批准记忆 |
 
