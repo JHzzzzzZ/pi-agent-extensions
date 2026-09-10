@@ -145,7 +145,7 @@ export async function validateWorkflow(
 
 	// PRD §5.5 args source-of-truth rule: a script-declared `meta.argsSchema`
 	// (engine-validated) is AUTHORITATIVE for argument validation — it must
-	// survive validate -> save so /workflow run <name> rejects violating args.
+	// survive validate -> save so /workflow:run <name> rejects violating args.
 	// The tool's `argsSchema` parameter is a fallback used only when the
 	// script declares none; a script-declared schema is never silently
 	// dropped or overridden.
@@ -229,7 +229,7 @@ export async function startWorkflow(
 		const started = await deps.runtime.start({
 			runId,
 			script,
-			// JHL-17: structured args (schema-validated at /workflow run <name>)
+			// JHL-17: structured args (schema-validated at /workflow:run <name>)
 			// reach the interpreter's `args` global through the run.
 			args: run.args,
 			// JHL-13 contract: the runtime calls this exactly once, with the

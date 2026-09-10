@@ -10,14 +10,14 @@
  *   PI_BRIDGE_SOCKS_HOST  上游 SOCKS5 主机，默认 127.0.0.1
  *   PI_BRIDGE_SOCKS_PORT  上游 SOCKS5 端口，默认 10808（v2rayN 默认值）
  *
- * settings.json httpProxy 同步（v1.2.0）：不再自动修改。由 /opencode-bridge sync
+ * settings.json httpProxy 同步（v1.2.0）：不再自动修改。由 /opencode-bridge:sync
  *   斜杠命令手动触发，先 plan（只读）给出将要做的事，经 ctx.ui.confirm 人工
  *   确认后才 apply（写前把原文件原文备份到 settings.json.bak-opencode-bridge-*）；
  *   仅增/删 httpProxy 字段，其余配置原样保留。
- *   恢复（v1.3.0）：/opencode-bridge restore 从备份中选择恢复，恢复前同样
+ *   恢复（v1.3.0）：/opencode-bridge:restore 从备份中选择恢复，恢复前同样
  *   先把当前配置备份一份，保证恢复操作本身可撤销。
  *
- * 端口自定义（v1.4.0）：/opencode-bridge sync 支持直接跟端口或交互式询问，
+ * 端口自定义（v1.4.0）：/opencode-bridge:sync 支持直接跟端口或交互式询问，
  *   端口持久化到 settings.json 同目录 opencode-bridge.json（仅 {"bridgePort": N}）；
  *   生效优先级 参数 > 环境变量 > 配置文件 > 默认值；改端口后经指纹确认自动
  *   停旧桥、起新桥，httpProxy 联动，一次确认覆盖全部落盘动作（fail-closed）。

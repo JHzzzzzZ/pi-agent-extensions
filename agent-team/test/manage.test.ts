@@ -57,7 +57,7 @@ test("team_create writes a valid team file and returns a reuse summary", async (
   const result = await tool.execute("id", CREATE_PARAMS, undefined, undefined, fakeCtx("/repo"));
   assert.equal(result.isError, undefined);
   assert.match(result.content[0].text, /\*\*dev-team\*\*/);
-  assert.match(result.content[0].text, /team run dev-team/);
+  assert.match(result.content[0].text, /team:run dev-team/);
   const filePath = path.join(globalDir, "dev-team.md");
   assert.equal(fs.existsSync(filePath), true);
   const content = fs.readFileSync(filePath, "utf-8");

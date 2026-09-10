@@ -61,7 +61,7 @@
     - 按键沿用已对齐的 `editorHasFocus`/空编辑器门控；`enter` 映射到现有 `/team view`（agent-team 无 inspector）。
   - 仍待实现时定：逐成员行/树/滚动/展开；spinner 与身份色是否照搬；组件工厂式渲染 vs 保持 string[]（硬约束①先证残影）；`/team clear` 命令去留。
   - 验收思路：真机（派单看状态条渲染/动画/按键）+ 真实宿主测试（复用 `viewer-host.test.ts` / `widget-focus-host.test.ts` 的 TuiMainScreen 仿真路径）+ 全量测试/typecheck 绿。
-- [ ] `/team` 帮助与命令编排合理性：统一路由后仍无 `help` 子命令（帮助只靠命令面板 description + 出错 usage），且 `/team help` 会被当作团队名（无任务时提示 `用法：/team help <任务描述>`，若有同名团队则直接派单）——与 `/workflows help` 不对称，`help` 也未进保留词。待办：给 `/team` 增加 `help` 子命令（列全部子命令 + 用法 + 撞保留词的显式 `run` 规则），把 `help` 纳入 `RESERVED_TEAM_COMMAND_NAMES`；顺带复核无参行为（列团队 vs 显示帮助）、子命令命名/顺序与 `getArgumentCompletions` 补全。细节待定，未领取。
+- [x] `/team` 帮助与命令编排合理性（完成 2026-09-14 @ 命令面冒号化）：原问题（`/team help` 被当作团队名、与 `/workflows help` 不对称、`help` 未进保留词）随 v1.12.0 冒号化消失——裸 `/team` 任何带参输入（含 `help`）都显示完整用法（列出全部 `/team:*` 命令与用法），参数路由与 `RESERVED_TEAM_COMMAND_NAMES` 保留词概念整体退役；命令面固定为 list/run/status/stop/view/clear/doctor，`getArgumentCompletions` 不再参与（本插件无子命令补全）。独立 `help` 子命令不再必要；若后续仍要，可在冒号面上加 `/team:help`（本条目已关闭，需要时重开）。
 - [x] widget 默认态太丑：亮块常显 2-3 行，需按 pi-subagents fleet-status 折叠——默认只留一行小提示，按 `↓`/`←` 才展开（用户 2026-09-10 截图反馈；完成 2026-09-14 @ merge 073d66b，agent-team 1.11.0 / 307 测试）
   - 现象：只要存在 run（running 或终态），输入栏下方就常驻多行亮块（头行 `agent-team … status…` + `任务: …`，失败再加 `✗ …`），选中态再多一行提示——占地方且与 fleet-status 的紧凑观感不一致；用户原话「这一块非常丑」。
   - 截图实读（`C:/Users/12967/AppData/Local/Temp/pi-clipboard-798090fd-79fa-4ff4-8dde-93492ee5383f.png`，临时路径，实现时先拷进 `agent-team/docs/assets/` 存档再引用）——选中态共 4 个显示行：
@@ -79,9 +79,9 @@
   - 验收：默认态只占 1 行且含激活提示；`↓`/`←` 展开出现 rows + 提示行；`esc` 收起回折叠；选择器/对话框场景不抢键；widget 纯函数测试 + 真宿主路径（`widget-focus-host.test.ts` 的 TuiMainScreen 仿真）锁定；全量测试 + typecheck 绿；真机截图复核。
 - [ ] 真正并发跑多个 team run（未领取）
   - 需求（用户 2026-09-10）：一个会话里可同时运行多个 team，各自 leader/成员子进程并行推进（当前第二个派单会被拒）。
-  - 现状差距：`TeamRunCoordinator` 单 active（`this.active`/`this.pending` 各一个句柄），第二个 `/team run` 直接返回 `RUN_IN_PROGRESS`；只保留 `lastRecord` 一条终态；`getStatus()` 返回单个 `RunStatusSnapshot`；widget 取单快照。`team_stop`/`stopAndSettle` 虽按 runId 对外暴露，但内部只有这一个句柄。
-  - 改动要点（实现时定）：多 run registry（Map<runId, controller/pending/progress/record>）；按 runId 的 status/stop/settle/预算独立；runstore 已按 runId 落盘，`session_start` reconcile 需处理多条残留；跨 run 的总并发上限与子进程资源（成员 4 并发是单 dispatch 协议上限，需另定）；报告 followUp 交错；`/team status`、`team_status`、viewer 选中 run 的定位；`RUN_IN_PROGRESS` 契约去留（保留为并发上限？改为可配？）；`team_stop` 省略 runId 的行为待重定。
-  - 依赖/关系：与「widget 展开态改 team + 成员树」配套（多 team 行才有真实数据源）；`/team clear`、终态常驻与水合语义需随之重定。
+  - 现状差距：`TeamRunCoordinator` 单 active（`this.active`/`this.pending` 各一个句柄），第二个 `/team:run` 直接返回 `RUN_IN_PROGRESS`；只保留 `lastRecord` 一条终态；`getStatus()` 返回单个 `RunStatusSnapshot`；widget 取单快照。`team_stop`/`stopAndSettle` 虽按 runId 对外暴露，但内部只有这一个句柄。
+  - 改动要点（实现时定）：多 run registry（Map<runId, controller/pending/progress/record>）；按 runId 的 status/stop/settle/预算独立；runstore 已按 runId 落盘，`session_start` reconcile 需处理多条残留；跨 run 的总并发上限与子进程资源（成员 4 并发是单 dispatch 协议上限，需另定）；报告 followUp 交错；`/team:status`、`team_status`、viewer 选中 run 的定位；`RUN_IN_PROGRESS` 契约去留（保留为并发上限？改为可配？）；`team_stop` 省略 runId 的行为待重定。
+  - 依赖/关系：与「widget 展开态改 team + 成员树」配套（多 team 行才有真实数据源）；`/team:clear`、终态常驻与水合语义需随之重定。
 - [ ] widget 展开态改 team + 成员树（未领取）
   - 需求（用户 2026-09-10）：展开不再只是「状态行 + 任务行」，显示 team 与 teammate 的行；多 team 时用树形层级。
   - 树形格式（用户给定；`main` = 主 agent 对话框，即根节点；每个 team 一个 leader 节点，`|-` 下为其成员）：
@@ -96,5 +96,5 @@
   - 事实前提：一个会话可定义/保存任意多个 team，但**当前同时只能跑一个 run**（见上一条；多 team 行需等真并发或历史保留）；协调器仅保留 `lastRecord` 一条终态。
   - 可行性：active 的 `progress.members[]`（name/status/note/latest）与终态 `record.members[]`（status/model/usage/summary）数据齐备；`WidgetRowSpec.actor` 已支持逐行 actor，`enter` 可直达查看器对应成员（`handleWidgetKey` → `onConfirm(actor)` 现成接线）。
   - 实现时定：`main` 行显示什么（主 agent 活动文本？可否 `enter` 进入？）；单 team 时是否也保留 `main`/`leader` 层级；任务行去留；折叠态是否显示活跃 team 数；树连接符/缩进/窄宽度退化；行光标与 `enter` 的 actor 映射；与「状态条对齐 pi-subagents fleet-status」条目的「逐成员行/树/滚动/展开」一并决策；组件工厂式渲染硬约束（`tui-sync.md` §3.1 残影教训）仍适用（先证残影再考虑换渲染路径）。
-- [ ] 命令面改冒号形式（跨插件，全量任务一部分）：`/team run|status|stop|view|clear|doctor` → `/team:run` 等；`/team <团队名> <任务>` 参数路由去留与保留字冲突（团队名撞 `run` 等）待定。全量清单与待定项见 `todos/commands-colon-todo.md`。（processing）
+- [x] 命令面改冒号形式（跨插件，全量任务一部分）：`/team run|status|stop|view|clear|doctor` → `/team:run` 等；`/team <团队名> <任务>` 参数路由去留与保留字冲突（团队名撞 `run` 等）待定。全量清单与待定项见 `todos/commands-colon-todo.md`。（完成 2026-09-14 @ feat/commands-colon：agent-team v1.12.0——裸 `/team` 仅保留无参=列团队/带参=用法，新增 `/team:list` 冒号副本，`/team:run|:status|:stop|:view|:clear|:doctor` 各自独立静态注册；参数路由与 `RESERVED_TEAM_COMMAND_NAMES` 保留词整体退役，团队名可与子命令同名；旧词只提示改名。309 测试 + typecheck 绿；真实 pi loader 冒烟通过）
 - [ ] 上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件下方亮块（belowEditor 独立栈）与 cockpit 进度 ticker 直接受影响。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。（processing 2026-09-10 @ route A：材料已备，待提交上游）

@@ -1,6 +1,6 @@
 # solo 审批门 — 跨扩展契约（solo-mode ↔ 审批方）
 
-> last verified @ a03e525
+> last verified @ 4ef27b6
 
 solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/solo` 开启后，**审批摩擦类**确认自动按批准路径通过。本卡是唯一语义事实来源——读者（pwr / opencode-bridge / deep-init 各一份 `solo-gate.ts`）与写者（solo-mode）都必须符合本卡。
 
@@ -29,11 +29,11 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 
 | 采纳方 | 自动批准的门 | 口径 |
 | --- | --- | --- |
-| pwr | 批准卡（`workflow_validate` 弹卡点）、`workflow_start` 门控、已保存命令 `/workflow run <name>` | **只产生 once 批准，绝不写 remembered 记录**；solo 关闭后既有 remembered 批准不受影响 |
+| pwr | 批准卡（`workflow_validate` 弹卡点）、`workflow_start` 门控、已保存命令 `/workflow:run <name>` | **只产生 once 批准，绝不写 remembered 记录**；solo 关闭后既有 remembered 批准不受影响 |
 | opencode-bridge | sync 确认、端口切换确认、restore 的选择 + 确认 | restore 自动选最新备份（列表本就"最新在前"）；备份链与指纹门控不变 |
 | deep-init | `--create-new` 的 confirm-required 门控 | 仅放行该门；update 模式与其它校验不变 |
 
-**明确不采纳**：误触保护类确认（agent-team viewer `D` 两步停止、`/team clear`、pwr `/workflow delete` 选择）、pi 的 `project_trust` 提示——solo 只豁免"审批摩擦"，不豁免"防误触"。
+**明确不采纳**：误触保护类确认（agent-team viewer `D` 两步停止、`/team:clear`、pwr `/workflow:delete` 选择）、pi 的 `project_trust` 提示——solo 只豁免"审批摩擦"，不豁免"防误触"。
 
 ## 新增采纳方的步骤
 
@@ -44,7 +44,7 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 
 ## 测试锚点
 
-- solo-mode：`solo-mode/index.test.ts`（12 个）——写读/生命周期/fail-closed/写失败。
+- solo-mode：`solo-mode/index.test.ts`（14 个）——写读/生命周期/fail-closed/写失败。
 - pwr：`pwr/tests/solo-gate.test.ts` + `pwr/test/entry.test.ts` 的 solo 集成（弹卡点、workflow_start、已保存命令）。
 - opencode-bridge：`solo-gate.test.ts` + `index.test.ts` 的 sync/端口切换/restore 三条 solo 路径。
 - deep-init：`solo-gate.test.ts` + `index.test.ts` 的 `planDispatch` 与命令接线。

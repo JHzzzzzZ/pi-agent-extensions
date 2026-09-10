@@ -6,7 +6,8 @@
  *   /loop daily at 09:00 <任务>                每天固定时刻循环
  *   /loop every 1h from 00:00 to 09:00 <任务>  每日时间窗口内按间隔循环（闭区间）
  *   /loop --bg <上述任意创建形态>  v1.3：后台模式
- *   /loop list | pause <id> | resume <id> | delete <id> | clear
+ *   /loop:list | /loop:pause <id> | /loop:resume <id> | /loop:delete <id> | /loop:clear
+ *   （命令面冒号化 v1.6.0：管理子命令为独立静态命令，裸 /loop 只负责创建/用法）
  *
  * agent 工具（tools.ts）：loop_create / loop_list / loop_delete，
  * 供模型用自然语言创建与管理定时任务。
@@ -27,7 +28,7 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { startAlignedTicker } from "./aligned-ticker.ts";
-import { parseLoopCommand } from "./parse.ts";
+import { LOOP_SUBCOMMANDS, parseLoopCommand, RETIRED_LOOP_SUBCOMMANDS, type CreateSpec } from "./parse.ts";
 import { runBgAgent, type BgRunOutcome } from "./runner.ts";
 import { registerLoopTools } from "./tools.ts";
 import {
@@ -60,11 +61,11 @@ const USAGE = [
   "  /loop daily at 09:00 <任务>  每天固定时刻循环",
   "  /loop every 1h from 00:00 to 09:00 <任务>  每日窗口内按间隔循环（闭区间）",
   "  /loop --bg 5m <任务>   后台模式：拉起独立 pi 进程执行，会话可用 pi --session <id> 恢复",
-  "  /loop list             查看全部任务",
-  "  /loop pause <id>       暂停任务",
-  "  /loop resume <id>      恢复任务",
-  "  /loop delete <id>      删除任务",
-  "  /loop clear            删除全部任务",
+  "  /loop:list             查看全部任务",
+  "  /loop:pause <id>       暂停任务",
+  "  /loop:resume <id>      恢复任务",
+  "  /loop:delete <id>      删除任务",
+  "  /loop:clear            删除全部任务",
 ].join("\n");
 
 /** 后台运行注入点：测试替换为假实现；默认拉起真实子 pi 进程（runner.ts） */
@@ -277,112 +278,182 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     refreshWidget();
   }
 
+  /** 无参/无法识别：用法 + 当前任务。 */
+  function showUsage(ctx: ExtensionCommandContext): void {
+    const lines = formatTaskLines(tasks, Date.now());
+    notify(ctx, lines.length > 0 ? `${USAGE}\n\n当前任务：\n${lines.join("\n")}` : USAGE);
+  }
+
+  /** `/loop:list`：全部任务。 */
+  function listLoops(ctx: ExtensionCommandContext): void {
+    const lines = formatTaskLines(tasks, Date.now());
+    notify(ctx, lines.length > 0 ? `当前 ${tasks.length} 个任务：\n${lines.join("\n")}` : "没有定时任务。用 /loop 5m <任务> 创建。");
+  }
+
+  /** 创建任务（裸 `/loop` 的创建形态；冒号面不另设 create 命令）。 */
+  function createLoop(ctx: ExtensionCommandContext, spec: CreateSpec): void {
+    const now = Date.now();
+    const result = createTask(
+      tasks,
+      {
+        task: spec.task,
+        recurring: spec.recurring,
+        intervalMs: spec.intervalMs,
+        schedule: spec.schedule,
+        background: spec.background,
+        model: spec.model,
+        fireAtMs: spec.fireAtMs ?? (spec.recurring ? now + (spec.intervalMs ?? 0) : now),
+        nowMs: now,
+      },
+      genId,
+    );
+    if (!result.ok) {
+      notify(ctx, result.message, "warning");
+      return;
+    }
+    persist();
+    refreshWidget();
+    const t = result.task;
+    notify(
+      ctx,
+      `已创建 loop ${t.id}：${describeRecurrence(spec)}${spec.background ? " · 后台执行" : ""}${t.model ? ` · 模型 ${t.model}` : ""} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`,
+    );
+  }
+
+  /** `/loop:pause <id>`。 */
+  function pauseLoop(ctx: ExtensionCommandContext, id: string): void {
+    const result = pauseTask(tasks, id);
+    if (!result.ok) {
+      notify(ctx, result.message, "warning");
+      return;
+    }
+    persist();
+    refreshWidget();
+    notify(ctx, `已暂停 loop ${result.task.id}：${result.task.task}`);
+  }
+
+  /** `/loop:resume <id>`。 */
+  function resumeLoop(ctx: ExtensionCommandContext, id: string): void {
+    const result = resumeTask(tasks, id, Date.now());
+    if (!result.ok) {
+      notify(ctx, result.message, "warning");
+      return;
+    }
+    persist();
+    refreshWidget();
+    notify(ctx, `已恢复 loop ${result.task.id}：下次 ${formatClock(result.task.nextDueAt)} · ${result.task.task}`);
+  }
+
+  /** `/loop:delete <id>`。 */
+  function deleteLoop(ctx: ExtensionCommandContext, id: string): void {
+    const result = deleteTask(tasks, id);
+    if (!result.ok) {
+      notify(ctx, result.message, "warning");
+      return;
+    }
+    persist();
+    refreshWidget();
+    notify(ctx, `已删除 loop ${result.task.id}：${result.task.task}`);
+  }
+
+  /** `/loop:clear`：删除全部任务。 */
+  function clearLoops(ctx: ExtensionCommandContext): void {
+    const n = clearTasks(tasks);
+    persist();
+    refreshWidget();
+    notify(ctx, n > 0 ? `已删除全部 ${n} 个任务` : "没有可删除的任务。");
+  }
+
   function runCommand(args: string, ctx: ExtensionCommandContext): void {
     const parsed = parseLoopCommand(args, Date.now());
     if (!parsed.ok) {
       notify(ctx, parsed.message, "warning");
       return;
     }
-    const cmd = parsed.value;
-    switch (cmd.kind) {
-      case "usage": {
-        const lines = formatTaskLines(tasks, Date.now());
-        notify(ctx, lines.length > 0 ? `${USAGE}\n\n当前任务：\n${lines.join("\n")}` : USAGE);
+    switch (parsed.value.kind) {
+      case "usage":
+        showUsage(ctx);
         return;
-      }
-      case "list": {
-        const lines = formatTaskLines(tasks, Date.now());
-        notify(ctx, lines.length > 0 ? `当前 ${tasks.length} 个任务：\n${lines.join("\n")}` : "没有定时任务。用 /loop 5m <任务> 创建。");
+      case "create":
+        createLoop(ctx, parsed.value.spec);
         return;
-      }
-      case "create": {
-        const spec = cmd.spec;
-        const now = Date.now();
-        const result = createTask(
-          tasks,
-          {
-            task: spec.task,
-            recurring: spec.recurring,
-            intervalMs: spec.intervalMs,
-            schedule: spec.schedule,
-            background: spec.background,
-            model: spec.model,
-            fireAtMs: spec.fireAtMs ?? (spec.recurring ? now + (spec.intervalMs ?? 0) : now),
-            nowMs: now,
-          },
-          genId,
-        );
-        if (!result.ok) {
-          notify(ctx, result.message, "warning");
-          return;
-        }
-        persist();
-        refreshWidget();
-        const t = result.task;
-        notify(
-          ctx,
-          `已创建 loop ${t.id}：${describeRecurrence(spec)}${spec.background ? " · 后台执行" : ""}${t.model ? ` · 模型 ${t.model}` : ""} · 下次 ${formatClock(t.nextDueAt)} · ${t.task}`,
-        );
-        return;
-      }
-      case "pause": {
-        const result = pauseTask(tasks, cmd.id);
-        if (!result.ok) {
-          notify(ctx, result.message, "warning");
-          return;
-        }
-        persist();
-        refreshWidget();
-        notify(ctx, `已暂停 loop ${result.task.id}：${result.task.task}`);
-        return;
-      }
-      case "resume": {
-        const result = resumeTask(tasks, cmd.id, Date.now());
-        if (!result.ok) {
-          notify(ctx, result.message, "warning");
-          return;
-        }
-        persist();
-        refreshWidget();
-        notify(ctx, `已恢复 loop ${result.task.id}：下次 ${formatClock(result.task.nextDueAt)} · ${result.task.task}`);
-        return;
-      }
-      case "delete": {
-        const result = deleteTask(tasks, cmd.id);
-        if (!result.ok) {
-          notify(ctx, result.message, "warning");
-          return;
-        }
-        persist();
-        refreshWidget();
-        notify(ctx, `已删除 loop ${result.task.id}：${result.task.task}`);
-        return;
-      }
-      case "clear": {
-        const n = clearTasks(tasks);
-        persist();
-        refreshWidget();
-        notify(ctx, n > 0 ? `已删除全部 ${n} 个任务` : "没有可删除的任务。");
-        return;
-      }
     }
   }
 
+  /** 单参数管理命令的 id 提取（无参返回空串）。 */
+  const firstArg = (args: string): string => (args ?? "").trim().split(/\s+/)[0] ?? "";
+
+  /**
+   * 裸 `/loop`（命令面冒号化 v1.6.0）：无参=用法；创建形态照旧；旧管理词
+   * （list/pause/resume/delete/clear）只提示改名、绝不执行。
+   */
   pi.registerCommand("loop", {
-    description: "定时循环任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒；--bg 后台模式拉起独立 pi 进程（list/pause/resume/delete/clear 管理）",
+    description: "定时循环任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒；--bg 后台模式；管理子命令为独立冒号命令（/loop:list|pause|resume|delete|clear）",
     getArgumentCompletions: (prefix) => {
-      const items = ["list", "pause ", "resume ", "delete ", "clear", "in ", "at ", "daily ", "every day ", "every 1h from ", "--bg "];
+      const items = ["in ", "at ", "daily ", "every day ", "every 1h from ", "--bg "];
       return items
         .filter((s) => s.startsWith(prefix))
         .map((s) => ({ value: s, label: s.trim() }));
     },
     handler: async (args, ctx) => {
       try {
+        const head = firstArg(args ?? "");
+        const renamed = RETIRED_LOOP_SUBCOMMANDS[head];
+        if (renamed) {
+          notify(ctx, `「/loop ${head}」已改名为「/${renamed.command}」；用法：${renamed.usage}`, "warning");
+          return;
+        }
         runCommand(args, ctx);
       } catch (e) {
         notify(ctx, `执行失败：${e instanceof Error ? e.message : String(e)}`, "error");
       }
     },
+  });
+
+  pi.registerCommand(LOOP_SUBCOMMANDS.list, {
+    description: "查看全部定时任务（id / 调度 / 下次触发 / 状态）",
+    handler: async (_args, ctx) => listLoops(ctx),
+  });
+
+  pi.registerCommand(LOOP_SUBCOMMANDS.pause, {
+    description: "暂停定时任务：/loop:pause <id>（用 /loop:list 查看 id）",
+    handler: async (args, ctx) => {
+      const id = firstArg(args ?? "");
+      if (!id) {
+        notify(ctx, "用法：/loop:pause <id>（用 /loop:list 查看 id）", "warning");
+        return;
+      }
+      pauseLoop(ctx, id);
+    },
+  });
+
+  pi.registerCommand(LOOP_SUBCOMMANDS.resume, {
+    description: "恢复定时任务：/loop:resume <id>",
+    handler: async (args, ctx) => {
+      const id = firstArg(args ?? "");
+      if (!id) {
+        notify(ctx, "用法：/loop:resume <id>（用 /loop:list 查看 id）", "warning");
+        return;
+      }
+      resumeLoop(ctx, id);
+    },
+  });
+
+  pi.registerCommand(LOOP_SUBCOMMANDS.delete, {
+    description: "删除定时任务：/loop:delete <id>",
+    handler: async (args, ctx) => {
+      const id = firstArg(args ?? "");
+      if (!id) {
+        notify(ctx, "用法：/loop:delete <id>（用 /loop:list 查看 id）", "warning");
+        return;
+      }
+      deleteLoop(ctx, id);
+    },
+  });
+
+  pi.registerCommand(LOOP_SUBCOMMANDS.clear, {
+    description: "删除全部定时任务",
+    handler: async (_args, ctx) => clearLoops(ctx),
   });
 
   registerLoopTools(pi, { tasks, genId, persist, refreshWidget });

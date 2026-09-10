@@ -1,5 +1,5 @@
 /**
- * PWR — workflow default model configuration (/workflow model command).
+ * PWR — workflow default model configuration (/workflow:model command).
  *
  * The workflow default model answers "which `--model` should child pi
  * agents use when the agent definition does NOT pin one".

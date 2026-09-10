@@ -142,7 +142,7 @@ export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): vo
     name: "team_create",
     label: "Create Agent Team",
     description:
-      "创建一个可复用的 agent team（写入团队定义文件）。创建后即可用 /team run <name> <任务> 或 team_run 工具反复派单。",
+      "创建一个可复用的 agent team（写入团队定义文件）。创建后即可用 /team:run <name> <任务> 或 team_run 工具反复派单。",
     promptGuidelines: [
       "创建团队前必须先调用 team_models 确认可用的 provider/id，再把真实存在的模型写进配置。",
       "创建团队前先与用户确认：团队用途、leader 的模型与策略 prompt 要点、每个成员的职责/后端模型/prompt。",
@@ -196,7 +196,7 @@ export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): vo
         };
       }
       const lines = teamSummaryLines({ ...team.value, filePath: created.value });
-      lines.push("", "派单方式：/team run " + team.value.name + " <任务>，或让我调用 team_run 工具。同一团队可反复派单复用。");
+      lines.push("", "派单方式：/team:run " + team.value.name + " <任务>，或让我调用 team_run 工具。同一团队可反复派单复用。");
       return { content: [{ type: "text" as const, text: lines.join("\n") }], details: { path: created.value } };
     },
   });

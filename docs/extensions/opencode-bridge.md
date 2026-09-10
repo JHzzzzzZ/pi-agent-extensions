@@ -1,6 +1,6 @@
 # opencode-bridge — HTTP CONNECT → SOCKS5 桥 helper 的拉起与 settings 联动
 
-> last verified @ a03e525
+> last verified @ 4ef27b6
 
 ## 职责与边界
 
@@ -10,15 +10,15 @@ opencode-go 等模型按出口 IP 限区，Pi 又只支持 HTTP 代理（不认 
 
 - `opencode-bridge-helper.mjs` — 零依赖独立进程，HTTP CONNECT → SOCKS5 桥本体；协议行为注释即契约。改协议必看这里。
 - `bridge.ts` — 可测试核心逻辑（配置解析、端口探测、ensureBridge 生命周期、sync/restore 的 plan/apply），**不 import Pi 宿主 API**。
-- `index.ts` — Pi 宿主接线：session_start 探测/拉起、单 `/opencode-bridge` 命令 + 子命令（无参=状态、`sync [port]`、`restore`；v1.6.0 合并，旧 `-sync`/`-restore` 不再注册）；审批门经 `solo-gate.ts`（只读，fail-closed）。
+- `index.ts` — Pi 宿主接线：session_start 探测/拉起、裸 `/opencode-bridge` 命令（无参=状态）+ 冒号子命令（v1.7.0：`/opencode-bridge:status`、`:sync [port]`、`:restore` 各自独立静态注册；v1.6.0 曾合并为空格子命令，旧 `-sync`/`-restore` 不再注册）；审批门经 `solo-gate.ts`（只读，fail-closed）。
 - `helper.test.ts`（真实子进程集成）、`bridge.test.ts`（全 fake 单测）、`index.test.ts`（fake Pi 宿主 + fake deps）。
 
 ## 核心数据流
 
 1. session_start → 探测 `127.0.0.1:<port>` → 已有桥直接复用（多 Pi/subagent 实例共享一个桥），否则 detached + unref 派生 helper，Pi 不持有子进程。
-2. `/opencode-bridge sync` → planHttpProxySync 只读出 plan（SET / REMOVE / NOOP / FOREIGN）→ ctx.ui.confirm 人工确认（solo 激活时自动批准）→ applyHttpProxySync 备份原文后落盘 → 重启 Pi 才生效。
+2. `/opencode-bridge:sync` → planHttpProxySync 只读出 plan（SET / REMOVE / NOOP / FOREIGN）→ ctx.ui.confirm 人工确认（solo 激活时自动批准）→ applyHttpProxySync 备份原文后落盘 → 重启 Pi 才生效。
 3. 改端口：一次确认覆盖全部动作——指纹确认停旧桥（shutdown 响应体含自家 BRIDGE_SHUTDOWN_MARKER）→ 起新桥 → httpProxy 写入联动；端口持久化到 settings.json 同目录 opencode-bridge.json。
-4. `/opencode-bridge restore` → 从备份列表选择恢复（人工确认）；恢复前先把当前配置再备份一份，保证恢复本身可撤销。
+4. `/opencode-bridge:restore` → 从备份列表选择恢复（人工确认）；恢复前先把当前配置再备份一份，保证恢复本身可撤销。
 
 ## 不变量
 

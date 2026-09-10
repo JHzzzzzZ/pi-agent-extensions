@@ -242,7 +242,7 @@ export interface TeamFileError {
 
 export interface DiscoveryResult {
   teams: TeamConfig[];
-  /** Files that exist but failed to parse/validate (surfaced by /team). */
+  /** Files that exist but failed to parse/validate (surfaced by /team:list). */
   invalid: TeamFileError[];
 }
 

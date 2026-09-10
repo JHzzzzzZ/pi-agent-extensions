@@ -42,10 +42,27 @@ export const SOLO_STATUS_TEXT = "⚡ solo";
 export const SOLO_USAGE = [
   "用法：",
   "  /solo          切换 solo 模式（开启需确认）",
-  "  /solo on       开启：危险操作将自动批准",
-  "  /solo off      关闭",
-  "  /solo status   查看当前状态",
+  "  /solo:on       开启：危险操作将自动批准",
+  "  /solo:off      关闭",
+  "  /solo:status   查看当前状态",
 ].join("\n");
+
+/** 冒号子命令（v1.2.0）：独立静态注册命令名。 */
+export const SOLO_SUBCOMMANDS = {
+  on: "solo:on",
+  off: "solo:off",
+  status: "solo:status",
+} as const;
+
+/**
+ * 旧空格子命令 → 新命令 + 用法。裸 `/solo` 命中时只提示改名、绝不执行
+ * （防止 `/solo on` 被误当一次切换——切换的隐式语义与显式开启方向相反）。
+ */
+export const RETIRED_SOLO_SUBCOMMANDS: Record<string, { command: string; usage: string }> = {
+  on: { command: SOLO_SUBCOMMANDS.on, usage: "/solo:on" },
+  off: { command: SOLO_SUBCOMMANDS.off, usage: "/solo:off" },
+  status: { command: SOLO_SUBCOMMANDS.status, usage: "/solo:status" },
+};
 /** 开启确认正文（静态文案,列出受影响审批门） */
 export const SOLO_CONFIRM_BODY = [
   "开启后以下审批门将自动批准（仅当前会话，/reload 或会话切换即复位）：",
@@ -57,8 +74,8 @@ export const SOLO_CONFIRM_BODY = [
 
 // ===== 类型 =====
 
-/** 命令动作：未知参数落到 usage */
-export type SoloAction = "on" | "off" | "status" | "toggle" | "usage";
+/** 命令动作：空参＝切换，其余一律 usage（管理词已拆为冒号命令） */
+export type SoloAction = "toggle" | "usage";
 
 export interface SoloState {
   pid: number;
@@ -76,13 +93,10 @@ export interface SoloModeDeps {
 
 // ===== 纯函数:命令解析 / 状态文件读写 =====
 
-/** 解析 `/solo` 参数：空参＝切换，未知参数＝usage（非抛错） */
+/** 解析裸 `/solo` 参数：空参＝切换，其余（含旧管理词）＝usage（非抛错） */
 export function parseSoloCommand(raw: unknown): SoloAction {
-  const token = String(raw ?? "").trim().toLowerCase();
+  const token = String(raw ?? "").trim();
   if (token === "") return "toggle";
-  if (token === "on") return "on";
-  if (token === "off") return "off";
-  if (token === "status") return "status";
   return "usage";
 }
 
@@ -200,31 +214,48 @@ export function createSoloModeExtension(pi: ExtensionAPI, deps: SoloModeDeps = {
     else notify(ctx, "solo 模式关闭失败：状态文件无法删除，审批门可能仍自动批准", "error");
   }
 
+  /** `/solo:status`：当前状态文案。 */
+  function showStatus(ui: SoloUi): void {
+    notify(ui, isSoloActive({ env, pid }) ? "solo 模式已启用（危险操作自动批准）" : "solo 模式未启用", "info");
+  }
+
+  /**
+   * 裸 `/solo`（命令面冒号化 v1.2.0）：空参＝切换；旧管理词（on/off/status）
+   * 只提示改名、绝不执行；其余参数提示用法。
+   */
   pi.registerCommand("solo", {
-    description: "切换 solo 免审批模式（危险操作自动批准；仅当前会话）",
+    description: "切换 solo 免审批模式（危险操作自动批准；仅当前会话）；子命令为独立冒号命令：/solo:on|off|status",
     handler: async (args, ctx) => {
-      const action = parseSoloCommand(args);
       const ui = ctx as unknown as SoloUi;
-      if (action === "usage") {
+      const head = String(args ?? "").trim().toLowerCase();
+      const renamed = RETIRED_SOLO_SUBCOMMANDS[head];
+      if (renamed) {
+        notify(ui, `「/solo ${head}」已改名为「/${renamed.command}」；用法：${renamed.usage}`, "warning");
+        return;
+      }
+      if (parseSoloCommand(args) === "usage") {
         notify(ui, SOLO_USAGE, "warning");
-        return;
-      }
-      if (action === "status") {
-        notify(ui, isSoloActive({ env, pid }) ? "solo 模式已启用（危险操作自动批准）" : "solo 模式未启用", "info");
-        return;
-      }
-      if (action === "off") {
-        deactivate(ui);
-        return;
-      }
-      if (action === "on") {
-        await activate(ui);
         return;
       }
       // toggle：以状态文件为准（跨实例共享进程则视为各自实例的）
       if (isSoloActive({ env, pid })) deactivate(ui);
       else await activate(ui);
     },
+  });
+
+  pi.registerCommand(SOLO_SUBCOMMANDS.on, {
+    description: "开启 solo 模式：危险操作将自动批准（需一次确认；仅当前会话）",
+    handler: async (_args, ctx) => activate(ctx as unknown as SoloUi),
+  });
+
+  pi.registerCommand(SOLO_SUBCOMMANDS.off, {
+    description: "关闭 solo 模式：审批门恢复人工确认",
+    handler: async (_args, ctx) => deactivate(ctx as unknown as SoloUi),
+  });
+
+  pi.registerCommand(SOLO_SUBCOMMANDS.status, {
+    description: "查看 solo 模式当前状态（是否已启用）",
+    handler: async (_args, ctx) => showStatus(ctx as unknown as SoloUi),
   });
 
   // 会话边界一律复位（/reload、/new、/resume、/fork）：仅清本进程 pid 的状态文件，

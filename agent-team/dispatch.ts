@@ -69,7 +69,7 @@ export interface DispatchDeps {
   gitRunner?: GitRunner;
   /** Test seam: SIGTERM→SIGKILL grace for member children. */
   killGraceMs?: number;
-  /** Run transcript writer (member activity artifacts for /team view). */
+  /** Run transcript writer (member activity artifacts for /team:view). */
   transcript?: TranscriptSink;
   /** Resolved per-run budget (defaults to the protocol constants). */
   budget?: RunBudget;

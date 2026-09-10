@@ -1,23 +1,23 @@
 # solo-mode — 免审批模式（审批门自动批准）
 
-> last verified @ 1db39e3
+> last verified @ 4ef27b6
 
 ## 职责与边界
 
-`/solo` 一键切换"免审批模式"：开启后本仓库**审批摩擦类**门自动走批准路径——PWR 批准卡（按 once）、opencode-bridge 的 sync / 端口切换 / restore 确认（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认。**不做**：不禁用委派（不屏蔽 subagent/团队/workflow 工具）、不自动批准误触保护类确认（agent-team viewer `D` 停止、`/team clear`、`/workflow delete` 选择）、不处理 pi `project_trust` 提示、不做快捷键、不跨会话持久化。
+`/solo` 一键切换"免审批模式"：开启后本仓库**审批摩擦类**门自动走批准路径——PWR 批准卡（按 once）、opencode-bridge 的 sync / 端口切换 / restore 确认（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认。**不做**：不禁用委派（不屏蔽 subagent/团队/workflow 工具）、不自动批准误触保护类确认（agent-team viewer `D` 停止、`/team:clear`、`/workflow:delete` 选择）、不处理 pi `project_trust` 提示、不做快捷键、不跨会话持久化。
 
 **仅当前会话**：`/reload`、`/new`、`/resume`、`/fork` 与进程退出即复位；子 pi 进程（PWR sub-agent / agent-team 成员 / loop `--bg`）天然不继承。
 
 ## 文件地图
 
 - `index.ts` — 单文件全部逻辑（无 package.json，2 空格缩进）：常量区（状态键/文案/用法/确认正文）→ 纯函数（`parseSoloCommand` / `resolveSoloStatePath` / `readSoloState` / `isSoloActive` / `writeSoloState` / `clearSoloState`）→ 扩展工厂 `createSoloModeExtension(pi, deps)`。**改文案/路径/命令面必看顶部常量区。**
-- `index.test.ts` — 12 个测试，手写 fake（pi 宿主 / UI / 时钟）+ 临时目录状态文件（`PI_SOLO_MODE_FILE`），不碰真实 `~/.pi/agent`。
+- `index.test.ts` — 14 个测试，手写 fake（pi 宿主 / UI / 时钟）+ 临时目录状态文件（`PI_SOLO_MODE_FILE`），不碰真实 `~/.pi/agent`。
 - 跨扩展语义在 `docs/cross/solo-approval-gate.md`（读者实现契约，唯一事实来源）；本卡只管写者。
 - 无独立 README；行为说明在 `index.ts` 文件头注释与根 `README.md` 小节。
 
 ## 核心数据流
 
-1. `/solo`（空参切换）/ `/solo on|off|status` / 未知参数 → usage 提示（`parseSoloCommand`，未知不抛错）。
+1. `/solo`（空参切换）/ `/solo:on|:off|:status`（独立静态命令）/ 未知参数 → usage 提示（`parseSoloCommand` 只识别空参 toggle，其余返回 usage，未知不抛错）；旧空格写法（`/solo on` 等）经裸入口只提示改名、绝不执行。
 2. 开启：无 UI（`hasUI` 假或 `ui.confirm` 缺失）→ 拒绝并 warning；否则 `ctx.ui.confirm`（静态清单文案）→ 取消则不写文件；确认后写状态文件 → `setStatus("40:solo-mode", "⚡ solo")` → notify。
 3. 关闭：删状态文件 → 清状态条；**删除失败必须 error notify**（否则用户以为关了但读者仍会看到激活）。
 4. 读者（pwr / opencode-bridge / deep-init）各自在审批门处 `isSoloActive()` 现读，命中则跳过 prompt、走批准路径并 notify "solo：已自动…"。
@@ -42,7 +42,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test solo-mode/index.test.ts`（12 个，仓库根执行）。
+- 必跑：`node --experimental-strip-types --test solo-mode/index.test.ts`（14 个，仓库根执行）。
 - 改命令面/文案：只动 `index.ts` 常量区与 `parseSoloCommand`，同步 `index.test.ts` 的解析与文案断言 + 根 README 小节。
 - 改状态文件契约（路径/字段/判定）：同步 `docs/cross/solo-approval-gate.md` + pwr/opencode-bridge/deep-init 的 `solo-gate.ts` 与其测试——**契约卡与三份实现必须一致**。
 - 新增采纳方：按 `docs/cross/solo-approval-gate.md` 的"新增采纳方步骤"（复制 `solo-gate.ts` + 门处判定 + notify + 两类测试 + 文档）。

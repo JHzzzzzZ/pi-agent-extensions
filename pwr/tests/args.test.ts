@@ -1,5 +1,5 @@
 /**
- * JHL-17: /workflow run <name> args parsing and JSON-schema subset validation.
+ * JHL-17: /workflow:run <name> args parsing and JSON-schema subset validation.
  */
 
 import { test } from "node:test";

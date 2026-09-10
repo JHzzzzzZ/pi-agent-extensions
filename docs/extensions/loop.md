@@ -1,6 +1,6 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ b9d397e
+> last verified @ 4ef27b6
 
 ## 职责与边界
 
@@ -31,7 +31,7 @@
 - window 是闭区间 [start, end]；推进语义是"now 之后**严格大于**的下一个触发点"（tasks.ts 头注释），改比较符会产生边界重复触发。
 - 后台任务绝不带 `--no-session`（runner.ts 头注释）：与 PWR runner 唯一关键差异，丢了会话就无法 resume。
 - 自包含：只依赖 pi SDK，不引其它扩展目录；快照格式对旧快照向后兼容（schedule 字段缺省即固定间隔模式，tasks.ts）。
-- 命令面为子命令式（`/loop list|pause|resume|delete|clear`，v1.4.0）——全仓命令风格统一以本插件为基准（跨插件需求：agent-team/pwr/opencode-bridge 已跟进），本插件无需改动。
+- 命令面为冒号式（v1.6.0）：裸 `/loop` 只管创建与用法（无子命令）；管理走独立静态命令 `/loop:list|:pause|:resume|:delete|:clear`，旧空格管理词只提示改名（parse.ts 只解析 create/usage，看不得命令词）。2026-09 曾以「空格子命令式为全仓基准」同步过文档口径，v1.12.0 全仓改回冒号后本条恢复本插件自身的冒号面。
 - 调度不依赖 UI：session_start 无论 `hasUI` 都启动计时器；widget 走 `hasUI` 守卫且传纯无样式字符串（`ExtensionUIContext` 无 theme 字段）。
 - 时钟一律注入 `nowMs`，代码里禁止直接 `Date.now()`（仓库时钟约定，见 docs/cross/deps-ports.md）。
 
@@ -45,7 +45,7 @@
 
 ## 改动清单
 
-- 必跑：`cd loop && npm install && npm test`（192 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.5.0 → 根 2.18.0 模式）。
+- 必跑：`cd loop && npm install && npm test`（193 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.6.0 → 根 2.20.0 模式）。
 - 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台跳过/interrupted）、test/tasks.test.ts（调度推进与 7 天过期边界）、test/runner.test.ts（子进程契约）、test/parse.test.ts（语法与闭区间窗口）。
 - fake 模式：进程边界手写 fake child + fake spawn（runner.test.ts，参照 deps-ports.md fake 选型规则 1）；时钟经 nowMs 注入手动推进，不引 mock 库。
 - 改调度语义：parse.ts 与 tasks.ts 的推进逻辑两端同看，并补 parse.test.ts 边界用例（午夜 / 窗口端点 / 已过时刻排明天）。

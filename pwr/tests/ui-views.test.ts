@@ -162,10 +162,10 @@ test("detail view covers PRD 4.3 sections and command reachability", () => {
 	assert.ok(text.includes("Agents (1)"));
 	assert.ok(text.includes("prompt: 列出 src/routes 下的路由文件"));
 	assert.ok(text.includes("result: found 12 files"));
-	assert.ok(text.includes("/workflows pause"));
-	assert.ok(text.includes("/workflows stop"));
-	assert.ok(text.includes("/workflows restart"));
-	assert.ok(text.includes("/workflows save"));
+	assert.ok(text.includes("/workflows:pause"));
+	assert.ok(text.includes("/workflows:stop"));
+	assert.ok(text.includes("/workflows:restart"));
+	assert.ok(text.includes("/workflows:save"));
 	assert.ok(text.includes(`  ${shortcutHint("pause")}  pause run`));
 	assert.ok(text.includes(shortcutHint("stop")));
 	assert.ok(text.includes(shortcutHint("restart")));

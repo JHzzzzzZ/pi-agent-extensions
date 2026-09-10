@@ -1,5 +1,5 @@
 /**
- * Viewer ghost regression: /team view chrome (top border + title row +
+ * Viewer ghost regression: /team:view chrome (top border + title row +
  * roster) must render exactly once per frame, and the actor selection must
  * survive actor-list growth after a dispatch. Pure renderer only — the
  * pi-tui host component is never instantiated (repo convention).

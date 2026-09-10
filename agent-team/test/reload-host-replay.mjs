@@ -32,7 +32,7 @@ const { ExtensionRunner } = await import(u(`${piRoot}/dist/core/extensions/runne
 const { createEventBus } = await import(u(`${piRoot}/dist/core/event-bus.js`));
 
 const EXPECTED_TOOLS = ["team_create", "team_list", "team_models", "team_run", "team_status", "team_transcript", "team_stop"];
-const EXPECTED_COMMANDS = ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear"];
+const EXPECTED_COMMANDS = ["team", "team:list", "team:run", "team:status", "team:stop", "team:view", "team:clear", "team:doctor"];
 
 const toolNames = (exts) => exts.flatMap((e) => [...e.tools.values()].map((t) => t.definition.name));
 const commandNames = (exts) => exts.flatMap((e) => [...e.commands.keys()]);

@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 1db39e3
+> last verified @ 4ef27b6
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -26,17 +26,17 @@
 
 | 卡 | 一句话 |
 | --- | --- |
-| [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行；`/workflows` 与 `/workflow run|delete|model` 子命令式命令面 |
-| [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达；team_stop 按 runId 中止；viewer 内 m 发消息直接对话（派单语义）；run 落盘/reconcile、budget 预算块、model 预检；单一 /team 命令 + 子命令（run/status/stop/view/clear/doctor）+ `/team <团队名>` 参数路由；TUI 对照 pi-subagents 矩阵同步（docs/tui-sync.md） |
+| [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行；`/workflows:*` 与 `/workflow:run|:delete|:model` 冒号命令面 |
+| [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达；team_stop 按 runId 中止；viewer 内 m 发消息直接对话（派单语义）；run 落盘/reconcile、budget 预算块、model 预检；裸 /team + 冒号子命令 `/team:list|:run|:status|:stop|:view|:clear|:doctor`（派单统一 `/team:run <名> <任务>`）；TUI 对照 pi-subagents 矩阵同步（docs/tui-sync.md） |
 | chatanywhere-provider | 双 provider 运行时自动发现：探测 /models 按家族线归并注册，探测失败 fail-closed |
 | deep-init | `/deep-init` 提示词驱动四阶段深度初始化 |
-| goal | `/goal` 会话目标循环：agent 跨回合自动推进至评估器判定达成 |
+| goal | `/goal` 会话目标循环：agent 跨回合自动推进至评估器判定达成；清除非阻塞项走 `/goal:clear|:stop|:off|:reset|:none|:cancel`，恢复 `/goal:resume` |
 | human-notify | Windows Toast 人工介入通知（审批/等人工具/结束，正文带差异化摘要） |
-| loop | `/loop` 定时任务：固定间隔 / 每日定时 / 每日窗口 / 一次性 / 后台 agent；子命令式命令面为全仓统一基准 |
-| opencode-bridge | 本地 HTTP CONNECT → SOCKS5 桥（单 `/opencode-bridge` 命令，sync/restore 子命令），让 Pi 的 httpProxy 走 v2rayN |
+| loop | `/loop` 定时任务：固定间隔 / 每日定时 / 每日窗口 / 一次性 / 后台 agent；创建走裸 `/loop`，管理走 `/loop:list|:pause|:resume|:delete|:clear` 冒号子命令 |
+| opencode-bridge | 本地 HTTP CONNECT → SOCKS5 桥（裸 `/opencode-bridge` 状态 + 冒号子命令 `:sync`/`:restore`/`:status`），让 Pi 的 httpProxy 走 v2rayN |
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
 | run-timer | 会话/任务/回合计时 widget |
-| solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话） |
+| solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status` |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 
 ## 收录与淘汰

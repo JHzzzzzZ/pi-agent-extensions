@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseLoopCommand, parseSchedule, formatInterval, MIN_INTERVAL_MS } from "../parse.ts";
+import { LOOP_SUBCOMMANDS, parseLoopCommand, parseSchedule, formatInterval, MIN_INTERVAL_MS, RETIRED_LOOP_SUBCOMMANDS } from "../parse.ts";
 import type { CreateSpec } from "../parse.ts";
 
 // 固定"当前时刻"：本地 2026-09-05 10:00:00
@@ -146,25 +146,23 @@ describe("parseLoopCommand — 一次性提醒", () => {
   });
 });
 
-describe("parseLoopCommand — 子命令", () => {
-  it("list / clear", () => {
-    const r1 = parseLoopCommand("list", BASE);
-    assert.ok(r1.ok && r1.value.kind === "list");
-    const r2 = parseLoopCommand("clear", BASE);
-    assert.ok(r2.ok && r2.value.kind === "clear");
-  });
-
-  it("pause/resume/delete + id", () => {
-    for (const verb of ["pause", "resume", "delete"] as const) {
-      const r = parseLoopCommand(`${verb} a1b2c3d4`, BASE);
-      assert.ok(r.ok);
-      assert.ok(r.ok && r.value.kind === verb && r.value.id === "a1b2c3d4");
+describe("parseLoopCommand — 管理子命令已拆为冒号命令（v1.6.0）", () => {
+  it("旧管理词一律回落 usage（裸入口先提示改名，见 index）", () => {
+    for (const args of ["list", "clear", "pause a1b2c3d4", "resume a1b2c3d4", "delete a1b2c3d4", "pause"]) {
+      const r = parseLoopCommand(args, BASE);
+      assert.ok(r.ok && r.value.kind === "usage", `${args} → usage`);
     }
   });
 
-  it("pause 缺 id（单词）→ usage", () => {
-    const r = parseLoopCommand("pause", BASE);
-    assert.ok(r.ok && r.value.kind === "usage");
+  it("RETIRED_LOOP_SUBCOMMANDS 映射旧词到冒号命令", () => {
+    for (const [head, command] of Object.entries(LOOP_SUBCOMMANDS)) {
+      assert.equal(RETIRED_LOOP_SUBCOMMANDS[head]?.command, command, head);
+    }
+    assert.equal(LOOP_SUBCOMMANDS.list, "loop:list");
+    assert.equal(LOOP_SUBCOMMANDS.pause, "loop:pause");
+    assert.equal(LOOP_SUBCOMMANDS.resume, "loop:resume");
+    assert.equal(LOOP_SUBCOMMANDS.delete, "loop:delete");
+    assert.equal(LOOP_SUBCOMMANDS.clear, "loop:clear");
   });
 });
 

@@ -20,8 +20,10 @@ import {
   extractAssistantText,
   extractJsonObject,
   formatElapsed,
+  GOAL_SUBCOMMANDS,
   parseGoalArgs,
   parseVerdict,
+  RETIRED_GOAL_SUBCOMMANDS,
   truncateText,
 } from "./index.ts";
 
@@ -158,15 +160,25 @@ test("parseGoalArgs:空参数是查询状态", () => {
   assert.deepEqual(parseGoalArgs("   "), { action: "status" });
 });
 
-test("parseGoalArgs:clear 全部别名且大小写不敏感", () => {
-  for (const alias of ["clear", "stop", "off", "reset", "none", "cancel", "Clear", "STOP"]) {
-    assert.deepEqual(parseGoalArgs(alias), { action: "clear" });
+test("parseGoalArgs:旧管理词不再是子命令（回落为目标文本）", () => {
+  // 裸命令只剩 status/set；clear 等管理词经裸入口时先被改名提示拦截（见接线测试），
+  // parseGoalArgs 本身不再识别它们。
+  for (const alias of ["clear", "stop", "off", "reset", "none", "cancel", "resume"]) {
+    assert.deepEqual(parseGoalArgs(alias), { action: "set", goal: alias });
   }
+  // `/goal status` 仍是目标文本（既有语义不变，status 不在退役表）。
+  assert.deepEqual(parseGoalArgs("status"), { action: "set", goal: "status" });
 });
 
-test("parseGoalArgs:resume 子命令", () => {
-  assert.deepEqual(parseGoalArgs("resume"), { action: "resume" });
-  assert.deepEqual(parseGoalArgs("  resume  "), { action: "resume" });
+test("RETIRED_GOAL_SUBCOMMANDS 映射旧词到冒号命令；6 别名共享 clear", () => {
+  for (const alias of ["clear", "stop", "off", "reset", "none", "cancel"] as const) {
+    assert.equal(RETIRED_GOAL_SUBCOMMANDS[alias]?.command, GOAL_SUBCOMMANDS[alias]);
+    assert.equal(GOAL_SUBCOMMANDS[alias], `goal:${alias}`);
+  }
+  assert.equal(RETIRED_GOAL_SUBCOMMANDS.resume?.command, "goal:resume");
+  assert.equal(RETIRED_GOAL_SUBCOMMANDS.status, undefined, "status 不是退役子命令");
+  assert.equal(GOAL_SUBCOMMANDS.status, "goal:status");
+  assert.equal(GOAL_SUBCOMMANDS.resume, "goal:resume");
 });
 
 test("parseGoalArgs:其余文本整体作为目标并保留内部空格", () => {
@@ -283,12 +295,30 @@ test("extractAssistantText:只取 assistant 文本,忽略 thinking/toolResult,�
 
 // ===== 接线 =====
 
-test("createGoalExtension:注册 goal 命令与预期 hooks", () => {
+test("createGoalExtension:注册 goal 命令、冒号子命令与预期 hooks", () => {
   const { fake } = boot();
-  assert.ok(fake.commands.has("goal"));
+  assert.deepEqual(
+    [...fake.commands.keys()].sort(),
+    ["goal", "goal:cancel", "goal:clear", "goal:none", "goal:off", "goal:reset", "goal:resume", "goal:status", "goal:stop"],
+  );
+  for (const name of fake.commands.keys()) {
+    assert.ok((fake.commands.get(name)?.description ?? "").length > 0, `${name} has a description`);
+  }
   for (const event of ["session_start", "agent_start", "turn_end", "agent_end", "agent_settled", "session_shutdown"]) {
     assert.ok(fake.handlers.has(event), `缺少 ${event} hook`);
   }
+});
+
+test("裸 /goal 的旧管理词只提示改名，绝不设置目标", async () => {
+  const { fake } = boot();
+  for (const head of ["clear", "stop", "resume", "none"]) {
+    await fake.commands.get("goal")!.handler(head, fake.makeCtx());
+    const note = fake.notifications.at(-1)!;
+    assert.equal(note.type, "warning");
+    assert.match(note.message, new RegExp(`「/goal ${head}」已改名为「/goal:${head}」`));
+  }
+  assert.equal(fake.entries.length, 0, "改名提示不落盘");
+  assert.equal(fake.userMessages.length, 0, "改名提示不开回合");
 });
 
 // ===== 设置 / 查询 / 清除 / 恢复 =====
@@ -322,20 +352,20 @@ test("/goal 查询:idle 与 active 两种文案", async () => {
   assert.ok(fake.notifications[0].message.includes("已评估轮数"));
 });
 
-test("/goal clear:落盘 {goal:null} 并清状态行;idle 时只提示", async () => {
+test("/goal:clear:落盘 {goal:null} 并清状态行;idle 时只提示", async () => {
   const { fake } = boot();
   await fake.commands.get("goal")!.handler("任务", fake.makeCtx());
-  await fake.commands.get("goal")!.handler("stop", fake.makeCtx());
+  await fake.commands.get("goal:stop")!.handler("", fake.makeCtx());
   assert.deepEqual(fake.entries.at(-1), { customType: GOAL_STATE_ENTRY, data: { goal: null } });
   assert.ok(fake.notifications.some((n) => n.message.includes("已清除")));
   assert.equal(fake.statuses.at(-1), undefined);
   fake.entries.length = 0;
-  await fake.commands.get("goal")!.handler("clear", fake.makeCtx());
+  await fake.commands.get("goal:clear")!.handler("", fake.makeCtx());
   assert.equal(fake.entries.length, 0);
   assert.ok(fake.notifications.at(-1)!.message.includes("没有活跃"));
 });
 
-test("/goal resume:paused 恢复并立即续跑;active 时提示无需恢复", async () => {
+test("/goal:resume:paused 恢复并立即续跑;active 时提示无需恢复", async () => {
   const { fake, evaluateCalls } = boot();
   const ctx = fake.makeCtx();
   await fake.commands.get("goal")!.handler("任务", ctx);
@@ -345,11 +375,11 @@ test("/goal resume:paused 恢复并立即续跑;active 时提示无需恢复", a
   assert.ok(fake.notifications.some((n) => n.message.includes("已暂停")));
   assert.equal(evaluateCalls.length, 0); // 中断路径不做评估
   fake.sent.length = 0;
-  await fake.commands.get("goal")!.handler("resume", ctx);
+  await fake.commands.get("goal:resume")!.handler("", ctx);
   assert.equal(fake.sent.length, 1);
   assert.equal(fake.sent[0].options?.triggerTurn, true);
   assert.equal(fake.sent[0].options?.deliverAs, "followUp");
-  await fake.commands.get("goal")!.handler("resume", ctx);
+  await fake.commands.get("goal:resume")!.handler("", ctx);
   assert.ok(fake.notifications.at(-1)!.message.includes("无需恢复"));
 });
 
@@ -415,7 +445,7 @@ test("agent_settled:评估器连续失败 3 次才暂停,前两次继续", async
 test("agent_settled:评估期间目标被清除→本轮作废不续跑", async () => {
   const { fake } = boot({
     evaluate: async () => {
-      await fake.commands.get("goal")!.handler("clear", fake.makeCtx());
+      await fake.commands.get("goal:clear")!.handler("", fake.makeCtx());
       return { ok: true, met: false, reason: "r" };
     },
   });
@@ -755,7 +785,7 @@ test("clear 后节拍停止并清状态", async () => {
   timers.clear();
   await fake.commands.get("goal")!.handler("任务", ctx);
   assert.equal(timerCount(), 1);
-  await fake.commands.get("goal")!.handler("clear", ctx);
+  await fake.commands.get("goal:clear")!.handler("", ctx);
   assert.equal(timerCount(), 0, "idle 后节拍停止");
   assert.equal(fake.statuses.at(-1), undefined);
 });
