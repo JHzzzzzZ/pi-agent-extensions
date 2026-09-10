@@ -1,6 +1,6 @@
 # stream-token-speed — 流式回复 TTFT 与实时 tokens/s 状态显示
 
-> last verified @ b9d397e
+> last verified @ 1db39e3
 
 ## 职责与边界
 
@@ -28,7 +28,7 @@
 - **内容零接触**：适配器只读事件 type / 消息身份（role / responseId）/ 时间，绝不解析、复制或输出 text / thinking / tool call 参数（adapter.ts 文件头契约）。
 - 计量三类增量各计 1（text_delta / thinking_delta / toolcall_delta）；tool result、用户消息、未知 delta 一律返回 null（adapter.ts）。
 - 常量即契约：WINDOW_MS=1000 / THROTTLE_MS=250 / EMA_ALPHA=0.3 / WARMUP_MS=1000（metrics.ts），调用点不写魔法数。
-- 状态键固定 `"50:stream-token-speed"`（status-port.ts `STATUS_KEY`；`50:` 为 footer 排序带，不可改回无前缀键）。不接对齐秒节拍：250ms 流式节流是内容驱动的，不是墙钟时间类状态。
+- 状态键固定 `"50:stream-token-speed"`（status-port.ts `STATUS_KEY`；`50:` 为 footer 排序带，宿主逐行渲染依赖本地补丁 `docs/pi-footer-status-patch.md`，不可改回无前缀键）。不接对齐秒节拍：250ms 流式节流是内容驱动的，不是墙钟时间类状态。
 - `available()` 为 false 时跳过渲染（print / json 模式静默降级）；setStatus / theme.fg 抛错必须在端口内部捕获，绝不影响 pi 消息流（status-port.ts 契约）。
 - 时间必须来自同一单调时钟（默认 performance.now，metrics.ts 文件头）——混用墙钟会让窗口计算错乱。
 - 轮次隔离：控制器只保留"当前轮"，新 assistant `message_start` 立即替换上一轮展示（controller.ts，AC-08）。

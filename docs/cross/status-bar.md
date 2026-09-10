@@ -1,6 +1,6 @@
 # 跨扩展横切契约：状态条刷新节拍与排序（footer + 编辑器上下 widget）
 
-> last verified @ b9d397e
+> last verified @ 1db39e3
 >
 > 适用范围：所有往 footer（`ctx.ui.setStatus`）或输入栏上下 widget（`ctx.ui.setWidget`）写「随时间变化」内容的扩展。目标：同一屏多个状态源**同一帧一起刷新**、相对顺序**契约化**，不再靠各自的 `setInterval` 相位碰运气。
 
@@ -19,7 +19,7 @@
 
 ## footer 排序带（`setStatus` 键）
 
-宿主 `footer.js` 把各扩展状态放进 Map，按 **key `localeCompare` 排序**后空格拼一行、超宽右截断。键即排序契约：
+宿主 `footer.js` 把各扩展状态放进 Map，按 **key `localeCompare` 排序**后**每段独占一行**渲染；单段超过终端宽度时由宿主用 `wrapTextWithAnsi` 续行（保留 ANSI 样式、信息零损失、行数不限）。逐行渲染**依赖本地宿主补丁**：原宿主把全部状态 `join(" ")` 拼成一行再整行尾部截断，后段被挤掉/截半；补丁改为逐段成行 + 超宽续行，见 `docs/pi-footer-status-patch.md`（升级 pi 后需重打；上游修复后可撤补丁，排序语义不变）。键即排序契约：
 
 | 带 | 扩展 | 键 |
 | --- | --- | --- |
