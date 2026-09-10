@@ -30,7 +30,7 @@
 
 - fail-closed：缺 engine / runner ⇒ 类型化错误（`ENGINE_UNAVAILABLE` / `AGENT_RUNNER_UNAVAILABLE`），绝不隐式回退主 agent。
 - 错误消息静态模板，绝不插值用户输入；脚本源码 / args 永不写盘；结果 ≤50KB（`RESULT_TOO_LARGE`）、summary ≤8KB。
-- 命令面统一为子命令式（v2.5.0）：`/workflows list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`（无参=列表；`/workflows <runId>` 与 `--filter` 保留兼容）；`/workflow run|delete|model` 为 `/workflow` 子命令。动态 `workflow:<name>` 注册退役——saved 名由 `/workflow run` 调用时现读盘，与保存/删除无命令同步问题。
+- 命令面统一为子命令式（v2.6.0）：`/workflows list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`（无参=列表；`/workflows <runId>` 与 `--filter` 保留兼容）；`/workflow run|delete|model` 为 `/workflow` 子命令。动态 `workflow:<name>` 注册退役——saved 名由 `/workflow run` 调用时现读盘，与保存/删除无命令同步问题。
 - trace 文本（v2.4.0）单行 + 尾部截断，绝不透传原始工具输出。
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
 - pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。

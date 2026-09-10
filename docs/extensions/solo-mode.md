@@ -1,10 +1,10 @@
 # solo-mode — 免审批模式（审批门自动批准）
 
-> last verified @ 0260f89
+> last verified @ a03e525
 
 ## 职责与边界
 
-`/solo` 一键切换"免审批模式"：开启后本仓库**审批摩擦类**门自动走批准路径——PWR 批准卡（按 once）、opencode-bridge 的 sync / 端口切换 / restore 确认（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认。**不做**：不禁用委派（不屏蔽 subagent/团队/workflow 工具）、不自动批准误触保护类确认（agent-team viewer `D` 停止、`/team:clear`、`/workflow-delete` 选择）、不处理 pi `project_trust` 提示、不做快捷键、不跨会话持久化。
+`/solo` 一键切换"免审批模式"：开启后本仓库**审批摩擦类**门自动走批准路径——PWR 批准卡（按 once）、opencode-bridge 的 sync / 端口切换 / restore 确认（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认。**不做**：不禁用委派（不屏蔽 subagent/团队/workflow 工具）、不自动批准误触保护类确认（agent-team viewer `D` 停止、`/team clear`、`/workflow delete` 选择）、不处理 pi `project_trust` 提示、不做快捷键、不跨会话持久化。
 
 **仅当前会话**：`/reload`、`/new`、`/resume`、`/fork` 与进程退出即复位；子 pi 进程（PWR sub-agent / agent-team 成员 / loop `--bg`）天然不继承。
 
