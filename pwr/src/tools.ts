@@ -117,7 +117,7 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 		label: "Workflow Save",
 		description: [
 			"Save a validated workflow as a reusable command (user or project scope).",
-			"Auto-fills meta.name/description/version, validates, writes the script and registers /workflow:<name>.",
+			"Auto-fills meta.name/description/version, validates, writes the script and registers the /workflow run <name> entry.",
 			"An existing same-name workflow returns NAME_CONFLICT; confirm with overwrite: true to replace it.",
 		].join(" "),
 		parameters: Type.Object({
@@ -161,7 +161,7 @@ export interface ApprovalCardInfo {
 	scriptSource: string;
 }
 
-/** Max bytes of script source shown by "View raw script" (full source via /workflows:script). */
+/** Max bytes of script source shown by "View raw script" (full source via /workflows script). */
 export const MAX_SCRIPT_PREVIEW_BYTES = 8 * 1024;
 
 /** Byte-safe script preview: pass-through under the cap, truncated with a pointer otherwise. */
@@ -214,7 +214,7 @@ export async function confirmApprovalCard(
 			// Read-only preview, then loop back to the same approval card.
 			const body = truncateScriptPreview(info.scriptSource);
 			ctx.ui.notify(
-				`[PWR] Workflow script "${info.scriptName}" (read-only)\n\n${body}\n完整源码: /workflows:script ${info.runId.slice(0, 8)}`,
+				`[PWR] Workflow script "${info.scriptName}" (read-only)\n\n${body}\n完整源码: /workflows script ${info.runId.slice(0, 8)}`,
 				"info",
 			);
 			continue;

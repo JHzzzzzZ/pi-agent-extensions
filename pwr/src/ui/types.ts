@@ -70,7 +70,7 @@ export interface WorkflowEventsSource {
 
 /**
  * Optional richer snapshot surface the runtime can serve for the live
- * /workflows:view viewer (JHL-18): full stage/task detail computed at read
+ * /workflows view viewer (JHL-18): full stage/task detail computed at read
  * time. The concrete WorkflowRuntime satisfies this structurally; when the
  * port is absent (or the run is unknown — post-restart) the viewer degrades
  * to the store-only snapshot.

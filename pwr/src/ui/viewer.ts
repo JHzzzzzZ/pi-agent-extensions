@@ -1,7 +1,7 @@
 /**
- * PWR UI - full-screen live run viewer (/workflows:view, JHL-18)
+ * PWR UI - full-screen live run viewer (/workflows view, JHL-18)
  *
- * Modeled on the sibling agent-team extension's /team:view: a capturing
+ * Modeled on the sibling agent-team extension's /team view: a capturing
  * overlay drawn via ctx.ui.custom, hand-drawn rounded borders, one page per
  * view — the script structure diagram first, then one page per runtime
  * stage, then the final result and the raw script. Refreshes on an interval

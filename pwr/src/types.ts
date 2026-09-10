@@ -40,7 +40,7 @@ export interface WorkflowMeta {
 	name: string;
 	description?: string;
 	version?: number | string;
-	/** Optional JSON schema (subset) validated against `args` at /workflow:<name> invocation. */
+	/** Optional JSON schema (subset) validated against `args` at /workflow run <name> invocation. */
 	argsSchema?: unknown;
 }
 
@@ -117,7 +117,7 @@ export interface PlanNode {
 export interface WorkflowPlan {
 	stages: StagePlan[];
 	budget: BudgetEstimate;
-	/** Structure tree for the /workflows:view diagram (JHL-18); optional so
+	/** Structure tree for the /workflows view diagram (JHL-18); optional so
 	 * older persisted plans and the parse-failure fallback stay valid. */
 	tree?: PlanNode[];
 }

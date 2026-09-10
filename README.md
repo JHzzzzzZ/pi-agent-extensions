@@ -4,8 +4,8 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡自动按 once） | 410 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话） | 278 个 |
+| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows` 与 `/workflow run|delete|model` 子命令式命令面） | 416 个（node:test） |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；单一 `/team` 命令 + 子命令路由） | 290 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 15 个（node:test） |
@@ -13,7 +13,7 @@
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定） | 182 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 44 个 |
 | [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
-| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy + 端口自定义自动迁移，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 113 个 |
+| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；单 `/opencode-bridge` 命令 + 子命令 `sync [port]`/`restore` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话 | 11 个 |
 
@@ -96,7 +96,7 @@ pi                                                                 # 重新启�
 /workflow 扫描当前仓库并生成一份架构概述
 ```
 
-agent 生成脚本后弹出批准卡，选 `Run once`；`/workflows:view` 可实时观看每个子 agent 的执行轨迹。
+agent 生成脚本后弹出批准卡，选 `Run once`；`/workflows view` 可实时观看每个子 agent 的执行轨迹。
 
 ✅ 判据：批准后运行完成，结果以 `pwr-workflow-result` 消息回传。
 
@@ -143,7 +143,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
     Reject
 ```
 
-`/workflows:view <runId>` 全屏运行查看器（脚本结构图 + 每 stage 一页 + 实时 trace）：
+`/workflows view <runId>` 全屏运行查看器（脚本结构图 + 每 stage 一页 + 实时 trace）：
 
 ```text
 ┌─ PWR · code-review.js · running · 1m 05s · run a1b2c3d4 ─────────────────┐
@@ -160,21 +160,21 @@ Choices: Run once / Remember for this script / View raw script / Reject
 - **完整结果送达** — 最终 JSON ≤ 8KB 时全量内联进完成消息；**> 8KB 时完整 JSON 落盘 `~/.pi/agent/workflows/results/<runId>.json`**，消息携带 JSON 安全截断的预览（含 `"__pwr_truncated__": true` 标记）+ `完整结果: <路径>` 行，消息总预算 16KB；持久化会话条目同样 JSON 安全截断并带 `resultPath` 字段，可从会话文件恢复全量结果
 - **结果回传** — 运行成功或失败后以 `pwr-workflow-result` 消息自动唤起主 agent 汇报；用户主动取消不打扰
 - **批准记忆** — 批准键 = 项目 canonical path + 脚本 SHA-256 digest；脚本被编辑后必须重新批准
-- **保存/复用**（`workflow_save` + `/workflow:<name> <参数>`）— 自动补齐 meta、落盘前强制重新校验、参数 JSON-schema 校验（`meta.argsSchema`）；args 支持 **`key=value` 语法**（按 schema 自动转类型，重复键/逗号成数组，`{` 开头仍按 JSON 解析，v2.4.0）；保存位置：用户范围 `~/.pi/agent/workflows/<name>.js`、项目范围 `.pi/workflows/<name>.js`（仅可信项目）
-- **观察与控制**（`/workflows`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+z/x/r`；`/workflows:saved` 列出已保存工作流（scope/描述/参数提示），`/workflow-delete` 不带名称时同样先列出（v2.4.0）
+- **保存/复用**（`workflow_save` + `/workflow run <name> [参数]`）— 自动补齐 meta、落盘前强制重新校验、参数 JSON-schema 校验（`meta.argsSchema`）；args 支持 **`key=value` 语法**（按 schema 自动转类型，重复键/逗号成数组，`{` 开头仍按 JSON 解析，v2.4.0）；保存位置：用户范围 `~/.pi/agent/workflows/<name>.js`、项目范围 `.pi/workflows/<name>.js`（仅可信项目）
+- **观察与控制**（`/workflows`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+z/x/r`；`/workflows saved` 列出已保存工作流（scope/描述/参数提示），`/workflow delete` 不带名称时同样先列出（v2.4.0）
 
 ### 命令
 
 | 命令 | 作用 |
 | --- | --- |
 | `/workflow <任务>` | 生成工作流（也支持 `workflow:` 前缀） |
-| `/workflow:<name> <args>` | 调用已保存的工作流（args 为 `key=value` 对或 JSON，如 `files=src depth=2`） |
-| `/workflow-delete [name]` | 删除已保存的工作流（项目范围优先；不带名称先列出全部） |
-| `/workflows:saved` | 列出已保存工作流（scope、描述、args 用法提示） |
-| `/workflows` | 运行列表/详情 UI |
-| `/workflows:view [runId]` | 全屏运行查看器（v2.3.0）：脚本结构图 + 每 stage 一页 + 结果/脚本页 |
-| `/workflows:approve <runId>` | 手动为 `awaiting_approval` 的运行弹批准卡 |
-| `/pwr-model [auto\|<model-id>]` | 查看/设置工作流默认模型（优先级：agent 定义 model > 脚本逐调用 model > PWR 默认 > 子 pi 默认） |
+| `/workflow run <name> [args]` | 调用已保存的工作流（args 为 `key=value` 对或 JSON，如 `files=src depth=2`；运行时现读盘，无动态注册） |
+| `/workflow delete [name]` | 删除已保存的工作流（项目范围优先；不带名称先列出全部） |
+| `/workflow model [auto\|<model-id>]` | 查看/设置工作流默认模型（优先级：agent 定义 model > 脚本逐调用 model > PWR 默认 > 子 pi 默认） |
+| `/workflows` | 运行列表/详情 UI（无参=列表；`/workflows <runId>` 与 `--filter` 保留兼容） |
+| `/workflows list [status]` · `view [runId]` · `open <runId>` | 列表（可过滤）/ 全屏运行查看器 / 详情视图 |
+| `/workflows pause\|resume\|stop\|restart <runId> [taskId]` | 暂停/恢复/停止（可单 agent）/重启单个 agent |
+| `/workflows save <runId>` · `saved` · `script <runId>` · `approve <runId>` · `help` | 保存为命令 / 已保存列表 / 原始脚本 / 手动批准 / 帮助 |
 | `workflow_save` / `workflow_validate` / `workflow_start` / `workflow_control` | agent 可调用的工具 |
 
 ### 测试与开发
@@ -182,7 +182,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ```bash
 cd pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 406 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 416 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflows UI（无宿主）
 ```
@@ -215,16 +215,16 @@ leader: claude-opus-4 · 已派发 3 个子任务
 ```
 
 - **对话式建团** — 主 agent 调 `team_create`/`team_list` 工具直接创建/查看团队；团队定义文件（`~/.pi/agent/teams/*.md` 或项目 `.pi/teams/*.md`）可随时手改，下一次派单即生效
-- **派单与复用** — `/team:run <团队> <任务>`、`/team:<团队> <任务>` 或 `team_run` 工具（默认后台，报告完成自动送达，返回含 runId）；同一团队反复使用；`/team:stop` 或 `team_stop` 工具按 runId 中止（settle-aware：停止后拿到 aborted 终态记录，报告 followUp 不再送达，可立即重新派单）
+- **派单与复用** — `/team <团队> <任务>`（参数路由）或 `/team run <团队> <任务>`（显式形态，撞保留词时用）、`team_run` 工具（默认后台，报告完成自动送达，返回含 runId）；同一团队反复使用；`/team stop` 或 `team_stop` 工具按 runId 中止（settle-aware：停止后拿到 aborted 终态记录，报告 followUp 不再送达，可立即重新派单）
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
-- **进度可视（可选中亮块）** — 输入栏下方的紧凑亮块：暗色一行概要（团队/状态/耗时/并行成员数 + 任务），`↓`/`←`（焦点在主编辑器且编辑器为空时）或 `alt+↓` 进入选中（`↑`/`↓`/`j`/`k` 移动，第 0 行再按 `↑`/`k` 退出选中、`enter` 打开查看器看成员明细、`esc`/其它键退出并放行编辑器）；`/login`、`/model` 等选择器/对话框打开时焦点不在编辑器，widget 完全不介入（方向键原样让给选择器，选中态自动退出）；run 结束切终态行（`✓/✗ · 耗时 · 费用`），不再残留 running（SIGTERM → SIGKILL 逐级中止）；不需要终态行时 `/team:clear` 手动清除（`/reload` 后仅进行中 run 自动重挂）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [agent-team/docs/tui-sync.md](agent-team/docs/tui-sync.md）)
-- **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team:doctor` 自检报告
-- **会话记录查看器** - `/team:view` 全屏左右分栏(fleet inspector 同款:左栏成员 roster 带选中标记与状态,右栏 Run/State/成员 元信息头 + 选中成员的连续会话流--任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行;≈85% 终端高,窄于 36 列仅提示),run artifacts 落盘、run 结束后仍可查;`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；按键（v1.8.0）全面对齐 fleet：`↑↓/j/k` 切成员、`Shift+J/K` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行，仅 `m` 发消息是特有键；主 agent 可用 `team_transcript` 工具转述记录要点
+- **进度可视（可选中亮块）** — 输入栏下方的紧凑亮块：暗色一行概要（团队/状态/耗时/并行成员数 + 任务），`↓`/`←`（焦点在主编辑器且编辑器为空时）或 `alt+↓` 进入选中（`↑`/`↓`/`j`/`k` 移动，第 0 行再按 `↑`/`k` 退出选中、`enter` 打开查看器看成员明细、`esc`/其它键退出并放行编辑器）；`/login`、`/model` 等选择器/对话框打开时焦点不在编辑器，widget 完全不介入（方向键原样让给选择器，选中态自动退出）；run 结束切终态行（`✓/✗ · 耗时 · 费用`），不再残留 running（SIGTERM → SIGKILL 逐级中止）；不需要终态行时 `/team clear` 手动清除（`/reload` 后仅进行中 run 自动重挂）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [agent-team/docs/tui-sync.md](agent-team/docs/tui-sync.md）)
+- **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team doctor` 自检报告
+- **会话记录查看器** - `/team view` 全屏左右分栏(fleet inspector 同款:左栏成员 roster 带选中标记与状态,右栏 Run/State/成员 元信息头 + 选中成员的连续会话流--任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行;≈85% 终端高,窄于 36 列仅提示),run artifacts 落盘、run 结束后仍可查;`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；按键（v1.8.0）全面对齐 fleet：`↑↓/j/k` 切成员、`Shift+J/K` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行，仅 `m` 发消息是特有键；主 agent 可用 `team_transcript` 工具转述记录要点
 - **查看器内直接对话（`m` 发消息）** — 选中成员/leader 后按 `m` 进入单行输入（右栏输入行），`Enter` 提交；成员子进程不可注入，对话走派单语义：消息编成新 run 的 task（附目标 actor transcript 尾部作上文），run 运行中则排队、落定后自动链式派出（failed/aborted 清空）；回复经新 run transcript 在查看器里展示，报告照常 followUp 送达
 
 ```bash
 cd agent-team
-npm install && npm test        # 278 个测试（含真实 git worktree 用例）
+npm install && npm test        # 290 个测试（含真实 git worktree 用例）
 npm run typecheck
 ```
 
@@ -370,21 +370,21 @@ cd deep-init && npm install && npm test   # 32 个测试；另有 npm run typech
 
 ## opencode-bridge — 本地代理桥（HTTP CONNECT → SOCKS5）
 
-背景：opencode-go 的 Muse Spark 等模型按出口 IP 限区，而 Pi 只支持 HTTP 代理（不认 `socks5://`）。本扩展随 Pi 启动确保一个**独立 helper 进程**在跑：它监听 `127.0.0.1:<端口>`（默认 `10899`），把 HTTP CONNECT 转成你本地 v2rayN 的 SOCKS5（默认 `127.0.0.1:10808`）。需要让模型请求走本桥时，运行 `/opencode-bridge-sync`：**人工确认后**才修改 settings.json 的 `httpProxy` 字段（仅此字段，其余配置不动；修改前原文件自动备份到 `settings.json.bak-opencode-bridge-<时间戳>`）。扩展自身**绝不自动修改** settings.json。端口优先级：命令行参数 > `PI_BRIDGE_PORT` > 配置文件（settings.json 同目录 `opencode-bridge.json`，仅 `{"bridgePort": N}`）> 默认值。
+背景：opencode-go 的 Muse Spark 等模型按出口 IP 限区，而 Pi 只支持 HTTP 代理（不认 `socks5://`）。本扩展随 Pi 启动确保一个**独立 helper 进程**在跑：它监听 `127.0.0.1:<端口>`（默认 `10899`），把 HTTP CONNECT 转成你本地 v2rayN 的 SOCKS5（默认 `127.0.0.1:10808`）。需要让模型请求走本桥时，运行 `/opencode-bridge sync`：**人工确认后**才修改 settings.json 的 `httpProxy` 字段（仅此字段，其余配置不动；修改前原文件自动备份到 `settings.json.bak-opencode-bridge-<时间戳>`）。扩展自身**绝不自动修改** settings.json（solo 审批门开启时确认自动按批准路径）。端口优先级：命令行参数 > `PI_BRIDGE_PORT` > 配置文件（settings.json 同目录 `opencode-bridge.json`，仅 `{"bridgePort": N}`）> 默认值。
 
 - **进程隔离** — 桥运行在独立进程（`opencode-bridge-helper.mjs`，零依赖 .mjs）中，任何 socket 异常/未捕获异常都不会影响 Pi 主进程；Pi 侧 spawn 后 `unref()`，不持有子进程资源
 - **多实例复用** — `session_start` 只做 TCP 探测：桥已在监听则直接复用（多个 Pi / subagent 共用一个桥），仅在必要时拉起 helper；端口被另一个桥占用时新 helper 以 0 退出（竞争安全）
 - **协议健壮性** — CONNECT 完成 SOCKS5 无认证握手（域名方式，分片应答按缓冲累积解析）后双向转发（含请求头部剩余数据）；普通 HTTP 返回 405；上游拒绝/握手失败返回 502；客户端中途断开只清理自身，桥继续服务后续请求
 - **受控退出** — SIGTERM/SIGINT 优雅退出；`GET /__bridge/shutdown`（仅本地可达）供测试/受控关闭
-- **端口自定义** — `/opencode-bridge-sync [port]` 直接跟端口，或无参时交互式询问（回车保持当前）；改端口后一次确认覆盖写配置文件、停旧桥、起新桥、改 httpProxy 四件事；停旧桥时校验自家 helper 指纹（不符则不动并提示手动释放），等端口释放超时则 abort，全程 fail-closed
+- **端口自定义** — `/opencode-bridge sync [port]` 直接跟端口，或无参时交互式询问（回车保持当前）；改端口后一次确认覆盖写配置文件、停旧桥、起新桥、改 httpProxy 四件事；停旧桥时校验自家 helper 指纹（不符则不动并提示手动释放），等端口释放超时则 abort，全程 fail-closed
 
 前置条件：本地 SOCKS5 代理（如 v2rayN）已在 `PI_BRIDGE_SOCKS_HOST:PI_BRIDGE_SOCKS_PORT` 运行。
 
 | 命令/配置 | 作用 |
 | --- | --- |
-| `/opencode-bridge` | 查看状态（必要时尝试启动）：监听地址、上游 SOCKS5、端口来源、配置引导 |
-| `/opencode-bridge-sync [port]` | 修改 settings.json 的 `httpProxy` 指向本桥（人工确认 + 自动备份；仅改 `httpProxy` 字段；桥不通且现值指向本桥时提议移除）；带参用参数端口，无参交互询问并持久化到 `opencode-bridge.json`，改端口自动迁移（指纹确认停旧桥 + 起新桥 + httpProxy 联动） |
-| `/opencode-bridge-restore` | 从备份列表选择恢复 settings.json（人工确认；恢复前先把当前配置再备份一份，保证恢复操作本身可撤销） |
+| `/opencode-bridge` | 查看状态（必要时尝试启动）：监听地址、上游 SOCKS5、端口来源、配置引导；同一命令的子命令：`sync` / `restore` |
+| `/opencode-bridge sync [port]` | 修改 settings.json 的 `httpProxy` 指向本桥（人工确认 + 自动备份；仅改 `httpProxy` 字段；桥不通且现值指向本桥时提议移除）；带参用参数端口，无参交互询问并持久化到 `opencode-bridge.json`，改端口自动迁移（指纹确认停旧桥 + 起新桥 + httpProxy 联动） |
+| `/opencode-bridge restore` | 从备份列表选择恢复 settings.json（人工确认；恢复前先把当前配置再备份一份，保证恢复操作本身可撤销） |
 | `PI_BRIDGE_PORT` | 桥监听端口，默认 `10899`（仅绑定 127.0.0.1；需 1-65535 整数，非法启动时报静态错误） |
 | `PI_BRIDGE_SOCKS_HOST` | 上游 SOCKS5 主机，默认 `127.0.0.1` |
 | `PI_BRIDGE_SOCKS_PORT` | 上游 SOCKS5 端口，默认 `10808` |
@@ -393,7 +393,7 @@ cd deep-init && npm install && npm test   # 32 个测试；另有 npm run typech
 ```bash
 cd opencode-bridge
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型）
-npm test           # 108 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
+npm test           # 114 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 
@@ -415,7 +415,7 @@ node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测�
 
 ## solo-mode
 
-免审批模式：`/solo` 一键切换后，本仓库的**审批摩擦类**门自动走批准路径——PWR 批准卡按 once 自动批准（绝不写 remembered 记录）、opencode-bridge 的 sync / 端口切换 / restore 确认自动通过（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认自动放行。**误触保护类确认不受影响**（agent-team viewer `D` 停止、`/team:clear`、`/workflow-delete` 选择仍人工）。
+免审批模式：`/solo` 一键切换后，本仓库的**审批摩擦类**门自动走批准路径——PWR 批准卡按 once 自动批准（绝不写 remembered 记录）、opencode-bridge 的 sync / 端口切换 / restore 确认自动通过（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认自动放行。**误触保护类确认不受影响**（agent-team viewer `D` 停止、`/team clear`、`/workflow delete` 选择仍人工）。
 
 - **仅当前会话** — 状态写在本进程独占文件 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`（`{pid, activatedAt}`，读者校验 `pid === process.pid`）；`/reload`、`/new`、`/resume`、`/fork` 与退出即复位，子 pi 进程（PWR sub-agent / agent-team 成员 / loop `--bg`）天然不继承
 - **开启需确认** — `/solo` 开启时弹一次确认（列出受影响的门）；无 UI 环境拒绝激活（fail-closed）；状态条显示 `⚡ solo`

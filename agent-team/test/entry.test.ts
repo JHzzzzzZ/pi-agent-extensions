@@ -160,15 +160,14 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     assert.ok(pi.tools.has("team_transcript"));
     assert.ok(pi.tools.has("team_stop"));
     assert.ok(!pi.tools.has("team_dispatch"));
-    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear", "team:doctor"]) {
-      assert.ok(pi.commands.has(name), `command ${name} registered`);
-    }
+    assert.deepEqual([...pi.commands.keys()], ["team"], "the unified /team router is the only command");
     assert.ok(pi.entryRenderers.has("agent-team-run-v1"));
 
-    // session_start registers dynamic per-team commands (project scope, trusted)
+    // session_start no longer registers dynamic per-team commands: the router
+    // resolves any non-reserved first token as a team name at invocation time.
     await pi.fire("session_start", { reason: "startup" }, fakeCtx(projectDir, true));
-    assert.ok(pi.commands.has("team:proj-team"), "dynamic /team:<name> registered");
-    assert.match(pi.commands.get("team:proj-team")?.description ?? "", /proj-team/);
+    assert.ok(!pi.commands.has("team:proj-team"), "dynamic /team:<name> registrations are retired");
+    assert.deepEqual([...pi.commands.keys()], ["team"]);
   });
 });
 
@@ -192,9 +191,7 @@ test("after session_shutdown the guard resets and a fresh load registers everyth
     for (const name of ["team_run", "team_status", "team_transcript", "team_stop"]) {
       assert.ok(second.tools.has(name), `tool ${name} re-registered after reload`);
     }
-    for (const name of ["team", "team:run", "team:status", "team:stop", "team:view", "team:clear", "team:doctor"]) {
-      assert.ok(second.commands.has(name), `command ${name} re-registered after reload`);
-    }
+    assert.deepEqual([...second.commands.keys()], ["team"], "the /team router re-registered after reload");
     assert.ok(second.entryRenderers.has("agent-team-run-v1"));
   });
 });
@@ -227,7 +224,7 @@ test("repeated session_shutdown keeps the guard usable", async () => {
     const second = fakePi();
     agentTeamExtension(second as never);
     assert.ok(second.tools.has("team_run"), "tool registered after two shutdowns");
-    assert.equal(second.commands.size, 7);
+    assert.deepEqual([...second.commands.keys()], ["team"]);
   });
 });
 
@@ -238,6 +235,6 @@ test("double load is a no-op (installed package + -e copy)", () => {
   const toolsAfterFirst = pi.tools.size;
   agentTeamExtension(pi as never);
   assert.equal(pi.tools.size, toolsAfterFirst, "second instance registers nothing");
-  assert.equal(pi.commands.size, 7);
+  assert.deepEqual([...pi.commands.keys()], ["team"]);
   resetDoubleLoadGuardForTests();
 });

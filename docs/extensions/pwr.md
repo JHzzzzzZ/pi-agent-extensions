@@ -1,6 +1,6 @@
 # pwr — Pi Workflow Runtime
 
-> last verified @ 0260f89
+> last verified @ 1ff04e1
 
 ## 职责与边界
 
@@ -24,11 +24,13 @@
 3. `workflow_start`（批准门控，键 = 项目路径|digest，改脚本即 `APPROVAL_STALE`）→ `WorkflowRuntime.start`。
 4. 调度器 → 解释器逐节点执行 → 派发：缓存命中直接回放（不派进程不占预算）| `PiAgentRunner.run` 子 pi。
 5. 完成：`RunNotifier`（runId 作用域，被取消的运行不唤醒）→ `pi.sendMessage(pwr-workflow-result)`。
+6. saved 复用：`/workflow run <name> [args]` → 运行时现读盘 `loadSavedWorkflow` → 重新校验 → args 按 schema 校验 → digest 门控批准 → start。
 
 ## 不变量
 
 - fail-closed：缺 engine / runner ⇒ 类型化错误（`ENGINE_UNAVAILABLE` / `AGENT_RUNNER_UNAVAILABLE`），绝不隐式回退主 agent。
 - 错误消息静态模板，绝不插值用户输入；脚本源码 / args 永不写盘；结果 ≤50KB（`RESULT_TOO_LARGE`）、summary ≤8KB。
+- 命令面统一为子命令式（v2.5.0）：`/workflows list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`（无参=列表；`/workflows <runId>` 与 `--filter` 保留兼容）；`/workflow run|delete|model` 为 `/workflow` 子命令。动态 `workflow:<name>` 注册退役——saved 名由 `/workflow run` 调用时现读盘，与保存/删除无命令同步问题。
 - trace 文本（v2.4.0）单行 + 尾部截断，绝不透传原始工具输出。
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
 - pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。
@@ -44,7 +46,7 @@
 
 ## 改动清单
 
-- 必跑：`cd pwr && npm test`（410 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。
+- 必跑：`cd pwr && npm test`（416 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。
 - DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `pwr/DELIVERY.md` 版本历史。
 - 测试 fake：`test/helpers.ts` 的 `makeFakeRunner`（fake AgentRunner）、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn`（fake 子进程）。集成模式见 `runner/test/integration.test.ts`。
 - 完整架构 / 安全文档 / 版本历史 → `pwr/DELIVERY.md`（权威，勿在别处重复）。

@@ -65,7 +65,7 @@ test("viewerStopAction：未落定 → warning 文案", async () => {
     outcome: { settled: false, record: null },
   }) as never);
   assert.equal(result.kind, "warning");
-  assert.equal(result.text, "已发送中止信号，leader 仍在收尾；稍后用 /team:status 确认终态");
+  assert.equal(result.text, "已发送中止信号，leader 仍在收尾；稍后用 /team status 确认终态");
 });
 
 test("viewerStopAction：无活动 run（有终态记录）→ error 提示，不调 stopAndSettle", async () => {
@@ -93,7 +93,7 @@ test("viewerStopAction：无活动 run（无记录）→ error 提示", async ()
 test("viewerStopAction：stopAndSettle 异常 → error 文案，不上抛", async () => {
   const result = await viewerStopAction(fakeCoordinator({ progress: { runId: "run-1" }, reject: true }) as never);
   assert.equal(result.kind, "error");
-  assert.equal(result.text, "停止失败；稍后用 /team:stop 重试");
+  assert.equal(result.text, "停止失败；稍后用 /team stop 重试");
 });
 
 // ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ type ViewerComponentLike = {
   dispose: () => void;
 };
 
-/** 捕获真实 TranscriptViewer 实例的 closable /team:view ctx。 */
+/** 捕获真实 TranscriptViewer 实例的 closable /team view ctx。 */
 function closableViewCtx() {
   let viewerComponent: ViewerComponentLike | undefined;
   let resolveCustom: ((v: unknown) => void) | undefined;
@@ -199,10 +199,10 @@ test("全链路：viewer D→Enter 触发真实 stopAndSettle，落定后 notice
     const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
     process.env.PI_AGENT_TEAM_WIDGET = "0";
     try {
-      const view = pi.commands.get("team:view");
+      const view = pi.commands.get("team");
       assert.ok(view);
       const closable = closableViewCtx();
-      void view.handler("", closable.ctx as never);
+      void view.handler("view", closable.ctx as never);
       await new Promise((resolve) => setTimeout(resolve, 30));
       const component = closable.component();
 

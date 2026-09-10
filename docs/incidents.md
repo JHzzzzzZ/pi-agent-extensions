@@ -4,7 +4,7 @@
 >
 > 记录格式：症状 → 根因 → 教训。新事故追加在表后；修完必须留档。
 
-## TUI 渲染堆叠（agent-team /team:view，三轮修复）
+## TUI 渲染堆叠（agent-team /team view，三轮修复）
 
 - 症状：查看器顶部标题 + 成员页签逐帧重影堆叠；用户截图实锤。
 - 根因：纯函数单测全绿但真机照样坏——堆叠只存在于 pi-tui 真实合成 / previousLines diff 路径，fake 结构断言不到。三轮渐进修：overlay maxHeight 对齐 + widget 暂停 → 照抄 fleet 壳 + 打开互斥。

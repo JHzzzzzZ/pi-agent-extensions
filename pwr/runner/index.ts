@@ -170,7 +170,7 @@ export class PiAgentRunner implements AgentRunner {
 		const args: string[] = ["--mode", "json", "-p", "--no-session"];
 		// Model precedence is resolved once in run(): agent definition pin >
 		// per-call agent(..., { model }) option > PWR default resolver
-		// (e.g. /pwr-model auto → main session model); undefined → the child
+		// (e.g. /workflow model auto → main session model); undefined → the child
 		// pi falls back to its own configured default.
 		if (model) args.push("--model", model);
 		if (tools.length > 0) args.push("--tools", tools.join(","));

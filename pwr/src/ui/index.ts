@@ -12,9 +12,10 @@ import type { ToolDeps } from "../tools.ts";
 import type { RunStatus, WorkflowPlan, WorkflowScript, WorkflowRun } from "../types.ts";
 import { PWR_RUN_ENTRY } from "../types.ts";
 import {
+	WORKFLOWS_COMMAND,
 	latestRunId,
 	parseControlArgs,
-	parseWorkflowsArgs,
+	parseWorkflowsCommand,
 	resolveRunId,
 	runApproveAction,
 	runControlAction,
@@ -236,148 +237,68 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 	}
 
 	// ----- commands -----
-	pi.registerCommand("workflows", {
-		description: "List PWR workflow runs or open a run detail view (/workflows [runId | --filter <status>]).",
+	/**
+	 * 统一 `/workflows` 命令（命令风格统一：子命令式）。子命令映射按
+	 * `parseWorkflowsCommand`，旧 `/workflows:<name>` 的各自 handler 逻辑
+	 * 原样保留：无参=列表，`<runId>`/`--filter` 仍为兼容自由形态。
+	 */
+	pi.registerCommand(WORKFLOWS_COMMAND, {
+		description:
+			"PWR 工作流：无参=运行列表；/workflows list|view|open|pause|resume|stop|restart|save|saved|script|approve|help（可用 runId 或 8 位前缀）",
 		handler: async (args, ctx) => {
-			const parsed = parseWorkflowsArgs(args ?? "");
-			if (parsed.kind === "help") {
-				notify(ctx, workflowsHelpText(), "info");
-				return;
+			const route = parseWorkflowsCommand(args ?? "");
+			switch (route.kind) {
+				case "help":
+					notify(ctx, workflowsHelpText(), "info");
+					return;
+				case "list":
+					showList(ctx, route.status);
+					return;
+				case "detail":
+				case "open":
+					await showDetail(ctx, route.runId);
+					return;
+				case "view":
+					await openViewer(ctx, route.runId ?? "");
+					return;
+				case "pause":
+					await dispatchControl(ctx, "pause", route.runId);
+					return;
+				case "resume":
+					await dispatchControl(ctx, "resume", route.runId);
+					return;
+				case "stop":
+					await dispatchControl(ctx, "stop", route.runId, route.agentId);
+					return;
+				case "restart":
+					await dispatchControl(ctx, "restart_agent", route.runId, route.agentId);
+					return;
+				case "save":
+					await saveFlow(ctx, route.runId);
+					return;
+				case "saved":
+					notify(ctx, formatSavedWorkflows(describeSavedWorkflows(deps)), "info");
+					return;
+				case "script": {
+					const runId = resolveRunId(store, route.runId);
+					if (!runId) {
+						notify(ctx, `Error: run "${route.runId}" not found (RUN_NOT_FOUND).`, "error");
+						return;
+					}
+					const script = deps.registry.getScript(runId);
+					notify(ctx, script ? `[PWR] Workflow script (read-only)\n\n${script.source}` : "Script not available for this run.", "info");
+					return;
+				}
+				case "approve": {
+					const outcome = await runApproveAction(deps, store, route.runId, ctx);
+					notify(ctx, outcome.text, outcome.ok ? "info" : "error");
+					refresh(ctx);
+					return;
+				}
+				case "usage":
+					notify(ctx, route.text, "error");
+					return;
 			}
-			if (parsed.kind === "list") {
-				showList(ctx, parsed.status);
-				return;
-			}
-			await showDetail(ctx, parsed.runId);
-		},
-	});
-
-	pi.registerCommand("workflows:list", {
-		description: "List PWR runs, optionally filtered by status.",
-		handler: async (args, ctx) => {
-			const status = (args ?? "").trim();
-			showList(ctx, status === "" ? undefined : status);
-		},
-	});
-
-	pi.registerCommand("workflows:view", {
-		description: "Open the full-screen live run viewer: structure diagram + per-stage pages (/workflows:view [runId]).",
-		handler: async (args, ctx) => {
-			await openViewer(ctx, (args ?? "").trim());
-		},
-	});
-
-	pi.registerCommand("workflows:open", {
-		description: "Open a PWR run detail view.",
-		handler: async (args, ctx) => {
-			const ref = (args ?? "").trim();
-			if (!ref) {
-				notify(ctx, "Usage: /workflows:open <runId>", "error");
-				return;
-			}
-			await showDetail(ctx, ref);
-		},
-	});
-
-	pi.registerCommand("workflows:pause", {
-		description: "Pause a PWR run.",
-		handler: async (args, ctx) => {
-			const parsed = parseControlArgs("pause", args ?? "");
-			if (!parsed.ok) {
-				notify(ctx, parsed.usage, "error");
-				return;
-			}
-			await dispatchControl(ctx, "pause", parsed.runId);
-		},
-	});
-
-	pi.registerCommand("workflows:resume", {
-		description: "Resume a paused PWR run.",
-		handler: async (args, ctx) => {
-			const parsed = parseControlArgs("resume", args ?? "");
-			if (!parsed.ok) {
-				notify(ctx, parsed.usage, "error");
-				return;
-			}
-			await dispatchControl(ctx, "resume", parsed.runId);
-		},
-	});
-
-	pi.registerCommand("workflows:stop", {
-		description: "Stop a PWR run, or a single agent task: /workflows:stop <runId> [taskId].",
-		handler: async (args, ctx) => {
-			const parsed = parseControlArgs("stop", args ?? "");
-			if (!parsed.ok) {
-				notify(ctx, parsed.usage, "error");
-				return;
-			}
-			await dispatchControl(ctx, "stop", parsed.runId, parsed.agentId);
-		},
-	});
-
-	pi.registerCommand("workflows:restart", {
-		description: "Restart a single agent task (completed cache unchanged): /workflows:restart <runId> <taskId>.",
-		handler: async (args, ctx) => {
-			const parsed = parseControlArgs("restart_agent", args ?? "");
-			if (!parsed.ok) {
-				notify(ctx, parsed.usage, "error");
-				return;
-			}
-			await dispatchControl(ctx, "restart_agent", parsed.runId, parsed.agentId);
-		},
-	});
-
-	pi.registerCommand("workflows:save", {
-		description: "Save a PWR run as a reusable command (with overwrite confirmation).",
-		handler: async (args, ctx) => {
-			const ref = (args ?? "").trim();
-			if (!ref) {
-				notify(ctx, "Usage: /workflows:save <runId>", "error");
-				return;
-			}
-			await saveFlow(ctx, ref);
-		},
-	});
-
-	pi.registerCommand("workflows:saved", {
-		description: "List saved PWR workflows (/workflow:<name> commands) with scope, description and args hint.",
-		handler: async (_args, ctx) => {
-			notify(ctx, formatSavedWorkflows(describeSavedWorkflows(deps)), "info");
-		},
-	});
-
-	pi.registerCommand("workflows:script", {
-		description: "Show the raw script of a PWR run (read-only).",
-		handler: async (args, ctx) => {
-			const ref = (args ?? "").trim();
-			const runId = ref ? resolveRunId(store, ref) : undefined;
-			if (!runId) {
-				notify(ctx, ref ? `Error: run "${ref}" not found (RUN_NOT_FOUND).` : "Usage: /workflows:script <runId>", "error");
-				return;
-			}
-			const script = deps.registry.getScript(runId);
-			notify(ctx, script ? `[PWR] Workflow script (read-only)\n\n${script.source}` : "Script not available for this run.", "info");
-		},
-	});
-
-	pi.registerCommand("workflows:approve", {
-		description: "Approve and start a run waiting for approval: /workflows:approve <runId> (shows the approval card).",
-		handler: async (args, ctx) => {
-			const ref = (args ?? "").trim();
-			if (!ref) {
-				notify(ctx, "Usage: /workflows:approve <runId>", "error");
-				return;
-			}
-			const outcome = await runApproveAction(deps, store, ref, ctx);
-			notify(ctx, outcome.text, outcome.ok ? "info" : "error");
-			refresh(ctx);
-		},
-	});
-
-	pi.registerCommand("workflows:help", {
-		description: "Show PWR /workflows command help.",
-		handler: async (_args, ctx) => {
-			notify(ctx, workflowsHelpText(), "info");
 		},
 	});
 

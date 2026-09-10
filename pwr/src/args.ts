@@ -1,7 +1,7 @@
 /**
  * PWR - saved-workflow arguments (JHL-17 goal 2)
  *
- * `/workflow:<name> <args>` input is turned into a structured `args` global:
+ * `/workflow run <name> [args]` input is turned into a structured `args` global:
  *  - empty input  -> `undefined` (PRD §5.5: no args is `undefined`)
  *  - non-empty    -> JSON.parse (objects, arrays and scalars are all valid)
  * When the saved script declares `meta.argsSchema`, the parsed value is
@@ -15,7 +15,7 @@ import { ErrorCode, errorMessage, type ErrorCodeValue } from "./errors.ts";
 export type ArgsResult = { ok: true; value: unknown } | { ok: false; code: ErrorCodeValue; message: string };
 
 /**
- * Parses the raw argument text of `/workflow:<name> <args>`.
+ * Parses the raw argument text of `/workflow run <name> [args]`.
  * Empty text yields `undefined` (no args). Anything else must be valid JSON;
  * otherwise ARGS_INVALID is returned and the workflow is not started.
  * The failure message is the STATIC template — raw input (which may contain

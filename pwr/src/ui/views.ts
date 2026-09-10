@@ -114,7 +114,7 @@ export function formatRunList(entries: RunListEntry[], opts: RunListOptions = {}
 		lines.push(formatRunListLine(entry));
 	}
 	if (opts.statusFilter) {
-		lines.push(`filter: ${opts.statusFilter} — use /workflows:list without filter to see all runs`);
+		lines.push(`filter: ${opts.statusFilter} — use /workflows list without filter to see all runs`);
 	}
 	return lines.join("\n");
 }
@@ -204,13 +204,13 @@ export function formatRunDetail(detail: RunDetail): string {
 
 	lines.push("");
 	lines.push("Actions (commands + keys):");
-	lines.push(`  /workflows:view ${detail.runId.slice(0, 8)}    full-screen live viewer`);
-	lines.push(`  /workflows:pause ${detail.runId.slice(0, 8)}    ${shortcutHint("pause")}  pause run`);
-	lines.push(`  /workflows:resume ${detail.runId.slice(0, 8)}                 resume run`);
-	lines.push(`  /workflows:stop ${detail.runId.slice(0, 8)}      ${shortcutHint("stop")}  stop run (or one agent)`);
-	lines.push(`  /workflows:restart ${detail.runId.slice(0, 8)} <taskId>  ${shortcutHint("restart")}  restart agent`);
-	lines.push(`  /workflows:save ${detail.runId.slice(0, 8)}      save as command`);
-	lines.push(`  /workflows:script ${detail.runId.slice(0, 8)}    view raw script`);
+	lines.push(`  /workflows view ${detail.runId.slice(0, 8)}    full-screen live viewer`);
+	lines.push(`  /workflows pause ${detail.runId.slice(0, 8)}    ${shortcutHint("pause")}  pause run`);
+	lines.push(`  /workflows resume ${detail.runId.slice(0, 8)}                 resume run`);
+	lines.push(`  /workflows stop ${detail.runId.slice(0, 8)}      ${shortcutHint("stop")}  stop run (or one agent)`);
+	lines.push(`  /workflows restart ${detail.runId.slice(0, 8)} <taskId>  ${shortcutHint("restart")}  restart agent`);
+	lines.push(`  /workflows save ${detail.runId.slice(0, 8)}      save as command`);
+	lines.push(`  /workflows script ${detail.runId.slice(0, 8)}    view raw script`);
 	lines.push(`  /workflows      list all runs`);
 	return lines.join("\n");
 }
@@ -242,21 +242,21 @@ export function costWarningText(): string {
 }
 
 /**
- * Saved-workflow enumeration (/workflows:saved and the /workflow-delete
+ * Saved-workflow enumeration (/workflows saved and the /workflow delete
  * no-arg listing). Project scope is listed first because it shadows the
  * same-name user-scope file at invocation time.
  */
 export function formatSavedWorkflows(summaries: SavedWorkflowSummary[]): string {
 	if (summaries.length === 0) {
-		return "No saved workflows yet — create one with /workflow <task>, then /workflows:save <runId>.";
+		return "No saved workflows yet — create one with /workflow <task>, then /workflows save <runId>.";
 	}
 	const lines = [`Saved workflows (${summaries.length}):`];
 	for (const s of summaries) {
 		const scope = s.scope === "project" ? "project, shadows user" : "user";
 		const desc = s.description ? ` — ${s.description}` : "";
 		const args = s.argsHint ? ` · args: ${s.argsHint}` : "";
-		lines.push(`  /workflow:${s.name}  [${scope}]${desc}${args}`);
+		lines.push(`  /workflow run ${s.name}  [${scope}]${desc}${args}`);
 	}
-	lines.push("Run: /workflow:<name> key=value ... (or a JSON value). Delete: /workflow-delete <name>.");
+	lines.push("Run: /workflow run <name> key=value ... (or a JSON value). Delete: /workflow delete <name>.");
 	return lines.join("\n");
 }
