@@ -327,7 +327,13 @@ export class TeamRunCoordinator {
       team: team.name,
       task,
       startedAtMs,
-      members: team.members.map((m) => ({ name: m.name, status: "queued" as const })),
+      members: team.members.map((m) => ({
+        name: m.name,
+        status: "queued" as const,
+        // 声明模型进 progress：viewer 头部要显示每个成员的后端模型，
+        // 不能每次 750ms 刷新都去扫盘重读团队文件。
+        ...(m.model ? { model: m.model } : {}),
+      })),
       budget: (() => {
         const b = resolveRunBudget(team.budget);
         return {

@@ -79,6 +79,7 @@ async function setup(): Promise<{
   pi: ReturnType<typeof fakePi>;
   spawn: FakeSpawnHandle;
   run: RunTool;
+  ctx: ReturnType<typeof fakeCtx>;
   cleanup: () => void;
 }> {
   isolateRunsDir();
@@ -98,6 +99,7 @@ async function setup(): Promise<{
   return {
     pi,
     spawn,
+    ctx,
     run: (params) => tool.execute("call-1", params, undefined, undefined, ctx),
     cleanup: () => fs.rmSync(projectDir, { recursive: true, force: true }),
   };
@@ -175,6 +177,42 @@ test("team_run wait:true keeps the synchronous contract: inline report, no follo
     assert.ok(
       pi.appendedEntries.some((entry) => entry.type === "agent-team-run-v1"),
       "run record persisted",
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+// Viewer / team_transcript 展示每个 actor 的后端模型：成员用团队配置声明值，
+// leader 用子进程实际报告值（runner 把 message_end 的 model 折进 usage）。
+test("team_transcript details expose each actor's backend model (member declared + leader actual)", async () => {
+  const { pi, spawn, run, ctx, cleanup } = await setup();
+  try {
+    const promise = run({ team: "proj-team", task: "修复登录 bug", wait: true });
+    const child = await waitForChild(spawn, 0);
+    child.autoRespond(leaderLines(), 0, 5);
+    await promise;
+
+    const tool = pi.tools.get("team_transcript") as unknown as {
+      execute: (
+        id: string,
+        params: Record<string, unknown>,
+        signal?: undefined,
+        onUpdate?: undefined,
+        ctx?: unknown,
+      ) => Promise<{ content: Array<{ text: string }>; details?: unknown }>;
+    };
+    const result = await tool.execute("call-1", {}, undefined, undefined, ctx);
+    const actors = (result.details as { actors: Array<{ actor: string; model?: string }> }).actors;
+    assert.equal(
+      actors.find((a) => a.actor === "_leader")?.model,
+      "claude-opus-4-5",
+      "leader model comes from the scripted child's message_end model",
+    );
+    assert.equal(
+      actors.find((a) => a.actor === "frontend")?.model,
+      "chatanywhere/gpt-5.6",
+      "member model comes from the team config",
     );
   } finally {
     cleanup();

@@ -361,14 +361,33 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       : undefined;
 
     const memberStatuses = new Map<string, string>();
-    if (progress) for (const member of progress.members) memberStatuses.set(member.name, member.status);
-    else if (lastRecord) for (const member of lastRecord.members) memberStatuses.set(member.name, member.status);
+    const memberModels = new Map<string, string>();
+    if (progress) {
+      for (const member of progress.members) {
+        memberStatuses.set(member.name, member.status);
+        if (member.model) memberModels.set(member.name, member.model);
+      }
+    } else if (lastRecord) {
+      for (const member of lastRecord.members) {
+        memberStatuses.set(member.name, member.status);
+        // 实际跑过的模型（子进程 message_end 上报）优先于声明值。
+        const model = member.usage?.model ?? member.model;
+        if (model) memberModels.set(member.name, model);
+      }
+    }
+    const leaderModel = progress?.leaderModel ?? lastRecord?.leaderUsage?.model;
 
     const actors: ViewerActor[] = [
-      { actor: LEADER_ACTOR, label: "leader", status: progress ? "running" : lastRecord?.status },
+      {
+        actor: LEADER_ACTOR,
+        label: "leader",
+        status: progress ? "running" : lastRecord?.status,
+        ...(leaderModel ? { model: leaderModel } : {}),
+      },
     ];
     for (const [name, status] of memberStatuses) {
-      actors.push({ actor: sanitizeActorName(name), label: name, status });
+      const model = memberModels.get(name);
+      actors.push({ actor: sanitizeActorName(name), label: name, status, ...(model ? { model } : {}) });
     }
     for (const fileActor of listTranscriptActors(transcriptRoot(), runId)) {
       if (fileActor === LEADER_ACTOR) continue;
@@ -820,7 +839,14 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           : text;
       return {
         content: [{ type: "text" as const, text: truncateUtf8(body, MAX_RESULT_BYTES) }],
-        details: { actors: data.actors.map((a) => ({ actor: a.actor, label: a.label, status: a.status })) },
+        details: {
+          actors: data.actors.map((a) => ({
+            actor: a.actor,
+            label: a.label,
+            status: a.status,
+            ...(a.model ? { model: a.model } : {}),
+          })),
+        },
       };
     },
   });
