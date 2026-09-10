@@ -3,14 +3,16 @@
  *
  * Renders the coordinator's run snapshot BELOW the editor (placement
  * "belowEditor") as plain `setWidget(key, string[], …)` refreshed on a 1s
- * interval, and makes the block selectable: bare ↓/← (only while the
- * editor is empty AND focused — aligned to fleet-status) and alt+down/up
- * (ungated second channel) activate a modal selection; ↑/↓/j/k move the
- * row cursor (到顶再按 ↑/k 退出选中，fleet-status 同构), enter opens the
- * transcript viewer on the row's actor, esc (or any other key) leaves
- * selection and — except for esc — passes the key
- * through to the editor untouched. Repaints skip when the render string
- * is unchanged (aligned to fleet-status renderKey).
+ * interval. Default (unselected) state is a single collapsed line
+ * (`agent-team <团队> · ↓/← 查看详情`); bare ↓/← (only while the editor is
+ * empty AND focused — aligned to fleet-status) and alt+down/up (ungated
+ * second channel) expand it into the rows + hint block. ↑/↓/j/k move the
+ * row cursor (到顶再按 ↑/k 退出选中并收回折叠，fleet-status 同构), enter opens
+ * the transcript viewer on the row's actor, esc (or any other key) leaves
+ * selection and — except for esc — passes the key through to the editor
+ * untouched. Repaints skip when the render string is unchanged (aligned to
+ * fleet-status renderKey; the collapsed line carries no per-second text,
+ * so running runs no longer churn the host).
  *
  * While a host selector/dialog owns the keyboard (`probeEditorFocus` →
  * false) the widget is fully inert: no activation key is consumed and an
@@ -43,24 +45,45 @@ function recordIcon(status: string): string {
         : "·";
 }
 
+/** 连续空白（含换行）压成单空格并 trim——宿主把残余换行渲染成额外行。 */
+function flatten(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function truncateTask(text: string): string {
-  return text.length > 44 ? `${text.slice(0, 44)}…` : text;
+  const flat = flatten(text);
+  // 截断后再 trimEnd，避免在 "…" 前留下空格。
+  const clipped = flat.length > 44 ? `${flat.slice(0, 44)}…` : flat;
+  return clipped.trimEnd();
 }
 
 /**
- * Compact widget rows for a run snapshot: a header line (team, status,
- * elapsed, live parallel-member count) plus the bounded task line — member
- * detail lives in the transcript viewer, not here. A failed/aborted run
+ * 折叠行（未选中时唯一一行）+ 展开 rows（选中态）：折叠行只报团队名与激活
+ * 提示，不含状态/耗时/并行数/余额——running 时逐秒 elapsed 不再进入渲染串，
+ * setWidget 指纹门控自然跳过（少 churn，对齐 fleet-status renderKey 语义）。
+ */
+export interface WidgetView {
+  /** 未选中态的单行文案；无 run 时为空串（widget 整体隐藏）。 */
+  collapsed: string;
+  /** 选中态的行（状态行 + 任务行 + 可选错误行），行构建语义与旧版一致。 */
+  rows: WidgetRowSpec[];
+}
+
+/**
+ * Compact widget view for a run snapshot: a collapsed one-liner (default,
+ * unselected) plus the expanded rows — a header line (team, status,
+ * elapsed, live parallel-member count) and the bounded task line (member
+ * detail lives in the transcript viewer, not here). A failed/aborted run
  * keeps one bounded error row. Empty when there is nothing to show.
  */
-export function buildWidgetRows(snapshot: RunStatusSnapshot, nowMs: number): WidgetRowSpec[] {
+export function buildWidgetView(snapshot: RunStatusSnapshot, nowMs: number): WidgetView {
   const rows: WidgetRowSpec[] = [];
   if (snapshot.running && snapshot.progress) {
     const progress = snapshot.progress;
     const running = progress.members.filter((member) => member.status === "running").length;
     const counts = progress.members.length > 0 ? ` · ${running}/${progress.members.length} 并行` : "";
     // Single-line lean: only a remaining-balance hint when a cost cap is set
-    // and not yet breached (a breach aborts the run anyway).
+    // and not yet breached (a breach aborts the run anyway). 仅展开态可见。
     let budgetHint = "";
     const budget = progress.budget;
     if (budget?.maxCostUsd !== null && budget?.maxCostUsd !== undefined && budget.spentCost < budget.maxCostUsd) {
@@ -71,16 +94,16 @@ export function buildWidgetRows(snapshot: RunStatusSnapshot, nowMs: number): Wid
       actor: LEADER_ACTOR,
     });
     rows.push({ text: `任务: ${truncateTask(progress.task)}`, actor: LEADER_ACTOR });
-    return rows;
+    return { collapsed: `agent-team ${flatten(progress.team)} · ↓/← 查看详情`, rows };
   }
   const record = snapshot.lastRecord;
-  if (!record) return [];
+  if (!record) return { collapsed: "", rows: [] };
   const secs = record.durationMs !== undefined ? ` · ${Math.round(record.durationMs / 100) / 10}s` : "";
   const cost = record.totalCost > 0 ? ` · $${record.totalCost.toFixed(4)}` : "";
   rows.push({ text: `agent-team ${record.team} ${recordIcon(record.status)} ${record.status}${secs}${cost}`, actor: LEADER_ACTOR });
   rows.push({ text: `任务: ${truncateTask(record.task)}`, actor: LEADER_ACTOR });
   if (record.error) rows.push({ text: `✗ ${truncateTask(record.error)}`, actor: LEADER_ACTOR });
-  return rows;
+  return { collapsed: `agent-team ${flatten(record.team)} · ↓/← 查看详情`, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -230,18 +253,19 @@ export function probeEditorFocus(tui: unknown): boolean | undefined {
  * bounded by char count only — CJK-heavy rows render up to 2× wider.
  */
 export function renderWidgetView(
-  rows: WidgetRowSpec[],
+  view: WidgetView,
   state: WidgetKeyState,
   width: number,
   styles: Styles,
 ): string[] {
-  if (rows.length === 0) return [];
+  if (view.rows.length === 0) return [];
   const usable = Math.max(8, width);
   if (!state.selected) {
-    return rows.map((row) => styles.dim(truncateVisible(row.text, usable)));
+    // 折叠默认态：恰好一行，不逐行输出 rows（状态/耗时收进展开态）。
+    return [styles.dim(truncateVisible(view.collapsed, usable))];
   }
   const inner = Math.max(8, usable - 2); // "▸ " / "  " gutter
-  const lines = rows.map((row, index) => {
+  const lines = view.rows.map((row, index) => {
     const text = truncateVisible(row.text, inner);
     return index === state.cursor ? styles.accent(`▸ ${text}`) : styles.dim(`  ${text}`);
   });
@@ -295,7 +319,7 @@ export interface RunWidgetControllerOptions {
  */
 export class RunWidgetController {
   private state = initialWidgetKeyState();
-  private rows: WidgetRowSpec[] = [];
+  private view: WidgetView = { collapsed: "", rows: [] };
   private stopTicker: (() => void) | null = null;
   /** True while the transcript viewer overlay is open (tick paused). */
   private paused = false;
@@ -376,10 +400,10 @@ export class RunWidgetController {
     if (this.paused) return;
     try {
       const snapshot = this.opts.load();
-      this.rows = buildWidgetRows(snapshot, this.opts.nowMs?.() ?? Date.now());
-      if (this.state.cursor > this.rows.length - 1) this.state.cursor = Math.max(0, this.rows.length - 1);
+      this.view = buildWidgetView(snapshot, this.opts.nowMs?.() ?? Date.now());
+      if (this.state.cursor > this.view.rows.length - 1) this.state.cursor = Math.max(0, this.view.rows.length - 1);
       const width = this.opts.width?.() ?? process.stdout.columns ?? 80;
-      const lines = renderWidgetView(this.rows, this.state, width, this.opts.styles);
+      const lines = renderWidgetView(this.view, this.state, width, this.opts.styles);
       const renderKey = lines.join("\n");
       if (renderKey === this.lastRender) return;
       this.lastRender = renderKey;
@@ -410,8 +434,8 @@ export class RunWidgetController {
       const result = handleWidgetKey(
         this.state,
         data,
-        this.rows.length,
-        this.rows.map((row) => row.actor),
+        this.view.rows.length,
+        this.view.rows.map((row) => row.actor),
         canActivate,
       );
       if (result.type === "none") return undefined;

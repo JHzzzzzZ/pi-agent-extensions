@@ -86,6 +86,7 @@ function editorTheme(): never {
 }
 
 const cursorRow = (lines: string[]): number => lines.findIndex((line) => line.startsWith("▸ "));
+const lastLines = (pushed: Array<string[] | undefined>): string[] => pushed[pushed.length - 1] ?? [];
 
 /** 真实 controller + 真实 probeEditorFocus 挂到真实 TUI 的输入监听上。 */
 function mountController(tui: TuiMainScreen): { controller: RunWidgetController; pushed: Array<string[] | undefined> } {
@@ -110,7 +111,7 @@ function mountController(tui: TuiMainScreen): { controller: RunWidgetController;
   return { controller, pushed };
 }
 
-test("真实宿主：焦点在主编辑器（CustomEditor）→ 裸 ↓ 被 widget 消费并进入选中（防门控永不开）", () => {
+test("真实宿主：焦点在主编辑器（CustomEditor）→ 裸 ↓ 被 widget 消费并展开（防门控永不开）", () => {
   const { term, dispatch } = fakeTerminal();
   const tui = new TuiMainScreen(term as never);
   const { controller, pushed } = mountController(tui);
@@ -120,8 +121,15 @@ test("真实宿主：焦点在主编辑器（CustomEditor）→ 裸 ↓ 被 widg
     tui.setFocus(editor);
     assert.equal(probeEditorFocus(tui), true, "真 CustomEditor 必须通过编辑器形状判定");
 
+    const before = lastLines(pushed);
+    assert.equal(before.length, 1, "默认帧为折叠单行");
+    assert.match(before[0]!, /agent-team dev-team · ↓\/← 查看详情/);
+
     dispatch(KEY_DOWN);
-    assert.equal(cursorRow(pushed[pushed.length - 1] ?? []), 0, "编辑器焦点时裸 ↓ 照常激活");
+    const after = lastLines(pushed);
+    assert.equal(cursorRow(after), 0, "编辑器焦点时裸 ↓ 照常激活");
+    assert.equal(after.length, 3, "真实 ↓ 分发后展开为 rows + 提示行");
+    assert.match(after[after.length - 1]!, /↑↓ 选择/);
   } finally {
     controller.stop();
     tui.stop();
@@ -149,7 +157,8 @@ test("真实宿主：焦点在 /login 选择器（OAuthSelectorComponent）→ �
 
     dispatch(KEY_DOWN);
     assert.deepEqual(received, [KEY_DOWN], "选择器必须收到方向键（widget 不得抢键）");
-    assert.equal(cursorRow(pushed[pushed.length - 1] ?? []), -1, "widget 不得进入选中");
+    assert.equal(cursorRow(lastLines(pushed)), -1, "widget 不得进入选中");
+    assert.equal(lastLines(pushed).length, 1, "widget 保持折叠单行");
   } finally {
     controller.stop();
     tui.stop();
@@ -172,7 +181,8 @@ test("真实宿主：焦点在扩展选择器（ExtensionSelectorComponent，ctx
 
     dispatch(KEY_DOWN);
     assert.deepEqual(received, [KEY_DOWN], "选择器必须收到方向键（widget 不得抢键）");
-    assert.equal(cursorRow(pushed[pushed.length - 1] ?? []), -1, "widget 不得进入选中");
+    assert.equal(cursorRow(lastLines(pushed)), -1, "widget 不得进入选中");
+    assert.equal(lastLines(pushed).length, 1, "widget 保持折叠单行");
   } finally {
     controller.stop();
     tui.stop();
