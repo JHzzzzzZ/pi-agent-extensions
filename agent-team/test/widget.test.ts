@@ -9,7 +9,7 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   RunWidgetController,
-  buildWidgetRows,
+  buildWidgetView,
   handleWidgetKey,
   initialWidgetKeyState,
   isEditorComponentLike,
@@ -69,18 +69,23 @@ function doneSnapshot(): RunStatusSnapshot {
   };
 }
 
-test("buildWidgetRows live: compact header (status/elapsed/parallel count) + task, all leader rows", () => {
-  const rows = buildWidgetRows(liveSnapshot(), 65000);
-  assert.equal(rows.length, 2, "compact: header + task only, no member detail");
-  assert.match(rows[0].text, /agent-team dev-team ▶ running · 1m5s · 1\/2 并行/);
-  assert.match(rows[1].text, /任务: 修复登录 bug/);
+test("buildWidgetView live: collapsed one-liner + expanded rows (status/elapsed/parallel count) + task, all leader rows", () => {
+  const view = buildWidgetView(liveSnapshot(), 65000);
+  assert.equal(
+    view.collapsed,
+    "agent-team dev-team · ↓/← 查看详情",
+    "running 折叠行：团队 + 激活提示（不含状态/耗时/并行数）",
+  );
+  assert.equal(view.rows.length, 2, "compact: header + task only, no member detail");
+  assert.match(view.rows[0].text, /agent-team dev-team ▶ running · 1m5s · 1\/2 并行/);
+  assert.match(view.rows[1].text, /任务: 修复登录 bug/);
   assert.deepEqual(
-    rows.map((row) => row.actor),
+    view.rows.map((row) => row.actor),
     ["_leader", "_leader"],
   );
 });
 
-test("buildWidgetRows adds a remaining-cost hint when a cost cap is set", () => {
+test("buildWidgetView adds a remaining-cost hint to the expanded header when a cost cap is set", () => {
   const base = liveSnapshot();
   const budget = {
     maxDispatchCalls: 12,
@@ -93,40 +98,77 @@ test("buildWidgetRows adds a remaining-cost hint when a cost cap is set", () => 
     memberRuns: 2,
   };
   base.progress!.budget = budget;
-  const rows = buildWidgetRows(base, 65000);
-  assert.match(rows[0].text, /剩 \$4\.58/);
+  assert.match(buildWidgetView(base, 65000).rows[0].text, /剩 \$4\.58/);
 
   // No cap → no hint.
   const uncapped = liveSnapshot();
   uncapped.progress!.budget = { ...budget, maxCostUsd: null };
-  assert.doesNotMatch(buildWidgetRows(uncapped, 65000)[0].text, /剩 \$/);
+  assert.doesNotMatch(buildWidgetView(uncapped, 65000).rows[0].text, /剩 \$/);
 
   // Cap already breached → no hint (the run aborts anyway).
   const breached = liveSnapshot();
   breached.progress!.budget = { ...budget, spentCost: 5.2 };
-  assert.doesNotMatch(buildWidgetRows(breached, 65000)[0].text, /剩 \$/);
+  assert.doesNotMatch(buildWidgetView(breached, 65000).rows[0].text, /剩 \$/);
 });
 
-test("buildWidgetRows terminal: status, duration, cost from the last record", () => {
-  const rows = buildWidgetRows(doneSnapshot(), 0);
-  assert.equal(rows.length, 2);
-  assert.match(rows[0].text, /agent-team dev-team ✓ completed · 12s · \$0\.0500/);
-  assert.match(rows[1].text, /任务: 修复 bug/);
-  assert.deepEqual(rows.map((row) => row.actor), ["_leader", "_leader"]);
+test("buildWidgetView terminal: same collapsed format, expanded status/duration/cost from the last record", () => {
+  const view = buildWidgetView(doneSnapshot(), 0);
+  assert.equal(view.collapsed, "agent-team dev-team · ↓/← 查看详情", "终态与 running 同折叠格式");
+  assert.equal(view.rows.length, 2);
+  assert.match(view.rows[0].text, /agent-team dev-team ✓ completed · 12s · \$0\.0500/);
+  assert.match(view.rows[1].text, /任务: 修复 bug/);
+  assert.deepEqual(view.rows.map((row) => row.actor), ["_leader", "_leader"]);
 });
 
-test("buildWidgetRows terminal failed record keeps one bounded error row", () => {
+test("buildWidgetView terminal failed record keeps one bounded error row", () => {
   const snapshot = doneSnapshot();
   snapshot.lastRecord = { ...snapshot.lastRecord!, status: "failed", error: "模型超时，任务中断" };
-  const rows = buildWidgetRows(snapshot, 0);
-  assert.equal(rows.length, 3);
-  assert.match(rows[0].text, /agent-team dev-team ✗ failed · 12s/);
-  assert.match(rows[2].text, /✗ 模型超时，任务中断/);
-  assert.equal(rows[2].actor, "_leader");
+  const view = buildWidgetView(snapshot, 0);
+  assert.equal(view.rows.length, 3);
+  assert.match(view.rows[0].text, /agent-team dev-team ✗ failed · 12s/);
+  assert.match(view.rows[2].text, /✗ 模型超时，任务中断/);
+  assert.equal(view.rows[2].actor, "_leader");
 });
 
-test("buildWidgetRows empty: no data renders no rows", () => {
-  assert.deepEqual(buildWidgetRows({ running: false, progress: null, lastRecord: null }, 0), []);
+test("buildWidgetView empty: no data → empty collapsed text and no rows (widget hidden)", () => {
+  assert.deepEqual(buildWidgetView({ running: false, progress: null, lastRecord: null }, 0), {
+    collapsed: "",
+    rows: [],
+  });
+});
+
+// 截图实读缺陷回归（用户 2026-09-10）：任务里的 \n 被宿主渲染成额外残行；折叠单行
+// 文案同样必须压平，否则一行会变多行。
+test("buildWidgetView flattens newlines/whitespace to single spaces in every row and in the collapsed text", () => {
+  const snapshot = liveSnapshot();
+  snapshot.progress!.task = "目标: 输出小写单词 hello。\n特别注意：这是对 count-duet 的一次复用任务";
+  const view = buildWidgetView(snapshot, 65000);
+  for (const row of view.rows) assert.doesNotMatch(row.text, /\n/, "任何 row 文本不得含换行（宿主要把残行渲染成额外行）");
+  assert.match(view.rows[1].text, /任务: 目标: 输出小写单词 hello。 特别注意：/);
+
+  // 折叠单行来自团队名，同样必须压平（多行团队名不把一行变多行）。
+  const multilineTeam = liveSnapshot();
+  multilineTeam.progress!.team = "count\nduet";
+  const collapsed = buildWidgetView(multilineTeam, 65000).collapsed;
+  assert.equal(collapsed, "agent-team count duet · ↓/← 查看详情");
+  assert.doesNotMatch(collapsed, /\n/);
+});
+
+test("buildWidgetView truncation: flatten first, then 44 chars + … (bounded, never trailing whitespace)", () => {
+  const snapshot = liveSnapshot();
+  snapshot.progress!.task = `${"a".repeat(30)}\n${"b".repeat(30)}   ${"c".repeat(10)}`;
+  const task = buildWidgetView(snapshot, 65000).rows[1].text.replace(/^任务: /, "");
+  assert.ok(task.length <= 45, `bounded task text, got ${task.length}`);
+  assert.match(task, /…$/);
+  assert.doesNotMatch(task, /\s$/);
+});
+
+test("buildWidgetView flattens the failure error row too", () => {
+  const snapshot = doneSnapshot();
+  snapshot.lastRecord = { ...snapshot.lastRecord!, status: "failed", error: "模型超时\n 任务中断  请重试" };
+  const view = buildWidgetView(snapshot, 0);
+  assert.equal(view.rows[2].text, "✗ 模型超时 任务中断 请重试");
+  assert.doesNotMatch(view.rows[2].text, /\n/);
 });
 
 test("key reducer: activation consumes alt+down/up in both encodings; bare keys pass through", () => {
@@ -240,18 +282,46 @@ test("key reducer: re-activation keeps the previous cursor position", () => {
   assert.ok(reactivated.type === "update" && reactivated.state.selected && reactivated.state.cursor === 2);
 });
 
-test("renderWidgetView truncates every line to terminal width (CJK-heavy rows)", () => {
+test("renderWidgetView collapsed: exactly one line with the activation hint and no task text", () => {
+  const view = buildWidgetView(liveSnapshot(), 65000);
+  const lines = renderWidgetView(view, { selected: false, cursor: 0 }, 80, plainStyles());
+  assert.equal(lines.length, 1, "折叠默认态恰好 1 行");
+  assert.equal(lines[0], "agent-team dev-team · ↓/← 查看详情");
+  assert.doesNotMatch(lines[0], /任务:/);
+});
+
+test("renderWidgetView expanded: all rows + bottom hint, gutter on the cursor row", () => {
+  const view = buildWidgetView(liveSnapshot(), 65000);
+  const lines = renderWidgetView(view, { selected: true, cursor: 1 }, 80, plainStyles());
+  assert.equal(lines.length, view.rows.length + 1, "展开 = rows + 底部提示行");
+  assert.match(lines[0], /^ {2}agent-team dev-team/);
+  assert.match(lines[1], /^▸ 任务: /);
+  assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
+});
+
+test("renderWidgetView empty view: no lines in either mode", () => {
+  const empty = buildWidgetView({ running: false, progress: null, lastRecord: null }, 0);
+  assert.deepEqual(renderWidgetView(empty, { selected: false, cursor: 0 }, 80, plainStyles()), []);
+  assert.deepEqual(renderWidgetView(empty, { selected: true, cursor: 0 }, 80, plainStyles()), []);
+});
+
+test("renderWidgetView truncates every line to terminal width (collapsed + expanded, CJK-heavy rows)", () => {
   // Regression: the host TUI crashes when a component line renders wider
   // than the terminal; rows are bounded by char count only, so CJK-heavy
   // text (44-char task = up to 88 columns) must be width-fitted here.
   const snapshot = liveSnapshot();
   snapshot.progress!.task = "实现一个摄影教学网页产出完整的页面结构与文案与样式与脚本内容超长截断示例";
-  const rows = buildWidgetRows(snapshot, 65000);
+  const view = buildWidgetView(snapshot, 65000);
   const styles = plainStyles();
 
   for (const width of [270, 120, 40, 20]) {
+    assert.equal(
+      renderWidgetView(view, { selected: false, cursor: 0 }, width, styles).length,
+      1,
+      `宽度 ${width} 折叠态仍恰好 1 行`,
+    );
     for (const selected of [false, true]) {
-      const lines = renderWidgetView(rows, { selected, cursor: 1 }, width, styles);
+      const lines = renderWidgetView(view, { selected, cursor: 1 }, width, styles);
       assert.ok(lines.length > 0);
       for (const line of lines) {
         assert.ok(
@@ -263,7 +333,7 @@ test("renderWidgetView truncates every line to terminal width (CJK-heavy rows)",
   }
 
   // Selection gutter counts toward the budget, cursor marker still visible.
-  const selected = renderWidgetView(rows, { selected: true, cursor: 1 }, 270, styles);
+  const selected = renderWidgetView(view, { selected: true, cursor: 1 }, 270, styles);
   assert.match(selected[1], /^▸ /);
   assert.match(selected[selected.length - 1], /↑↓ 选择/);
 });
@@ -297,19 +367,23 @@ test("controller setPaused(true) 隐藏亮块并冻结重绘，恢复后立即�
 
     controller.setPaused(false);
     assert.ok(pushed.length > frozen, "恢复后立即刷出一帧");
-    assert.ok((pushed[pushed.length - 1]?.length ?? 0) > 0, "恢复后亮块行回来");
-    assert.match(pushed[pushed.length - 1]![0], /agent-team dev-team ▶ running/);
+    assert.equal(pushed[pushed.length - 1]?.length, 1, "恢复后亮块回来且为折叠单行");
+    assert.match(pushed[pushed.length - 1]![0], /agent-team dev-team · ↓\/← 查看详情/);
   } finally {
     controller.stop();
   }
 });
 
-test("controller 暂停后 tick 不再 setWidget", async () => {
+test("controller 暂停后 tick 停止（折叠态静止：tick 只刷新不 setWidget）", async () => {
   const pushed: Array<string[] | undefined> = [];
+  let loadCalls = 0;
   let nowMs = 65000;
   const controller = new RunWidgetController(
     {
-      load: liveSnapshot,
+      load: () => {
+        loadCalls += 1;
+        return liveSnapshot();
+      },
       styles: plainStyles(),
       onConfirm: () => {},
       width: () => 80,
@@ -322,18 +396,23 @@ test("controller 暂停后 tick 不再 setWidget", async () => {
   );
   try {
     controller.start();
-    // 无变化跳过语义下，同 nowMs 的 tick 不再重绘；推进 elapsed 跨秒后 tick
-    // 读到新渲染串 → 正常重建（证明 tick 循环仍在跑）。
+    const afterStart = pushed.length;
+    const callsAfterStart = loadCalls;
+    // 折叠行不含 elapsed：tick 持续刷新（load 被反复调用）但渲染串不变，
+    // 指纹门控跳过 setWidget（少 churn，与 fleet-status renderKey 语义一致）。
     nowMs = 67000;
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.ok(pushed.length >= 2, `tick 应读到推进的 elapsed 并重绘，实得 ${pushed.length}`);
+    assert.ok(loadCalls > callsAfterStart, `tick 应持续刷新，load 调用数实得 ${loadCalls}`);
+    assert.equal(pushed.length, afterStart, "折叠态静止内容：tick 不再 setWidget");
 
     controller.setPaused(true);
-    const afterPause = pushed.length;
     assert.deepEqual(pushed[pushed.length - 1], undefined, "暂停帧为 undefined");
-    nowMs = 69000; // 暂停期间 elapsed 再推进也不得 setWidget
+    const afterPause = pushed.length;
+    const callsAfterPause = loadCalls;
+    nowMs = 69000;
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(pushed.length, afterPause, "暂停后 tick 不再 setWidget");
+    assert.equal(pushed.length, afterPause, "暂停帧后 tick 不再 setWidget");
+    assert.equal(loadCalls, callsAfterPause, "暂停期间 tick 循环已停（load 不再被调用）");
   } finally {
     controller.stop();
   }
@@ -376,8 +455,24 @@ function controllerHarness(opts: {
 const lastLines = (pushed: Array<string[] | undefined>): string[] => pushed[pushed.length - 1] ?? [];
 const cursorRow = (lines: string[]): number => lines.findIndex((line) => line.startsWith("▸ "));
 
+// 首帧即折叠单行：不存在 run 之外的常显多行概要。
+test("controller 首帧：折叠单行（无行光标、含激活提示）", () => {
+  const { controller, pushed } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+  });
+  try {
+    const lines = lastLines(pushed);
+    assert.equal(lines.length, 1, "默认态恰好 1 行");
+    assert.equal(lines[0], "agent-team dev-team · ↓/← 查看详情");
+    assert.equal(cursorRow(lines), -1, "折叠态无行光标");
+  } finally {
+    controller.stop();
+  }
+});
+
 // 编辑器为空：bare ↓ 进入选中并 consume（对齐 fleet-status getEditorText===""）。
-test("controller 空编辑器按 ↓ 激活 widget（consume 且出现行光标）", () => {
+test("controller 空编辑器按 ↓ 激活 widget（consume、展开 rows + 提示行、出现行光标）", () => {
   const { controller, pushed, handlers } = controllerHarness({
     load: liveSnapshot,
     editorState: () => ({ text: "" }),
@@ -386,14 +481,17 @@ test("controller 空编辑器按 ↓ 激活 widget（consume 且出现行光标�
     assert.equal(handlers.length, 1, "attachInput 应收到一个 handler");
     const r = handlers[0]!("\x1b[B");
     assert.equal(r?.consume, true, "空编辑器 ↓ 应被 widget 消费");
-    assert.equal(cursorRow(lastLines(pushed)), 0, "激活后行光标应在第 0 行");
+    const lines = lastLines(pushed);
+    assert.equal(cursorRow(lines), 0, "激活后行光标应在第 0 行");
+    assert.equal(lines.length, 3, "展开 = rows(2) + 底部提示行");
+    assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
   } finally {
     controller.stop();
   }
 });
 
 // 编辑器有文本：bare ↓/← 放行编辑器（不消费），widget 不劫持输入。
-test("controller 编辑器有文本时 ↓/← 不消费（放行编辑器）", () => {
+test("controller 编辑器有文本时 ↓/← 不消费（放行编辑器，保持折叠）", () => {
   const { controller, pushed, handlers } = controllerHarness({
     load: liveSnapshot,
     editorState: () => ({ text: "abc" }),
@@ -402,6 +500,7 @@ test("controller 编辑器有文本时 ↓/← 不消费（放行编辑器）", 
     assert.equal(handlers[0]!("\x1b[B"), undefined, "有文本时 ↓ 不消费");
     assert.equal(handlers[0]!("\x1b[D"), undefined, "有文本时 ← 不消费");
     assert.equal(cursorRow(lastLines(pushed)), -1, "未进入选中，无行光标");
+    assert.equal(lastLines(pushed).length, 1, "保持折叠单行");
   } finally {
     controller.stop();
   }
@@ -438,6 +537,7 @@ test("controller 选中态 k/j 移动行光标（▸ 前缀位置随之变化）
     assert.equal(cursorRow(lastLines(pushed)), 0, "k 应回到第 0 行");
     handlers[0]!("k"); // 顶部再按 k：退出选中放行编辑器（fleet-status 同构）
     assert.equal(cursorRow(lastLines(pushed)), -1, "到顶再按 k 应退出选中（无行光标）");
+    assert.equal(lastLines(pushed).length, 1, "退出选中后收回折叠单行");
     assert.equal(handlers[0]!("j"), undefined, "退出选中后 j 放行编辑器");
     handlers[0]!("\x1b[1;3B"); // alt+↓ 重新激活（cursor 保持）
     assert.equal(cursorRow(lastLines(pushed)), 0, "再次激活回到原光标");
@@ -520,6 +620,7 @@ test("controller 焦点非编辑器（选择器/对话框）：裸 ↓ 与 alt+�
     assert.equal(handlers[0]!("\x1b[1;3B"), undefined, "alt+↓ 第二通道在对话框期也不介入");
     assert.equal(handlers[0]!("\x1b[1;3A"), undefined, "alt+↑ 同样不介入");
     assert.equal(cursorRow(lastLines(pushed)), -1, "不得进入选中");
+    assert.equal(lastLines(pushed).length, 1, "对话框期保持折叠单行");
   } finally {
     controller.stop();
   }
@@ -538,6 +639,7 @@ test("controller 选中态焦点丢失（选择器打开）：退出选中且该
     focused = false; // 宿主把焦点交给选择器
     assert.equal(handlers[0]!("\x1b[B"), undefined, "焦点丢失后按键放行选择器（不消费）");
     assert.equal(cursorRow(lastLines(pushed)), -1, "选中态自动退出（无行光标）");
+    assert.equal(lastLines(pushed).length, 1, "退出选中后收回折叠单行");
     focused = true;
     handlers[0]!("\x1b[1;3B"); // alt 通道重新激活
     assert.equal(cursorRow(lastLines(pushed)), 0, "焦点回来后可从原 cursor 再激活");
@@ -631,21 +733,57 @@ test("controller 终态静态行连续 refresh → setWidget 只调一次（无�
   }
 });
 
-// running 快照固定 nowMs（elapsed 不变）：连续 refresh 跳过；elapsed 变化则重建。
-test("controller running 快照：elapsed 不变跳过、变化重建", () => {
+// 折叠行不含 elapsed：running 时时间推进也不再逐秒重绘（少 churn，fleet-status
+// renderKey 语义）；时间只在展开态出现。
+test("controller running 折叠态：elapsed 变化也跳过（折叠行不含时间）", () => {
   let nowMs = 65000;
   const { controller, pushed } = skipHarness({ load: liveSnapshot, nowMs: () => nowMs });
   try {
     const afterStart = pushed.length;
     controller.refresh();
-    assert.equal(pushed.length, afterStart, "elapsed 未变（同 nowMs）应跳过");
+    assert.equal(pushed.length, afterStart, "折叠行未变应跳过");
 
-    nowMs = 66000; // elapsed 1m5s → 1m6s
+    nowMs = 66000; // elapsed 1m5s → 1m6s：折叠行不变
     controller.refresh();
-    assert.equal(pushed.length, afterStart + 1, "elapsed 变化应重建一帧");
+    assert.equal(pushed.length, afterStart, "折叠行不含 elapsed → 时间推进也不重绘");
+  } finally {
+    controller.stop();
+  }
+});
 
+// 展开态才含 elapsed：同秒跳过、跨秒重绘。
+test("controller 展开态：elapsed 变化触发重绘（时间信息只在展开行）", () => {
+  let nowMs = 65000;
+  const pushed: Array<string[] | undefined> = [];
+  const handlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
+  const controller = new RunWidgetController(
+    {
+      load: liveSnapshot,
+      styles: plainStyles(),
+      onConfirm: () => {},
+      width: () => 80,
+      nowMs: () => nowMs,
+      tickMs: 60 * 60 * 1000,
+      editorState: () => ({ text: "" }),
+    },
+    (lines) => {
+      pushed.push(lines);
+    },
+    (handler) => {
+      handlers.push(handler);
+      return () => {};
+    },
+  );
+  controller.start();
+  try {
+    handlers[0]!("\x1b[B"); // 展开
+    const expanded = pushed.length;
     controller.refresh();
-    assert.equal(pushed.length, afterStart + 1, "同 elapsed 再次 refresh 应跳过");
+    assert.equal(pushed.length, expanded, "同秒展开帧应跳过");
+
+    nowMs = 66000;
+    controller.refresh();
+    assert.equal(pushed.length, expanded + 1, "elapsed 变化 → 展开帧重建");
   } finally {
     controller.stop();
   }
@@ -662,10 +800,12 @@ test("controller 选中态 toggle 触发重绘（不被跳过逻辑压制）", (
     handlers[0]!("\x1b[B"); // 进入选中：渲染串出现 ▸ + 提示行 → 必须重绘
     assert.equal(pushed.length, before + 1, "进入选中应触发一次重绘");
     assert.equal(cursorRow(lastLines(pushed)), 0, "选中后行光标在第 0 行");
+    assert.equal(lastLines(pushed).length, 3, "展开 = rows + 提示行");
 
-    handlers[0]!("\x1b"); // esc 退出选中：渲染串回到无 ▸ → 必须重绘
+    handlers[0]!("\x1b"); // esc 退出选中：渲染串回到折叠单行 → 必须重绘
     assert.equal(pushed.length, before + 2, "退出选中应再触发一次重绘");
     assert.equal(cursorRow(lastLines(pushed)), -1, "退出后无行光标");
+    assert.equal(lastLines(pushed).length, 1, "esc 收回折叠单行");
   } finally {
     controller.stop();
   }
