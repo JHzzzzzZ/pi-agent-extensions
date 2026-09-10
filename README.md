@@ -60,7 +60,10 @@ pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
 
 ```bash
 node tools/install-smoke.mjs        # ✓ = 12/12 扩展在干净目录下加载成功；✗ 时打印问题清单
+node tools/install-smoke.mjs --task # 加跑一条真实模型任务：让模型调用全新安装的 loop_list 工具
 ```
+
+`--task` 是“从零装到跑通”的端到端自检：在同一临时目录里带上你的 `auth.json`（仅临时目录内使用、结束即删，绝不打印内容），用真实模型跑一次工具调用，以事件流中的 `tool_execution_start/end` 为判据（模型自由文本不算数）。模型默认取你配置里的 `defaultProvider/defaultModel`，可用 `--model provider/id` 覆盖；普通安装冒烟不需要联网，`--task` 需要。
 
 失败时临时安装目录会自动保留（便于排查），成功时自动清理。
 

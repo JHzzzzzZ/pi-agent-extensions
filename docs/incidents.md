@@ -85,3 +85,9 @@
 - 症状：worktree 收尾后主工作区依赖消失——首次 `agent-team/node_modules` 只剩空骨架，第二次 `pwr/node_modules` 被清空；下一次跑测试/截图工具直接 `ERR_MODULE_NOT_FOUND`（本轮两次撞上，各花 ~1 分钟 npm install 恢复）。
 - 根因：为省一次 `npm install`，在 worktree 内用 `mklink /J` 把 `node_modules` 指向主工作区。NTFS 联接不是符号链接——递归删除（`git worktree remove --force`）会**穿透联接删除目标目录内容**，且联接本身一并消失，现场无痕迹；本次即使先 `cmd //c rmdir <junction>` 再删 worktree，`pwr` 侧仍被穿透。
 - 教训：① **worktree 内不要建 junction**（AGENTS.md 规则红线·worktree 实现）——要么 worktree 内真实 `npm install`，要么主工作区跑测试、worktree 只写代码；② 万不得已用了联接：删除顺序「先解除链接 → `dir /AL` 确认链接消失 → 再 `git worktree remove`」，删完立刻 `ls` 校验目标目录（本轮逐一校验仍被穿透，说明该做法不可靠）；③ 恢复便宜（`npm install`）但会打断无人值守轮次——把它当红线，不靠事后补救。
+
+## 子进程继承 cwd → 临时目录清理 EPERM（深冒烟工具）
+
+- 症状：`tools/install-smoke.mjs --task` 成功跑完但收尾删不掉临时配置目录——`fs.rmSync` 抛 `EPERM`（`maxRetries: 8, retryDelay: 250` 的内部重试也没吸收，锁定 >9s），而目录里逐个文件都能删、几分钟后再删目录又能成功。
+- 根因：深任务拉起真实 `pi` 子进程时 `cwd` 指向待删的临时配置目录；pi 进程内的扩展在会话期间派生后台进程（Toast 的 PowerShell、bridge helper 等）并继承 cwd，Windows 下「进程 cwd 在目录内」会把目录本身钉住——文件可删、目录不可删。
+- 教训：① 待删目录绝不能作为子进程族群的 cwd——工具里改为 `cwd: os.tmpdir()`，配置位置仍由 `PI_CODING_AGENT_DIR` 决定（改后即干净删除）；② 跨进程句柄锁定要靠隔离躲开，不要指望 `rmSync` 重试吸收（重试窗口不可预知）；③ 所有会在临时目录里落凭据副本的工具，清理失败路径必须单独删凭据文件并告警（本工具已做：auth.json 随目录删，删不掉目录时也单独删）。
