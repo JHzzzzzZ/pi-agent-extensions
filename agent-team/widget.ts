@@ -389,12 +389,12 @@ export class RunWidgetController {
   }
 
   /**
-   * Rebuilds rows and pushes them to the host. Skips setWidget when the
+   * Rebuilds the view and pushes it to the host. Skips setWidget when the
    * render string is unchanged (aligned to fleet-status renderKey semantics,
-   * v0.66.0 fleet-status.ts:585-591) — static content no longer churns the
-   * host every tick (a ghosting/flicker source). While running the elapsed
-   * label changes every second and naturally rebuilds; a selection toggle
-   * changes the gutter/hint lines and rebuilds too.
+   * v0.66.0 fleet-status.ts:585-591) — the collapsed default line carries no
+   * per-second text, so a running run no longer churns the host; the expanded
+   * header's elapsed label changes every second while selected, and a
+   * selection toggle changes the gutter/hint lines and rebuilds too.
    */
   refresh(): void {
     if (this.paused) return;
