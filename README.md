@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十一个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列，各段文本已瘦身并以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十一个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -11,11 +11,11 @@
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；管理走 `/loop:*` 冒号子命令） | 193 个（node:test） |
-| [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 62 个 |
+| [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 63 个 |
 | [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
-| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`） | 14 个 |
+| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`） | 15 个 |
 
 ## 安装
 
@@ -254,13 +254,14 @@ npm run typecheck
 
 ## stream-token-speed
 
-流式回复速度计量：显示 **TTFT（首 token 延迟）** 与瞬时 **tokens/s**（1s 滑动窗口 + EMA 平滑，250ms 节流），结束后保留本轮 TTFT / 平均速度（汇总以 `~` 标注平均值）。计量范围覆盖 text / thinking / tool call 增量；tool result 与工具执行进度一律排除。不读取、不记录、不发送任何消息内容。状态段以 `│ ` 开头（跨插件契约见 `docs/cross/status-bar.md`）。
+流式回复速度计量：显示 **TTFT（首 token 延迟）** 与瞬时 **tokens/s**（1s 滑动窗口 + EMA 平滑，250ms 节流），结束后保留本轮 TTFT / 平均速度（汇总以 `~` 标注平均值）。计量范围覆盖 text / thinking / tool call 增量；tool result 与工具执行进度一律排除。不读取、不记录、不发送任何消息内容。段前缀由 `status-band` 统一决定：最前段无前缀、其余段 `│ `（跨插件契约见 `docs/cross/status-bar.md`）。
 
-效果示意（终端状态行，实测格式）：
+效果示意（终端状态行，实测格式；单段时即最前段）：
 
 ```text
-│ TTFT 412ms · 86.4 tok/s    ← 流式回复期间实时刷新（热身期速度显示 —；未出首 token 时只显示 │ TTFT —）
-│ TTFT 412ms · ~78.6 tok/s   ← 回合结束后保留 TTFT + 平均速度（~ 标注平均）
+TTFT 412ms · 86.4 tok/s    ← 流式回复期间实时刷新（热身期速度显示 —；未出首 token 时只显示 TTFT —）
+TTFT 412ms · ~78.6 tok/s   ← 回合结束后保留 TTFT + 平均速度（~ 标注平均）
+TTFT — │ tok72% mcp40%(14:30) │ pwr 2▶ 1✓   ← 多段同屏：最前段定格，其余以 │ 相连
 ```
 
 ```bash
@@ -282,16 +283,16 @@ export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选，Claud
 
 ## provider-quota
 
-查询当前 provider 的账户额度/余额并在终端状态行显示（段文本以 `│ ` 开头、无 provider 前缀）。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`，只看绝对刷新时间，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）输出 `X%/Y%/Z%(HH:mm)`（5 小时/周/月三窗口，缺失窗口跳过），后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
+查询当前 provider 的账户额度/余额并在终端状态行显示（无 provider 前缀；段前缀由 `status-band` 决定：最前段无前缀、其余段 `│ `）。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`，只看绝对刷新时间，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）输出 `X%/Y%/Z%(HH:mm)`（5 小时/周/月三窗口，缺失窗口跳过），后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
 
-效果示意（终端状态行，实测格式）：
+效果示意（终端状态行，实测格式；单段时即最前段）：
 
 ```text
-│ $4.58 (used $5.42)      ← OpenRouter：剩余额度（已用）
-│ 102.50 CNY              ← DeepSeek：余额
-│ 186.40                  ← ChatAnywhere：余额
-│ tok72% mcp40%(14:30)    ← 智谱：token/MCP 窗口占用 + 下次刷新时间
-│ 15%/6%/3%(03:41)        ← OpenCode Go：5h/周/月窗口 + 命中限额窗口的重置时间
+$4.58 (used $5.42)      ← OpenRouter：剩余额度（已用）
+102.50 CNY              ← DeepSeek：余额
+186.40                  ← ChatAnywhere：余额
+tok72% mcp40%(14:30)    ← 智谱：token/MCP 窗口占用 + 下次刷新时间
+15%/6%/3%(03:41)        ← OpenCode Go：5h/周/月窗口 + 命中限额窗口的重置时间
 ```
 
 ```bash
@@ -362,15 +363,16 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 - 状态行「已运行」时长在目标活动/暂停期间每秒刷新（对齐秒节拍，与计时/循环状态条同帧）
 - 手动中断（Esc）自动暂停；评估器连续 3 次失败暂停（瞬时失败不杀循环）
 
-效果示意（终端状态行，实测格式）：
+效果示意（终端状态行，实测格式；单段时即最前段）：
 
 ```text
-│ ◎ 让 pwr 全部测试通过且 typecheck 零错误 · 3轮 · 1m05s   ← 推进中（目标截到 20 显示列）
-│ ⏸ 让 pwr 全部测试通过且 typecheck 零错误 · 已暂停 · 1m05s ← 手动中断后自动暂停
+◎ 让 pwr 全部测试通过且 typecheck 零错误 · 3轮 · 1m05s      ← 推进中（目标截到 20 显示列）
+⏸ 让 pwr 全部测试通过且 typecheck 零错误 · 已暂停 · 1m05s  ← 手动中断后自动暂停
+◎ 修复全部测试 · 4轮 · 1m05s │ tok72% mcp40%(14:30) │ pwr 2▶ 1✓  ← 多段同屏（最前段定格）
 ```
 
 ```bash
-node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts   # 62 个测试
+node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts   # 63 个测试
 ```
 
 ---
@@ -439,12 +441,12 @@ node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测�
 免审批模式：`/solo` 一键切换后，本仓库的**审批摩擦类**门自动走批准路径——PWR 批准卡按 once 自动批准（绝不写 remembered 记录）、opencode-bridge 的 sync / 端口切换 / restore 确认自动通过（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认自动放行。**误触保护类确认不受影响**（agent-team viewer `D` 停止、`/team:clear`、`/workflow:delete` 选择仍人工）。
 
 - **仅当前会话** — 状态写在本进程独占文件 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`（`{pid, activatedAt}`，读者校验 `pid === process.pid`）；`/reload`、`/new`、`/resume`、`/fork` 与退出即复位，子 pi 进程（PWR sub-agent / agent-team 成员 / loop `--bg`）天然不继承
-- **开启需确认** — `/solo` 开启时弹一次确认（列出受影响的门）；无 UI 环境拒绝激活（fail-closed）；状态条显示 `│ ⚡ solo`
+- **开启需确认** — `/solo` 开启时弹一次确认（列出受影响的门）；无 UI 环境拒绝激活（fail-closed）；状态条显示 `⚡ solo`（最前段无前缀，多段时为 `… │ ⚡ solo`）
 - **命令** — `/solo` 切换、`/solo:on|:off|:status`（旧空格写法只提示改名）、未知参数提示用法
 - **跨扩展契约** — 状态文件与 fail-closed 口径见 `docs/cross/solo-approval-gate.md`（pwr / opencode-bridge / deep-init 各一份同构 `solo-gate.ts` 只读实现）
 
 ```bash
-node --experimental-strip-types --test solo-mode/index.test.ts   # 14 个测试
+node --experimental-strip-types --test solo-mode/index.test.ts   # 15 个测试
 ```
 
 ---

@@ -4,7 +4,7 @@
 
 ## 职责与边界
 
-在 pi TUI 状态栏显示本轮流式回复的 TTFT（首 token 延迟）与瞬时 tokens/s（EMA 平滑），结束后保留汇总（TTFT + 平均速度，`~` 前缀标注平均值）——状态文本以 `│ ` 开头（段前缀契约见 `docs/cross/status-bar.md`）。计量范围：text / thinking / tool call 三类流式增量，各计 1。**不做**：内容解析与输出（绝不读消息文本）、tool result 与工具执行计时、跨轮累计、持久化任何状态（无 session 条目）。
+在 pi TUI 状态栏显示本轮流式回复的 TTFT（首 token 延迟）与瞬时 tokens/s（EMA 平滑），结束后保留汇总（TTFT + 平均速度，`~` 前缀标注平均值）——段前缀由本地 `status-band.ts` 决定（最前段无前缀、行首定格；非最前段加 `│ `）。计量范围：text / thinking / tool call 三类流式增量，各计 1。**不做**：内容解析与输出（绝不读消息文本）、tool result 与工具执行计时、跨轮累计、持久化任何状态（无 session 条目）。
 
 ## 文件地图
 
@@ -12,7 +12,8 @@
 - `adapter.ts` — pi 事件 → 内部契约映射；按结构识别（输入 unknown），含 outcome（completed/aborted/error）判定。
 - `metrics.ts` — 纯函数度量层：滑动窗口 / EMA / 热身 / 结束汇总 / 文案格式化；全部常量与契约注释在此。改速度口径必看。
 - `controller.ts` — 编排：轮次匹配 + 收编 responseId、250ms 节流、热身期分支、渲染。
-- `status-port.ts` — `ctx.ui.setStatus` 薄封装：可用性检查、`│ ` 段前缀拼接（在样式之前）、样式包装、异常隔离。
+- `status-port.ts` — `ctx.ui.setStatus` 薄封装：可用性检查、经 `writeBand` 写入（前缀决策在样式之前）、样式包装、异常隔离。
+- `status-band.ts` — 每插件一份的 footer 段前缀登记（`Symbol.for("pi.status-bar.bands.v1")` 进程共享表）；最前段无前缀、其余段 `│ `，出现/消失重渲染；改前缀规则只动此文件（五份拷贝同步）。
 - `test/fixtures.ts` — 事件夹具 + `RecordingStatusPort` 替身。
 
 ## 核心数据流
@@ -20,7 +21,7 @@
 1. `message_start` → 适配器识别 assistant 消息 → `createRun` + 显示 `TTFT —`。
 2. `message_update` → 适配器过滤出三类可计量 delta（各计 1，其余 null）→ 计入 1s 滑动窗口。
 3. 距上次渲染 ≥250ms 才是合格刷新点；热身期（首个增量后 1s）瞬时值保持 `—`；满 1s 后以首个完整窗口值为 EMA 种子（α=0.3）开始平滑更新。
-4. 渲染经 `status-port.ts` → `ctx.ui.setStatus(STATUS_KEY, "│ " + 文本)`（异常在端口内吞掉；键为 `50:stream-token-speed`，排序带见 `docs/cross/status-bar.md`，调用点统一用 `STATUS_KEY` 常量）。
+4. 渲染经 `status-port.ts` → `writeBand(STATUS_KEY, 逻辑文本, writer)`（前缀由登记表决定；异常在端口内吞掉；键为 `50:stream-token-speed`，排序带见 `docs/cross/status-bar.md`，调用点统一用 `STATUS_KEY` 常量）。
 5. `message_end` → `computeSummary` 出汇总（`TTFT <ms>ms · ~<平均> tok/s`）；无任何样本则清除状态（`setStatus(..., undefined)`，不显示 0 tok/s），`run` 置 null 停止刷新。
 
 ## 不变量
@@ -28,7 +29,7 @@
 - **内容零接触**：适配器只读事件 type / 消息身份（role / responseId）/ 时间，绝不解析、复制或输出 text / thinking / tool call 参数（adapter.ts 文件头契约）。
 - 计量三类增量各计 1（text_delta / thinking_delta / toolcall_delta）；tool result、用户消息、未知 delta 一律返回 null（adapter.ts）。
 - 常量即契约：WINDOW_MS=1000 / THROTTLE_MS=250 / EMA_ALPHA=0.3 / WARMUP_MS=1000（metrics.ts），调用点不写魔法数。
-- 状态键固定 `"50:stream-token-speed"`（status-port.ts `STATUS_KEY`；`50:` 为 footer 排序带，不可改回无前缀键）；段文本以 `│ ` 开头，前缀在端口内、样式之前拼接（`STATUS_SEPARATOR`，docs/cross/status-bar.md）。无流式数据时写 `undefined` 清状态（绝不显示 0 tok/s / 无数据文案）。不接对齐秒节拍：250ms 流式节流是内容驱动的，不是墙钟时间类状态。
+- 状态键固定 `"50:stream-token-speed"`（status-port.ts `STATUS_KEY`；`50:` 为 footer 排序带，不可改回无前缀键）；段前缀由 `status-band.ts` 统一决定（最前段无前缀/行首定格，其余段 `│ `，低带出现/消失重渲染本段）。无流式数据时写 `undefined` 清状态（绝不显示 0 tok/s / 无数据文案）；`session_shutdown` 清上一轮汇总与登记（避免 /reload 后残留）。不接对齐秒节拍：250ms 流式节流是内容驱动的，不是墙钟时间类状态。
 - `available()` 为 false 时跳过渲染（print / json 模式静默降级）；setStatus / theme.fg 抛错必须在端口内部捕获，绝不影响 pi 消息流（status-port.ts 契约）。
 - 时间必须来自同一单调时钟（默认 performance.now，metrics.ts 文件头）——混用墙钟会让窗口计算错乱。
 - 轮次隔离：控制器只保留"当前轮"，新 assistant `message_start` 立即替换上一轮展示（controller.ts，AC-08）。
