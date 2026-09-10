@@ -1,6 +1,6 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ 0241c35
+> last verified @ a03e525
 
 ## 职责与边界
 

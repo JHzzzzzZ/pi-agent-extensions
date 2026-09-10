@@ -1,3 +1,5 @@
+- [ ] 状态条时钟统一与排序：run-timer 与 loop 各自刷新状态条（`⏰ loop 2 个任务 · 下次 12h39m` 与计时行）导致换行/重排。期望多插件共用同一时间钟 + 明确的排序约定。跨插件需求，已在 run-timer-todo.md 同步登记。
 - [x] 后台模式（`--bg`）支持模型指定：`/loop` 与 `loop_create` 加可选模型参数（`provider/id` 格式，如 `opencode-go/deepseek-v4-flash`），透传给子 `pi` 进程的 `--model` 参数（`runner.ts` spawn args）；不传时维持现状（pi 默认模型）。前台模式注入当前会话暂不支持指定（命令层 `--model` 缺 `--bg` 显式报错，工具层前台带 model 返回类型化错误）。对应场景：定时巡检用便宜模型、重要任务用强模型。（完成 2026-09-10 @ feat/loop-bg-model：语法 `/loop --bg --model <provider/id> <创建形态>`；`/loop list` 调度列以 `@provider/id` 标注；未知模型由子 pi 报错、任务标记 failed，loop 不做预检；13 个新测试，全量 182 绿 + typecheck 绿）
 - [x] 根 README 为每个插件增加效果示意图
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞
+- [ ] 命令风格统一（跨插件）：子命令式 `/loop list|pause|resume|delete|clear` 与 agent-team 的冒号命名空间式 `/team:run|stop|status|view|clear|doctor` 用法不一致，需统一（倾向于哪种、是否连带 provider-quota `/quota`、如何向后兼容旧写法待定）。跨插件需求，已在 agent-team-todo.md 同步登记。（processing 2026-09-10 @ feat/commands-subcommand-style：已定子命令式为统一基准，范围为全部命令面，直接替换不留别名。loop 已是子命令式，本插件代码不动仅文档口径同步）
