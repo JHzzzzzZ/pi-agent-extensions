@@ -9,9 +9,11 @@
  */
 
 import * as assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
   RunWidgetController,
+  WIDGET_MAX_LINES,
   buildWidgetView,
   handleWidgetKey,
   initialWidgetKeyState,
@@ -367,6 +369,77 @@ test("renderWidgetView expanded: main/leader（含任务摘要）/成员 rows + 
   assert.match(lines[2], /^ {2}\|- frontend ● running/);
   assert.match(lines[3], /^ {2}\|- backend ✓ done$/);
   assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
+  assert.ok(
+    !lines.some((line) => /上方还有|下方还有/.test(line)),
+    "窗口未溢出（小团队全部行可见）时不得出现折叠提示行",
+  );
+});
+
+/** 大团队快照：2 根行 + count 个成员行。 */
+function largeTeamSnapshot(count: number): RunStatusSnapshot {
+  const snapshot = liveSnapshot();
+  snapshot.progress!.members = Array.from({ length: count }, (_, index) => ({
+    name: `member-${index}`,
+    status: "running" as const,
+    latest: `任务片段 ${index}`,
+  }));
+  return snapshot;
+}
+
+test("renderWidgetView 大团队窗口化：帧 ≤ 宿主 10 行上限、选中行与提示行恒在帧内", () => {
+  // 宿主 setExtensionWidget 对 string[] 硬截 MAX_WIDGET_LINES = 10 并追加
+  // "... (widget truncated)"：本插件自产帧超限时尾部提示行会被吃掉、光标可能落在
+  // 不可见行（第六轮读宿主源码发现的候选问题）。窗口化后此不变量由本测试钉住。
+  const view = buildWidgetView(largeTeamSnapshot(12), 65000);
+  assert.equal(view.rows.length, 14, "2 根行 + 12 成员行");
+  const styles = plainStyles();
+  for (let cursor = 0; cursor < view.rows.length; cursor++) {
+    const lines = renderWidgetView(view, { selected: true, cursor }, 80, styles);
+    assert.ok(
+      lines.length <= WIDGET_MAX_LINES,
+      `cursor=${cursor}: 帧 ${lines.length} 行超过宿主上限 ${WIDGET_MAX_LINES}`,
+    );
+    const marked = lines.filter((line) => line.startsWith("▸ "));
+    assert.equal(marked.length, 1, `cursor=${cursor}: 恰好一个行光标`);
+    assert.ok(
+      marked[0]!.includes(view.rows[cursor]!.text),
+      `cursor=${cursor}: 光标行必须是选中行（${view.rows[cursor]!.text}）`,
+    );
+    assert.match(lines[lines.length - 1]!, /↑↓ 选择 · enter 查看 · esc 退出/, `cursor=${cursor}: 提示行固定在帧内`);
+  }
+});
+
+test("renderWidgetView 大团队折叠提示：首行只提示下方、末行只提示上方、中段两侧都提示", () => {
+  const view = buildWidgetView(largeTeamSnapshot(12), 65000);
+  const styles = plainStyles();
+  const top = renderWidgetView(view, { selected: true, cursor: 0 }, 80, styles);
+  assert.ok(top.some((line) => /下方还有 6 行/.test(line)), "光标在首行：只提示下方隐藏行");
+  assert.ok(!top.some((line) => /上方还有/.test(line)), "首行窗口上侧无隐藏行");
+  const bottom = renderWidgetView(view, { selected: true, cursor: view.rows.length - 1 }, 80, styles);
+  assert.ok(bottom.some((line) => /上方还有 6 行/.test(line)), "光标在末行：只提示上方隐藏行");
+  assert.ok(!bottom.some((line) => /下方还有/.test(line)), "末行窗口下侧无隐藏行");
+
+  const both = Array.from({ length: view.rows.length }, (_, cursor) =>
+    renderWidgetView(view, { selected: true, cursor }, 80, styles),
+  ).find((lines) => lines.some((line) => /上方还有/.test(line)) && lines.some((line) => /下方还有/.test(line)));
+  assert.ok(both, "中段光标：窗口两侧都有隐藏行时应同时给出两条折叠提示");
+});
+
+test("WIDGET_MAX_LINES 与真实宿主 string[] widget 上限一致（宿主漂移即红）", async () => {
+  const hostSource = await readFile(
+    new URL(
+      "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const match = /MAX_WIDGET_LINES\s*=\s*(\d+)/.exec(hostSource);
+  assert.ok(match, "宿主源码应含 MAX_WIDGET_LINES 常量（宿主布局变化时本测试需更新）");
+  assert.equal(
+    WIDGET_MAX_LINES,
+    Number(match[1]),
+    "本插件窗口上限必须等于宿主 string[] widget 截断上限",
+  );
 });
 
 test("renderWidgetView empty view: no lines in either mode", () => {
@@ -406,6 +479,21 @@ test("renderWidgetView truncates every line to terminal width (collapsed + expan
   const selected = renderWidgetView(view, { selected: true, cursor: 1 }, 270, styles);
   assert.match(selected[1], /^▸ /);
   assert.match(selected[selected.length - 1], /↑↓ 选择/);
+});
+
+test("renderWidgetView 大团队窗口的每行同样受终端宽度约束（折叠提示行含在内）", () => {
+  const view = buildWidgetView(largeTeamSnapshot(12), 65000);
+  const styles = plainStyles();
+  for (const width of [40, 20, 12]) {
+    for (const cursor of [0, 8, view.rows.length - 1]) {
+      for (const line of renderWidgetView(view, { selected: true, cursor }, width, styles)) {
+        assert.ok(
+          visibleWidth(line) <= width,
+          `width=${width} cursor=${cursor}: line renders ${visibleWidth(line)} > ${width}`,
+        );
+      }
+    }
+  }
 });
 
 test("widget rows never carry raw newlines (multi-line task/activity/latest flattened)", () => {
