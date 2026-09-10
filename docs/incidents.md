@@ -91,3 +91,10 @@
 - 症状：`tools/install-smoke.mjs --task` 成功跑完但收尾删不掉临时配置目录——`fs.rmSync` 抛 `EPERM`（`maxRetries: 8, retryDelay: 250` 的内部重试也没吸收，锁定 >9s），而目录里逐个文件都能删、几分钟后再删目录又能成功。
 - 根因：深任务拉起真实 `pi` 子进程时 `cwd` 指向待删的临时配置目录；pi 进程内的扩展在会话期间派生后台进程（Toast 的 PowerShell、bridge helper 等）并继承 cwd，Windows 下「进程 cwd 在目录内」会把目录本身钉住——文件可删、目录不可删。
 - 教训：① 待删目录绝不能作为子进程族群的 cwd——工具里改为 `cwd: os.tmpdir()`，配置位置仍由 `PI_CODING_AGENT_DIR` 决定（改后即干净删除）；② 跨进程句柄锁定要靠隔离躲开，不要指望 `rmSync` 重试吸收（重试窗口不可预知）；③ 所有会在临时目录里落凭据副本的工具，清理失败路径必须单独删凭据文件并告警（本工具已做：auth.json 随目录删，删不掉目录时也单独删）。
+
+## Windows 长路径让 worktree 删除静默失败（agent-team-viewer-model 收尾）
+
+- 症状：任务合并后 `git worktree remove .worktrees/agent-team-viewer-model --force` 报 `error: failed to delete ...: Filename too long`（注册项已摘除、目录留下）；Git Bash 递归删除、PowerShell `Remove-Item -Recurse -Force` 同样静默留下 `agent-team/node_modules/.../@aws-sdk/core/dist-types/ts3.4/...` 深层文件（路径超 260 字符，Win32 API 上限）。
+- 根因：Windows 默认 260 字符 MAX_PATH 上限；node_modules 里嵌套依赖的 `dist-types/ts3.4` 路径超限，普通删除 API 无法遍历/删除这些条目，且失败不是总是报错（PowerShell 静默跳过）。
+- 处置（可复用流程）：① 空目录镜像两遍 `MSYS_NO_PATHCONV=1 robocopy <empty> <target> /MIR`（Git Bash 会把 `/MIR` 当路径转换，必须加 `MSYS_NO_PATHCONV=1` 或写 `//MIR`），第一遍删大部分、第二遍清剩余长路径文件；② `find <target> -depth -type d -exec rmdir {} \;` 逐级删空目录。删前先确认没有 reparse point（`Get-ChildItem -Recurse -Force -Directory | Where-Object { $_.Attributes -band ReparsePoint }`）——junction 删除另有事故（见上）。
+- 教训：worktree 删除失败不要反复重试或硬删；长路径是 Windows 结构性限制，每次使用上述 robocopy 流程（不试探），并先用 `find`/`du` 确认只剩空壳再删。
