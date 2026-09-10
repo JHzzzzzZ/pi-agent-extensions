@@ -42,6 +42,10 @@
 - [ ] viewer/widget 重复行第四轮：v1.7.0 分栏改版后真机仍有重复行出现（processing）
   - 现象：前三轮修复（指纹门控、overlay maxHeight/margin 对齐、fleet 壳照抄 + 单实例/互斥测试）后，用户真机仍观察到重复行（具体帧/截图待补记，历史见上三轮条目）。
   - 要求：先拿真机截图定位是哪类重复（标题堆叠？roster 正文重影？亮块与 viewer 并存？），再对照 pi-subagents fleet 真机已验证的渲染路径逐行比对差异；警惕"纯函数单测绿但真机红"——复用 viewer-host（真实 TuiMainScreen + scrollback 仿真器）扩大仿真覆盖，直到仿真复现真机现象再动手修。
+  - **根因已定位（2026-09-15，computer-use 真机 + 全分辨率抓屏复现）**：不是内容重复，是 overlay 帧里混入**原始换行符**导致的行错位。链路：① `cockpit.ts:499` 把每次派发写成多行 tool 条目 `team_dispatch 派发 →\n  - <member>: <task>`（实测每 run 8–10 条多行 tool 条目，即每次派发一条）；② `viewer.ts` tools 渲染分支按单行处理（`'· ' + truncateVisible(text, width-2)`），不切 `\n`；③ 帧拼装 `fitLine` 按显示宽度计算（换行符宽 0）→ 帧行字符串带着 `\n` 通过宽度校验；④ 宿主绘制该行时，换行后的尾巴落在 overlay 缓冲区的**下一物理行第 0 列**（即 overlay 左缘/roster 列区域），且真实行数比声明多 1 → 帧几何错位；diff 渲染器不知道这些脏格 → 残行跨刷新持久（实测 pane1/pane2 相隔 3s 像素级相同）。真机画面：roster 列下方每派发一条出现 `  - front: 请数出数字 N（计数序列的一部分）…` 残行——用户观感即"重复行/前端渲染错乱"。
+  - 最小复现（真实代码）：`bodyLines([{kind:'tool',text:'team_dispatch 派发 →\n  - front: …'}], true, 100, plainStyles())` 返回的行含原始 `\n`（本机实测 exit=1）。
+  - 修复方向（TDD，worktree）：tools 分支按 `\n` 切分为物理行（首段剥 legacy 前缀）；`renderViewerFrame` 加"输出行不得含原始换行"不变量测试；同族路径核查（task/assistant 兜底走 `wrapText` 已安全，markdown 走数组安全）；可选加固 `cockpit.ts` 写单行条目。
+  - 已排除（非 bug）：95% 宽 overlay 左右各 ~3 列底层内容透出（与 fleet 逐字相同的 overlayOptions，宿主行为）；widget 折叠/展开/秒级刷新干净；viewer 开/关、切成员、run 完成刷新均无残影。
 - [ ] 支持运行中的 run 中途插话（steer 语义）：viewer 发消息当前是派单语义（排队 → run 落定后链式派出），用户实测"数数途中打招呼，任务结束才收到回复"——期望不打断任务、让正在干活的 leader/成员尽快看到插话并回应。
   - 架构前提：现 leader 是 cockpit 派生的一次性 `pi --no-session` 进程、成员由 leader 派生，cockpit/用户均无通道向运行中的子进程注入消息；中途插话需要 leader 常驻会话进程（保持会话、可接收新输入）+ steer/注入通道，并解决与现有"run 显式终态"可靠性的冲突（run 落盘/reconcile/预算中止/stopAndSettle 都建立在 run 有明确终点上；常驻后"run 何时算结束"需要重新定义——如空闲超时或显式结束命令）。
   - 参考：pi 的 followUp/steer 语义（主 agent 接收排队消息的三种投递模式）；`chat.ts` 队列可复用为 steer 入口，只换"消息到达"的通道，提交/输入框 UI 不变。
@@ -105,3 +109,4 @@
   - 落点建议：右栏 detail 头（`viewer.ts` `detailHeaderLines`）按选中成员加 `模型:` 行，或 roster 行尾注；样式以 pi-subagents fleet inspector 为对照（`agent-team/docs/tui-sync.md` 为 TUI 期望值唯一来源，改完登记矩阵）。
   - 验收：打开 `/team:view` 选中任一成员即可看到其模型（provider/id）；运行中与终态都有值；窄宽度下不超宽（fitLine/截断）；viewer 纯函数测试 + 真实宿主测试（`viewer-host`）锁定；README/AGENTS/docs 卡同步；全量测试 + typecheck 绿。
 - [x] widget 真机反馈（完成 2026-09-15 @ feat/agent-team-widget-leader-summary，agent-team 1.13.1 / 根 2.23.1）：诊断结论——成员行本身正常（真实宿主逐帧导航/enter 定位该成员，诊断已转为永久回归测试）；「选不中成员」的根因是独立任务行排在成员后：光标到底落在 `任务:` 行、enter 打开的却是 leader（假成员陷阱）。修复：任务摘要并入 leader 行（`leader <团队> · <任务摘要> ▶ running · …`，44 字截断），删除独立任务行——末行恒为成员行，`↓`/`j` 到底即最后一个成员；截图存档 `agent-team/docs/assets/widget-tree-feedback.png`；323 测试 + typecheck 绿。
+- [ ] widget/viewer 按键双触发（用户 2026-09-15 真机反馈，processing 2026-09-15 @ widget-key-release）：Kitty 键盘协议 flag 2 下每次按键额外发送 release 事件（`\x1b[1;1:3B` 等 `:3` 编码），`handleWidgetKey`/`handleViewerKey` 只调 `matchesKey` 未过滤 release → 一次按键生效两次（widget 激活+移动/移动两行、viewer 跳两个成员），也是「选不中成员」的真凶（跳过成员行）。照 fleet-status.ts:699 在 reducer 顶部 `isKeyRelease(data)` 短路；widget 与 viewer 双侧都要。参考截图存档 `agent-team/docs/assets/widget-fleet-status-reference.png`。
