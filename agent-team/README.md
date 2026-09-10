@@ -154,7 +154,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 
 实现机制（run artifacts）：每个 run 在 `~/.pi/agent/teams/runs/<runId>/` 下保留每个成员一份有界 JSONL 流水（leader 为 `_leader.jsonl`）——leader 侧事件由驾驶舱从 leader 子进程 JSON 流写入，成员侧由 leader 进程内的 dispatch 执行器实时写入，查看器与工具按需读取。单条记录封顶 4KB、单文件 2MB、目录保留 7 天（session 启动时自动清理）。全部落盘 best-effort，记录失败绝不影响 run 本身。
 
-**与成员/leader 直接对话（`m` 发消息，v1.6.0）**：选中某个 actor 后按 `m` 进入右栏头部下方单行输入（`❯ <内容>▏`），可打印字符（含 CJK）追加、backspace 删字、`Esc`/`ctrl+c` 只退出输入（不关查看器）、`Enter` 提交。架构上成员子进程归 leader 派生、驾驶舱无通道向运行中的子进程注入消息，因此对话走**派单语义**：每条消息编成一个新 run 的 task（leader 直发；成员则指示 leader 转派并附该成员 transcript 尾部 ~2000 字节作上文，派出时刻现读不缓存），复用 `startBackgroundRun`（含 model 预检）派出；当前 run 在跑则消息**排队**，run 落定（completed）后自动链式派出，run failed/aborted 则清空队列（用户变卦语义，与 `team_stop`/viewer `D`/`/team:clear` 一致——显式停止也清队列并提示丢弃条数）。回复经新 run 的 transcript 在查看器里展示（选中页跟随最新 run），报告照常 followUp 送达主会话。队列驻留在会话内存不落盘，`/reload` 后丢失可接受。
+**与成员/leader 直接对话（`m` 发消息，v1.6.0；leader 运行中插话 v1.15.0）**：选中某个 actor 后按 `m` 进入右栏头部下方单行输入（`❯ <内容>▏`），可打印字符（含 CJK）追加、backspace 删字、`Esc`/`ctrl+c` 只退出输入（不关查看器）、`Enter` 提交。**目标 = leader 且 run 运行中**：leader 子进程以 `--mode rpc` 拉起，cockpit 持有其 stdin，消息以 RPC `steer` 发出——pi 在当前助手回合执行完工具调用后、下次 LLM 调用前送达（当前任务不被打断），回复出现在本 run 的 transcript 里；提交 notice 为「已插话给 leader（steer）：不打断当前任务，leader 会在当前回合结束后尽快回应」。其余情况走**派单语义**：每条消息编成一个新 run 的 task（leader 直发；成员则指示 leader 转派并附该成员 transcript 尾部 ~2000 字节作上文，派出时刻现读不缓存）——成员子进程归 leader 派生、驾驶舱无通道注入，因此仍走此路径；复用 `startBackgroundRun`（含 model 预检）派出；当前 run 在跑则消息**排队**，run 落定（completed）后自动链式派出，run failed/aborted 则清空队列（用户变卦语义，与 `team_stop`/viewer `D`/`/team:clear` 一致——显式停止也清队列并提示丢弃条数）。回复经新 run 的 transcript 在查看器里展示（选中页跟随最新 run），报告照常 followUp 送达主会话。队列驻留在会话内存不落盘，`/reload` 后丢失可接受。
 
 对话内查看：主 agent 可调用 `team_transcript` 工具（`member` 参数指定成员名或 `leader`）读取同样的记录并转述要点；`team_status` 之外想深入某个成员"到底做了什么"时用它。统一路由下不存在动态命令覆盖问题：首 token 是保留词即子命令，否则才是团队名。
 
@@ -179,7 +179,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（347 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（354 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

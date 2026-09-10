@@ -71,7 +71,7 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   const child = await waitForChild(spawn, 0);
   const record = spawn.records[0];
 
-  assert.deepEqual(record.args.slice(0, 4), ["--mode", "json", "-p", "--no-session"]);
+  assert.deepEqual(record.args.slice(0, 3), ["--mode", "rpc", "--no-session"]);
   assert.equal(record.args[record.args.indexOf("--model") + 1], "anthropic/claude-opus-4-5");
   const extIndex = record.args.indexOf("-e");
   assert.equal(record.args[extIndex + 1], "/ext/agent-team/index.ts");
@@ -82,7 +82,13 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   assert.match(promptContent, /team_dispatch/);
   assert.match(promptContent, /frontend/);
   assert.match(promptContent, /你是技术负责人/);
-  assert.equal(record.args[record.args.length - 1], "Task: 修复登录 bug");
+  // RPC 模式：task 走 stdin 的初始 prompt 命令（不再作 argv 尾参）
+  assert.ok(!record.args.some((arg) => arg.startsWith("Task: ")), "task not in argv");
+  assert.deepEqual(JSON.parse(child.writes[0] ?? "{}"), {
+    type: "prompt",
+    id: "task",
+    message: "Task: 修复登录 bug",
+  });
   assert.equal(record.env?.PI_AGENT_TEAM_FILE, fixtureTeam().filePath);
   assert.equal(record.env?.PI_AGENT_TEAM_NAME, "dev-team");
   assert.match(record.env?.PI_AGENT_TEAM_RUN_ID ?? "", /^run-\d+$/);
@@ -111,6 +117,60 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   const status = coordinator.getStatus();
   assert.equal(status.running, false);
   assert.equal(status.lastRecord?.runId, run.runId);
+});
+
+test("RPC steer：run 运行中插话写入 stdin，agent_settled 后关闭 stdin（进程退出门）", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const promise = coordinator.start({ team: fixtureTeam(), task: "数数", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+
+  assert.equal(coordinator.steerLeader("插话一"), true);
+  assert.equal(coordinator.steerLeader("插话二"), true);
+  assert.deepEqual(
+    child.writes.slice(1).map((line) => JSON.parse(line)),
+    [
+      { type: "steer", message: "插话一" },
+      { type: "steer", message: "插话二" },
+    ],
+  );
+
+  // agent_settled = 本轮任务结束 → 关 stdin，RPC 进程才能退出
+  child.emitLine(JSON.stringify({ type: "agent_settled" }));
+  assert.equal(child.ended, true, "settle 后关闭 stdin");
+  assert.equal(coordinator.steerLeader("太晚了"), false, "关闭后不再接受插话");
+
+  child.autoRespond(leaderLines(), 0, 5);
+  const result = await promise;
+  assert.ok(result.ok);
+  assert.equal(result.value!.status, "completed");
+});
+
+test("prompt 被 pi 拒绝：记错误 + 关 stdin，run 以 failed 落定而不是挂起", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const promise = coordinator.start({ team: fixtureTeam(), task: "x", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+
+  child.emitLine(
+    JSON.stringify({ type: "response", id: "task", command: "prompt", success: false, error: "Unknown model: a/b" }),
+  );
+  assert.equal(child.ended, true, "prompt 失败无 settle 事件，必须主动关 stdin");
+  child.emitClose(0);
+  const result = await promise;
+  assert.ok(result.ok);
+  assert.equal(result.value!.status, "failed");
+  assert.match(result.value!.error ?? "", /Unknown model: a\/b/);
 });
 
 test("team-level shared worktree: leader runs inside it and the record carries it", async () => {

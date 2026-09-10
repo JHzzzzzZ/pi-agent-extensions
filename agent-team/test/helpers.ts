@@ -50,6 +50,20 @@ export class FakeChild implements PiChildProcess {
     },
   };
 
+  /** RPC command lines written to the child (leader prompt/steer). */
+  readonly writes: string[] = [];
+  /** True once stdin.end() was called (RPC shutdown trigger). */
+  ended = false;
+
+  stdin = {
+    write: (data: string) => {
+      this.writes.push(data);
+    },
+    end: () => {
+      this.ended = true;
+    },
+  };
+
   on(event: "close" | "error", cb: (arg: never) => void): void {
     if (event === "close") this.closeCbs.push(cb as (code: number | null) => void);
     else if (event === "error") this.errorCbs.push(cb as (err: Error) => void);

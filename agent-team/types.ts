@@ -254,9 +254,20 @@ export interface PiChildProcess {
   readonly pid?: number;
   stdout: { on(event: "data", cb: (chunk: unknown) => void): void };
   stderr: { on(event: "data", cb: (chunk: unknown) => void): void };
+  /**
+   * Writable stdin when the spawn opened a pipe (leader RPC mode sends
+   * `prompt`/`steer` commands here). Absent on one-shot children.
+   */
+  stdin?: PiChildStdin;
   on(event: "close", cb: (code: number | null) => void): void;
   on(event: "error", cb: (err: Error) => void): void;
   kill(signal: string): boolean;
+}
+
+/** Child stdin command channel (JSON line protocol in RPC mode). */
+export interface PiChildStdin {
+  write(data: string): void;
+  end(): void;
 }
 
 export type PiSpawn = (command: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv }) => PiChildProcess;

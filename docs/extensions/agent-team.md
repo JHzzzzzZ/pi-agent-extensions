@@ -1,16 +1,16 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 7273291
+> last verified @ 819553a
 
 ## 职责与边界
 
-Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单：拉起独立 leader 子进程，leader 经 `team_dispatch` 调度成员子进程并行干活，报告以 followUp 送回；派单变卦/超预算/跑偏时主 agent 用 `team_stop <runId>` 中止（runId 由 team_run 返回与 team_status 展示）；viewer 内 `m` 发消息与成员/leader 直接对话（派单语义，见数据流 ⑧）。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
+Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单：拉起独立 leader 子进程（`--mode rpc`），leader 经 `team_dispatch` 调度成员子进程并行干活，报告以 followUp 送回；派单变卦/超预算/跑偏时主 agent 用 `team_stop <runId>` 中止（runId 由 team_run 返回与 team_status 展示）；viewer 内 `m` 发消息与成员/leader 直接对话——**leader 运行中走 RPC steer 插话（当前回合边界送达、不打断任务），成员/已落定走派单语义**（见数据流 ⑧）。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
 
 ## 文件地图
 
 - `types.ts` — 团队文件格式（frontmatter `leader` + `members[]`，块标量 prompt）、常量（entry / 消息类型 / 环境变量 / 上限）。**改团队文件格式必看这里。**
 - `config.ts` — 团队发现：`~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`，同名项目优先，每次使用重扫；frontmatter `budget:` 块解析（非法值 → `INVALID_TEAM_FILE`）。
-- `runner.ts` — 子 `pi --mode json -p` 契约（leader 与 member 共用），`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn` 回调）。
+- `runner.ts` — 子 `pi` 进程契约：**leader 走 `--mode rpc`**（stdin 发 `prompt`/`steer` JSON 行，`agent_settled` 后关 stdin 使进程退出；RPC 只在 stdin 结束时退出）；member 走 `--mode json -p`（一次性）。`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn`）与 stdin（`onChild`）；`onWire` 转发每行解析后的原始 JSON（RPC 的 `response`/`agent_settled` 只在此层可见）。
 - `runstore.ts` — 每 run `status.json` 元数据快照（落 `teams/runs/<runId>/`，与 transcript 同目录同 7 天 retention）：coordinator claim 即写 running（含 leaderPid），每条退出路径落终态；`session_start` reconcile 把上次会话残留的 running 翻成 failed 记录（只报告**不杀**孤儿 leader，避免 PID 复用误杀）。
 - `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
 - `doctor.ts` — `/team:doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
@@ -27,7 +27,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 5. leader 汇总 → 退出码 0 → 报告经 `finalizeRun`（wait/后台单一终态路径）持久化 + 交付：后台 followUp 自动送达主会话；`wait: true` 内联返回（同步契约不变）。
 6. `team_stop <runId>` 中止：`stopAndSettle()` SIGTERM→SIGKILL 后有界等待（默认 7s）落定，返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达，可立即重新派单。viewer 内 `D` 停止共用同一停止语义：确认后经 `viewerStopAction` → `stopAndSettle()`（`index.ts` 导出仅供测试），结果映射为顶部 notice（settled → success、未落定 → warning、异常 → error，绝不上抛）；run 已结束/无活动 run 时纯渲染层 notice 拦截，不进确认态、回调不会被调。
 7. 崩溃恢复：主会话中断 ⇒ 下次 `session_start` 把残留 running `status.json` 翻成 failed 记录 + 孤儿 leader PID 警告（不杀进程）；`/team:doctor` 可看全部残留与损坏文件。
-8. viewer 发消息（`m`，`chat.ts` + index 接线）：消息 → `buildChatTask`（leader 直发 / 成员转派，附目标 actor transcript 尾部 ≤2000 字节，**派出时刻现读**）→ 复用 `startBackgroundRun`（含 model 预检）派新后台 run；run 运行中则 FIFO 入队，runPromise 收尾调 `chat.onRunFinalized`——completed 链式派出下一条（一次一条，链式 run 的收尾继续驱动），failed/aborted 清空队列并 notify；`team_stop`/`/team:stop`/viewer `D`（`viewerStopAndClearChat`）/`/team:clear` 显式停止也清队列并提示丢弃条数。队列驻留在 cockpit 闭包不落盘（易失交互态，/reload 丢失可接受）。
+8. viewer 发消息（`m`，`chat.ts` + index 接线）：**目标 = leader 且 run 运行中且 leader stdin 可用 → RPC `steer` 插话**（`ChatCoordinatorDeps.steerLeader` → `cockpit.steerLeader()` 写 `{"type":"steer"}`；pi 在当前助手回合执行完工具调用后、下次 LLM 调用前送达——不打断任务；提交返回 `{kind:"steered"}`，notice 提示「已插话（steer）」）；其余情况走派单语义：消息 → `buildChatTask`（leader 直发 / 成员转派，附目标 actor transcript 尾部 ≤2000 字节，**派出时刻现读**）→ 复用 `startBackgroundRun`（含 model 预检）派新后台 run；run 运行中则 FIFO 入队，runPromise 收尾调 `chat.onRunFinalized`——completed 链式派出下一条（一次一条，链式 run 的收尾继续驱动），failed/aborted 清空队列并 notify；`team_stop`/`/team:stop`/viewer `D`（`viewerStopAndClearChat`）/`/team:clear` 显式停止也清队列并提示丢弃条数。队列驻留在 cockpit 闭包不落盘（易失交互态，/reload 丢失可接受）。
 
 ## 不变量
 
@@ -43,7 +43,8 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - **widget 挂载不变量（v1.13.0，触发形式对齐 fleet-status）**：controller 每会话挂一次（`session_start` 无条件，TUI + 未禁用），宿主 widget 注册由数据决定——`snapshot.running` ⇒ string[] 帧，落定 ⇒ `setWidget(key, undefined)` 自动卸载（终态行不常驻）；`refresh()` 数据为空时同步复位选择态并清指纹；点击/事件与 1s tick 共用该路径。刷新双触发：coordinator `onProgress` 事件即时 + 1s tick 兜底，指纹相同跳过；终态不重挂（/reload 水合只恢复 `lastRecord`，不影响 widget）。`/team:clear` 不再手动卸亮块（只清排队对话），集成测试要看到帧必须走真实派单。
 - viewer 打开期间必须暂停下方 widget（`RunWidgetController.setPaused`），关闭恢复。
 - **viewer 帧行单行不变量（v1.13.3）**：多行 tool 条目（`cockpit.ts:499` 的 `team_dispatch 派发 →\n  - 成员: 任务`）必须按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 再兜底把残余 CR/LF 折成空格——帧行携带原始换行会让宿主按物理行写出时把尾巴挤到下一行同列（overlay 左缘残行 + 帧几何漂移，diff 无法清理；真机事故见 `docs/incidents.md`）。widget 同族路径由 `flatten`（`\s+`）保证。
-- **子进程不可注入，对话 = 派单**：成员子进程归 leader 进程派生、leader 由 cockpit 派生（`--no-session` 一次性进程），cockpit 没有任何通道向运行中的子进程注入消息——viewer 发消息只能编成新 run 的 task（chat.ts），绝不试图 steer/写运行中子进程的 stdin。
+- **leader 可注入、成员不可注入**：leader 子进程以 `--mode rpc` 拉起，cockpit 持有其 stdin（`steerLeader()` 写 `steer` 命令，仅 run 活跃且通道未关时可写——`agent_settled`/prompt 拒绝/run 收尾即 `end()`，之后回退队列语义）；成员子进程归 leader 派生、cockpit 无任何通道，成员消息仍编成新 run 的 task（chat.ts 派单语义），绝不试图写运行中子进程的 stdin。
+- **RPC 收尾不变量**：leader 进程只在 stdin 结束时退出（`onInputEnd`→shutdown）——必须在 `agent_settled` 时关 stdin；prompt 预检失败（`response.prompt.success=false`）不会产生 settle，必须同样关 stdin 否则 run 永久挂起；`promptError` 折进 failed 记录（不让预检失败落成 completed 空报告）。
 - chat 队列条目只存 `{ targetLabel, message }`，上文尾部派出时刻现读（不随消息缓存，避免排队期间陈旧）；链式门控仅 completed 续发，failed/aborted 全清——显式停止（team_stop/D//team:clear）同样清队列。
 - **不偷编辑器按键**：亮块**默认折叠单行**（未选中态只有激活键被消费，其余（含 esc）原样交还编辑器）——`↓`/`←`（空编辑器 ∧ 主编辑器焦点）或 `alt+↓`/`alt+↑` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行）+ 底部提示行，`esc` 或第 0 行再按 `↑`/`k` 收回折叠；`main` 行 enter 只收起选中（fleet main 语义），leader/成员行 enter 按 actor 进查看器；**按键 release 过滤**（v1.13.2）：widget/viewer 的 key reducer 顶部 `isKeyRelease` 短路（fleet-status.ts:699 同款）——Kitty flag 2 下 release 事件（`:3` 编码）同样能被 `matchesKey` 命中，漏过滤 = 一次按键生效两次；repeat（`:2`）保留供长按连续移动；**焦点门控**（对齐 fleet-status `editorHasFocus`，v1.9.1）：`ensureRunWidget` 挂载时经 factory 形态 `setWidget` 一次性捕获宿主 TUI（宿主同步调用 factory，空组件在 controller 首帧（running）或首个字符串帧被替换、无可见变化），`editorFocus: () => probeEditorFocus(state.tui)`——`getFocusedComponent()` 优先、`focusedComponent` 字段回退、五方法结构判定编辑器形状（`isEditorComponentLike`，不用 `instanceof`：跨 jiti 模块边界不可靠）；焦点确定非编辑器（`/login`、`/model`、`/settings` 选择器，`ctx.ui.select`，overlay 对话框）时 widget 完全不介入（含 alt 通道）且选中态退出让行；宿主无焦点信息/取用抛错 → `undefined`，降级为旧门控（仅空编辑器）。bare `↓`/`←` 仅当焦点在主编辑器且编辑器为空才激活（`editorState` 端口注入 `getEditorText`，宿主缺该 API 时降级为仅 alt 通道）；选中态 `↑`/`k` 在第 0 行再按退出选中（fleet-status 同构，后续键到达编辑器，退出保持 cursor 供再次激活恢复）。
 - **TUI 同步 ≠ 依赖**：viewer/widget 行为对照 pi-subagents（基线 v0.66.0，`agent-team/docs/tui-sync.md`）代码级同步，但不 import 它；测试期望只能从矩阵来，不从实现反推；同步后登记新版本号。
@@ -68,7 +69,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（347 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（354 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
