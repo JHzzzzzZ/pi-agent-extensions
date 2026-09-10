@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ ad93a28
+> last verified @ bd3946d
 
 ## 职责与边界
 
@@ -15,7 +15,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
 - `doctor.ts` — `/team:doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
 - `dispatch.ts`（leader 模式工具）、`cockpit.ts`（cockpit 模式工具）、`manage.ts`（team_create/list）、`chat.ts`（viewer 发消息：task 模板 + transcript 尾部截断 + FIFO 队列/链式门控，纯逻辑层，宿主接线在 index.ts）。
-- `widget.ts` — 输入栏下方可选中亮块（`setWidget(key, string[], { placement: "belowEditor" })`）——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件，v1.13.0），宿主 widget 由 `RunStatusSnapshot.running` 决定注册（running ⇒ string[] 帧，落定 ⇒ `undefined` 自动卸载，终态不常驻；`running` 但无 progress 同样隐藏）；**刷新双触发** = coordinator `onProgress` 状态变化点事件即时（leader 事件/派发起止 → `refreshWidget()`，不等 tick）+ 1s 对齐秒节拍兜底（`aligned-ticker.ts`）+ 渲染串指纹相同跳过（`renderKey`）；默认（未选中）为折叠单行 `agent-team <团队> · ↓/← 查看详情`（不含状态/耗时/并行数，未展开时不逐秒 churn），选中态展开 `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（`buildWidgetView`/`renderWidgetView` 纯函数；成员行 `|- <名> <图标> <状态>[ · ≤30 字尾注]`，图标 queued `·`/running `●`/done `✓`/failed `✗`/aborted `⊘`；任务摘要/尾注文本先 `\s+` 压平再截断，任务摘要 44 字截断内嵌 leader 行、末行恒为成员行；`main` 行 enter 只收起选中，leader/成员行按 actor 进查看器）；激活门控 = 焦点在主编辑器（`editorFocus` 端口 + `probeEditorFocus` 结构判定，宿主无焦点信息降级）× 编辑器为空（`editorState` 端口）；选中态到顶再按 `↑`/`k` 退出选中并收回折叠）；`aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，widget 与 cockpit 进度 ticker 共用，契约见 `docs/cross/status-bar.md`）；`viewer.ts` — `/team:view` 全屏左右分栏查看器（左 roster/右 detail，fleet inspector 布局，v1.8.0 起动作键位全集对齐 fleet）；`transcript.ts` — 成员转写物化；`docs/tui-sync.md` — TUI 行为对照 pi-subagents 的同步矩阵（**TUI 期望值唯一事实来源**）。
+- `widget.ts` — 输入栏下方可选中亮块（`setWidget(key, string[], { placement: "belowEditor" })`）——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件，v1.13.0），宿主 widget 由 `RunStatusSnapshot.running` 决定注册（running ⇒ string[] 帧，落定 ⇒ `undefined` 自动卸载，终态不常驻；`running` 但无 progress 同样隐藏）；**刷新双触发** = coordinator `onProgress` 状态变化点事件即时（leader 事件/派发起止 → `refreshWidget()`，不等 tick）+ 1s 对齐秒节拍兜底（`aligned-ticker.ts`）+ 渲染串指纹相同跳过（`renderKey`）；默认（未选中）为折叠单行 `agent-team <团队> · ↓/← 查看详情`（不含状态/耗时/并行数，未展开时不逐秒 churn），选中态展开 `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（`buildWidgetView`/`renderWidgetView` 纯函数；成员行 `|- <名> <图标> <状态>[ · ≤30 字尾注]`，图标 queued `·`/running `●`/done `✓`/failed `✗`/aborted `⊘`；任务摘要/尾注文本先 `\s+` 压平再截断，任务摘要 44 字截断内嵌 leader 行、末行恒为成员行；`main` 行 enter 只收起选中，leader/成员行按 actor 进查看器）；激活门控 = 焦点在主编辑器（`editorFocus` 端口 + `probeEditorFocus` 结构判定，宿主无焦点信息降级）× 编辑器为空（`editorState` 端口）；选中态到顶再按 `↑`/`k` 退出选中并收回折叠）；`aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，widget 与 cockpit 进度 ticker 共用，契约见 `docs/cross/status-bar.md`）；`viewer.ts` — `/team:view` 全屏左右分栏查看器（左 roster/右 detail，fleet inspector 布局，v1.8.0 起动作键位全集对齐 fleet）；`transcript.ts` — 成员转写物化；`tools/capture-screens.mjs` + `tools/vt-screen.mjs` — 文档截图（真实 TuiMainScreen + 真实 viewer + headless 终端 → `docs/assets/*.svg`，帧锚点自检、确定性输出；见 README「文档截图」）；`docs/tui-sync.md` — TUI 行为对照 pi-subagents 的同步矩阵（**TUI 期望值唯一事实来源**）。
 - 两种模式一套代码，以 `PI_AGENT_TEAM_FILE` 环境变量区分；leader 模式只注册 `team_dispatch`。`PI_AGENT_TEAM_RUNS_DIR` 可重定向 run artifacts 根（测试隔离用）。
 
 ## 核心数据流
@@ -66,8 +66,9 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（331 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（337 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
 - 涉及团队文件格式：同步 `types.ts` + `examples/` + README。
+- 改 viewer/widget/cockpit 外观：跑 `node tools/capture-screens.mjs` 重生成 `docs/assets/agent-team-viewer.svg`（帧锚点自检失败即报错，说明渲染路径已变）。
