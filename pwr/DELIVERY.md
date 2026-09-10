@@ -1,3 +1,18 @@
+# DELIVERY — PWR 合并交付包 v2.9.0（命令面归一：单一 /workflow:* 命名空间）
+
+> 把 `/workflows` 根与 12 条 `/workflows:*` 子命令整体并入 `/workflow:*`（硬切：旧前缀不再注册，无墓碑、无改名提示）。命令面收敛为 16 条：裸 `/workflow`（`<任务>` 生成；空参或 `help|--help|-h`=完整分组帮助；14 个旧子命令词只提示改名、绝不生成）+ 15 条 `/workflow:*` 独立静态子命令。saved 工作流生命周期动作（`run/save/saved/delete/model`）在帮助文本中单列一组，消除 `/workflows:save` vs `/workflow:run` 歧义。`:list` 非法状态不再静默返回空列表（warning + 有效状态集合）。`/workflows <runId>` 自由形态 → `/workflow:open <runId>`；`--filter` 形态退役（改写 `/workflow:list <status>`）。功能与安全不变量不变。
+
+## 本版变更（v2.9.0）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| 命令面归一 | `WORKFLOW_SUBCOMMANDS` 扩为 15 键统一表；`RETIRED_WORKFLOW_SUBCOMMANDS` 扩为 14 词（`help` 除外）；裸 `/workflow` 矩阵 = 空参/help 词→完整帮助、旧词→改名 warning、其余→生成任务 | `src/intent.ts`、`index.ts` |
+| UI 接线 | 删除 `WORKFLOWS_COMMAND`/`WORKFLOWS_SUBCOMMANDS`/`RETIRED_WORKFLOWS_SUBCOMMANDS`/`parseWorkflowsArgs`/`WorkflowsParse`；注册 12 条 `/workflow:*`；`workflowsHelpText` → `workflowHelpText`（四组：生成/定义、saved 生命周期、观察控制、快捷键）；导出 `isRunStatus` 供 `:list` 校验 | `src/ui/commands.ts`、`src/ui/index.ts` |
+| 文案 | 详情 Actions / saved 空列表 / 过滤器提示 / 快捷键 command twin / Usage 全部换 `/workflow:*`；footer 状态标签 `workflows: N active…` 保留（是插件状态别名，不是命令名） | `src/ui/views.ts`、`src/ui/keybindings.ts`、`src/tools.ts` |
+| 测试（439） | entry：命令面精确 16 条 + 硬切守卫 + 裸根矩阵/`help` 词 + `:list bogus` warning；intent：15 键统一表 + 14 退役词；ui-commands：删 `parseWorkflowsArgs`，加 `isRunStatus`，帮助分组断言；ui-views：Actions/saved 文案 + 空提示；viewer-host fixture 换新命令名 | `test/entry.test.ts`、`tests/intent.test.ts`、`tests/ui-commands.test.ts`、`tests/ui-views.test.ts`、`tests/ui-viewer-host.test.ts` |
+
+---
+
 # DELIVERY — PWR 合并交付包 v2.8.0（命令面冒号化）
 
 > 把命令面从 v2.6.0 的空格子命令式改回冒号命名空间式（每个子命令一条独立静态注册命令）：`/workflow` 增加独立命令 `/workflow:run|:delete|:model`；`/workflows` 增加独立命令 `/workflows:list|:view|:open|:pause|:resume|:stop|:restart|:save|:saved|:script|:approve|:help`。裸 `/workflow` 保留生成入口（`/workflow <任务>` 与 `workflow:` 前缀），裸 `/workflows` 保留无参=列表、`<runId>`=详情、`--filter <状态>`、`help|--help|-h`=帮助。旧空格写法不再执行——裸命令命中旧子命令词时只提示改名（防止 `/workflow run …` 误触发生成回合）。`parseWorkflowCommandRoute`/`parseWorkflowsCommand` 退役；功能与安全不变量不变。

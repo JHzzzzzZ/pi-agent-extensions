@@ -17,4 +17,4 @@
   - 实施步骤：先搭骨架 + agent-team、pwr 两张样板卡给用户过目，认可后再铺满其余 9 个插件。
 - [x] team_stop（agent-team 1.2.0）落地后同步 docs/ 知识库：agent-team 卡（职责/数据流/不变量/改动清单 109→137 + last verified）与 INDEX 摘要行。
 - [x] 根 README 增加「5 分钟上手」章节：对标 Claude Code / OpenCode / Gemini CLI 的 onboarding 结构（编号旅程 + 每步可验证成功判据），补齐外部用户"从零装到跑通"缺口：Step 0 前置条件（pi 本体安装命令 + /login 认证）、装后验证判据、第一个真实任务（loop 提醒 → agent-team 建团派单 → pwr 工作流）、排障 FAQ（扩展没加载 /reload、pi list 自检、human-notify 仅 Windows）。（完成 @ 5c217ab，2026-09-09，来源：定时任务调研 history/2026-09-09.md）
-- [ ] 根 README 顶部增加真机截图：对标 OpenCode/Gemini CLI"TUI 截图放开头"模式——现有 ASCII 效果示意不能替代真实截图（GOAL.md §2 "真机截图齐全"是"别人这把"尺子的明确要求）。候选：agent-team 亮块+查看器、pwr 运行查看器、/workflows 列表。落盘 `docs/assets/`（或根 `assets/`），需要真机运行时抓取（可探索 headless 渲染或人工协助）。
+- [ ] 根 README 顶部增加真机截图：对标 OpenCode/Gemini CLI"TUI 截图放开头"模式——现有 ASCII 效果示意不能替代真实截图（GOAL.md §2 "真机截图齐全"是"别人这把"尺子的明确要求）。候选：agent-team 亮块+查看器、pwr 运行查看器、/workflow:list 列表。落盘 `docs/assets/`（或根 `assets/`），需要真机运行时抓取（可探索 headless 渲染或人工协助）。

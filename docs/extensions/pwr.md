@@ -31,9 +31,9 @@
 
 - fail-closed：缺 engine / runner ⇒ 类型化错误（`ENGINE_UNAVAILABLE` / `AGENT_RUNNER_UNAVAILABLE`），绝不隐式回退主 agent。
 - 错误消息静态模板，绝不插值用户输入；脚本源码 / args 永不写盘；结果 ≤50KB（`RESULT_TOO_LARGE`）、summary ≤8KB。
-- 命令面为冒号式（v2.8.0）：`/workflows` 裸命令（无参=列表；`<runId>`=详情；`--filter <状态>`；`help|--help|-h`=帮助）+ 12 条独立子命令 `/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`；`/workflow:run|:delete|:model` 为独立命令，裸 `/workflow`（空参=用法，其余文本=生成）只做生成入口。动态 `workflow:<name>` 注册保持退役——saved 名由 `/workflow:run` 调用时现读盘，与保存/删除无命令同步问题。旧空格子命令只提示改名、绝不执行。
+- 命令面为单一 `/workflow:*` 命名空间（v2.9.0）：裸 `/workflow` 只做生成入口（`<任务>`；空参或 `help|--help|-h`=完整分组帮助；14 个旧子命令词只提示改名、绝不生成）；15 条独立冒号子命令 `/workflow:run|delete|model|list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`。旧 `/workflows` 根与 `/workflows:*` 硬切不注册（无墓碑）；saved 名由 `/workflow:run` 调用时现读盘，与保存/删除无命令同步问题。`:list` 非法状态 warning + 有效状态集合（不静默列空表）。
 - trace 文本（v2.4.0）单行 + 尾部截断，绝不透传原始工具输出。
-- `/workflows:view`（v2.7.0）是 fleet 式分栏 overlay：左 roster（结构/stage/结果/脚本，选中钉 itemId 跨刷新）右 detail（三行元信息头 + 可滚动正文）；chrome 区零每秒文本（elapsed 只在正文），750ms 刷新经指纹门控（忽略 elapsed 纯时钟变化）+ 帧高消抖；`D` 两步停止（Enter/Y 确认，Esc/ctrl+c/N/backspace 取消不关查看器），停止复用 `runControlAction("stop")` 路径。
+- `/workflow:view`（v2.7.0）是 fleet 式分栏 overlay：左 roster（结构/stage/结果/脚本，选中钉 itemId 跨刷新）右 detail（三行元信息头 + 可滚动正文）；chrome 区零每秒文本（elapsed 只在正文），750ms 刷新经指纹门控（忽略 elapsed 纯时钟变化）+ 帧高消抖；`D` 两步停止（Enter/Y 确认，Esc/ctrl+c/N/backspace 取消不关查看器），停止复用 `runControlAction("stop")` 路径。
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
 - pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。
 - solo 审批门（`src/solo-gate.ts`）：只产生 once 批准，绝不写 remembered 记录；solo 关闭后既有 remembered 批准不受影响（契约见 `docs/cross/solo-approval-gate.md`）。
@@ -49,7 +49,7 @@
 
 ## 改动清单
 
-- 必跑：`cd pwr && npm test`（438 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。viewer 改动跑 `tests/ui-viewer.test.ts`（纯函数）+ `tests/ui-viewer-host.test.ts`（真实宿主，防 overlay 堆叠）。
+- 必跑：`cd pwr && npm test`（439 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。viewer 改动跑 `tests/ui-viewer.test.ts`（纯函数）+ `tests/ui-viewer-host.test.ts`（真实宿主，防 overlay 堆叠）。
 - DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `pwr/DELIVERY.md` 版本历史。
 - 测试 fake：`test/helpers.ts` 的 `makeFakeRunner`（fake AgentRunner）、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn`（fake 子进程）。集成模式见 `runner/test/integration.test.ts`。
 - 完整架构 / 安全文档 / 版本历史 → `pwr/DELIVERY.md`（权威，勿在别处重复）。
