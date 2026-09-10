@@ -3,8 +3,9 @@
  *
  * - footer：五个 `setStatus` 键带两位排序前缀，`localeCompare` 后顺序 =
  *   语义带顺序（goal 10 < provider-quota 20 < pwr 30 < solo-mode 40 <
- *   stream-token-speed 50）。宿主 footer.js 按 key `localeCompare` 拼接
- *   状态行，键本身即排序契约。
+ *   stream-token-speed 50）。宿主 footer.js 按 key `localeCompare` 逐行
+ *   渲染各段状态（逐行本身依赖本地宿主补丁 `docs/pi-footer-status-patch.md`），
+ *   键本身即排序契约。
  * - 编辑器上方 widget：宿主按首次 `setWidget` 顺序堆叠，而 `session_start`
  *   按根 `package.json` `pi.extensions` 注册顺序逐个派发 ⇒ 扩展数组顺序
  *   即 widget 栈顺序契约（pwr-runs → run-timer → loop）。
