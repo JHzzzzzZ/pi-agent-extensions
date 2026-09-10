@@ -1,0 +1,256 @@
+/**
+ * agent-team — headless screenshot capture for docs/assets (GOAL.md §2 "真机截图")
+ *
+ * 为什么这样截图：README 的 ASCII"效果示意"不能替代真实画面，但真机抓屏
+ * 需要人肉 + 终端窗口。本工具走"真实渲染路径"——真实的 `TuiMainScreen` +
+ * 真实的 `TranscriptViewer` 组件 + 真实的主屏 diff 渲染器，只是把终端换成一个
+ * 记录字节流的 headless 终端，再把字节流还原为字符网格写成 SVG（GitHub 可
+ * 直接渲染）。产物可重复生成、可 diff、可在 CI/无人值守环境跑。
+ *
+ * 诚实边界（写进 README 图注）：场景数据是示例 run（count-duet），助手正文按
+ * 纯文本渲染（未接宿主 Markdown 主题），主屏背景为示意文本；除此之外的布局、
+ * 边框、页签、状态色、widget 文字全部来自被测组件本身。
+ *
+ * 用法（需先在 agent-team/ 下 npm install）：
+ *   node agent-team/tools/capture-screens.mjs [outDir]
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { TuiMainScreen } from "@earendil-works/pi-tui";
+import { VIEWER_OVERLAY_OPTIONS, TranscriptViewer } from "../viewer.ts";
+import { DEFAULT_BG, DEFAULT_FG, VtScreen } from "./vt-screen.mjs";
+
+// ---------------------------------------------------------------------------
+// Style port: dark palette (approximates the host's default dark theme)
+// ---------------------------------------------------------------------------
+
+const hexToSgr = (hex) => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return { open: `\x1b[38;2;${r};${g};${b}m`, close: "\x1b[39m", bgOpen: `\x1b[48;2;${r};${g};${b}m`, bgClose: "\x1b[49m" };
+};
+
+const fgStyle = (hex) => {
+  const s = hexToSgr(hex);
+  return (text) => `${s.open}${text}${s.close}`;
+};
+const bgStyle = (hex) => {
+  const s = hexToSgr(hex);
+  return (text) => `${s.bgOpen}${text}${s.bgClose}`;
+};
+
+export const DARK = {
+  dim: "#6b7280",
+  border: "#4b5263",
+  accent: "#61afef",
+  success: "#98c379",
+  warning: "#e5c07b",
+  error: "#e06c75",
+  bubble: "#2c313a",
+  text: DEFAULT_FG,
+};
+
+/** Real `Styles` port backed by ANSI codes (no theme object needed headless). */
+export function ansiStyles() {
+  return {
+    dim: fgStyle(DARK.dim),
+    border: fgStyle(DARK.border),
+    accent: fgStyle(DARK.accent),
+    success: fgStyle(DARK.success),
+    error: fgStyle(DARK.error),
+    warning: fgStyle(DARK.warning),
+    bubble: bgStyle(DARK.bubble),
+    bold: (text) => `\x1b[1m${text}\x1b[22m`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// SVG writer (character grid → GitHub-renderable SVG)
+// ---------------------------------------------------------------------------
+
+const CELL_W = 8.4;
+const CELL_H = 18;
+const FONT_SIZE = 14;
+
+const escapeXml = (s) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const styleKey = (c) => `${c.bold ? "b" : ""}${c.dim ? "d" : ""}${c.underline ? "u" : ""}${c.inverse ? "i" : ""}|${c.fg ?? ""}|${c.bg ?? ""}`;
+
+/** 网格 → SVG 文本（每行按样式切成 run，用 textLength 钉死列宽，保证对齐）。 */
+export function svgFromGrid(grid) {
+  const cols = grid[0]?.length ?? 0;
+  const width = Math.ceil(cols * CELL_W);
+  const height = grid.length * CELL_H;
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="'Cascadia Mono','JetBrains Mono',Consolas,Menlo,monospace" font-size="${FONT_SIZE}">`,
+    `<rect width="100%" height="100%" fill="${DEFAULT_BG}"/>`,
+  ];
+  grid.forEach((row, r) => {
+    const y = r * CELL_H + 13;
+    // 行尾裁剪：保留有背景色或非空白的最后一格
+    let last = -1;
+    row.forEach((c, i) => {
+      if (!c) return;
+      if (c.ch !== " " || c.bg) last = i;
+    });
+    for (let i = 0; i <= last; i++) {
+      const c = row[i];
+      if (!c || c.cont) continue;
+      const key = styleKey(c);
+      let j = i;
+      while (j + 1 <= last && row[j + 1] && styleKey(row[j + 1]) === key) j += 1;
+      const text = [];
+      for (let k = i; k <= j; k++) if (!row[k].cont) text.push(row[k].ch);
+      const content = text.join("");
+      const runWidth = (j - i + 1) * CELL_W;
+      const fg = c.inverse ? (c.bg ?? DARK.text) : (c.fg ?? DARK.text);
+      const bg = c.inverse ? (c.fg ?? DEFAULT_BG) : c.bg;
+      if (bg) parts.push(`<rect x="${(i * CELL_W).toFixed(1)}" y="${(r * CELL_H).toFixed(1)}" width="${runWidth.toFixed(1)}" height="${CELL_H}" fill="${bg}"/>`);
+      if (content.trim() !== "") {
+        const weight = c.bold ? ' font-weight="bold"' : "";
+        const opacity = c.dim ? ' opacity="0.75"' : "";
+        const decoration = c.underline ? ' text-decoration="underline"' : "";
+        parts.push(
+          `<text x="${(i * CELL_W).toFixed(1)}" y="${y}" fill="${fg}" textLength="${runWidth.toFixed(1)}" lengthAdjust="spacingAndGlyphs" xml:space="preserve"${weight}${opacity}${decoration}>${escapeXml(content)}</text>`,
+        );
+      }
+      i = j;
+    }
+  });
+  parts.push("</svg>");
+  return `${parts.join("\n")}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Scene: real TranscriptViewer over a real TuiMainScreen (headless terminal)
+// ---------------------------------------------------------------------------
+
+function entry(kind, text) {
+  return { kind, text, ts: "2026-09-11T09:12:04.000Z" };
+}
+
+/** 示例 run 数据（count-duet：leader 派单、两个成员数数）——与真机冒烟场景同形。 */
+function countDuet(elapsedSec, extraDispatch) {
+  const leader = [
+    entry("task", "用 count-duet 团队从 1 数到 10；leader 数奇数，front 数偶数。"),
+    entry("assistant", "收到，先派 front 数偶数，再派 back 复核序列。"),
+    entry("tool", "team_dispatch 派发 →\n  - front: 请数出数字 2（计数序列的一部分）。只输出数字 2，不要任何额外文字。"),
+    entry("assistant", "front 回了 2，继续。"),
+    entry("tool", "team_dispatch 派发 →\n  - back: 复核 front 的 2 是否正确。"),
+    entry("assistant", "back 确认无误，本轮结束。"),
+  ];
+  if (extraDispatch) {
+    leader.push(
+      entry("tool", "team_dispatch 派发 →\n  - front: 请数出数字 4（计数序列的一部分）。只输出数字 4，不要任何额外文字。"),
+      entry("assistant", "front 回了 4，序列 1,2,3,4 连续。"),
+    );
+  }
+  return {
+    team: "count-duet",
+    runId: "run-1788938207941",
+    runStatus: "running",
+    elapsed: `${elapsedSec}s`,
+    actors: [
+      { actor: "_leader", label: "leader", status: "running" },
+      { actor: "front", label: "front", status: "done" },
+      { actor: "back", label: "back", status: "running" },
+    ],
+    entries: new Map([
+      ["_leader", leader],
+      ["front", [entry("task", "数出数字 2"), entry("assistant", "2"), entry("tool", "read count.txt → 2")]],
+      ["back", [entry("task", "复核 front 的 2"), entry("assistant", "核对通过：2 在 1..10 内且为偶数。")]],
+    ]),
+  };
+}
+
+// 主屏背景文本：overlay 只覆盖中间 95% 宽、85% 高，边缘会露出主屏内容。
+// 因此每行留出左右边距（前 3 列 + 行尾不超出 overlay 右缘），避免出现被
+// 覆盖一半的字符碎片——那是合成残影，不是真机观感。
+const BASE_PAD = "     "; // overlay 左缘在 col 3：主屏文本缩进 ≥4 列才不会露出被覆盖一半的字符
+const BASE_LINES = [
+  `${BASE_PAD}${fgStyle(DARK.accent)("⏺")} 用 count-duet 团队从 1 数到 10：leader 数奇数，front 数偶数`,
+  "",
+  `${BASE_PAD}${fgStyle(DARK.dim)("leader turn 7 …")}`,
+  ...["team_dispatch 派发 → front 数出数字 2", "front 回了 2", "team_dispatch 派发 → back 复核"].map(
+    (line) => `${BASE_PAD}${fgStyle(DARK.dim)("⏵ ")}${line}`,
+  ),
+];
+
+/**
+ * 跑一个场景：真实组件 + 真实合成路径，返回网格屏与文本屏。
+ * 全程同步 renderNow（确定性，不依赖内部定时器）。
+ */
+export function captureViewerScene({ cols = 150, rows = 40 } = {}) {
+  const screen = new VtScreen(cols, rows);
+  const term = {
+    columns: cols,
+    rows,
+    write: (data) => screen.feed(data),
+    hideCursor: () => {},
+    showCursor: () => {},
+  };
+  const tui = new TuiMainScreen(term);
+  const baseLines = [...BASE_LINES];
+  const base = { render: () => [...baseLines], handleInput: () => {}, invalidate: () => {} };
+  tui.addChild(base);
+
+  let elapsedSec = 41;
+  let extra = false;
+  const viewer = new TranscriptViewer({
+    load: () => countDuet(elapsedSec, extra),
+    done: () => {},
+    styles: ansiStyles(),
+    rows: () => term.rows,
+    refreshMs: 3600_000, // 定时器不参与：帧由 renderNow 精确驱动
+  });
+  tui.showOverlay(viewer, VIEWER_OVERLAY_OPTIONS);
+  tui.renderNow();
+  for (let tick = 1; tick <= 5; tick++) {
+    elapsedSec += 1;
+    if (tick === 3) extra = true; // 第 3 跳第二个派单落地
+    baseLines.push(`${BASE_PAD}${fgStyle(DARK.dim)("leader turn " + (7 + tick) + " …")}`);
+    tui.renderNow();
+  }
+  try {
+    return { grid: screen.grid(), lines: screen.text(), cols, rows };
+  } finally {
+    tui.dispose?.();
+  }
+}
+
+/** 帧自检：锚点缺失说明真实渲染路径变了，截图不可信——工具必须响亮地失败。 */
+export function assertFrame(lines) {
+  const text = lines.join("\n");
+  const anchors = ["agent-team viewer", "count-duet", "· _leader", "· front", "· back"];
+  const missing = anchors.filter((a) => !text.includes(a));
+  if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
+  const titles = lines.filter((l) => l.includes("agent-team viewer")).length;
+  if (titles !== 1) throw new Error(`overlay 帧标题应恰好 1 行，实得 ${titles}`);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(here, "..", "..");
+
+export function capture() {
+  const scene = captureViewerScene();
+  assertFrame(scene.lines);
+  return { name: "agent-team-viewer.svg", svg: svgFromGrid(scene.grid) };
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  const outDir = path.resolve(process.argv[2] ?? path.join(ROOT, "docs", "assets"));
+  const { name, svg } = capture();
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, name), svg, "utf8");
+  console.log(`✓ docs/assets/${name}（${svg.split("\n").length} 行 SVG）`);
+}

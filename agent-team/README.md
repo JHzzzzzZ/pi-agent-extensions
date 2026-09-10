@@ -178,7 +178,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（326 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（337 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
@@ -189,6 +189,10 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 本扩展的 TUI（viewer / widget / cockpit 状态行 / index 接线）对照 pi-subagents 的 fleet 家族（当前基线 v0.66.0）**代码级同步**：同步≠依赖（不 import pi-subagents），以“对照抄改 + 单测锁定”方式维护。逐文件映射、对齐维度、差异处置与测试期望值的**唯一事实来源**见 [docs/tui-sync.md](docs/tui-sync.md)——pi-subagents 每升版一次，agent-team 跟进一次并登记新版本号。
 
 测试约定与仓库一致：`node:test` + `node:assert/strict`、手写 FakeChild 进程 fake、注入时钟、真实 git 只用于 worktree 用例（临时目录，自动清理）。
+
+### 文档截图（无头真实渲染）
+
+`tools/capture-screens.mjs` 把真实 `TuiMainScreen` + 真实 `TranscriptViewer` 接到一个记录字节流的 headless 终端上，把渲染器写出的 ANSI 还原成字符网格并输出 SVG 到 `../docs/assets/`（根 README 内嵌）。不需要真机终端窗口、不需要人工抓屏，产物可重复生成、可 diff；`tools/vt-screen.mjs` 是带样式追踪的最小 VT 仿真屏（与 `test/viewer-host.test.ts` 的 FakeScreen 同源、互不依赖）。帧锚点自检失败时工具直接报错退出——渲染路径变了，截图就不许悄悄过期。
 
 ## 设计说明
 

@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="720" viewBox="0 0 1260 720" font-family="'Cascadia Mono','JetBrains Mono',Consolas,Menlo,monospace" font-size="14">
+<rect width="100%" height="100%" fill="#17191e"/>
+<text x="42.0" y="13" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">⏺</text>
+<text x="50.4" y="13" fill="#d7dae0" textLength="504.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> 用 count-duet 团队从 1 数到 10：leader 数奇数，front 数偶数</text>
+<text x="42.0" y="49" fill="#6b7280" textLength="126.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">leader turn 7 …</text>
+<text x="33.6" y="67" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
+<text x="33.6" y="85" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="42.0" y="85" fill="#d7dae0" textLength="1016.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> agent-team viewer · team count-duet                                                                                     </text>
+<text x="1058.4" y="85" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▶</text>
+<text x="1066.8" y="85" fill="#d7dae0" textLength="151.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> leader · running </text>
+<text x="1218.0" y="85" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="103" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">├──────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────┤</text>
+<text x="33.6" y="121" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="42.0" y="121" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">›</text>
+<text x="58.8" y="121" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▶</text>
+<text x="75.6" y="121" fill="#d7dae0" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">leader</text>
+<text x="134.4" y="121" fill="#6b7280" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">· _leader</text>
+<text x="369.6" y="121" fill="#6b7280" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">running</text>
+<text x="428.4" y="121" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="121" fill="#d7dae0" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">Run:</text>
+<text x="470.4" y="121" fill="#d7dae0" textLength="747.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> run-1788938207941                                                                       </text>
+<text x="1218.0" y="121" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="139" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="58.8" y="139" fill="#98c379" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">✓</text>
+<text x="67.2" y="139" fill="#d7dae0" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> front </text>
+<text x="126.0" y="139" fill="#6b7280" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">· front</text>
+<text x="394.8" y="139" fill="#6b7280" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">done</text>
+<text x="428.4" y="139" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="139" fill="#d7dae0" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">State:</text>
+<text x="487.2" y="139" fill="#d7dae0" textLength="730.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> running                                                                               </text>
+<text x="1218.0" y="139" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="157" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="58.8" y="157" fill="#61afef" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▶</text>
+<text x="67.2" y="157" fill="#d7dae0" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> back </text>
+<text x="117.6" y="157" fill="#6b7280" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">· back</text>
+<text x="369.6" y="157" fill="#6b7280" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">running</text>
+<text x="428.4" y="157" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="157" fill="#d7dae0" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" font-weight="bold">成员:</text>
+<text x="478.8" y="157" fill="#d7dae0" textLength="739.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> leader（running）· 1/3                                                                 </text>
+<text x="1218.0" y="157" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="175" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="175" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="436.8" y="162.0" width="781.2" height="18" fill="#2c313a"/>
+<text x="436.8" y="175" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">❯ 用 count-duet 团队从 1 数到 10；leader 数奇数，front 数偶数。                              </text>
+<text x="1218.0" y="175" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="193" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="193" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="193" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="211" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="211" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="211" fill="#6b7280" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▸ assistant · 09:12:04</text>
+<text x="1218.0" y="211" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="229" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="229" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="229" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">收到，先派 front 数偶数，再派 back 复核序列。                                                </text>
+<text x="1218.0" y="229" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="247" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="247" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="247" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="265" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="265" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="265" fill="#6b7280" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">· team_dispatch 派发 →</text>
+<text x="1218.0" y="265" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="283" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="283" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="283" fill="#6b7280" textLength="646.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  - front: 请数出数字 2（计数序列的一部分）。只输出数字 2，不要任何额外文字。</text>
+<text x="1218.0" y="283" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="301" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="301" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="301" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="319" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="319" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="319" fill="#6b7280" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▸ assistant · 09:12:04</text>
+<text x="1218.0" y="319" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="337" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="337" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="337" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">front 回了 2，继续。                                                                         </text>
+<text x="1218.0" y="337" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="355" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="355" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="355" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="373" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="373" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="373" fill="#6b7280" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">· team_dispatch 派发 →</text>
+<text x="1218.0" y="373" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="391" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="391" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="391" fill="#6b7280" textLength="302.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  - back: 复核 front 的 2 是否正确。</text>
+<text x="1218.0" y="391" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="409" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="409" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="409" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="427" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="427" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="427" fill="#6b7280" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▸ assistant · 09:12:04</text>
+<text x="1218.0" y="427" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="445" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="445" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="445" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">back 确认无误，本轮结束。                                                                    </text>
+<text x="1218.0" y="445" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="463" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="463" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="463" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="481" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="481" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="481" fill="#6b7280" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">· team_dispatch 派发 →</text>
+<text x="1218.0" y="481" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="499" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="499" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="499" fill="#6b7280" textLength="646.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  - front: 请数出数字 4（计数序列的一部分）。只输出数字 4，不要任何额外文字。</text>
+<text x="1218.0" y="499" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="517" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="517" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="517" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="535" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="535" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="535" fill="#6b7280" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▸ assistant · 09:12:04</text>
+<text x="1218.0" y="535" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="553" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="553" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="436.8" y="553" fill="#d7dae0" textLength="781.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">front 回了 4，序列 1,2,3,4 连续。                                                            </text>
+<text x="1218.0" y="553" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="571" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="571" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="571" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="589" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="589" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="589" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="607" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="428.4" y="607" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="1218.0" y="607" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="625" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">├──────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┤</text>
+<text x="33.6" y="643" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="42.0" y="643" fill="#6b7280" textLength="798.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">↑↓ 成员 · J/K 滚动 · PgUp/PgDn 翻页 · x 工具行 · m 发消息 · D 停止 · r 刷新 · q 关闭 · 成员 1/3</text>
+<text x="1218.0" y="643" fill="#4b5263" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="33.6" y="661" fill="#4b5263" textLength="1192.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+</svg>
