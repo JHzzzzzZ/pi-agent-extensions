@@ -88,17 +88,17 @@ members:
 
 派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`），刻意保持**紧凑两行**：头行 `agent-team <团队> ▶ running · 耗时 · N/M 并行` + 任务行（44 字符截断）；leader 活动与各成员明细**不进亮块**——想看细节 `enter` 进查看器。run 结束后切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），失败附一条截断错误行，不残留 "running" 字样。终态行会一直保留（可回看）；不需要时用 `/team:clear` 手动清除——run 进行中会拒绝（先 `/team:stop` 或等结束），只卸亮块不清运行记录（`/team:status`、`/team:view` 回看不受影响）；清除后再次派单会自动重挂。`/reload` 后水合仅在存在**进行中** run 时自动挂亮块，终态记录不再自动重挂。
 
-裸 `↑`/`↓` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的。对齐 pi-subagents fleet-status（v0.66.0）：**编辑器为空时** `↓`/`←` 也可进入选中；`alt+↓`/`alt+↑` 是不受门控的第二通道（编辑器有文本也能进）。选中态导航补 `j`/`k`（对齐 fleet roster）：
+裸 `↑`/`↓` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的。对齐 pi-subagents fleet-status（v0.66.0）：**焦点在主编辑器且编辑器为空时** `↓`/`←` 才可进入选中；`alt+↓`/`alt+↑` 是不受门控的第二通道（编辑器有文本也能进）。**焦点不在编辑器时 widget 完全不介入**（对齐 fleet `editorHasFocus`，v1.8.1）：`/login`、`/model`、`/settings` 等选择器或 `ctx.ui.select`/overlay 对话框打开期间，方向键原样让给选择器（含 alt 通道），已进入的选中态自动退出。选中态导航补 `j`/`k`（对齐 fleet roster）：
 
 | 按键 | 作用 |
 |---|---|
-| `↓`/`←`（编辑器为空）或 `alt+↓`/`alt+↑` | 进入选中：亮块高亮，出现行光标与按键提示行 |
+| `↓`/`←`（焦点在主编辑器且编辑器为空）或 `alt+↓`/`alt+↑` | 进入选中：亮块高亮，出现行光标与按键提示行 |
 | `↑`/`↓`、`j`/`k` | 在行间移动光标（底部钳位）；第 0 行再按 `↑`/`k` **退出选中**（fleet-status 同构） |
 | `enter` | 打开 `/team:view` 查看器（定位 leader 页，查看器内 `↑↓/j/k` 切成员） |
 | `esc` | 退出选中 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新（宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；渲染串指纹无变化时跳过 `setWidget`（对齐 fleet-status renderKey，静止内容不空转宿主）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
+实现：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新（宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；渲染串指纹无变化时跳过 `setWidget`（对齐 fleet-status renderKey，静止内容不空转宿主）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
@@ -145,7 +145,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（267 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（278 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

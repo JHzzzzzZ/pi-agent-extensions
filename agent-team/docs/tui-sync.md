@@ -23,7 +23,7 @@
 | overlay 几何（五字段） | `{ anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 }`（`fleet.ts:1440`） | `VIEWER_OVERLAY_OPTIONS` 已 verbatim | 已对齐（测试锁死防回归） |
 | 刷新节流 | `REFRESH_MS = 750`（`fleet.ts:25`，`MIN_REFRESH_MS = 250`） | viewer tick 800；widget tick 1000 | viewer 800→**750**；widget 1000 保留（下方亮块是宿主纯字符串表面，见差异表） |
 | viewer 关闭键 | `close: ["escape", "ctrl+c", "q"]`（`fleet.ts:33-34`） | 仅 `q`/Esc | **补 ctrl+c** |
-| widget 激活门控 | `matchesKey(data,"down") \|\| matchesKey(data,"left")`，且 `ctx.ui.getEditorText() === ""` 才激活（`fleet-status.ts:606-607`） | `alt+↓/↑` 激活，无编辑器门控 | 新增 **↓/← 空编辑器激活**；`alt+↓/↑` 保留为不受门控第二通道（差异表 §3.3） |
+| widget 激活门控 | `editorHasFocus()` 短路（焦点非编辑器/选择器打开 → 不消费且退出选中，`fleet-status.ts:701/965`）+ `matchesKey(data,"down") \|\| matchesKey(data,"left")`，且 `ctx.ui.getEditorText() === ""` 才激活（`fleet-status.ts:606-607`） | v1.8.0：`alt+↓/↑` 激活，仅「编辑器为空」半条门控 | v1.8.1：补 **焦点门控**（`editorFocus` 端口 + `probeEditorFocus` 结构判定，经 factory 形态 `setWidget` 一次性捕获宿主 TUI）+ ↓/← 空编辑器激活；`alt+↓/↑` 保留为不受空编辑器门控的第二通道（差异表 §3.3） |
 | widget 选中导航 | `down/j`、`up/k`（`fleet.ts:36-37`，`fleet-status.ts:616-625`）；up 到顶再按 = 退出选中 | `↑/↓` | **补 j/k**；`↑/↓` 保留 |
 | 无变化跳过重绘 | `renderKey` 相同则跳过；running 时仍强制重绘（墙钟 spinner，`fleet-status.ts:585-591`） | 每次 refresh 必 setWidget | **渲染串指纹相同则跳过**；running + elapsed 变化照常重建 |
 | open/close 互斥 | 单实例（`fleetInspectorOpen` 等守卫） | `openViewer` early-return + `viewerOpen` 门控 | 已对齐 |
@@ -41,7 +41,7 @@
 |---|---|---|---|
 | 3.1 | widget 渲染用 `setWidget(key, string[], …)` 而非 fleet-status 的组件工厂式 `setWidget(key, (tui, theme) => Component, …)` | **避坑保留** | 组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加残影行；string[] 由宿主包装渲染，是跨构建最稳路径。见 `widget.ts` 头注 + `index.ts ensureRunWidget` 注释。 |
 | 3.2 | viewer roster+detail 左右双栏 + 键位（v1.8.0 起全面对齐 fleet）：`↑↓/k/j` 切换左栏成员、`Shift+K/J` 滚右栏正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行；旧键 `←→/h/l/Tab/1-9/g/G` 退役按下忽略。特有语义仅剩 `m` 发消息（fleet 无对应；fleet 的 p/Enter/H/s steer/inspect/prompt audit 控制面无对应语义，未列入） | **布局 + 键位已对齐** | 布局与几何公式对照 `fleet.ts:1319-1381` 抄改（§4 规格表）；键位逐字对齐 `DEFAULT_FLEET_KEYBINDINGS`（`fleet.ts:33-48`，大写滚动键经 fleet 同款大写→`shift+小写` matchesKey 判定，`fleet.ts:59-61` 同构）。见 `viewer.ts` `VIEWER_ACTION_KEYS`/`handleViewerKey` + `README.md §5` 按键表。 |
-| 3.3 | `alt+↓/↑` 为不受门控的第二激活通道 | **特有语义保留** | fleet-status 只有 ↓/← 激活；alt 通道是 agent-team 历史行为（模态选中风格，与 pi 主编辑器语义并行）。非空编辑器仍可经 alt 通道进 widget。见 `widget.ts` `isActivate`。 |
+| 3.3 | `alt+↓/↑` 为不受（空编辑器）门控的第二激活通道 | **特有语义保留** | fleet-status 只有 ↓/← 激活；alt 通道是 agent-team 历史行为（模态选中风格，与 pi 主编辑器语义并行）。非空编辑器仍可经 alt 通道进 widget。但**焦点门控对 alt 通道同样生效**（v1.8.1）：焦点确定非编辑器（选择器/对话框）时 alt+↓/↑ 也不介入——对话框期 widget 完全不介入。见 `widget.ts` `isActivate` + `onData` 焦点短路。 |
 | 3.4 | widget tick 1000ms（vs fleet 750ms） | **避坑保留** | 下方亮块是宿主渲染的纯字符串表面（无 overlay 重影风险），1s 节奏够用且省 churn。见 `types.ts` `WIDGET_TICK_MS`。 |
 | 3.5 | 行图标/文案映射 | **已对齐** | fleet ●/◦/■ 与 agent-team ✓/✗/⊘/·/▶ 的映射关系：fleet 运行中 ▶ spinner 语义 ≈ agent-team `running → ▶`；完成 ✓、失败 ✗、中止 ⊘、队列 ·。见 `viewer.ts statusDisplay` + `widget.ts recordIcon`。 |
 | 3.6 | 状态行文本（`formatStatusSnapshot`） | **已对齐** | 仅样式/文案参照 fleet-status 状态行，无行为差异。 |
@@ -64,7 +64,8 @@
 | overlay `margin` | `1` | `fleet.ts:1440` |
 | close 键集 | `escape`、`ctrl+c`、`q`（编码：`\x1b`、`\x03`、`"q"`） | `fleet.ts:34` |
 | 激活键集 | `down`（`\x1b[B`）、`left`（`\x1b[D`） | `fleet-status.ts:606` |
-| 激活条件 | 编辑器文本为空（`getEditorText() === ""`） | `fleet-status.ts:607` |
+| 激活条件 | 焦点 = 主编辑器（`editorHasFocus()`）∧ 编辑器文本为空（`getEditorText() === ""`） | `fleet-status.ts:607/701` |
+| 焦点探测 | 优先 `getFocusedComponent()`，否则读 `focusedComponent` 字段（`fleet-status.ts:965` 同款读法）；五方法（`render`/`invalidate`/`handleInput`/`getText`/`setText`）齐全 = 编辑器；两者皆无/取用抛错 → undefined（降级为旧门控） | `fleet-status.ts:965`；getter 优先为 agent-team 补充（公共 API 优先于运行时字段） |
 | 选中导航键集 | `selectUp: ["up", "k"]`、`selectDown: ["down", "j"]`（fleet 首末钳位；fleet-status 的“up 到顶再按退出选中”v1.8.0 已采纳，见差异表 §3.7） | `fleet.ts:37-38`、`fleet-status.ts:616-625` |
 | 成员首末跳转 | `selectFirst: ["home"]`、`selectLast: ["end"]`（fleet `moveSelection(±items.length)` 同构） | `fleet.ts:39-40`、`fleet.ts:1159-1160` |
 | 正文滚动键 | `scrollUp: ["K"]`、`scrollDown: ["J"]`（大写绑定→`shift+小写` 经 matchesKey 判定，`fleet.ts:59-61`）；`scrollDetail` 骤到 [0, maxScroll]，到底/在底再滚 = re-follow（`fleet.ts:1013-1018`） | `fleet.ts:35-36`、`fleet.ts:1155-1156` |
@@ -96,6 +97,7 @@
 | agent-team 1.6.0 | 2026-09-14 | viewer 发消息（`m` 单行输入，特有语义；输入模式分支优先于一切按键、Esc 只退输入不关 viewer）；actionLines 优先级 busy > confirm > **input** > notice（输入行占右栏正文窗口、帧总高不变）；图例追加 `m 发消息`。差异条目 §4（发消息键位行）登记；chat/viewer-chat/viewer-chat-host 三文件测试锁定 | `feat/agent-team-view-chat` |
 | agent-team 1.7.0 | 2026-09-09 | viewer 改 roster+detail 左右双栏（对照 `fleet.ts:1319-1381` 抄改）：左栏成员 roster（选中标记+状态图标+右对齐状态，窗口化滚动），右栏 = 三行元信息头（Run/State/成员）+ 完整转录正文（滚动/follow/Markdown/x 工具行保留）；`VIEWER_CHROME_ROWS` 3→6、帧高公式换 `max(2, floor(rows*0.85) - 6)`、最小宽度门 36 列；键位不变，差异条目 §3.2 改写，§4 新增几何字面量（另修正 AGENTS 卡里 overlay 宽度的陈旧记载 96%→95%，常量从未变过） | `feat/agent-team-viewer-split` |
 | agent-team 1.8.0 | 2026-09-14 | viewer/widget 按键全面对齐 fleet：viewer 动作键位全集逐字对齐 `DEFAULT_FLEET_KEYBINDINGS`（`↑↓/k/j` 切成员+钉 actor id、`Shift+K/J` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行；旧键 `←→/h/l/Tab/1-9/g/G` 退役忽略，特有仅剩 `m`）；widget 选中态到顶（cursor 0）再按 `↑`/`k` 退出选中（§3.7 改已采纳）。§2 新增成员切换/滚动键位行、§3.2/§3.7 改写、§4 新增键位字面量（selectUp/Down/First/Last、scrollUp/Down、pageUp/Down、toggleTools、close、退役键）；另清理 §4 尾部残留合并冲突标记 | `feat/agent-team-viewer-keys` |
+| agent-team 1.8.1 | 2026-09-10 | widget 补焦点门控（`editorHasFocus` 半条）：`probeEditorFocus`（`getFocusedComponent()` 优先/`focusedComponent` 字段回退/未知 → undefined 降级）经 index factory 形态 `setWidget` 一次性捕获宿主 TUI 接线；焦点确定非编辑器（`/login`、`/model`、`/settings` 选择器，`ctx.ui.select`，overlay 对话框）时 widget 完全不介入（含 alt 通道），选中态退出让行。§2 门控行、§3.3、§4 激活条件/焦点探测改写；widget（7）、widget-focus-host（3，真 TuiMainScreen + 真 CustomEditor/OAuthSelector/ExtensionSelector）、viewer-mutex（1）共 11 测试锁定 | `feat/agent-team-widget-focus` |
 
 ## 6. 范围外（明确不做）
 
