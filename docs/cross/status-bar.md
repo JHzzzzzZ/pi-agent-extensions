@@ -19,7 +19,7 @@
 
 ## footer 排序带（`setStatus` 键）
 
-宿主 `footer.js` 把各扩展状态放进 Map，按 **key `localeCompare` 排序**后**每段独占一行**渲染；单段超过终端宽度时由宿主用 `wrapTextWithAnsi` 续行（保留 ANSI 样式、信息零损失、行数不限）。逐行渲染**依赖本地宿主补丁**：原宿主把全部状态 `join(" ")` 拼成一行再整行尾部截断，后段被挤掉/截半；补丁改为逐段成行 + 超宽续行，见 `docs/pi-footer-status-patch.md`（升级 pi 后需重打；上游修复后可撤补丁，排序语义不变）。键即排序契约：
+宿主 `footer.js` 把各扩展状态放进 Map，按 **key `localeCompare` 排序**后空格拼一行、超宽右截断。键即排序契约：
 
 | 带 | 扩展 | 键 |
 | --- | --- | --- |
@@ -33,9 +33,9 @@
 
 ## widget 栈顺序
 
-- **编辑器上方**（`setWidget(key, lines)` 无 placement）顺序 = 扩展注册顺序 = 根 `package.json` `pi.extensions` 数组顺序：宿主 `session_start` 按注册顺序逐个 `await` 派发，首个 `setWidget` 决定 widget Map 插入序。当前契约：`pwr-runs → run-timer → loop`（loop 无任务时懒挂载，首次出现位于当时栈底）。
+- **编辑器上方**（`setWidget(key, lines)` 无 placement）顺序（**首次挂载**）= 扩展注册顺序 = 根 `package.json` `pi.extensions` 数组顺序：宿主 `session_start` 按注册顺序逐个 `await` 派发，首个 `setWidget` 决定 widget Map 插入序。当前契约：`pwr-runs → run-timer → loop`（loop 无任务时懒挂载，首次出现位于当时栈底）。
 - **编辑器下方**（`placement: "belowEditor"`）只有 agent-team，无冲突。
-- 刷新保序**依赖本地宿主补丁**：宿主 `setExtensionWidget` 每次 `setWidget` 都 delete+set，会把该 key 移到栈底（周期性刷新 widget 因此逐秒换位）。补丁把「已存在 key」改为原地覆盖以保序，见 `docs/pi-widget-order-patch.md`（升级 pi 后需重打；上游修复后可撤补丁，顺序语义不变）。
+- 刷新阶段**不保序**：宿主 `setExtensionWidget` 每次 `setWidget` 都 delete+set，会把该 key 移到栈底（周期性刷新 widget 因此逐秒换位）。这是宿主行为，本仓库不打宿主补丁（`AGENTS.md`「仓库边界」）；问题走上游，见 `docs/pi-widget-order-issue.md`（issue 草稿）与各插件的 route A 待办。
 - 接入步骤（新增上方 widget）：把扩展注册进根 `package.json` `pi.extensions` 的正确位置，并在 `test/status-bar-contract.test.ts` 锁定相对顺序。
 
 ## 非目标

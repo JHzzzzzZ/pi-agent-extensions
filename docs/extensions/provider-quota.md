@@ -25,7 +25,7 @@ footer 状态行显示当前 provider 的余额/额度：session 启动即查、
 - zhipu 鉴权 Authorization 是原始 token，**不加 Bearer 前缀**；quota-limit 请求不附时间窗 query 参数（参考实现契约）。
 - `session_shutdown` 后未完成请求不得回写 footer：每次 setStatus 前检查 `sessionSignal.aborted`，shutdown 后保留已中止的 controller 引用让残留链路立即短路（index.ts `write` 与 `session_shutdown`）。
 - 节奏常量：5 分钟轮询、10s 超时、重试 3 次、500ms 基础指数退避（`REFRESH_MS`/`FETCH_TIMEOUT_MS`/`MAX_RETRIES`/`BASE_BACKOFF_MS`）。低频刷新**不接对齐秒节拍**（非时间显示类，跨插件状态条契约只约束时间类状态）。
-- 状态键 `20:provider-quota` 带排序带前缀，不可改回 `provider-quota`（宿主按 key localeCompare 逐行渲染 footer；逐行 + 超宽续行依赖本地宿主补丁 `docs/pi-footer-status-patch.md`）。
+- 状态键 `20:provider-quota` 带排序带前缀，不可改回 `provider-quota`（宿主按 key localeCompare 拼接 footer）。
 - 可重试分类：5xx / timeout / net err 可重试，parse err 不可（`FetchResult.retryable`）。
 
 ## 已知坑

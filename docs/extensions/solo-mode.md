@@ -30,7 +30,7 @@
 - **写失败 fail-closed**：状态文件写不进去 → 保持关闭 + error notify，绝不"内存里当开启"。
 - **对 PWR 只产生 once**：solo 绝不写 remembered 批准记录（`pwr/index.ts` 三处接线都强制降级 once），solo 关闭后既有 remembered 批准不受影响。
 - **异常隔离**：fs / UI 调用全部 try/catch；notify/setStatus 失败不影响状态机。
-- 状态条文本是纯字符串（宿主 `ExtensionUIContext` 无 `theme` 字段，不能调 `theme.fg`）；写入前 `ctx.hasUI` 守卫。键 `40:solo-mode` 为排序带（`docs/cross/status-bar.md`；宿主逐行渲染依赖本地补丁 `docs/pi-footer-status-patch.md`），不可改回 `solo-mode`；状态是静态的，不跑 ticker。
+- 状态条文本是纯字符串（宿主 `ExtensionUIContext` 无 `theme` 字段，不能调 `theme.fg`）；写入前 `ctx.hasUI` 守卫。键 `40:solo-mode` 为排序带（`docs/cross/status-bar.md`），不可改回 `solo-mode`；状态是静态的，不跑 ticker。
 
 ## 已知坑
 

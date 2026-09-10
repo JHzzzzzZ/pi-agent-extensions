@@ -34,7 +34,7 @@
 - 命令面（v1.3.0）：裸 `/goal` 空参=状态、其余=目标文本（`/goal status` 也是目标文本，不是子命令）；`/goal:status` 状态副本；`/goal:clear|:stop|:off|:reset|:none|:cancel` 共享同一清除动作；`/goal:resume` 恢复。旧空格管理词经裸入口只提示改名、绝不执行。
 - 所有 notify/setStatus/appendEntry 调用均 try/catch——持久化或 UI 失败绝不破坏会话、绝不中断循环链。
 - 状态条目幂等可重放：恢复只信最后一条 `goal-state-v1`，结果条目 `goal-result-v1` 仅记录、不参与水合。
-- 状态行键 `10:goal` 带排序带前缀（宿主按 key localeCompare 逐行渲染 footer；逐行 + 超宽续行依赖本地宿主补丁 `docs/pi-footer-status-patch.md`，不可改回 `goal`）；节拍器随 idle/无 UI/shutdown 停止，不留残留定时器。
+- 状态行键 `10:goal` 带排序带前缀（宿主按 key localeCompare 拼接 footer，不可改回 `goal`）；节拍器随 idle/无 UI/shutdown 停止，不留残留定时器。
 
 ## 已知坑
 
