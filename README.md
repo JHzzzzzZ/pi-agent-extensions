@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 337 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 339 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -53,6 +53,16 @@ pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
 ```
 
 > 两种方式不要混用同一扩展，否则会重复加载（命令/状态条重复注册）。从手动复制切换到 `pi install` 时，先删除 `extensions/` 下的旧拷贝。
+
+### 安装自检（可选）
+
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 12 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+
+```bash
+node tools/install-smoke.mjs        # ✓ = 12/12 扩展在干净目录下加载成功；✗ 时打印问题清单
+```
+
+失败时临时安装目录会自动保留（便于排查），成功时自动清理。
 
 ## 5 分钟上手
 
@@ -252,7 +262,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd agent-team
-npm install && npm test        # 337 个测试（含真实 git worktree 用例）
+npm install && npm test        # 339 个测试（含真实 git worktree 用例）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team,pwr}-viewer.svg（无头真实渲染）
 npm run typecheck
 ```
