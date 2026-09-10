@@ -74,6 +74,9 @@ interface Capture {
   frames: Array<string[] | undefined>;
   inputHandlers: Array<(data: string) => { consume?: boolean } | undefined>;
   notifications: Array<{ text: string; level?: string }>;
+  /** Viewer overlays opened via /team:view 或 widget enter（真实 TranscriptViewer 实例）。 */
+  viewerComponents: Array<{ render: (width: number) => string[] }>;
+  customCalls: number;
 }
 
 function editorShape(): Record<string, unknown> {
@@ -81,7 +84,7 @@ function editorShape(): Record<string, unknown> {
 }
 
 function widgetCapture(): Capture {
-  return { factoryCalls: 0, frames: [], inputHandlers: [], notifications: [] };
+  return { factoryCalls: 0, frames: [], inputHandlers: [], notifications: [], viewerComponents: [], customCalls: 0 };
 }
 
 function sessionCtx(cwd: string, capture: Capture) {
@@ -106,6 +109,14 @@ function sessionCtx(cwd: string, capture: Capture) {
       onTerminalInput: (handler: (data: string) => { consume?: boolean } | undefined): (() => void) => {
         capture.inputHandlers.push(handler);
         return () => {};
+      },
+      custom: (...args: unknown[]): Promise<unknown> => {
+        capture.customCalls += 1;
+        const factory = args[0] as (tui: unknown, theme: unknown, keybindings: unknown, done: (r: unknown) => void) => unknown;
+        capture.viewerComponents.push(
+          factory({}, { fg: (_c: string, t: string) => t }, undefined, () => {}) as { render: (width: number) => string[] },
+        );
+        return new Promise<unknown>(() => {}); // overlay 常开不关
       },
     },
     sessionManager: { getEntries: (): unknown[] => [] },
@@ -185,11 +196,10 @@ test("派单立即推折叠帧；展开后 leader 事件同步刷新成员树（
     assert.equal(host.capture.inputHandlers[0]!("\x1b[B")?.consume, true, "空编辑器 + 编辑器焦点 → ↓ 激活");
     const expanded = lastFrame(host.capture)!;
     assert.equal(expanded[0], "▸ main");
-    assert.match(expanded[1]!, /leader proj-team ▶ running/);
+    assert.match(expanded[1]!, /leader proj-team · 修复登录 bug ▶ running/);
     assert.match(expanded[2]!, /^\s+\|- frontend · queued$/);
     assert.match(expanded[3]!, /^\s+\|- backend · queued$/);
-    assert.match(expanded[4]!, /^\s+任务: 修复登录 bug$/);
-    assert.equal(expanded.length, 6, "树行 5 + 底部提示行 1");
+    assert.equal(expanded.length, 5, "树行 4（main/leader/2 成员）+ 底部提示行 1；任务摘要已在 leader 行");
 
     // leader 派发事件 → coordinator render → refreshWidget 同步推帧（无 1s 等待）。
     child.emitLine(JSON.stringify({ type: "tool_execution_start", toolName: "team_dispatch", args: { tasks: [{ agent: "frontend", task: "a" }, { agent: "backend", task: "b" }] } }));
@@ -227,6 +237,28 @@ test("run 落定：自动推 undefined 卸载亮块（无终态行常驻）", as
       1,
       "卸载帧只推一次（数据驱动卸载）",
     );
+  } finally {
+    await host.cleanup();
+  }
+});
+
+test("成员行 enter 直达查看器并定位该成员（末行恒为成员，无任务行假成员陷阱）", async () => {
+  const host = await setupHost();
+  try {
+    await dispatch(host, "修复登录 bug");
+    await waitForChild(host.spawn, 0);
+
+    const handler = host.capture.inputHandlers[0]!;
+    handler("\x1b[B"); // 激活：cursor 0 = main
+    handler("\x1b[B"); // cursor 1 = leader
+    handler("\x1b[B"); // cursor 2 = frontend 成员行
+    assert.match(lastFrame(host.capture)!.find((line) => line.startsWith("▸")) ?? "", /frontend/, "光标停在成员行");
+    handler("\r");
+
+    assert.equal(host.capture.customCalls, 1, "成员行 enter 应打开查看器");
+    const frame = host.capture.viewerComponents[0]!.render(120).join("\n");
+    assert.match(frame, /›.*frontend · frontend/, "roster 选中项应为该成员");
+    assert.match(frame, /成员: frontend/, "右栏元信息头应定位该成员");
   } finally {
     await host.cleanup();
   }

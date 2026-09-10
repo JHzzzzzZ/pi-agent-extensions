@@ -14,7 +14,7 @@
 | 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，4 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
 | 隔离分支 | `worktree.ts`（每次 run 独立分支，不碰当前目录） |
-| 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界，契约 `docs/cross/status-bar.md`）；数据驱动挂载：controller 每会话挂一次，运行中有帧、落定 `setWidget(undefined)` 自动卸载；未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`，选中态 = `main → leader → 成员… → 任务` 树 + 底部提示行（v1.13.0） |
+| 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界，契约 `docs/cross/status-bar.md`）；数据驱动挂载：controller 每会话挂一次，运行中有帧、落定 `setWidget(undefined)` 自动卸载；未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`，选中态 = `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（末行恒为成员行；v1.13.0，任务摘要 v1.13.1 并入） |
 | 错误码 | `types.ts` `TeamErrorCodes` |
 
 ## CONVENTIONS
@@ -36,6 +36,6 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 322 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 323 测试（node --test test/*.test.ts）
 npm run typecheck
 ```

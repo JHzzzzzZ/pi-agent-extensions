@@ -66,7 +66,7 @@ function flatten(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-/** 任务行：压平后 44 字符 + `…`（截断后 trimEnd，避免 "…" 前留空格）。 */
+/** 任务摘要：压平后 44 字符 + `…`（截断后 trimEnd，避免 "…" 前留空格）。 */
 function truncateTask(text: string): string {
   const flat = flatten(text);
   const clipped = flat.length > 44 ? `${flat.slice(0, 44)}…` : flat;
@@ -79,7 +79,11 @@ function truncateMemberTail(text: string): string {
   return flat.length > 30 ? `${flat.slice(0, 29)}…` : flat;
 }
 
-/** Leader 行：`leader <团队> ▶ running · <耗时> · <N>/<M> 并行[ · 剩 $X.XX]`。 */
+/**
+ * Leader 行：`leader <团队> · <任务摘要> ▶ running · <耗时> · <N>/<M> 并行[ · 剩 $X.XX]`。
+ * 任务摘要与 leader 同行（不再单独占一行）：末行恒为成员行，光标到底即成员，
+ * 消除「任务行 enter 打开 leader」的假成员陷阱（用户 2026-09-15 真机反馈）。
+ */
 function leaderRowText(progress: RunProgress, nowMs: number): string {
   const running = progress.members.filter((member) => member.status === "running").length;
   const counts = progress.members.length > 0 ? ` · ${running}/${progress.members.length} 并行` : "";
@@ -90,7 +94,9 @@ function leaderRowText(progress: RunProgress, nowMs: number): string {
   if (budget?.maxCostUsd !== null && budget?.maxCostUsd !== undefined && budget.spentCost < budget.maxCostUsd) {
     budgetHint = ` · 剩 $${(budget.maxCostUsd - budget.spentCost).toFixed(2)}`;
   }
-  return `leader ${flatten(progress.team)} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`;
+  const task = truncateTask(progress.task);
+  const summary = task.length > 0 ? ` · ${task}` : "";
+  return `leader ${flatten(progress.team)}${summary} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`;
 }
 
 /** 成员行：`|- <成员名> <图标> <状态>[ · <尾部>]`（尾部 note 优先，否则 latest）。 */
@@ -102,14 +108,14 @@ function memberRowText(member: MemberProgress): string {
 
 /**
  * Widget view for the live run: collapsed one-liner (default, unselected)
- * plus the expanded `main → leader → 成员… → 任务` tree. Settled runs (and
- * snapshots without live progress) project to an EMPTY view — the block is
- * unmounted, terminal rows live in /team:status and /team:view instead.
+ * plus the expanded `main → leader（含任务摘要）→ 成员…` tree. Settled runs
+ * (and snapshots without live progress) project to an EMPTY view — the
+ * block is unmounted, terminal rows live in /team:status and /team:view.
  */
 export interface WidgetView {
   /** 未选中态的单行文案；无活跃 run 时为空串（widget 整体隐藏）。 */
   collapsed: string;
-  /** 选中态的行（main + leader + 成员… + 任务行）。 */
+  /** 选中态的行（main + leader + 成员…；任务摘要在 leader 行内）。 */
   rows: WidgetRowSpec[];
 }
 
@@ -123,7 +129,6 @@ export function buildWidgetView(snapshot: RunStatusSnapshot, nowMs: number): Wid
   for (const member of progress.members) {
     rows.push({ text: memberRowText(member), actor: sanitizeActorName(member.name), kind: "member" });
   }
-  rows.push({ text: `任务: ${truncateTask(progress.task)}`, actor: LEADER_ACTOR, kind: "leader" });
   return { collapsed: `agent-team ${flatten(progress.team)} · ↓/← 查看详情`, rows };
 }
 
