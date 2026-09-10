@@ -302,7 +302,7 @@ export function readMetaFromSource(source: string): WorkflowMeta | undefined {
 	}
 }
 
-/** One row of the saved-workflow listing (/workflows:saved). */
+/** One row of the saved-workflow listing (/workflow:saved). */
 export interface SavedWorkflowSummary {
 	name: string;
 	scope: "user" | "project";

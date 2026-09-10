@@ -25,7 +25,7 @@
 
 | 卡 | 一句话 |
 | --- | --- |
-| [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行；`/workflows:*` 与 `/workflow:run|:delete|:model` 冒号命令面 |
+| [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行；单一 `/workflow:*` 冒号命令面（裸 `/workflow` 生成/帮助 + 15 条子命令） |
 | [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，报告 followUp 送达；team_stop 按 runId 中止；viewer 内 m 发消息直接对话（派单语义）；run 落盘/reconcile、budget 预算块、model 预检；裸 /team + 冒号子命令 `/team:list|:run|:status|:stop|:view|:clear|:doctor`（派单统一 `/team:run <名> <任务>`）；TUI 对照 pi-subagents 矩阵同步（docs/tui-sync.md） |
 | chatanywhere-provider | 双 provider 运行时自动发现：探测 /models 按家族线归并注册，探测失败 fail-closed |
 | deep-init | `/deep-init` 提示词驱动四阶段深度初始化 |

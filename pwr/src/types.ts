@@ -117,7 +117,7 @@ export interface PlanNode {
 export interface WorkflowPlan {
 	stages: StagePlan[];
 	budget: BudgetEstimate;
-	/** Structure tree for the /workflows:view diagram (JHL-18); optional so
+	/** Structure tree for the /workflow:view diagram (JHL-18); optional so
 	 * older persisted plans and the parse-failure fallback stay valid. */
 	tree?: PlanNode[];
 }

@@ -1,5 +1,5 @@
 /**
- * PWR UI - script structure diagram for /workflows:view (JHL-18)
+ * PWR UI - script structure diagram for /workflow:view (JHL-18)
  *
  * Renders the script's static call structure (from extractPlan's tree) as a
  * Unicode tree with live runtime status overlaid:

@@ -171,7 +171,7 @@ export class WorkflowRuntime implements RuntimeAdapter {
 	private readonly defaultMaxAgents: number | undefined;
 	private readonly nowFn: () => string;
 	private readonly settleHandlers = new Set<(runId: string) => void>();
-	/** JHL-15 /workflows UI event feed subscribers. */
+	/** JHL-15 /workflow UI event feed subscribers. */
 	private readonly eventHandlers = new Set<(ev: RunEvent) => void>();
 	private shutDown = false;
 
@@ -343,13 +343,13 @@ export class WorkflowRuntime implements RuntimeAdapter {
 		this.runner = runner;
 	}
 
-	/** JHL-15 contract: subscribe to the run/task/summary event feed (/workflows UI). */
+	/** JHL-15 contract: subscribe to the run/task/summary event feed (/workflow UI). */
 	onEvent(handler: (ev: RunEvent) => void): void {
 		this.eventHandlers.add(handler);
 	}
 
 	// ------------------------------------------------------------------
-	// Event feed (JHL-15 /workflows UI)
+	// Event feed (JHL-15 /workflow UI)
 	// ------------------------------------------------------------------
 
 	private emit(ev: RunEvent): void {
@@ -759,7 +759,7 @@ export class WorkflowRuntime implements RuntimeAdapter {
 
 	/**
 	 * A cache hit (cross-run reuse or resume replay) still produces a
-	 * completed task record for THIS run so the /workflows:view stays
+	 * completed task record for THIS run so the /workflow:view stays
 	 * accurate. Full results stay in the private cache only.
 	 */
 	private recordCacheHit(

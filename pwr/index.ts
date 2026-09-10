@@ -23,6 +23,7 @@ import { isSoloActive } from "./src/solo-gate.ts";
 import { AUTO_MODEL, PwrModelConfig } from "./src/model-config.ts";
 import { PWR_APPROVAL_ENTRY, PWR_GENERATION_CUSTOM_TYPE, PWR_RUN_ENTRY } from "./src/types.ts";
 import { firstToken, matchWorkflowPrefix, parseWorkflowCommandArgs, parseWorkflowRunArgs, RETIRED_WORKFLOW_SUBCOMMANDS, WORKFLOW_COMMAND, WORKFLOW_SUBCOMMANDS, type GenerationRequest } from "./src/intent.ts";
+import { workflowHelpText } from "./src/ui/commands.ts";
 import { RunNotifier } from "./src/notify.ts";
 import { RunRegistry, type SaveAdapter } from "./src/flow.ts";
 import { confirmApprovalCard, formatPlanText, registerPwrTools, type ApprovalCardInfo, type ToolDeps } from "./src/tools.ts";
@@ -232,28 +233,30 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		modelConfig.setSessionModel((event as { model?: { id?: string } }).model?.id);
 	});
 
-	// ----- trigger: /workflow (generate) + colon sub-commands (v2.8.0) -----
+	// ----- trigger: /workflow (generate/help) + colon sub-commands (v2.9.0) -----
 	/**
-	 * 裸 `/workflow`：空参=用法；旧空格子命令（run/delete/model）只提示改名、
-	 * 绝不生成（防 `/workflow run <name>` 误触发生成回合）；其余输入=生成任务。
+	 * 裸 `/workflow`：空参或 help 词=完整帮助；14 个旧空格子命令词只提示改名、
+	 * 绝不生成（防 `/workflow list <runId>` 误触发生成回合）；其余输入=生成任务。
 	 * 子命令是独立静态命令（WORKFLOW_SUBCOMMANDS），各有独立 handler。
 	 */
 	pi.registerCommand(WORKFLOW_COMMAND, {
 		description:
-			"PWR 工作流入口：/workflow <任务> 生成脚本；子命令为独立冒号命令：/workflow:run <名称> [参数]、/workflow:delete <名称>、/workflow:model [auto|<模型>]",
+			"PWR 工作流入口：/workflow <任务> 生成脚本；/workflow help 显示全部冒号子命令（/workflow:run|:list|:view|:pause|…）",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim();
-			const renamed = RETIRED_WORKFLOW_SUBCOMMANDS[firstToken(trimmed)];
+			const head = firstToken(trimmed);
+			if (!head || head === "help" || head === "--help" || head === "-h") {
+				ctx.ui.notify(workflowHelpText(), "info");
+				return;
+			}
+			const renamed = RETIRED_WORKFLOW_SUBCOMMANDS[head];
 			if (renamed) {
-				ctx.ui.notify(`「/workflow ${firstToken(trimmed)}」已改名为「/${renamed.command}」；用法：${renamed.usage}`, "warning");
+				ctx.ui.notify(`「/workflow ${head}」已改名为「/${renamed.command}」；用法：${renamed.usage}`, "warning");
 				return;
 			}
 			const request = parseWorkflowCommandArgs(trimmed);
 			if (!request) {
-				ctx.ui.notify(
-					"Usage: /workflow <task description> | /workflow:run <name> [args] | /workflow:delete <name> | /workflow:model [auto|<model-id>]",
-					"error",
-				);
+				ctx.ui.notify(workflowHelpText(), "info");
 				return;
 			}
 			generationRequest = request;
@@ -366,7 +369,7 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 			void notifier.settle(runId);
 		});
 		// JHL-13/JHL-15 contract: the runtime pushes RunEvents to the
-		// /workflows UI store; refresh the widget/status line once bound.
+		// /workflow UI store; refresh the widget/status line once bound.
 		ui.bindRuntime(deps.runtime as UiRuntimeAdapter | null);
 		// 运行时状态桥：每次 run_status 变迁把富条目（含任务错误）写盘。
 		(deps.runtime as { onEvent?(h: (ev: { type: string; runId: string }) => void): void } | null)?.onEvent?.((ev) => {
@@ -392,7 +395,7 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		persistApprovals();
 	};
 
-	// ----- /workflows observation & control UI (JHL-15) -----
+	// ----- /workflow observation & control UI (JHL-15) -----
 	const ui = createWorkflowsUi(pi, deps, () => deps.runtime as UiRuntimeAdapter | null);
 
 	// ----- run metadata trail (never the script source) -----
@@ -408,7 +411,7 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 
 	/**
 	 * 运行时状态桥：runtime 每次 run_status 变迁把富条目（含任务错误）
-	 * 写盘，使重启后 /workflows 仍能显示失败详情。只落白名单字段；
+	 * 写盘，使重启后运行列表仍能显示失败详情。只落白名单字段；
 	 * 持久化失败绝不破坏会话。
 	 */
 	function persistRunFromRuntime(runId: string): void {

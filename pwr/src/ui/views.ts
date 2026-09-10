@@ -1,5 +1,5 @@
 /**
- * PWR UI - pure text views for /workflows (JHL-15)
+ * PWR UI - pure text views for /workflow (JHL-15)
  *
  * All rendering is plain text; status is NEVER color-only (PRD 4.3: 状态不可
  * 仅用颜色表达). Every status carries a text glyph + the status word, so the
@@ -114,7 +114,7 @@ export function formatRunList(entries: RunListEntry[], opts: RunListOptions = {}
 		lines.push(formatRunListLine(entry));
 	}
 	if (opts.statusFilter) {
-		lines.push(`filter: ${opts.statusFilter} — use /workflows:list without filter to see all runs`);
+		lines.push(`filter: ${opts.statusFilter} — use /workflow:list without filter to see all runs`);
 	}
 	return lines.join("\n");
 }
@@ -204,14 +204,14 @@ export function formatRunDetail(detail: RunDetail): string {
 
 	lines.push("");
 	lines.push("Actions (commands + keys):");
-	lines.push(`  /workflows:view ${detail.runId.slice(0, 8)}    full-screen live viewer`);
-	lines.push(`  /workflows:pause ${detail.runId.slice(0, 8)}    ${shortcutHint("pause")}  pause run`);
-	lines.push(`  /workflows:resume ${detail.runId.slice(0, 8)}                 resume run`);
-	lines.push(`  /workflows:stop ${detail.runId.slice(0, 8)}      ${shortcutHint("stop")}  stop run (or one agent)`);
-	lines.push(`  /workflows:restart ${detail.runId.slice(0, 8)} <taskId>  ${shortcutHint("restart")}  restart agent`);
-	lines.push(`  /workflows:save ${detail.runId.slice(0, 8)}      save as command`);
-	lines.push(`  /workflows:script ${detail.runId.slice(0, 8)}    view raw script`);
-	lines.push(`  /workflows:list      list all runs`);
+	lines.push(`  /workflow:view ${detail.runId.slice(0, 8)}    full-screen live viewer`);
+	lines.push(`  /workflow:pause ${detail.runId.slice(0, 8)}    ${shortcutHint("pause")}  pause run`);
+	lines.push(`  /workflow:resume ${detail.runId.slice(0, 8)}                 resume run`);
+	lines.push(`  /workflow:stop ${detail.runId.slice(0, 8)}      ${shortcutHint("stop")}  stop run (or one agent)`);
+	lines.push(`  /workflow:restart ${detail.runId.slice(0, 8)} <taskId>  ${shortcutHint("restart")}  restart agent`);
+	lines.push(`  /workflow:save ${detail.runId.slice(0, 8)}      save as command`);
+	lines.push(`  /workflow:script ${detail.runId.slice(0, 8)}    view raw script`);
+	lines.push(`  /workflow:list      list all runs`);
 	return lines.join("\n");
 }
 
@@ -242,13 +242,13 @@ export function costWarningText(): string {
 }
 
 /**
- * Saved-workflow enumeration (/workflows:saved and the /workflow:delete
+ * Saved-workflow enumeration (/workflow:saved and the /workflow:delete
  * no-arg listing). Project scope is listed first because it shadows the
  * same-name user-scope file at invocation time.
  */
 export function formatSavedWorkflows(summaries: SavedWorkflowSummary[]): string {
 	if (summaries.length === 0) {
-		return "No saved workflows yet — create one with /workflow <task>, then /workflows:save <runId>.";
+		return "No saved workflows yet — create one with /workflow <task>, then /workflow:save <runId>.";
 	}
 	const lines = [`Saved workflows (${summaries.length}):`];
 	for (const s of summaries) {

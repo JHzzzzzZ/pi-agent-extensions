@@ -4,7 +4,7 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows:view` fleet 式分栏查看器；`/workflows:*` 与 `/workflow:run|:delete|:model` 冒号命令面） | 438 个（node:test） |
+| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
 | [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 322 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
@@ -96,7 +96,7 @@ pi                                                                 # 重新启�
 /workflow 扫描当前仓库并生成一份架构概述
 ```
 
-agent 生成脚本后弹出批准卡，选 `Run once`；`/workflows:view` 可实时观看每个子 agent 的执行轨迹。
+agent 生成脚本后弹出批准卡，选 `Run once`；`/workflow:view` 可实时观看每个子 agent 的执行轨迹。
 
 ✅ 判据：批准后运行完成，结果以 `pwr-workflow-result` 消息回传。
 
@@ -114,11 +114,11 @@ agent 生成脚本后弹出批准卡，选 `Run once`；`/workflows:view` 可实
 
 ## pwr — Pi Workflow Runtime（主项目）
 
-本地工作流编排扩展（v2.8.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
+本地工作流编排扩展（v2.9.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
 
 ### 效果示意
 
-`/workflows` 运行列表（实测格式）：
+`/workflow:list` 运行列表（实测格式）：
 
 ```text
 PWR runs (2)
@@ -143,7 +143,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
     Reject
 ```
 
-`/workflows:view <runId>` 分栏运行查看器（左 roster + 右正文，v2.7.0）：
+`/workflow:view <runId>` 分栏运行查看器（左 roster + 右正文，v2.7.0）：
 
 ```text
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -175,7 +175,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 - **结果回传** — 运行成功或失败后以 `pwr-workflow-result` 消息自动唤起主 agent 汇报；用户主动取消不打扰
 - **批准记忆** — 批准键 = 项目 canonical path + 脚本 SHA-256 digest；脚本被编辑后必须重新批准
 - **保存/复用**（`workflow_save` + `/workflow:run <name> [参数]`）— 自动补齐 meta、落盘前强制重新校验、参数 JSON-schema 校验（`meta.argsSchema`）；args 支持 **`key=value` 语法**（按 schema 自动转类型，重复键/逗号成数组，`{` 开头仍按 JSON 解析，v2.4.0）；保存位置：用户范围 `~/.pi/agent/workflows/<name>.js`、项目范围 `.pi/workflows/<name>.js`（仅可信项目）
-- **观察与控制**（`/workflows`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+z/x/r`；`/workflows:saved` 列出已保存工作流（scope/描述/参数提示），`/workflow:delete` 不带名称时同样先列出（v2.4.0）
+- **观察与控制**（`/workflow:*`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+z/x/r`；`/workflow:saved` 列出已保存工作流（scope/描述/参数提示），`/workflow:delete` 不带名称时同样先列出（v2.4.0）
 
 ### 命令
 
@@ -185,10 +185,14 @@ Choices: Run once / Remember for this script / View raw script / Reject
 | `/workflow:run <name> [args]` | 调用已保存的工作流（args 为 `key=value` 对或 JSON，如 `files=src depth=2`；运行时现读盘，无动态注册） |
 | `/workflow:delete [name]` | 删除已保存的工作流（项目范围优先；不带名称先列出全部） |
 | `/workflow:model [auto\|<model-id>]` | 查看/设置工作流默认模型（优先级：agent 定义 model > 脚本逐调用 model > PWR 默认 > 子 pi 默认） |
-| `/workflows` | 运行列表/详情 UI（无参=列表；`/workflows <runId>` 与 `--filter` 保留兼容；裸词 `help` 显示帮助） |
-| `/workflows:list [status]` · `:view [runId]` · `:open <runId>` | 列表（可过滤）/ 全屏运行查看器 / 详情视图 |
-| `/workflows:pause\|:resume\|:stop\|:restart <runId> [taskId]` | 暂停/恢复/停止（可单 agent）/重启单个 agent |
-| `/workflows:save <runId>` · `:saved` · `:script <runId>` · `:approve <runId>` · `:help` | 保存为命令 / 已保存列表 / 原始脚本 / 手动批准 / 帮助 |
+| `/workflow <任务>` | 生成工作流（也支持 `workflow:` 前缀）；空参或 `help` 显示完整分组帮助 |
+| `/workflow:run <name> [args]` | 调用已保存的工作流（args 为 `key=value` 对或 JSON，如 `files=src depth=2`；运行时现读盘，无动态注册） |
+| `/workflow:delete [name]` | 删除已保存的工作流（项目范围优先；不带名称先列出全部） |
+| `/workflow:model [auto\|<model-id>]` | 查看/设置工作流默认模型（优先级：agent 定义 model > 脚本逐调用 model > PWR 默认 > 子 pi 默认） |
+| `/workflow:save <runId>` · `/workflow:saved` | 把 run 保存为可复用命令 / 列出已保存工作流（scope/描述/参数提示） |
+| `/workflow:list [status]` · `:view [runId]` · `:open <runId>` | 列表（可过滤）/ 全屏运行查看器 / 详情视图 |
+| `/workflow:pause\|:resume\|:stop\|:restart <runId> [taskId]` | 暂停/恢复/停止（可单 agent）/重启单个 agent |
+| `/workflow:script <runId>` · `:approve <runId>` · `:help` | 原始脚本 / 手动批准 / 帮助 |
 | `workflow_save` / `workflow_validate` / `workflow_start` / `workflow_control` | agent 可调用的工具 |
 
 ### 测试与开发
@@ -196,9 +200,9 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ```bash
 cd pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 438 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 439 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
-npm run demo       # 模拟 /workflows UI（无宿主）
+npm run demo       # 模拟 /workflow UI（无宿主）
 ```
 
 测试全 mock（fake AgentRunner / fake child pi 进程），不产生真实子进程、无网络。架构与安全说明见 `pwr/DELIVERY.md`，DSL 语法与使用示例见 `pwr/README.md`。

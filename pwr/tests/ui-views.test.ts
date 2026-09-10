@@ -19,6 +19,7 @@ import {
 	formatRunDetail,
 	formatRunList,
 	formatRunListLine,
+	formatSavedWorkflows,
 	formatStageLine,
 	formatStatus,
 	formatTokens,
@@ -81,8 +82,25 @@ test("run list supports status filter", () => {
 		statusFilter: "running",
 	});
 	assert.ok(list.includes("filter: running"));
+	assert.ok(list.includes("/workflow:list"), "filter hint points at /workflow:list");
 	assert.ok(list.includes("a1b2c3d4"));
 	assert.ok(!list.includes("bbbbbbbb"), "filtered-out run must not appear");
+});
+
+test("saved-workflow text uses the unified /workflow namespace (empty prompt + rows)", () => {
+	const empty = formatSavedWorkflows([]);
+	assert.ok(empty.includes("/workflow <task>"), "empty prompt points at generation");
+	assert.ok(empty.includes("/workflow:save <runId>"), "empty prompt points at /workflow:save");
+	assert.ok(!empty.includes("workflows:"), "empty prompt has no legacy namespace");
+
+	const rows = formatSavedWorkflows([
+		{ name: "audit", scope: "user", description: "audit routes", argsHint: "files=string[]" },
+		{ name: "lint", scope: "project" },
+	]);
+	assert.ok(rows.includes("/workflow:run audit"));
+	assert.ok(rows.includes("/workflow:run lint"));
+	assert.ok(rows.includes("/workflow:delete"), "footer points at /workflow:delete");
+	assert.ok(!rows.includes("workflows:"), "rows have no legacy namespace");
 });
 
 const STAGE: StageView = {
@@ -162,10 +180,12 @@ test("detail view covers PRD 4.3 sections and command reachability", () => {
 	assert.ok(text.includes("Agents (1)"));
 	assert.ok(text.includes("prompt: 列出 src/routes 下的路由文件"));
 	assert.ok(text.includes("result: found 12 files"));
-	assert.ok(text.includes("/workflows:pause"));
-	assert.ok(text.includes("/workflows:stop"));
-	assert.ok(text.includes("/workflows:restart"));
-	assert.ok(text.includes("/workflows:save"));
+	assert.ok(text.includes("/workflow:view"));
+	assert.ok(text.includes("/workflow:pause"));
+	assert.ok(text.includes("/workflow:stop"));
+	assert.ok(text.includes("/workflow:restart"));
+	assert.ok(text.includes("/workflow:save"));
+	assert.ok(!text.includes("workflows:"), "detail actions use the unified /workflow namespace");
 	assert.ok(text.includes(`  ${shortcutHint("pause")}  pause run`));
 	assert.ok(text.includes(shortcutHint("stop")));
 	assert.ok(text.includes(shortcutHint("restart")));

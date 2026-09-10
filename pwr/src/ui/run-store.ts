@@ -1,7 +1,7 @@
 /**
  * PWR UI - in-memory run store (JHL-15)
  *
- * Synchronous snapshot of all workflow runs for the `/workflows` UI. The
+ * Synchronous snapshot of all workflow runs for the `/workflow` UI. The
  * store is fed by:
  *
  *  - `hydrateRun()` - called by the extension entry when `workflow_validate`
@@ -13,7 +13,7 @@
  *  - `applyControlView()` - merged with the `{ run }` view returned by
  *    `workflow_control`.
  *  - `applyRuntimeView()` - full snapshot merge from the runtime's rich view
- *    (stages + tasks + usage), pulled on every /workflows:view refresh tick
+ *    (stages + tasks + usage), pulled on every /workflow:view refresh tick
  *    (JHL-18).
  *
  * All reads are synchronous from memory so commands/widgets render without
