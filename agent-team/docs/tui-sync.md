@@ -56,6 +56,7 @@
 | 3.11 | 展开态：`main → leader（含任务摘要）→ 成员…` 树（v1.13.0；任务行 v1.13.1 并入 leader 行）+ 底部提示行 | **特有语义保留** | fleet 无 main 树/任务摘要；agent-team 展开块 = 树行（`main` / `leader <团队> · <任务摘要> ▶ running · 耗时 · N/M 并行[ · 剩 $X.XX]` / `|- <成员> <图标> <状态>[ · 尾部]`）+ 底部 `↑↓ 选择 · enter 查看 · esc 退出`（无空行、无缩进，`renderWidgetView`）。**末行恒为成员行**（不设独立任务行：避免用户把末行任务当成员、enter 却打开 leader 的假成员陷阱，用户 2026-09-15 真机反馈）；`main` 行 enter 只收起选中（fleet main 同构），leader/成员行 enter 进查看器（按 actor 钉选）。折叠默认形态对齐 fleet 折叠单行（§2）。历史截图（多行常显/折叠）存 `agent-team/docs/assets/widget-before-collapse.png`；任务行陷阱截图存 `agent-team/docs/assets/widget-tree-feedback.png`。 |
 | 3.12 | viewer 帧行单行不变量：多行 tool 条目（`team_dispatch 派发 →\n  - 成员: 任务`）按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 兜底折叠残余 CR/LF | **特有语义（fleet 无此数据形状）** | `cockpit.ts:499` 的派发条目是多行文本；fleet 的工具输出路径本就按行拆分或 `\s+` 压平（`fleet-transcript.ts:441/500`）。agent-team 旧实现把整条当单行 → 帧行携带 `\n`，宿主按物理行写屏时尾巴落到下一行同列，overlay 左缘残行 + 帧几何漂移且 diff 无法清理（真机 2026-09-15 实锤，`docs/incidents.md`）。见 `viewer.ts` `blockLines`（tools 分支）/ `fitLine`。 |
 | 3.13 | detail 元信息头第 4 行 `模型:`（Run/State/成员/模型）——leader 显示子进程 `message_end` 实际上报值（`RunProgress.leaderModel` / 终态 `record.leaderUsage?.model`），成员显示团队文件声明值（live 经 `MemberProgress.model`、终态优先 `member.usage?.model` 实际值），未声明显示 `（默认）` | **特有语义（fleet 检查器无模型行）** | 用户 2026-09-10 提出“viewer 显示 teammate 详细信息（如每个成员使用的模型）”。头部行数由 3 → 4（仍占正文窗口顶部、帧总行数恒为 `bodyHeight + VIEWER_CHROME_ROWS`、无焦点/键位变化）；`buildViewerData` 不再为此重读团队文件（模型随 progress/record 到达）。见 `viewer.ts` `ViewerActor.model`/`detailHeaderLines` + `index.ts` `buildViewerData`。 |
+| 3.14 | widget 展开态窗口化：选中行恒在窗口内、帧总行数（含折叠提示行与底部提示行）≤ 宿主 `MAX_WIDGET_LINES = 10`，隐藏侧以 `  … 上方/下方还有 N 行` 明示 | **特有语义（fleet-status 的 owner/子 agent 树本身 ≤6 行，无窗口化需求）** | 宿主 `setExtensionWidget` 对 `string[]` 只渲染前 10 行并追加 `... (widget truncated)`（`interactive-mode.js`）：v1.14.2 前 8+ 成员团队展开即被截断、光标可落到不可见行（第六轮读宿主源码发现的候选问题）。`widget.ts` `WIDGET_MAX_LINES`/`widgetRowWindow`；`WIDGET_MAX_LINES` 与宿主常量的等值由测试直接读宿主 dist 源码锁定（漂移即红）。 |
 
 ## 4. 规格字面量表（测试期望值唯一来源）
 
@@ -90,6 +91,8 @@
 | widget 刷新触发 | 事件即时（coordinator `onProgress`）+ 1s aligned ticker 兜底 + 渲染串指纹跳过 | fleet 500ms + renderKey（`fleet-status.ts:585-591`）；差异表 §3.4 |
 | widget 展开提示行 | `↑↓ 选择 · enter 查看 · esc 退出`（底部、无缩进） | agent-team 特有（见差异表 §3.11） |
 | widget 文本截断 | 先压平（`\s+` → 单空格 + trim），再 44 字符 + `…`，截断后 `trimEnd()` | fleet 无同款截断；换行残行修复（截图回归），任务摘要/成员尾注共用 |
+| widget 展开窗口 | 帧总行数 ≤ `WIDGET_MAX_LINES`（10 = 宿主 `setExtensionWidget` 的 string[] 硬上限）；预算 = 10 − 1（底部提示行）− 折叠提示行（0/1/2）⇒ 窗口 7..9 行，选中行必在窗口内 | agent-team 特有（v1.14.2）；`widget.ts` `widgetRowWindow` |
+| widget 折叠提示行 | `  … 上方还有 N 行` / `  … 下方还有 N 行`（两空格 gutter、dim；仅对应侧有隐藏行时各出现一行） | agent-team 特有（v1.14.2）；与 `widget 展开提示行` 同帧 |
 | stop 键位 | `["D"]`（确认态按键：Enter/Y 确认；Esc/ctrl+c/N/backspace 取消） | `fleet.ts:46`、`fleet.ts:1134-1150` |
 | refresh 键位 | `["r", "R"]` | `fleet.ts:43` |
 | close 键位 | `["escape", "ctrl+c", "q"]` | `fleet.ts:34`、`fleet.ts:1150-1154` |
@@ -122,6 +125,7 @@
 | agent-team 1.13.2 | 2026-09-15 | 按键 release 过滤（修复“一次按键生效两次”真机问题，也是“选不中成员”的真凶）：Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码），release 同样能被 matchesKey 命中——widget `handleWidgetKey` 与 viewer `handleViewerKey` 顶部统一 `isKeyRelease(data)` 短路（`fleet-status.ts:699` 同款）；repeat（`:2`）保留（长按连续移动）；§2/§4 新增行，widget/viewer 测试锁定（press+release 序列只生效一次）；参考截图存档 `docs/assets/widget-fleet-status-reference.png` | `fix/agent-team-widget-key-release` |
 | agent-team 1.13.3 | 2026-09-15 | viewer 帧行单行不变量（“重复行第四轮”根因）：多行 tool 条目（`team_dispatch 派发 →\n  - 成员: 任务`）按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 兜底折叠残余 CR/LF——旧实现帧行携带原始 `\n`，宿主按物理行写屏时尾巴落到下一行同列，overlay 左缘残行 + 帧几何漂移且 diff 渲染器无法清理（computer-use 全分辨率真机实锤）。差异条目 §3.12 + §4 新增行；viewer（拆行/帧不变量）、viewer-host（真实宿主多行派发条目）、widget（同类护栏）测试锁定 | `fix/agent-team-viewer-newline` |
 | agent-team 1.14.0 | 2026-09-11 | viewer detail 元信息头新增第 4 行 `模型:`（leader 实际/成员声明，未声明 `（默认）`）+ `team_transcript` details 同步带 model；差异条目 §3.13 登记；`MemberProgress.model` 由 cockpit 启动时写入（viewer 不重读团队文件）；截图管线 countDuet 场景补模型、`agent-team-viewer.svg` 重生成并加 `模型:` 锚点；viewer 头部测试与 run-tool 集成测试锁定 | `feat/agent-team-viewer-model` |
+| agent-team 1.14.2 | 2026-09-11 | widget 展开态窗口化（大团队真机截断修复）：`WIDGET_MAX_LINES = 10`（= 宿主 string[] widget 上限）+ `widgetRowWindow`（选中行恒可见、窗口 7..9 行、隐藏侧 `  … 上方/下方还有 N 行`）；宿主常量漂移由测试直读宿主 dist 源码锁定；差异条目 §3.14 + §4 新增两行；widget 测试 4 个新增（全 cursor 行数上限/选中行在帧内、两侧折叠提示、宽度约束、宿主常量等值） | `feat/agent-team-widget-window` |
 
 ## 6. 范围外（明确不做）
 

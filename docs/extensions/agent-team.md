@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ f4ba82d
+> last verified @ 7273291
 
 ## 职责与边界
 
@@ -63,11 +63,12 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - 确认横幅/notice 按右栏 detail 宽换行后占正文窗口顶部、窗口收缩、**帧总行数恒为 `bodyHeight + VIEWER_CHROME_ROWS`**（ghost-host 定高约束，差异条目 tui-sync §3.8）；busy 守卫防重复调 stop；notice 由按键清除或被新 notice 替换（不做自动淡出/指纹清除——停止结果 notice 会随 aborted 终态刷新立即变指纹，指纹清除会把它瞬间抹掉）。
 - 焦点结构判定按 fleet 同款五方法形状（`render`/`invalidate`/`handleInput`/`getText`/`setText`）：宿主 `ctx.ui.editor()` 的 `ExtensionEditorComponent` 同样满足，会被判为编辑器——该对话框内 ↓ 仍可能被 widget 消费一次；与 fleet 行为一致，agent-team 自身不用该对话框，接受并记录在案。
 - Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码，如 `\x1b[1;1:3B`），release 同样能被 `matchesKey` 命中——widget/viewer 的 key reducer 漏过滤会一次按键生效两次（真机 2026-09-15 实锤，fleet-status.ts:699 同款过滤）；repeat（`:2`）不得一并过滤，否则长按不能连续移动。
+- widget 展开态窗口化（v1.14.2，差异条目 tui-sync §3.14）：帧总行数（含折叠提示行与底部提示行）≤ `WIDGET_MAX_LINES = 10`＝宿主 `setExtensionWidget` 对 `string[]` 的硬上限（超出会被宿主截为前 10 行 + `... (widget truncated)`）；选中行恒在窗口内、窗口 7..9 行，隐藏侧以 `  … 上方/下方还有 N 行` 明示；`WIDGET_MAX_LINES` 与宿主常量的等值由测试直接读宿主 dist 源码锁定（宿主漂移即红）。
 - 入口接受 `{ spawn }` 供工具级测试（`test/run-tool.test.ts`）。
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（343 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（347 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。

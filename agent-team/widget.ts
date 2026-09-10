@@ -17,7 +17,9 @@
  * (`agent-team <团队> · ↓/← 查看详情`); bare ↓/← (only while the editor is
  * empty AND focused — aligned to fleet-status) and alt+down/up (ungated
  * second channel) expand it into the `main → leader → 成员` tree + task +
- * hint rows. ↑/↓/j/k move the row cursor (到顶再按 ↑/k 退出选中并收回折叠，
+ * hint rows. 展开态窗口化（选中行恒可见、帧总行数 ≤ 宿主 string[] widget
+ * 的 10 行硬上限）——隐藏侧以 `… 上方/下方还有 N 行` 提示。↑/↓/j/k 移动行
+ * 光标 (到顶再按 ↑/k 退出选中并收回折叠，
  * fleet-status 同构), enter opens the transcript viewer on the row's actor —
  * except the `main` root row, whose enter only leaves selection (fleet main
  * semantics) — esc (or any other key) leaves selection and — except for esc —
@@ -277,10 +279,47 @@ export function probeEditorFocus(tui: unknown): boolean | undefined {
 // ---------------------------------------------------------------------------
 
 /**
+ * 宿主 `setExtensionWidget` 对 `string[]` 的硬上限：只渲染前 10 行并追加
+ * `... (widget truncated)`（pi-coding-agent `interactive-mode.js`
+ * `InteractiveMode.MAX_WIDGET_LINES = 10`）。展开态据此窗口化——帧总行数
+ * （含底部提示行与折叠提示行）不超过该值，光标行永远在帧内。
+ */
+export const WIDGET_MAX_LINES = 10;
+
+/** 展开态底部键位提示（窗口化预算里固定占 1 行）。 */
+const WIDGET_HINT_TEXT = "↑↓ 选择 · enter 查看 · esc 退出";
+
+/** 隐藏行折叠提示（两个空格与行 gutter 对齐）：`  … 上方还有 N 行`。 */
+function foldHintText(where: "上" | "下", hidden: number): string {
+  return `  … ${where}方还有 ${hidden} 行`;
+}
+
+/**
+ * 展开态行窗口：选中行永远在窗口内；窗口行数 + 折叠提示行 ≤ 提示行之外的
+ * 预算（`WIDGET_MAX_LINES - 1`）。窗口尺寸变化后重算一次即收敛（尺寸只减
+ * 不增，折叠提示最多 2 行 ⇒ 至多 3 轮）。
+ */
+function widgetRowWindow(rows: readonly WidgetRowSpec[], cursor: number): { start: number; size: number } {
+  const budget = WIDGET_MAX_LINES - 1;
+  let size = Math.min(rows.length, budget);
+  let start = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    start = Math.max(0, Math.min(cursor - size + 1, rows.length - size));
+    const foldLines = (start > 0 ? 1 : 0) + (start + size < rows.length ? 1 : 0);
+    const allowed = budget - foldLines;
+    if (size <= allowed) break;
+    size = allowed;
+  }
+  return { start, size };
+}
+
+/**
  * Width-fitted, styled widget lines. Truncation happens on the PLAIN text
  * before styling (ANSI codes would break width measurement); the host TUI
  * crashes on component lines wider than the terminal, and row texts are
  * bounded by char count only — CJK-heavy rows render up to 2× wider.
+ * 展开态窗口化（见 `WIDGET_MAX_LINES`）：大团队不再撞宿主截断，隐藏侧以
+ * `… 上方/下方还有 N 行` 明示。
  */
 export function renderWidgetView(
   view: WidgetView,
@@ -295,11 +334,23 @@ export function renderWidgetView(
     return [styles.dim(truncateVisible(view.collapsed, usable))];
   }
   const inner = Math.max(8, usable - 2); // "▸ " / "  " gutter
-  const lines = view.rows.map((row, index) => {
+  const cursor = Math.min(Math.max(0, state.cursor), view.rows.length - 1);
+  const window = widgetRowWindow(view.rows, cursor);
+  const lines: string[] = [];
+  if (window.start > 0) {
+    lines.push(styles.dim(truncateVisible(foldHintText("上", window.start), usable)));
+  }
+  for (let index = window.start; index < window.start + window.size; index++) {
+    const row = view.rows[index];
+    if (!row) continue;
     const text = truncateVisible(row.text, inner);
-    return index === state.cursor ? styles.accent(`▸ ${text}`) : styles.dim(`  ${text}`);
-  });
-  lines.push(styles.dim(truncateVisible("↑↓ 选择 · enter 查看 · esc 退出", usable)));
+    lines.push(index === cursor ? styles.accent(`▸ ${text}`) : styles.dim(`  ${text}`));
+  }
+  const hiddenBelow = view.rows.length - (window.start + window.size);
+  if (hiddenBelow > 0) {
+    lines.push(styles.dim(truncateVisible(foldHintText("下", hiddenBelow), usable)));
+  }
+  lines.push(styles.dim(truncateVisible(WIDGET_HINT_TEXT, usable)));
   return lines;
 }
 
