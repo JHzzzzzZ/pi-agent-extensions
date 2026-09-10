@@ -4,7 +4,7 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows` 与 `/workflow run|delete|model` 子命令式命令面） | 416 个（node:test） |
+| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows view` fleet 式分栏查看器；`/workflows` 与 `/workflow run|delete|model` 子命令式命令面） | 436 个（node:test） |
 | [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；单一 `/team` 命令 + 子命令路由） | 279 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
@@ -114,7 +114,7 @@ agent 生成脚本后弹出批准卡，选 `Run once`；`/workflows view` 可实
 
 ## pwr — Pi Workflow Runtime（主项目）
 
-本地工作流编排扩展（v2.5.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
+本地工作流编排扩展（v2.7.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
 
 ### 效果示意
 
@@ -143,14 +143,28 @@ Choices: Run once / Remember for this script / View raw script / Reject
     Reject
 ```
 
-`/workflows view <runId>` 全屏运行查看器（脚本结构图 + 每 stage 一页 + 实时 trace）：
+`/workflows view <runId>` 分栏运行查看器（左 roster + 右正文，v2.7.0）：
 
 ```text
-┌─ PWR · code-review.js · running · 1m 05s · run a1b2c3d4 ─────────────────┐
-│ [1 概览] [2 Stages] [3 Agents] [4 Result] [5 脚本]                        │
-│ …每个 agent 行下方实时滚动该子 agent 的工具调用摘要与输出尾部、tokens 累计 │
-└─ ctrl+alt+z 暂停 · ctrl+alt+x 停止 · ctrl+alt+r 重启 agent · ↑/↓ 滚动 ───┘
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ PWR viewer · code-review.js · run a1b2c3d4                                      ▶ 结构 · running │
+├────────────────────────────────────┬─────────────────────────────────────────────────────────────┤
+│› ▶ 结构                     running│Run: a1b2c3d4-9e21-4c07-9f86-3d5a1b2c3d4e                    │
+│  ✓ 审计                   completed│State: running                                               │
+│  ▶ 修复                     running│条目: 结构（running） · 1/5                                  │
+│  ≡ 结果                     running│▶ running code-review.js · digest 3f9a1c2e4b                 │
+│  {} 脚本                       只读│agents 7/12 · tokens 84k · cost $0.41 · elapsed 1m 05s       │
+│                                    │                                                             │
+│                                    │脚本结构:                                                    │
+│                                    │  ├─ ✓ 审计 · agent · 0/0 · 41s · 12k tok                    │
+│                                    │  └─ ▶ 修复 · parallel ×8≈ · 7/8 · 1m 02s                    │
+│                                    │                                                             │
+├────────────────────────────────────┴─────────────────────────────────────────────────────────────┤
+│↑↓ 条目 · J/K 滚动 · PgUp/PgDn 翻页 · x trace · D 停止 · r 刷新 · [/] run · q 关闭 · 条目 1/5     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
+
+运行中每 750ms 刷新（仅 elapsed 走秒不重绘）；`D` 两步停止 run（Enter/Y 确认）。
 
 ### 功能
 
@@ -182,7 +196,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ```bash
 cd pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 416 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 436 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflows UI（无宿主）
 ```
