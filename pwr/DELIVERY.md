@@ -2,6 +2,10 @@
 
 > 三项用户反馈改进：① 运行时只能看到 agent 行却看不到"它在干什么"——子 `pi --mode json` 一直在 stdout 吐完整事件流（`tool_execution_*`、`message_update`），但 runner 只解析 `message_end`/`tool_result_end` 且无实时回调；② saved workflow 无法列出，只能线下找 .js 文件；③ `/workflow:<name>` 参数必须写 JSON。安全不变量不变：trace 全部单行截断、args 仅摘要、错误静态模板，绝不透传原始工具输出（PRD §6.1）。
 
+# DELIVERY — PWR 合并交付包 v2.5.0（solo 审批门）
+
+> v2.5.0：新增 solo 免审批模式的 PWR 侧接线——`/solo` 开启时批准卡按 once 自动批准（不弹卡），`workflow_start` 强制降级 once，已保存命令 `approveSavedCommand` 同口径；绝不写 remembered 批准。状态文件契约与 fail-closed 口径见 `docs/cross/solo-approval-gate.md`（pwr 侧为只读 `src/solo-gate.ts`，校验 `pid === process.pid`）。
+
 ## 本版变更（v2.4.2）
 
 - 接线 pi 0.85.1 `session_shutdown` 钩子 → `runtime.shutdown()`：/new、/resume、/fork、/clone、exit 时中止在途控制器、非终态 run 标记 cancelled；`RuntimeAdapter` 增加可选 `shutdown?()`/`revive?()` 契约。

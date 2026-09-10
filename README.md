@@ -1,10 +1,10 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十一个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI | 405 个（node:test） |
+| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡自动按 once） | 410 个（node:test） |
 | [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话） | 267 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
@@ -12,9 +12,10 @@
 | [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 单文件测试（同目录） |
 | [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定） | 182 个（node:test） |
 | [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成 | 44 个 |
-| [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 32 个（node:test） |
-| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy + 端口自定义自动迁移，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 108 个 |
+| [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
+| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；`/opencode-bridge-sync` 确认式修改 httpProxy + 端口自定义自动迁移，`/opencode-bridge-restore` 从备份恢复，均可撤销） | 113 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
+| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话 | 11 个 |
 
 ## 安装
 
@@ -107,12 +108,13 @@ agent 生成脚本后弹出批准卡，选 `Run once`；`/workflows:view` 可实
 | 模型不可用 / 无响应 | pi 里 `/login` 检查 provider 配置；`/model` 切换模型 |
 | Windows Toast 不弹 | human-notify 仅 Windows 生效（Linux/macOS no-op）；`PI_HUMAN_NOTIFY=0` 会整体关闭 |
 | 状态条没出现 stream-token-speed / provider-quota / run-timer | 这三个是状态 widget，需对应事件（流式回复 / 支持的 provider / 会话计时）才显示 |
+| `/solo` 开了但审批卡还在弹 | 状态只对当前进程生效：`/reload`、`/new`、`/resume`、`/fork` 后自动复位；子 pi 进程（subagent / team 成员 / loop `--bg`）不继承 solo |
 
 ---
 
 ## pwr — Pi Workflow Runtime（主项目）
 
-本地工作流编排扩展（v2.4.2）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行。
+本地工作流编排扩展（v2.5.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
 
 ### 效果示意
 
@@ -411,9 +413,24 @@ node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测�
 
 ---
 
+## solo-mode
+
+免审批模式：`/solo` 一键切换后，本仓库的**审批摩擦类**门自动走批准路径——PWR 批准卡按 once 自动批准（绝不写 remembered 记录）、opencode-bridge 的 sync / 端口切换 / restore 确认自动通过（restore 自动选最新备份）、deep-init 的 `--create-new` 二次确认自动放行。**误触保护类确认不受影响**（agent-team viewer `D` 停止、`/team:clear`、`/workflow-delete` 选择仍人工）。
+
+- **仅当前会话** — 状态写在本进程独占文件 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`（`{pid, activatedAt}`，读者校验 `pid === process.pid`）；`/reload`、`/new`、`/resume`、`/fork` 与退出即复位，子 pi 进程（PWR sub-agent / agent-team 成员 / loop `--bg`）天然不继承
+- **开启需确认** — `/solo` 开启时弹一次确认（列出受影响的门）；无 UI 环境拒绝激活（fail-closed）；状态条显示 `⚡ solo`
+- **命令** — `/solo` 切换、`/solo on|off|status`、未知参数提示用法
+- **跨扩展契约** — 状态文件与 fail-closed 口径见 `docs/cross/solo-approval-gate.md`（pwr / opencode-bridge / deep-init 各一份同构 `solo-gate.ts` 只读实现）
+
+```bash
+node --experimental-strip-types --test solo-mode/index.test.ts   # 11 个测试
+```
+
+---
+
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`pwr/vendor/acorn.mjs` 为生成文件，勿修改

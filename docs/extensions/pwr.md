@@ -1,10 +1,10 @@
 # pwr — Pi Workflow Runtime
 
-> last verified @ e17c801
+> last verified @ 0260f89
 
 ## 职责与边界
 
-用户写受约束的 ECMAScript 工作流脚本（并行派多个 sub-agent），PWR 校验 → 批准卡 → 派子 `pi` 进程执行并回传结果。**不做**：任意代码执行（白名单沙箱）、持久化脚本源码/args、隐式降级回主 agent。
+用户写受约束的 ECMAScript 工作流脚本（并行派多个 sub-agent），PWR 校验 → 批准卡 → 派子 `pi` 进程执行并回传结果。**不做**：任意代码执行（白名单沙箱）、持久化脚本源码/args、隐式降级回主 agent。批准卡受 solo 审批门影响（`/solo` 开启时按 once 自动批准，见 `docs/cross/solo-approval-gate.md`）。
 
 ## 文件地图
 
@@ -20,7 +20,7 @@
 ## 核心数据流
 
 1. `/workflow <任务>` → `input` 钩子 → `pwr-generation-request` 自定义消息。
-2. 主 agent 调 `workflow_validate` → `tool_result` 上弹批准卡（once / remember / 拒绝）。
+2. 主 agent 调 `workflow_validate` → `tool_result` 上弹批准卡（once / remember / 拒绝）；solo 激活时跳过弹卡并按 once 自动批准。
 3. `workflow_start`（批准门控，键 = 项目路径|digest，改脚本即 `APPROVAL_STALE`）→ `WorkflowRuntime.start`。
 4. 调度器 → 解释器逐节点执行 → 派发：缓存命中直接回放（不派进程不占预算）| `PiAgentRunner.run` 子 pi。
 5. 完成：`RunNotifier`（runId 作用域，被取消的运行不唤醒）→ `pi.sendMessage(pwr-workflow-result)`。
@@ -32,6 +32,7 @@
 - trace 文本（v2.4.0）单行 + 尾部截断，绝不透传原始工具输出。
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
 - pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。
+- solo 审批门（`src/solo-gate.ts`）：只产生 once 批准，绝不写 remembered 记录；solo 关闭后既有 remembered 批准不受影响（契约见 `docs/cross/solo-approval-gate.md`）。
 
 ## 已知坑
 
@@ -43,7 +44,7 @@
 
 ## 改动清单
 
-- 必跑：`cd pwr && npm test`（406 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。
+- 必跑：`cd pwr && npm test`（410 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。
 - DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `pwr/DELIVERY.md` 版本历史。
 - 测试 fake：`test/helpers.ts` 的 `makeFakeRunner`（fake AgentRunner）、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn`（fake 子进程）。集成模式见 `runner/test/integration.test.ts`。
 - 完整架构 / 安全文档 / 版本历史 → `pwr/DELIVERY.md`（权威，勿在别处重复）。
