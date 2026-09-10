@@ -12,10 +12,14 @@ import * as path from "node:path";
 
 import {
   REPO_ROOT,
+  buildDeepArgs,
+  checkDeepRun,
   checkSmoke,
+  deepModelFromSettings,
   extensionDirsFromManifest,
   findManifestDrift,
   loadManifest,
+  parseJsonEvents,
   parseRpcOutput,
 } from "../tools/install-smoke.mjs";
 
@@ -106,4 +110,76 @@ test("checkSmoke：宿主内联扩展（<inline:…>）不参与来源目录核�
     expectations: {},
   });
   assert.deepEqual(problems, []);
+});
+
+// —— 深度任务（--task）：真实模型 + 扩展工具端到端 ——
+
+test("deepModelFromSettings：显式 --model 优先，否则由 defaultProvider/defaultModel 拼 provider/id", () => {
+  assert.equal(deepModelFromSettings({ defaultProvider: "opencode-go", defaultModel: "deepseek-flash" }, undefined), "opencode-go/deepseek-flash");
+  assert.equal(deepModelFromSettings({ defaultProvider: "opencode-go", defaultModel: "deepseek-flash" }, "deepseek/deepseek-chat"), "deepseek/deepseek-chat");
+  assert.equal(deepModelFromSettings({}, undefined), undefined);
+  assert.equal(deepModelFromSettings({ defaultProvider: "opencode-go" }, undefined), undefined);
+});
+
+test("buildDeepArgs：--tools 只放行被测工具，显式模型透传，无模型时不加 --model", () => {
+  const args = buildDeepArgs({ model: "opencode-go/deepseek-flash", tool: "loop_list" });
+  assert.deepEqual(args.slice(0, 7), ["--mode", "json", "-p", "--no-session", "--tools", "loop_list", "--model"]);
+  assert.equal(args[7], "opencode-go/deepseek-flash");
+  assert.match(args.at(-1), /loop_list/);
+  const bare = buildDeepArgs({ tool: "loop_list" });
+  assert.ok(!bare.includes("--model"));
+});
+
+test("parseJsonEvents：跳过非 JSON 行（OSC 通知转义 / 文本日志），保留事件", () => {
+  const text = [
+    "]777;notify;Pi;Ready for input",
+    JSON.stringify({ type: "agent_start" }),
+    "not json",
+    JSON.stringify({ type: "tool_execution_start", toolCallId: "t1", toolName: "loop_list", args: {} }),
+    JSON.stringify({ type: "tool_execution_end", toolCallId: "t1", toolName: "loop_list", isError: false }),
+  ].join("\n");
+  const events = parseJsonEvents(text);
+  assert.deepEqual(events.map((e) => e.type), ["agent_start", "tool_execution_start", "tool_execution_end"]);
+});
+
+test("checkDeepRun：工具成功执行一次即零问题", () => {
+  const problems = checkDeepRun({
+    exitCode: 0,
+    events: [
+      { type: "agent_start" },
+      { type: "tool_execution_start", toolName: "loop_list" },
+      { type: "tool_execution_end", toolName: "loop_list", isError: false },
+      { type: "agent_end" },
+    ],
+    tool: "loop_list",
+  });
+  assert.deepEqual(problems, []);
+});
+
+test("checkDeepRun：进程退出码非 0 直接失败并附 stderr", () => {
+  const problems = checkDeepRun({ exitCode: 1, stderr: "auth failed", events: [], tool: "loop_list" });
+  assert.equal(problems.length, 2);
+  assert.match(problems[0], /退出码 1/);
+  assert.match(problems[1], /auth failed/);
+  const spawnFailed = checkDeepRun({ spawnError: "ENOENT", events: [], tool: "loop_list" });
+  assert.equal(spawnFailed.length, 1);
+  assert.match(spawnFailed[0], /无法启动 pi/);
+});
+
+test("checkDeepRun：模型没调工具 / 工具报错 / 半途而废分别给出指向性结论", () => {
+  const notCalled = checkDeepRun({ exitCode: 0, events: [{ type: "agent_end" }], tool: "loop_list" });
+  assert.equal(notCalled.length, 1);
+  assert.match(notCalled[0], /未调用工具 loop_list/);
+
+  const toolError = checkDeepRun({
+    exitCode: 0,
+    events: [{ type: "tool_execution_start", toolName: "loop_list" }, { type: "tool_execution_end", toolName: "loop_list", isError: true }],
+    tool: "loop_list",
+  });
+  assert.equal(toolError.length, 1);
+  assert.match(toolError[0], /执行报错/);
+
+  const halfDone = checkDeepRun({ exitCode: 0, events: [{ type: "tool_execution_start", toolName: "loop_list" }], tool: "loop_list" });
+  assert.equal(halfDone.length, 1);
+  assert.match(halfDone[0], /未执行完成/);
 });
