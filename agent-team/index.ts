@@ -83,7 +83,7 @@ function transcriptRoot(): string {
 /** Transcript directories older than this are pruned on session start. */
 const TRANSCRIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** /team:<name> dynamic registrations never shadow these built-ins. */
+/** First tokens owned by the /team sub-command router (anything else is a team name). */
 const RESERVED_TEAM_COMMAND_NAMES = new Set(["run", "status", "stop", "view", "clear", "doctor"]);
 
 /** Builds the guarded UI port over ctx.ui (repo TUI conventions). */
@@ -360,7 +360,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
    * the viewer.
    */
   const openViewer = async (ctx: ExtensionContext, initialActor?: string): Promise<void> => {
-    // 互斥：连点 enter（widget confirm）或在 viewer 打开时再敲 /team:view
+    // 互斥：连点 enter（widget confirm）或在 viewer 打开时再敲 /team view
     // 会开出第二个 overlay，上一个不消失——标题+页签成双成对堆叠。fleet
     // 检查器同样只认单实例（`fleetInspectorOpen`），这里直接 early-return。
     if (state.viewerOpen) return;
@@ -401,7 +401,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
 
   /**
    * Viewer 停止动作 + 对话队列清理：停止成功（非 error notice）时丢弃队列
-   * 内排队的消息（用户变卦语义，与 team_stop / /team:stop 一致），丢弃条
+   * 内排队的消息（用户变卦语义，与 team_stop / /team stop 一致），丢弃条
    * 数追加进 notice 文案。
    */
   const viewerStopAndClearChat = async (): Promise<ViewerStopResult> => {
@@ -519,7 +519,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   };
 
   /**
-   * Background run flow shared by /team:run and the team_run tool: fire and
+   * Background run flow shared by /team run and the team_run tool: fire and
    * forget — persists the record and delivers the final report as a
    * followUp turn so the user can keep talking to the main agent while the
    * team works. Returns immediately; RUN_IN_PROGRESS surfaces right away.
@@ -536,13 +536,13 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       return { ok: false, code: preflight.code, message: preflight.message };
     }
     if (state.coordinator.isRunning()) {
-      return { ok: false, code: "RUN_IN_PROGRESS", message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。" };
+      return { ok: false, code: "RUN_IN_PROGRESS", message: "另一个 team run 正在进行中；先 /team stop 或等它结束。" };
     }
     // start() claims the run synchronously, so the runId is readable right
     // after the call — the handle team_stop needs.
     const runPromise = state.coordinator.start({ team, task, ui });
     const runId = state.coordinator.activeRunId() ?? "";
-    ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
+    ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team status 或 team_status 查进度`, "info");
     // Completion still persists the record and wakes the session with the
     // report (followUp turn), then drives the viewer chat queue: completed
     // → chain-dispatch the next queued message; failed/aborted → drop it.
@@ -619,7 +619,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       if (params.wait !== true) {
         // Default: background dispatch — the main agent's turn ends right
         // away so the user can keep talking; the report arrives later as a
-        // followUp turn (same flow as /team:run).
+        // followUp turn (same flow as /team run).
         const started = startBackgroundRun(ctx, ui, found.value, params.task);
         if (!started.ok) {
           return {
@@ -729,7 +729,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   });
 
   // Stop tool: the MAIN agent aborts a background run by runId (the same
-  // primitive /team:stop uses, plus a bounded settle wait so the agent gets
+  // primitive /team stop uses, plus a bounded settle wait so the agent gets
   // a terminal record instead of a phantom "running"). Only the cockpit
   // registers it — leader/member child processes never see team_stop.
   pi.registerTool({
@@ -827,141 +827,179 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       }
     });
 
-  pi.registerCommand("team", {
-    description: "列出所有 agent team（团队/成员/模型）",
-    handler: async (_args, ctx) => {
-      const ui = uiPortFrom(ctx);
-      const { teams, invalid } = discoverTeams({
-        cwd: state.cwd,
-        scope: state.projectTrusted ? "both" : "global",
-      });
-      if (teams.length === 0 && invalid.length === 0) {
-        ui.notify("没有任何团队定义。用 team_create 工具创建，或在 ~/.pi/agent/teams/ 放置团队 .md 文件。", "info");
-        return;
+  /** `/team`（无参）：列出所有 agent team（团队/成员/模型）。 */
+  const listTeams = (ctx: ExtensionContext): void => {
+    const ui = uiPortFrom(ctx);
+    const { teams, invalid } = discoverTeams({
+      cwd: state.cwd,
+      scope: state.projectTrusted ? "both" : "global",
+    });
+    if (teams.length === 0 && invalid.length === 0) {
+      ui.notify("没有任何团队定义。用 team_create 工具创建，或在 ~/.pi/agent/teams/ 放置团队 .md 文件。", "info");
+      return;
+    }
+    const lines: string[] = [];
+    for (const team of teams) {
+      lines.push(...teamSummaryLines(team));
+      if (RESERVED_TEAM_COMMAND_NAMES.has(team.name)) {
+        lines.push(`⚠ 团队名与内置子命令同名；派单请用 /team run ${team.name} <任务>`);
       }
-      const lines: string[] = [];
-      for (const team of teams) lines.push(...teamSummaryLines(team), "");
-      for (const bad of invalid) lines.push(`⚠ ${bad.file} — ${bad.message}`);
-      ui.notify(lines.join("\n"), "info");
-    },
-  });
+      lines.push("");
+    }
+    for (const bad of invalid) lines.push(`⚠ ${bad.file} — ${bad.message}`);
+    ui.notify(lines.join("\n"), "info");
+  };
 
-  pi.registerCommand("team:run", {
-    description: "派单（后台运行）：/team:run <团队名> <任务描述>",
-    handler: async (args, ctx) => {
-      const ui = uiPortFrom(ctx);
-      const trimmed = (args ?? "").trim();
-      const spaceIndex = trimmed.indexOf(" ");
-      if (spaceIndex <= 0 || trimmed.slice(spaceIndex + 1).trim().length === 0) {
-        ui.notify("用法：/team:run <团队名> <任务描述>", "warning");
-        return;
-      }
-      const teamName = trimmed.slice(0, spaceIndex);
-      const task = trimmed.slice(spaceIndex + 1).trim();
-      runFromCommand(ctx, teamName, task);
-    },
-  });
+  /** `/team run <团队名> <任务>`：显式派单（团队名撞保留词时的唯一入口）。 */
+  const startRunFromArgs = (ctx: ExtensionContext, args: string): void => {
+    const trimmed = args.trim();
+    const spaceIndex = trimmed.indexOf(" ");
+    if (spaceIndex <= 0 || trimmed.slice(spaceIndex + 1).trim().length === 0) {
+      uiPortFrom(ctx).notify("用法：/team run <团队名> <任务描述>", "warning");
+      return;
+    }
+    const teamName = trimmed.slice(0, spaceIndex);
+    const task = trimmed.slice(spaceIndex + 1).trim();
+    runFromCommand(ctx, teamName, task);
+  };
 
-  pi.registerCommand("team:status", {
-    description: "查看当前/最近一次 team run 的状态（各成员在干什么）",
-    handler: async (_args, ctx) => {
-      uiPortFrom(ctx).notify(statusText(ctx), "info");
-    },
-  });
+  /** `/team status`：当前/最近一次 run 的状态。 */
+  const showRunStatus = (ctx: ExtensionContext): void => {
+    uiPortFrom(ctx).notify(statusText(ctx), "info");
+  };
 
-  pi.registerCommand("team:stop", {
-    description: "中止当前 team run（leader 与所有成员）",
-    handler: async (_args, ctx) => {
-      const ui = uiPortFrom(ctx);
-      if (state.coordinator.stop()) {
-        const dropped = chat.clear();
-        ui.notify(dropped > 0 ? `已发送中止信号（SIGTERM → SIGKILL）；已丢弃排队的 ${dropped} 条 viewer 对话消息` : "已发送中止信号（SIGTERM → SIGKILL）", "warning");
-      } else {
-        ui.notify("当前没有正在进行的 team run", "info");
-      }
-    },
-  });
-
-  pi.registerCommand("team:view", {
-    description: "全屏查看当前/最近一次 run 的成员会话记录（实时）",
-    handler: async (_args, ctx) => {
-      const ui = uiPortFrom(ctx);
-      if (!ctx.hasUI || ctx.mode !== "tui") {
-        ui.notify("会话记录查看器仅在交互式 TUI 中可用。", "warning");
-        return;
-      }
-      const snapshot = state.coordinator.getStatus();
-      if (!snapshot.progress && !snapshot.lastRecord) {
-        ui.notify("当前没有 team run 记录。用 /team:run <团队> <任务> 派单后即可查看。", "info");
-        return;
-      }
-      try {
-        await openViewer(ctx);
-      } catch (e) {
-        ui.notify(`打开会话记录查看器失败: ${e instanceof Error ? e.message : String(e)}`, "error");
-      }
-    },
-  });
-
-  pi.registerCommand("team:clear", {
-    description: "清除输入栏下方的 team run 亮块（不影响 /team:status、/team:view 回看）",
-    handler: async (_args, ctx) => {
-      const ui = uiPortFrom(ctx);
-      if (state.coordinator.isRunning()) {
-        ui.notify("team run 进行中；先 /team:stop 或等它结束再清除。", "warning");
-        return;
-      }
-      if (!state.widgetMounted) {
-        ui.notify("下方没有 team run 亮块。", "info");
-        return;
-      }
-      try {
-        state.widget?.stop();
-      } catch {
-        /* widget failures never break the session */
-      }
-      state.widget = undefined;
-      state.widgetMounted = false;
-      clearWidget(ctx);
+  /** `/team stop`：中止当前 run（leader 与所有成员）。 */
+  const stopRun = (ctx: ExtensionContext): void => {
+    const ui = uiPortFrom(ctx);
+    if (state.coordinator.stop()) {
       const dropped = chat.clear();
-      ui.notify(dropped > 0 ? `已清除下方亮块与排队的 ${dropped} 条对话消息；/team:status、/team:view 仍可回看。` : "已清除下方亮块；/team:status、/team:view 仍可回看。", "info");
-    },
-  });
+      ui.notify(dropped > 0 ? `已发送中止信号（SIGTERM → SIGKILL）；已丢弃排队的 ${dropped} 条 viewer 对话消息` : "已发送中止信号（SIGTERM → SIGKILL）", "warning");
+    } else {
+      ui.notify("当前没有正在进行的 team run", "info");
+    }
+  };
 
-  pi.registerCommand("team:doctor", {
-    description: "自检：运行模式/团队发现/模型预检/运行目录/预算/worktree 一览",
-    handler: async (_args, ctx) => {
-      const ui = uiPortFrom(ctx);
-      const registry = (ctx as unknown as {
-        modelRegistry?: { refresh?: () => Promise<void>; getError?: () => string | undefined };
-      }).modelRegistry;
-      if (registry?.refresh) {
-        try {
-          await registry.refresh();
-        } catch {
-          /* refresh is best-effort */
-        }
-      }
-      let gitRepo = false;
+  /** `/team view`：全屏查看当前/最近一次 run 的成员会话记录（实时）。 */
+  const showRunViewer = async (ctx: ExtensionContext): Promise<void> => {
+    const ui = uiPortFrom(ctx);
+    if (!ctx.hasUI || ctx.mode !== "tui") {
+      ui.notify("会话记录查看器仅在交互式 TUI 中可用。", "warning");
+      return;
+    }
+    const snapshot = state.coordinator.getStatus();
+    if (!snapshot.progress && !snapshot.lastRecord) {
+      ui.notify("当前没有 team run 记录。用 /team run <团队> <任务> 派单后即可查看。", "info");
+      return;
+    }
+    try {
+      await openViewer(ctx);
+    } catch (e) {
+      ui.notify(`打开会话记录查看器失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  };
+
+  /** `/team clear`：清除输入栏下方的 team run 亮块。 */
+  const clearRunBlock = (ctx: ExtensionContext): void => {
+    const ui = uiPortFrom(ctx);
+    if (state.coordinator.isRunning()) {
+      ui.notify("team run 进行中；先 /team stop 或等它结束再清除。", "warning");
+      return;
+    }
+    if (!state.widgetMounted) {
+      ui.notify("下方没有 team run 亮块。", "info");
+      return;
+    }
+    try {
+      state.widget?.stop();
+    } catch {
+      /* widget failures never break the session */
+    }
+    state.widget = undefined;
+    state.widgetMounted = false;
+    clearWidget(ctx);
+    const dropped = chat.clear();
+    ui.notify(dropped > 0 ? `已清除下方亮块与排队的 ${dropped} 条对话消息；/team status、/team view 仍可回看。` : "已清除下方亮块；/team status、/team view 仍可回看。", "info");
+  };
+
+  /** `/team doctor`：自检报告。 */
+  const showDoctor = async (ctx: ExtensionContext): Promise<void> => {
+    const ui = uiPortFrom(ctx);
+    const registry = (ctx as unknown as {
+      modelRegistry?: { refresh?: () => Promise<void>; getError?: () => string | undefined };
+    }).modelRegistry;
+    if (registry?.refresh) {
       try {
-        gitRepo = await isGitRepo(defaultGitRunner(), state.cwd);
+        await registry.refresh();
       } catch {
-        gitRepo = false;
+        /* refresh is best-effort */
       }
-      const report = buildDoctorReport(
-        {
-          mode: "cockpit",
-          cwd: state.cwd,
-          projectTrusted: state.projectTrusted,
-          scope: state.projectTrusted ? "both" : "global",
-          widgetEnabled: process.env.PI_AGENT_TEAM_WIDGET !== "0",
-          ...(registry?.getError ? { registryError: registry.getError() } : {}),
-          runsRoot: transcriptRoot(),
-          worktreeRoot: worktreeRoot(),
-        },
-        { isGitRepo: () => gitRepo },
-      );
-      ui.notify(report, "info");
+    }
+    let gitRepo = false;
+    try {
+      gitRepo = await isGitRepo(defaultGitRunner(), state.cwd);
+    } catch {
+      gitRepo = false;
+    }
+    const report = buildDoctorReport(
+      {
+        mode: "cockpit",
+        cwd: state.cwd,
+        projectTrusted: state.projectTrusted,
+        scope: state.projectTrusted ? "both" : "global",
+        widgetEnabled: process.env.PI_AGENT_TEAM_WIDGET !== "0",
+        ...(registry?.getError ? { registryError: registry.getError() } : {}),
+        runsRoot: transcriptRoot(),
+        worktreeRoot: worktreeRoot(),
+      },
+      { isGitRepo: () => gitRepo },
+    );
+    ui.notify(report, "info");
+  };
+
+  /**
+   * 统一 `/team` 命令（命令风格统一：子命令式）。首 token 是保留词 → 子命令；
+   * 否则视为团队名 → `/team <团队名> <任务>` 直接派单。撞保留词的团队名走
+   * 显式 `/team run <名> <任务>`（列表文案会提示）。
+   */
+  pi.registerCommand("team", {
+    description:
+      "agent team：无参列出团队；/team run <团队> <任务> 派单；/team <团队> <任务> 直接派单；子命令 status|stop|view|clear|doctor",
+    handler: async (args, ctx) => {
+      const trimmed = (args ?? "").trim();
+      if (!trimmed) {
+        listTeams(ctx);
+        return;
+      }
+      const spaceIndex = trimmed.indexOf(" ");
+      const head = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
+      const rest = spaceIndex === -1 ? "" : trimmed.slice(spaceIndex + 1).trim();
+      if (!RESERVED_TEAM_COMMAND_NAMES.has(head)) {
+        if (!rest) {
+          uiPortFrom(ctx).notify(`用法：/team ${head} <任务描述>`, "warning");
+          return;
+        }
+        runFromCommand(ctx, head, rest);
+        return;
+      }
+      switch (head) {
+        case "run":
+          startRunFromArgs(ctx, rest);
+          return;
+        case "status":
+          showRunStatus(ctx);
+          return;
+        case "stop":
+          stopRun(ctx);
+          return;
+        case "view":
+          await showRunViewer(ctx);
+          return;
+        case "clear":
+          clearRunBlock(ctx);
+          return;
+        default: // doctor — RESERVED_TEAM_COMMAND_NAMES is exactly the sub-command set
+          await showDoctor(ctx);
+      }
     },
   });
 
@@ -976,7 +1014,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     state.widgetMounted = false;
     clearWidget(ctx);
 
-    // Hydrate the most recent run record so /team:status works after reload.
+    // Hydrate the most recent run record so /team status works after reload.
     try {
       const entries = ctx.sessionManager.getEntries() as Array<{ type?: string; customType?: string; data?: unknown }>;
       for (const entry of entries) {
@@ -1030,9 +1068,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     }
 
     // Below-editor run widget: only mount right away when hydration found a
-    // STILL-RUNNING run. A terminal record hydrates /team:status and
-    // /team:view paths but must not re-mount the below-editor block on every
-    // /reload — the user cleared it with /team:clear for a reason. The next
+    // STILL-RUNNING run. A terminal record hydrates /team status and
+    // /team view paths but must not re-mount the below-editor block on every
+    // /reload — the user cleared it with /team clear for a reason. The next
     // dispatch remounts it (startBackgroundRun → ensureRunWidget).
     const snapshot = state.coordinator.getStatus();
     if (snapshot.running) ensureRunWidget(ctx);
@@ -1044,22 +1082,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       /* pruning is best-effort */
     }
 
-    // Dynamic per-team commands: /team:<name> <任务>（/reload 后新团队生效）
-    const { teams } = discoverTeams({ cwd: state.cwd, scope: state.projectTrusted ? "both" : "global" });
-    for (const team of teams) {
-      if (RESERVED_TEAM_COMMAND_NAMES.has(team.name)) continue; // built-ins win: run/status/stop/view
-      pi.registerCommand(`team:${team.name}`, {
-        description: `派单给 ${team.name}${team.description ? `（${team.description}）` : ""}：/team:${team.name} <任务>`,
-        handler: async (args, cmdCtx) => {
-          const task = (args ?? "").trim();
-          if (!task) {
-            uiPortFrom(cmdCtx).notify(`用法：/team:${team.name} <任务描述>`, "warning");
-            return;
-          }
-          runFromCommand(cmdCtx, team.name, task);
-        },
-      });
-    }
+    // 动态 per-team 命令已退役（命令风格统一）：非保留词首 token 的
+    // `/team <团队名> <任务>` 由统一路由器现场解析，团队增删无需注册命令。
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -1142,8 +1166,8 @@ export async function viewerStopAction(coordinator: ViewerStopCoordinator): Prom
       const secs = outcome.record?.durationMs !== undefined ? ` · ${Math.round(outcome.record.durationMs / 100) / 10}s` : "";
       return { text: `run 已停止（aborted${secs}）；该 run 的报告不再送达`, kind: "success" };
     }
-    return { text: "已发送中止信号，leader 仍在收尾；稍后用 /team:status 确认终态", kind: "warning" };
+    return { text: "已发送中止信号，leader 仍在收尾；稍后用 /team status 确认终态", kind: "warning" };
   } catch {
-    return { text: "停止失败；稍后用 /team:stop 重试", kind: "error" };
+    return { text: "停止失败；稍后用 /team stop 重试", kind: "error" };
   }
 }

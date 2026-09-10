@@ -2,7 +2,7 @@
  * agent-team — viewer 打开互斥（host 接线层行为测试）
  *
  * 真机堆叠的另一半根因：互斥缺失时，连点 enter（widget confirm）或开
- * 着 viewer 又敲 /team:view 会叠出第二个 overlay；两个实例几何稍有偏
+ * 着 viewer 又敲 /team view 会叠出第二个 overlay；两个实例几何稍有偏
  * 差即互相露边（见 viewer-host.test.ts 头注与 zz 机制验证：双实例在
  * 真实合成器里稳定复现出 2 标题/2 页签/2 底边）。本文件用假
  * ExtensionAPI + 假 ctx 把 cockpit 接起来，断言第二次进入不开新
@@ -80,7 +80,7 @@ function hydratedSessionCtx() {
 
 isolateRunsDir();
 
-test("team:view 互斥：viewer 打开期间再进入不开第二个 overlay", async () => {
+test("team view 互斥：viewer 打开期间再进入不开第二个 overlay", async () => {
   resetDoubleLoadGuardForTests();
   const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
   process.env.PI_AGENT_TEAM_WIDGET = "0"; // 本用例不测 widget：跳过它的 1s 真定时器
@@ -102,15 +102,15 @@ test("team:view 互斥：viewer 打开期间再进入不开第二个 overlay", a
         },
       },
     };
-    const view = pi.commands.get("team:view");
-    assert.ok(view, "cockpit 应注册 /team:view");
+    const view = pi.commands.get("team");
+    assert.ok(view, "cockpit 应注册 /team view 路由");
 
-    void view.handler("", viewCtx as never); // 第一次：打开 overlay（pending，不 await）
+    void view.handler("view", viewCtx as never); // 第一次：打开 overlay（pending，不 await）
     // 第二次：互斥应让它在短时间内直接返回。若互斥缺失，第二次会真的再
     // 开一个永不关闭的 overlay 并永久 await——race 超时让旧行为快速失败
     // 而不是把测试套件挂死（旧版实测挂 300s）。
     await Promise.race([
-      view.handler("", viewCtx as never),
+      view.handler("view", viewCtx as never),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("互斥缺失：第二个 viewer 调用未在 500ms 内返回（= 双 overlay 永久打开）")), 500),
       ),
@@ -169,7 +169,7 @@ function widgetSessionCtx(timeline: string[], cwd: string) {
 /**
  * 挂好 widget 的会话：真实派一个后台 run（fake leader 子进程常开不回）
  * 让 ensureRunWidget 走真实挂载路径。水合不再从终态记录挂 widget
- * （/team:clear + 水合门控语义），所以这里必须经真实派单挂载。
+ * （/team clear + 水合门控语义），所以这里必须经真实派单挂载。
  */
 async function mountedSession(timeline: string[]): Promise<{
   pi: ReturnType<typeof fakePi>;
@@ -208,7 +208,7 @@ async function mountedSession(timeline: string[]): Promise<{
 type ViewerComponentLike = { handleInput: (data: string) => void };
 
 /**
- * 可关闭的 /team:view ctx：custom 捕获真实 TranscriptViewer 实例 + done
+ * 可关闭的 /team view ctx：custom 捕获真实 TranscriptViewer 实例 + done
  * 回调；测试经 component.handleInput("\x03") 关闭 overlay，驱动 openViewer
  * 的 finally（widget 恢复）完整跑完。
  */
@@ -252,11 +252,11 @@ test("接线：viewer 打开时 widget 隐藏（setWidget(undefined) 先于 cust
   try {
     const { pi } = mounted;
     const customCalls: unknown[][] = [];
-    const view = pi.commands.get("team:view");
+    const view = pi.commands.get("team");
     assert.ok(view);
     const closable = closableViewCtx({ timeline, customCalls });
 
-    void view.handler("", closable.ctx as never); // 打开 overlay（pending）
+    void view.handler("view", closable.ctx as never); // 打开 overlay（pending）
     await new Promise((resolve) => setTimeout(resolve, 30)); // 等 openViewer 跑到 custom
     assert.equal(customCalls.length, 1, "应恰好打开一个 overlay");
     const hideAt = timeline.indexOf("hide");
@@ -276,7 +276,7 @@ test("接线：viewer 打开时 widget 隐藏（setWidget(undefined) 先于 cust
   }
 });
 
-test("接线：viewer 打开期间再次 /team:view → custom 只进一次（widget 挂载态下仍互斥）", async () => {
+test("接线：viewer 打开期间再次 /team view → custom 只进一次（widget 挂载态下仍互斥）", async () => {
   const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
   delete process.env.PI_AGENT_TEAM_WIDGET;
   const mounted = await mountedSession([]);
@@ -284,11 +284,11 @@ test("接线：viewer 打开期间再次 /team:view → custom 只进一次（wi
     const { pi } = mounted;
 
     const customCalls: unknown[][] = [];
-    const view = pi.commands.get("team:view");
+    const view = pi.commands.get("team");
     assert.ok(view);
     const closable = closableViewCtx({ customCalls });
 
-    void view.handler("", closable.ctx as never);
+    void view.handler("view", closable.ctx as never);
     await Promise.race([
       view.handler("", closable.ctx as never), // 第二次：互斥应 early-return
       new Promise<never>((_, reject) =>

@@ -1060,7 +1060,7 @@ export class TranscriptViewer implements Component {
       try {
         result = await stop();
       } catch {
-        result = { text: "停止失败；稍后用 /team:stop 重试", kind: "error" };
+        result = { text: "停止失败；稍后用 /team stop 重试", kind: "error" };
       }
       this.state = { ...this.state, stopping: false, notice: { text: result.text, kind: result.kind } };
       this.requestRender();

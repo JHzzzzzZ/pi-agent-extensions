@@ -1,5 +1,5 @@
 /**
- * agent-team — doctor self-check (`/team:doctor`)
+ * agent-team — doctor self-check (`/team doctor`)
  *
  * A pure report builder over injected deps (mirroring pi-subagents'
  * extension/doctor.ts pattern): team discovery, per-team model preflight,

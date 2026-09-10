@@ -1,16 +1,16 @@
 /**
- * /team:clear + hydration-gating tests against the real entry (fake
+ * /team clear + hydration-gating tests against the real entry (fake
  * ExtensionAPI / fake ctx with a TUI ui port + scripted leader child).
  *
  * Locks:
- * - /team:clear refuses while a run is in progress (warning, no widget side
+ * - /team clear refuses while a run is in progress (warning, no widget side
  *   effects), no-ops with an info hint when no widget is mounted, and
  *   otherwise unmounts the below-editor block (controller stop + setWidget
  *   undefined) without touching lastRecord.
  * - A re-dispatch after a clear remounts the widget (ensureRunWidget path).
  * - session_start hydration only mounts the widget when a run is actually
  *   RUNNING; a terminal record hydrates status/view paths but no widget.
- * - A team named "clear" must not shadow the built-in /team:clear command.
+ * - A team named "clear" must not shadow the /team clear sub-command.
  */
 
 import * as assert from "node:assert/strict";
@@ -143,7 +143,7 @@ async function setup(opts: { entries?: Array<{ type?: string; customType?: strin
     spawn,
     run: (params) => tool("team_run").execute("call-run", params, undefined, undefined, ctx),
     status: (params) => tool("team_status").execute("call-status", params, undefined, undefined, ctx),
-    clear: (clearCtx: unknown) => pi.commands.get("team:clear")!.handler("", clearCtx),
+    clear: (clearCtx: unknown) => pi.commands.get("team")!.handler("clear", clearCtx),
     ctx,
     widgetCalls,
     notifications,
@@ -181,7 +181,7 @@ function escapeRegExp(text: string): string {
   return text.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
-test("/team:clear refuses while a run is in progress (warning, widget untouched)", async () => {
+test("/team clear refuses while a run is in progress (warning, widget untouched)", async () => {
   const { spawn, run, clear, ctx, widgetCalls, notifications, cleanup } = await setup();
   try {
     const started = await run({ team: "proj-team", task: "长任务" });
@@ -205,7 +205,7 @@ test("/team:clear refuses while a run is in progress (warning, widget untouched)
   }
 });
 
-test("/team:clear on a terminal run unmounts the widget (setWidget undefined, lastRecord kept)", async () => {
+test("/team clear on a terminal run unmounts the widget (setWidget undefined, lastRecord kept)", async () => {
   const { pi, spawn, run, status, clear, ctx, widgetCalls, notifications, cleanup } = await setup();
   try {
     const started = await run({ team: "proj-team", task: "跑完" });
@@ -226,7 +226,7 @@ test("/team:clear on a terminal run unmounts the widget (setWidget undefined, la
     assert.equal(last.level, "info");
     assert.match(last.text, /清除/);
 
-    // lastRecord survives: /team:status still shows the finished run.
+    // lastRecord survives: /team status still shows the finished run.
     const statusText = (await status({})).content[0].text;
     assert.match(statusText, /completed/);
     assert.match(statusText, new RegExp(escapeRegExp(runId)));
@@ -235,7 +235,7 @@ test("/team:clear on a terminal run unmounts the widget (setWidget undefined, la
   }
 });
 
-test("/team:clear with no mounted widget is a no-op info hint", async () => {
+test("/team clear with no mounted widget is a no-op info hint", async () => {
   const { clear, ctx, widgetCalls, notifications, cleanup } = await setup();
   try {
     await clear(ctx);
@@ -251,7 +251,7 @@ test("/team:clear with no mounted widget is a no-op info hint", async () => {
   }
 });
 
-test("re-dispatch after /team:clear remounts the widget", async () => {
+test("re-dispatch after /team clear remounts the widget", async () => {
   const { pi, spawn, run, clear, ctx, widgetCalls, cleanup } = await setup();
   try {
     const first = await run({ team: "proj-team", task: "one" });
@@ -275,7 +275,7 @@ test("re-dispatch after /team:clear remounts the widget", async () => {
   }
 });
 
-test("session_start hydration: terminal record mounts no widget but keeps /team:status", async () => {
+test("session_start hydration: terminal record mounts no widget but keeps /team status", async () => {
   const entries = [
     {
       type: "custom",
@@ -324,11 +324,14 @@ test("session_start hydration: a running run still mounts the widget (reload mid
   }
 });
 
-test("a team named clear must not shadow the built-in /team:clear command", async () => {
-  const { pi, cleanup } = await setup({ extraTeamFile: "clear" });
+test("a team named clear cannot shadow the /team clear sub-command (single router)", async () => {
+  const { pi, clear, ctx, notifications, cleanup } = await setup({ extraTeamFile: "clear" });
   try {
-    assert.ok(pi.commands.has("team:clear"), "built-in /team:clear registered");
-    assert.match(pi.commands.get("team:clear")!.description, /清除/, "built-in description, not the dynamic team dispatch one");
+    assert.deepEqual([...pi.commands.keys()], ["team"], "only the unified /team router is registered");
+    await clear(ctx);
+    const last = notifications.at(-1);
+    assert.equal(last?.level, "info");
+    assert.match(last?.text ?? "", /亮块/, "the clear sub-command — not a dispatch to the team — handled it");
   } finally {
     cleanup();
   }
