@@ -34,8 +34,12 @@ export const GOAL_RESULT_ENTRY = "goal-result-v1";
 export const GOAL_CONTINUE_MESSAGE = "goal-continue";
 /** 排序带前缀：宿主按 key localeCompare 拼接 footer 状态行（docs/cross/status-bar.md） */
 export const STATUS_KEY = "10:goal";
+/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头 */
+export const STATUS_SEPARATOR = "│ ";
 /** 活动 goal 期间的状态行刷新间隔（对齐秒边界） */
 const STATUS_TICK_MS = 1000;
+/** 状态行里目标文本的显示列上限（CJK/全角按 2 列计） */
+const MAX_STATUS_GOAL_WIDTH = 20;
 
 /** 对齐 Claude Code /goal:条件最长 4000 字符 */
 export const MAX_GOAL_LENGTH = 4000;
@@ -220,10 +224,39 @@ export function formatElapsed(ms: number): string {
   return `${h}h${String(min % 60).padStart(2, "0")}m`;
 }
 
-export function truncateText(text: string, max: number): string {
-  const chars = Array.from(text);
-  if (chars.length <= max) return text;
-  return chars.slice(0, Math.max(1, max - 1)).join("") + "…";
+/** CJK/全角字符判定（本地实现，与 run-timer 同款；不做跨插件共享） */
+export function isCJK(ch: string): boolean {
+  const cp = ch.codePointAt(0)!;
+  return (
+    (cp >= 0x4e00 && cp <= 0x9fff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xff01 && cp <= 0xff60) ||
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x2e80 && cp <= 0x2eff) ||
+    (cp >= 0x3000 && cp <= 0x303f)
+  );
+}
+
+/** 终端显示列数（CJK/全角按 2 列） */
+export function visualLen(s: string): number {
+  let n = 0;
+  for (const ch of s) n += isCJK(ch) ? 2 : 1;
+  return n;
+}
+
+/** 按显示列截断（超出时保留 ≤ max-1 列 + `…`，截断结果不超过 max 列） */
+export function truncateText(text: string, maxVisual: number): string {
+  if (visualLen(text) <= maxVisual) return text;
+  let result = "";
+  let width = 0;
+  for (const ch of text) {
+    const charWidth = isCJK(ch) ? 2 : 1;
+    if (width + charWidth > maxVisual - 1) break;
+    result += ch;
+    width += charWidth;
+  }
+  return result + "…";
 }
 
 export interface StatusInfo {
@@ -235,10 +268,10 @@ export interface StatusInfo {
 
 export function buildStatusLine(info: StatusInfo, nowMsValue: number): string {
   const elapsed = formatElapsed(Math.max(0, nowMsValue - info.startedAtMs));
-  const goal = truncateText(info.goal, 48);
+  const goal = truncateText(info.goal, MAX_STATUS_GOAL_WIDTH);
   return info.phase === "paused"
-    ? `⏸ goal: ${goal} · 已暂停 · ${elapsed}`
-    : `◎ goal: ${goal} · 第${info.turns}轮 · ${elapsed}`;
+    ? `⏸ ${goal} · 已暂停 · ${elapsed}`
+    : `◎ ${goal} · ${info.turns}轮 · ${elapsed}`;
 }
 
 /** 提取 agent 回合中 assistant 消息的文本内容(忽略 thinking/toolResult),超限取尾部 */
@@ -390,7 +423,7 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
           if (statusCtx) updateStatus(statusCtx);
         }, { intervalMs: STATUS_TICK_MS });
       }
-      const line = buildStatusLine(
+      const line = STATUS_SEPARATOR + buildStatusLine(
         { phase: state.phase, goal: state.goal, turns: state.turns, startedAtMs: state.startedAtMs },
         nowMs(),
       );

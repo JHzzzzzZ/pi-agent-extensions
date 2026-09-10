@@ -14,6 +14,8 @@
  */
 
 export const STATUS_KEY = "50:stream-token-speed" as const;
+/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头。 */
+export const STATUS_SEPARATOR = "│ ";
 
 export interface StatusPort {
   available(): boolean;
@@ -43,7 +45,8 @@ export function createStatusPort(
     setStatus(key, text): void {
       if (!isAvailable()) return;
       try {
-        const styled = text !== undefined && style !== undefined ? style(text) : text;
+        const prefixed = text === undefined ? undefined : STATUS_SEPARATOR + text;
+        const styled = prefixed !== undefined && style !== undefined ? style(prefixed) : prefixed;
         ui.setStatus(key, styled);
       } catch {
         // 隔离 UI 异常：扩展故障不得中断、延迟或改写模型回复及工具调用。

@@ -12,6 +12,8 @@ import {
   effectiveStreamingSeconds,
   formatSummary,
   formatTps,
+  formatWaitingStatus,
+  formatStreamingStatus,
   formatWarmupStatus,
   instantTps,
   isWarmingUp,
@@ -118,7 +120,7 @@ test("有效流式时长：= 最后增量 − 首增量（末端无输出/工具
   assert.equal(effectiveStreamingSeconds(single), 0.001);
 });
 
-test("AC-04 口径（v3）：结束汇总 = TTFT + EMA 最后瞬时 + 有效流式时长平均", () => {
+test("AC-04 口径（v3）：结束汇总 = TTFT + 有效流式时长平均（显示 `TTFT xxms · ~avg tok/s`）", () => {
   const r = run("m1", 0);
   // TTFT 420ms；36 个增量分布在 2 秒内，最后 1s 内 18 个
   for (let i = 0; i < 36; i++) addEligibleDelta(r, "text", 420 + i * (2000 / 36));
@@ -130,7 +132,7 @@ test("AC-04 口径（v3）：结束汇总 = TTFT + EMA 最后瞬时 + 有效流�
   // 末尾原始值 18 为种子（渲染路径见集成测试 AC-04）
   assert.equal(s.lastInstantCarried, false);
   assert.ok(Math.abs(s.lastInstantTps - 18) < 0.01, `last=${s.lastInstantTps}`);
-  assert.match(formatSummary(s), /^TTFT 420 ms｜最后 18\.0 tok\/s｜平均 18\.5 tok\/s$/);
+  assert.match(formatSummary(s), /^TTFT 420ms · ~18\.5 tok\/s$/);
 });
 
 test("AC-05（v3）：首增量后立即结束也能补算，且无 NaN / Infinity / 除零", () => {
@@ -175,7 +177,7 @@ test("v3：末尾窗口无输出 -> 最后沿用最近非零平滑值并以 ~ �
   // 末尾窗口（1000~2000）无样本 -> 沿用最近非零平滑值并标注
   assert.equal(s.lastInstantCarried, true);
   assert.ok(s.lastInstantTps > 200 && s.lastInstantTps < 300, `last=${s.lastInstantTps}`);
-  assert.match(formatSummary(s), /^TTFT 100 ms｜最后 ~2\d\d\.\d tok\/s｜平均 12\.5 tok\/s$/);
+  assert.match(formatSummary(s), /^TTFT 100ms · ~12\.5 tok\/s$/);
 });
 
 test("v3：流中段无输出间隙计入有效时长（仅扣除末端间隙）", () => {
@@ -198,7 +200,7 @@ test("v4：热身期判定（首个增量后前 1s 内）与 `—` 状态格式"
   assert.equal(isWarmingUp(r, 1099), true); // 999ms：仍在热身
   assert.equal(isWarmingUp(r, 1100), false); // 满 1s：热身结束
   assert.equal(WARMUP_MS, 1000);
-  assert.equal(formatWarmupStatus(420), "生成中：TTFT 420 ms｜速度 —");
+  assert.equal(formatWarmupStatus(420), "TTFT 420ms · —");
 });
 
 test("v4：热身期未完成且末尾窗口无输出 -> 最后退回有效时长平均（恒非零）", () => {
@@ -212,7 +214,17 @@ test("v4：热身期未完成且末尾窗口无输出 -> 最后退回有效时�
   assert.equal(s.lastInstantCarried, true);
   // 退回有效时长平均 = 2 / 0.1s = 20（而非 0）
   assert.ok(Math.abs(s.lastInstantTps - 20) < 1e-9, `last=${s.lastInstantTps}`);
-  assert.match(formatSummary(s), /^TTFT 100 ms｜最后 ~20\.0 tok\/s｜平均 20\.0 tok\/s$/);
+  assert.match(formatSummary(s), /^TTFT 100ms · ~20\.0 tok\/s$/);
+});
+
+test("footer 状态文本格式：等待 / 热身 / 流式 / 汇总（瘦身版，docs/cross/status-bar.md）", () => {
+  assert.equal(formatWaitingStatus(), "TTFT —");
+  assert.equal(formatWarmupStatus(412), "TTFT 412ms · —");
+  assert.equal(formatStreamingStatus(412, 86.4), "TTFT 412ms · 86.4 tok/s");
+  assert.equal(
+    formatSummary({ ttftMs: 412, lastInstantTps: 78.6, averageTps: 78.6, hasStreamingData: true, lastInstantCarried: false }),
+    "TTFT 412ms · ~78.6 tok/s",
+  );
 });
 
 test("WINDOW_MS / THROTTLE_MS 常量符合设计（1000ms / 250ms）", () => {

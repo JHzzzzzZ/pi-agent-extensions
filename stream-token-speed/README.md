@@ -1,7 +1,8 @@
 # stream-token-speed — pi TUI 扩展（JHL-10）
 
 在 pi TUI 流式回复期间显示 **TTFT（首 token 延迟）** 与 **瞬时 tokens/s**，
-结束后保留本轮 **TTFT / 最后瞬时值 / 平均速度**。
+结束后保留本轮 **TTFT / 平均速度**（`~` 前缀标注平均值）。
+状态文本以 `│ ` 开头（footer 段前缀契约，见 `docs/cross/status-bar.md`）。
 
 计量范围：文本（`text_delta`）、thinking（`thinking_delta`）、tool call
 （`toolcall_delta`）的流式增量，每个统一流事件计 1 个 token；
@@ -21,14 +22,13 @@
 
 ## 使用效果
 
-| 阶段 | 状态区显示（键：`stream-token-speed`） |
+| 阶段 | 状态区显示（键：`50:stream-token-speed`，段文本以 `│ ` 开头） |
 | --- | --- |
-| assistant 消息开始 | `生成中：TTFT 等待中｜速度 —` |
-| 流式生成中（v4 热身期：前 1s） | `生成中：TTFT 420 ms｜速度 —` |
-| 流式生成中（满 1s 后，每 250ms 节流刷新） | `生成中：TTFT 420 ms｜速度 18.0 tok/s` |
-| 结束（有流式数据） | `TTFT 420 ms｜最后 18.0 tok/s｜平均 18.0 tok/s` |
-| 结束（末尾无输出，最后瞬时沿用） | `TTFT 420 ms｜最后 ~18.0 tok/s｜平均 18.0 tok/s` |
-| 结束（无流式数据） | `无流式速度数据` |
+| assistant 消息开始 | `│ TTFT —` |
+| 流式生成中（v4 热身期：前 1s） | `│ TTFT 420ms · —` |
+| 流式生成中（满 1s 后，每 250ms 节流刷新） | `│ TTFT 420ms · 18.0 tok/s` |
+| 结束（有流式数据） | `│ TTFT 420ms · ~18.0 tok/s`（`~` 标注平均速度） |
+| 结束（无流式数据） | 清除状态（不显示任何文案 / 不显示 0 tok/s） |
 
 > 状态文本在 TUI 模式下以 `ctx.ui.theme.fg("dim", text)` 渲染为灰色
 > （`setStatus` 仅接受字符串，颜色由 theme 样式函数包装；RPC 模式保持纯文本）。
@@ -44,14 +44,14 @@
 - **平均速度（有效流式时长）**：本轮总增量 ÷（最后增量时刻 - 首增量时刻），
   即「首 token → message_end」区间扣除末端无输出/工具执行间隙；
   消息间的工具执行本就不计入消息时长。
-- **最后瞬时值**：末尾 1s 窗口有样本时取末尾 EMA；无样本时沿用最近一次
-  渲染的非零平滑值（热身期未完成则退回有效时长平均，恒非零），以 `~`
-  前缀标注。
+- **最后瞬时值（仅内部保留）**：末尾 1s 窗口有样本时取末尾 EMA；无样本时沿用最近一次
+  渲染的非零平滑值（热身期未完成则退回有效时长平均，恒非零）。该值**不上屏**——
+  汇总只显示 TTFT + 平均速度（`~` 标注），字段留在 `CompletedSummary` 供兼容与回归。
 - 所有速率四舍五入到一位小数；时间为同一单调时钟（`performance.now`）。
 
 ## 行为边界
 
-- 非流式回复 / 无可计量增量 → `无流式速度数据`（不显示 0 tok/s）。
+- 非流式回复 / 无可计量增量 → 清除状态（不显示 0 tok/s）。
 - 生成中取消 / 报错 → 按已收到的增量与结束时间生成汇总，之后停止刷新。
 - print / json 模式（无 UI）→ 静默降级，不调用 `setStatus`。
 - `setStatus` 与样式函数的异常均在端口内部隔离，不影响 pi 的消息流与工具调用。
@@ -77,7 +77,7 @@ stream-token-speed/
 ## 自测
 
 ```bash
-# 单元 + 集成测试（43 条，覆盖 PRD AC-01 ~ AC-09 + 修复#1/#2 回归 + v3/v4 口径）
+# 单元 + 集成测试（45 条，覆盖 PRD AC-01 ~ AC-09 + 修复#1/#2 回归 + v3/v4 口径）
 node --experimental-strip-types --test \
   test/metrics.test.ts test/adapter.test.ts test/integration.test.ts
 
@@ -85,7 +85,7 @@ node --experimental-strip-types --test \
 # fake provider 模拟真实 provider 的 responseId 时序：start 无 id、增量后有；
 # 流时长 > 1.2s，覆盖 v4 热身期与正式计量）
 # 场景 1：流式回复（thinking/text/toolcall 增量 + 工具执行）-> 汇总正确
-# 场景 2：非流式回复 -> 无流式速度数据
+# 场景 2：非流式回复 -> 无流式数据，状态条清除
 node e2e/run-e2e.mjs
 ```
 

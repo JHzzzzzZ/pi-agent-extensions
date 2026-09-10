@@ -36,6 +36,8 @@ import * as path from "node:path";
 export const SOLO_STATE_FILE_ENV = "PI_SOLO_MODE_FILE";
 /** 状态条键（每扩展一个；带 `40:` 排序前缀，见 docs/cross/status-bar.md） */
 export const SOLO_STATUS_KEY = "40:solo-mode";
+/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头 */
+export const STATUS_SEPARATOR = "│ ";
 /** 状态条文本（纯字符串,宿主 ExtensionUIContext 无 theme 字段） */
 export const SOLO_STATUS_TEXT = "⚡ solo";
 /** 命令行用法 */
@@ -174,7 +176,7 @@ export function createSoloModeExtension(pi: ExtensionAPI, deps: SoloModeDeps = {
   function setStatus(ctx: SoloUi, text: string | undefined): void {
     try {
       if (!ctx?.hasUI) return;
-      ctx.ui?.setStatus?.(SOLO_STATUS_KEY, text);
+      ctx.ui?.setStatus?.(SOLO_STATUS_KEY, text === undefined ? undefined : STATUS_SEPARATOR + text);
     } catch {
       /* 忽略 */
     }

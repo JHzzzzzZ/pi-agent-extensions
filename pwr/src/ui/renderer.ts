@@ -93,16 +93,19 @@ export function runStatusText(store: RunStore): string | undefined {
 	const runs = store.listRuns();
 	const active = runs.filter((r) => ACTIVE_STATUSES.has(r.status));
 	if (active.length === 0) return undefined;
-	const top = active[0];
 	const done = runs.length - active.length;
-	return `workflows: ${active.length} active (${top.scriptName} ${top.status}), ${done} finished`;
+	return done > 0 ? `pwr ${active.length}▶ ${done}✓` : `pwr ${active.length}▶`;
 }
+
+/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头。 */
+export const STATUS_SEPARATOR = "│ ";
 
 /**
  * Non-blocking push of status + widget from the store.
  * footer 键带 `30:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md）。
  */
 export function refreshUiStatus(ui: ExtensionUIContext, store: RunStore): void {
-	ui.setStatus("30:pwr", runStatusText(store));
+	const text = runStatusText(store);
+	ui.setStatus("30:pwr", text === undefined ? undefined : STATUS_SEPARATOR + text);
 	ui.setWidget("pwr-runs", runWidgetLines(store));
 }

@@ -4,7 +4,7 @@
 
 ## 职责与边界
 
-`/goal <条件>` 设定完成条件，agent 跨回合自动推进：每个 agent_settled 后由独立 LLM 评估器（当前会话模型的一次 maxTokens=512 小调用）判定 {met, reason}，未达成则以评估原因为指导经 `pi.sendMessage({triggerTurn, deliverAs:"followUp"})` 开下一回合，达成后清目标并写结果条目。footer 状态行（键 `10:goal`）在 active/paused 期间按对齐秒节拍刷新「已运行」时长（`aligned-ticker.ts`，契约见 `docs/cross/status-bar.md`）。**不做**：轮次上限（靠目标文本自限，如 "or stop after 20 turns"）、工具执行监控（评估器只看 assistant 文本输出）、独立持久化（只写会话条目）。
+`/goal <条件>` 设定完成条件，agent 跨回合自动推进：每个 agent_settled 后由独立 LLM 评估器（当前会话模型的一次 maxTokens=512 小调用）判定 {met, reason}，未达成则以评估原因为指导经 `pi.sendMessage({triggerTurn, deliverAs:"followUp"})` 开下一回合，达成后清目标并写结果条目。footer 状态行（键 `10:goal`，文本以 `│ ` 开头）在 active/paused 期间按对齐秒节拍刷新「已运行」时长（`aligned-ticker.ts`，契约见 `docs/cross/status-bar.md`）：`│ ◎ <目标≤20列> · <N>轮 · <时长>`，暂停为 `⏸ <目标≤20列> · 已暂停 · <时长>`（目标按显示列截断，CJK 双宽）；idle 清状态。**不做**：轮次上限（靠目标文本自限，如 "or stop after 20 turns"）、工具执行监控（评估器只看 assistant 文本输出）、独立持久化（只写会话条目）。
 
 ## 文件地图
 
@@ -22,7 +22,7 @@
 3. `agent_settled` → 评估器小调用（goal + evidence + lastReason）→ 严格判定：部分进展/未验证声明不算 met。
 4. 未达成 → `goal-continue` 自定义消息（含评估器反馈）followUp 续回合；达成 → 写 `goal-result-v1` 条目 + 清状态。
 5. 状态以 `goal-state-v1` 条目持久化（末条生效，null = 已清除）；`session_start` 水合。
-6. 状态行：每次 `updateStatus` 记录 ctx 并保证节拍器存活；节拍回调每秒重算时长，文本指纹相同则跳过 `setStatus`；转 idle 或 shutdown 时停节拍并清状态。
+6. 状态行：每次 `updateStatus` 记录 ctx 并保证节拍器存活；节拍回调每秒重算时长，文本（含 `│ ` 前缀）指纹相同则跳过 `setStatus`；转 idle 或 shutdown 时停节拍并清状态。
 
 ## 不变量
 
@@ -34,7 +34,7 @@
 - 命令面（v1.3.0）：裸 `/goal` 空参=状态、其余=目标文本（`/goal status` 也是目标文本，不是子命令）；`/goal:status` 状态副本；`/goal:clear|:stop|:off|:reset|:none|:cancel` 共享同一清除动作；`/goal:resume` 恢复。旧空格管理词经裸入口只提示改名、绝不执行。
 - 所有 notify/setStatus/appendEntry 调用均 try/catch——持久化或 UI 失败绝不破坏会话、绝不中断循环链。
 - 状态条目幂等可重放：恢复只信最后一条 `goal-state-v1`，结果条目 `goal-result-v1` 仅记录、不参与水合。
-- 状态行键 `10:goal` 带排序带前缀（宿主按 key localeCompare 拼接 footer，不可改回 `goal`）；节拍器随 idle/无 UI/shutdown 停止，不留残留定时器。
+- 状态行键 `10:goal` 带排序带前缀（宿主按 key localeCompare 拼接 footer，不可改回 `goal`），段文本以 `│ ` 开头（段边界靠插件自写前缀，`docs/cross/status-bar.md`）；目标文本按**显示列**截到 20 列（`truncateText`/`visualLen`，CJK 双宽）；节拍器随 idle/无 UI/shutdown 停止，不留残留定时器。
 
 ## 已知坑
 
@@ -48,7 +48,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts`（61 个，goal/ 目录下执行，无 package.json 无 typecheck 脚本）。
+- 必跑：`node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts`（62 个，goal/ 目录下执行，无 package.json 无 typecheck 脚本）。
 - 必看测试：`index.test.ts` — `makeFakePi` 手写 fake pi 宿主（记录 sendMessage/sendUserMessage/entries/statuses/statusKeys）+ fake 评估器 + 注入 `nowMs`，全离线；节拍用全局 `setTimeout` mock + `fireTick()`；评估器小调用边界只 fake 不真连。
 - fake 模式：沿 `GoalDeps` 注入口（评估器 + 时钟），对应 docs/cross/deps-ports.md 的 goal 行；新增进程/IO 边界才立新口，别加策略层。
 - 改上限值/消息文案/条目键 ⇒ 同步 README 的 goal 段与头部注释；改条目键 ⇒ 同步 docs/cross/messages-entries.md。

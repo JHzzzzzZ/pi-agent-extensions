@@ -4,7 +4,8 @@
  * - footer：五个 `setStatus` 键带两位排序前缀，`localeCompare` 后顺序 =
  *   语义带顺序（goal 10 < provider-quota 20 < pwr 30 < solo-mode 40 <
  *   stream-token-speed 50）。宿主 footer.js 按 key `localeCompare` 拼接
- *   状态行，键本身即排序契约。
+ *   状态行，键本身即排序契约；同理段文本以 `│ ` 开头——宿主 join 只是单空格，
+ *   段边界只能靠各插件自己写的前缀区分（同上卡「段分隔与瘦身契约」）。
  * - 编辑器上方 widget：宿主按首次 `setWidget` 顺序堆叠，而 `session_start`
  *   按根 `package.json` `pi.extensions` 注册顺序逐个派发 ⇒ 扩展数组顺序
  *   即 widget 栈顺序契约（pwr-runs → run-timer → loop）。
@@ -43,5 +44,21 @@ test("footer 排序带：五个键 localeCompare 顺序固定且字面量来自�
   assert.deepEqual(sorted, keys, "localeCompare 顺序必须等于带顺序");
   for (const [name, key, file] of bands) {
     assert.ok(read(file).includes(`"${key}"`), `${name} 的源码缺少键字面量 ${key}`);
+  }
+});
+
+test("footer 段分隔：五个写入者均定义 `│ ` 前缀常量", () => {
+  const writers = [
+    ["goal", "goal/index.ts"],
+    ["provider-quota", "provider-quota/index.ts"],
+    ["pwr", "pwr/src/ui/renderer.ts"],
+    ["solo-mode", "solo-mode/index.ts"],
+    ["stream-token-speed", "stream-token-speed/status-port.ts"],
+  ] as const;
+  for (const [name, file] of writers) {
+    assert.ok(
+      read(file).includes('export const STATUS_SEPARATOR = "│ ";'),
+      `${name} 缺少 \`│ \` 段前缀常量（段边界靠插件自写前缀，宿主 join 只有单空格）`,
+    );
   }
 });

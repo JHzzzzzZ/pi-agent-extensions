@@ -2,10 +2,10 @@
  * 编排层：将适配器输出的事件驱动度量状态机，并负责 250ms 节流渲染。
  *
  * 交互流程（JHL-10-Design-v2.md §5）：
- *   assistant message_start  -> 创建 Run，显示“生成中：TTFT 等待中｜速度 —”
+ *   assistant message_start  -> 创建 Run，显示“TTFT —”
  *   message_update(eligible) -> 计入 1 个 token，到达合格刷新点时原位更新状态
  *   tool result / 工具执行   -> 不订阅、不计数、不影响任何指标
- *   assistant message_end    -> 有样本：汇总；无样本：无流式速度数据
+ *   assistant message_end    -> 有样本：汇总；无样本：清除状态（不显示 0 tok/s）
  *
  * 轮次隔离：pi 的消息流按 message_start -> message_end 严格串行，同一时刻只
  * 存在一个进行中的 assistant 消息；控制器只保留“当前轮”。新 assistant
@@ -32,7 +32,6 @@ import {
   isWarmingUp,
   shouldRender,
   updateEma,
-  NO_DATA_STATUS,
   type ClockMs,
   type MetricRun,
 } from "./metrics.ts";
@@ -98,7 +97,7 @@ export class TokenSpeedController {
     this.renderStreaming(run, status, delta.at);
   }
 
-  /** message_end：有样本 -> 汇总；无样本 -> 无流式速度数据；随后停止刷新。 */
+  /** message_end：有样本 -> 汇总；无样本 -> 清除状态；随后停止刷新。 */
   onMessageEnd(event: unknown, status: StatusPort): void {
     const end = this.adapter.onAssistantEnd(event);
     if (end === null) return;
@@ -112,7 +111,7 @@ export class TokenSpeedController {
     if (summary.hasStreamingData) {
       status.setStatus(STATUS_KEY, formatSummary(summary));
     } else {
-      status.setStatus(STATUS_KEY, NO_DATA_STATUS);
+      status.setStatus(STATUS_KEY, undefined);
     }
   }
 

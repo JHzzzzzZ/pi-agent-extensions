@@ -12,6 +12,7 @@ import {
   GOAL_STATE_ENTRY,
   MAX_GOAL_LENGTH,
   STATUS_KEY,
+  STATUS_SEPARATOR,
   buildContinueMessage,
   buildEvaluatorPrompt,
   buildStatusLine,
@@ -21,10 +22,12 @@ import {
   extractJsonObject,
   formatElapsed,
   GOAL_SUBCOMMANDS,
+  isCJK,
   parseGoalArgs,
   parseVerdict,
   RETIRED_GOAL_SUBCOMMANDS,
   truncateText,
+  visualLen,
 } from "./index.ts";
 
 // ===== 手写 fake:pi 宿主 =====
@@ -256,15 +259,16 @@ test("buildContinueMessage:包含目标/原因/轮数与证据要求", () => {
 
 test("buildStatusLine:active/paused 形态、轮数与时长", () => {
   const line = buildStatusLine({ phase: "active", goal: "修复全部测试", turns: 4, startedAtMs: 0 }, 65_000);
-  assert.ok(line.includes("◎") && line.includes("修复全部测试") && line.includes("第4轮") && line.includes("1m05s"));
+  assert.equal(line, "◎ 修复全部测试 · 4轮 · 1m05s");
   const paused = buildStatusLine({ phase: "paused", goal: "g", turns: 2, startedAtMs: 0 }, 1000);
-  assert.ok(paused.includes("已暂停") && paused.includes("⏸"));
+  assert.equal(paused, "⏸ g · 已暂停 · 1s");
 });
 
-test("buildStatusLine:超长目标截断", () => {
+test("buildStatusLine:超长目标截到 20 显示列", () => {
   const line = buildStatusLine({ phase: "active", goal: "字".repeat(60), turns: 1, startedAtMs: 0 }, 0);
-  assert.ok(line.includes("…"));
-  assert.ok(line.length < 80);
+  assert.equal(line, `◎ ${"字".repeat(9)}… · 1轮 · 0s`);
+  // 目标部分自身不超过 20 显示列
+  assert.ok(visualLen(truncateText("字".repeat(60), 20)) <= 20);
 });
 
 test("formatElapsed:各量级", () => {
@@ -274,9 +278,13 @@ test("formatElapsed:各量级", () => {
   assert.equal(formatElapsed(3_723_000), "1h02m");
 });
 
-test("truncateText:按码点截断", () => {
+test("truncateText:按显示列截断（CJK/全角按 2 列）", () => {
   assert.equal(truncateText("abcdef", 6), "abcdef");
   assert.equal(truncateText("abcdef", 5), "abcd…");
+  assert.equal(truncateText("中文测试", 6), "中文…");
+  assert.equal(truncateText("中文测试", 8), "中文测试");
+  assert.equal(visualLen("中文测试"), 8);
+  assert.ok(isCJK("中") && !isCJK("a"));
 });
 
 test("extractAssistantText:只取 assistant 文本,忽略 thinking/toolResult,超限取尾部", () => {
@@ -400,7 +408,7 @@ test("agent_settled:未达成→继续消息(triggerTurn+followUp,含原因与�
   assert.equal(message.display, true);
   assert.deepEqual(options, { triggerTurn: true, deliverAs: "followUp" });
   assert.ok(message.content.includes("测试全绿") && message.content.includes("还差 2 个测试") && message.content.includes("第 1 轮"));
-  assert.ok(fake.statuses.at(-1)!.includes("第1轮"));
+  assert.ok(fake.statuses.at(-1)!.includes("1轮"));
   assert.equal(fake.entries.filter((e) => e.customType === GOAL_STATE_ENTRY).length, 1); // 循环中不重复落盘状态
 });
 
@@ -763,6 +771,13 @@ test("STATUS_KEY 带排序带前缀（10:goal）", () => {
   assert.equal(STATUS_KEY, "10:goal");
 });
 
+test("状态行带段分隔前缀 `│ `（docs/cross/status-bar.md）", async () => {
+  const { fake } = boot();
+  await fake.commands.get("goal")!.handler("写文档", fake.makeCtx());
+  assert.ok(fake.statuses.at(-1)!.startsWith(STATUS_SEPARATOR), "状态行以 │ 开头");
+  assert.ok(fake.statuses.at(-1)!.includes("◎ 写文档 · 0轮"));
+});
+
 test("active 期间启动对齐节拍：tick 刷新“已运行”时长", async () => {
   const { fake } = boot();
   const ctx = fake.makeCtx();
@@ -772,7 +787,8 @@ test("active 期间启动对齐节拍：tick 刷新“已运行”时长", async
   const writes = fake.statuses.length;
   fireTick();
   assert.ok(fake.statuses.length > writes, "tick 写新状态");
-  assert.ok(fake.statuses.at(-1)!.includes("◎ goal"));
+  assert.ok(fake.statuses.at(-1)!.startsWith(STATUS_SEPARATOR));
+  assert.ok(fake.statuses.at(-1)!.includes("◎ "));
   assert.ok(
     fake.statusKeys.every((key) => key === STATUS_KEY),
     "所有状态都写排序带键",
