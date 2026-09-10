@@ -100,7 +100,15 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		}
 		lastViewedRunId = runId;
 		try {
-			await openRunViewer(ctx.ui, { load: viewerLoad, initialRunId: runId });
+			await openRunViewer(ctx.ui, {
+				load: viewerLoad,
+				initialRunId: runId,
+				// D 两步确认后的停止：复用 /workflows stop 的控制路径（store 同步刷新）。
+				onStop: async (stoppingRunId) => {
+					const outcome = await runControlAction(deps, store, "stop", stoppingRunId);
+					return { ok: outcome.ok, text: outcome.text };
+				},
+			});
 		} catch (err) {
 			notify(ctx, `Viewer failed: ${err instanceof Error ? err.message : String(err)}`, "warning");
 		}
