@@ -70,7 +70,11 @@ pi install ./pi-agent-extensions
 ```bash
 node tools/install-smoke.mjs        # ✓ = 12/12 扩展在干净目录下加载成功；✗ 时打印问题清单
 node tools/install-smoke.mjs --task # 加跑一条真实模型任务：让模型调用全新安装的 loop_list 工具
+node tools/install-smoke.mjs --install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
+                                    # 真跑一遍上面「方式一」的 pi install（联网）：核对装到的包版本/扩展清单/全部命令
 ```
+
+`--install <源>` 是给“推荐安装路径”本身的自动自检：在全新临时配置目录里执行真实 `pi install <源>`（git 源或本地路径都行），随后定位装到的包、核对版本与扩展清单，再复用同一套命令面/TUI 键校验。上面那条 `@dev-laptop` 命令会直接告诉你远端当前发布线装出来是什么版本、几个扩展。可叠加 `--task`：先证明 `pi install` 装出来的包能用，再让模型在该安装形态下真调一次扩展工具。
 
 `--task` 是“从零装到跑通”的端到端自检：在同一临时目录里带上你的 `auth.json`（仅临时目录内使用、结束即删，绝不打印内容），用真实模型跑一次工具调用，以事件流中的 `tool_execution_start/end` 为判据（模型自由文本不算数）。模型默认取你配置里的 `defaultProvider/defaultModel`，可用 `--model provider/id` 覆盖；普通安装冒烟不需要联网，`--task` 需要。
 
