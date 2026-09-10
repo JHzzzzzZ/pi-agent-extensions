@@ -116,6 +116,10 @@ agent 生成脚本后弹出批准卡，选 `Run once`；`/workflow:view` 可实�
 
 本地工作流编排扩展（v2.9.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
 
+![pwr 运行查看器（/workflow:view）](docs/assets/pwr-viewer.svg)
+
+> 上图与下方 agent-team 截图出自同一条无头管线（`agent-team/tools/capture-screens.mjs`，真实 `TuiMainScreen` + 真实 `RunViewer` + 记录字节流的仿真屏）：左栏 roster（结构/各 stage/结果/脚本）右栏结构图与实时状态；场景数据为示例 run `nightly-audit`，可重复生成、可 diff。
+
 ### 效果示意
 
 `/workflow:list` 运行列表（实测格式）：
@@ -222,7 +226,7 @@ npm run demo       # 模拟 /workflow UI（无宿主）
 
 ![agent-team 查看器（/team:view）](docs/assets/agent-team-viewer.svg)
 
-> 上图由 `agent-team/tools/capture-screens.mjs` **无头重放真实渲染路径**生成（真实 `TuiMainScreen` + 真实 `TranscriptViewer`，终端只换成记录字节流的仿真屏），可重复生成、可 diff：场景数据为示例 run、助手正文按纯文本渲染（未接宿主 Markdown 主题），其余布局/边框/页签/状态色均来自组件本身。
+> 上图由 `agent-team/tools/capture-screens.mjs` **无头重放真实渲染路径**生成（真实 `TuiMainScreen` + 真实 `TranscriptViewer`，终端只换成记录字节流的仿真屏），可重复生成、可 diff：场景数据为示例 run、助手正文按纯文本渲染（未接宿主 Markdown 主题），其余布局/边框/页签/状态色均来自组件本身。同一工具同时生成上方 pwr 查看器截图。
 
 效果示意（运行期间亮块，实测格式）：
 
@@ -249,7 +253,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 ```bash
 cd agent-team
 npm install && npm test        # 337 个测试（含真实 git worktree 用例）
-node tools/capture-screens.mjs # 重新生成 docs/assets/agent-team-viewer.svg（无头真实渲染）
+node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team,pwr}-viewer.svg（无头真实渲染）
 npm run typecheck
 ```
 
