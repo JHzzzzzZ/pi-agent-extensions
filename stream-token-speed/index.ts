@@ -16,7 +16,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createStreamAdapter } from "./adapter.ts";
 import { TokenSpeedController } from "./controller.ts";
-import { createStatusPort, type StatusPort, type StatusStyler } from "./status-port.ts";
+import { createStatusPort, STATUS_KEY, type StatusPort, type StatusStyler } from "./status-port.ts";
 
 export default function (pi: ExtensionAPI): void {
   const controller = new TokenSpeedController(createStreamAdapter());
@@ -51,5 +51,11 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("message_end", async (event, ctx) => {
     controller.onMessageEnd(event, portFor(ctx));
+  });
+
+  // 会话边界（/new、/resume、/fork、/reload）清掉上一轮的汇总：避免旧指标
+  // 残留到新会话，同时清共享登记（更高排序带的段重算前缀）。
+  pi.on("session_shutdown", async (_event, ctx) => {
+    portFor(ctx).setStatus(STATUS_KEY, undefined);
   });
 }

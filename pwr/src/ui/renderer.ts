@@ -11,8 +11,11 @@
 
 import { Box, Text, type Component } from "@earendil-works/pi-tui";
 import type { EntryRenderer, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { writeBand } from "./status-band.ts";
 import type { RunEntryData, RunStore } from "./types.ts";
 import { formatCount, formatDuration, formatStatus, runCardLines } from "./views.ts";
+
+export { STATUS_SEPARATOR } from "./status-band.ts";
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "paused", "awaiting_approval"]);
 
@@ -97,15 +100,12 @@ export function runStatusText(store: RunStore): string | undefined {
 	return done > 0 ? `pwr ${active.length}▶ ${done}✓` : `pwr ${active.length}▶`;
 }
 
-/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头。 */
-export const STATUS_SEPARATOR = "│ ";
-
 /**
  * Non-blocking push of status + widget from the store.
- * footer 键带 `30:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md）。
+ * footer 键带 `30:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md）；
+ * 段前缀由 `status-band` 统一决定（最前段不加 `│ `）。
  */
 export function refreshUiStatus(ui: ExtensionUIContext, store: RunStore): void {
-	const text = runStatusText(store);
-	ui.setStatus("30:pwr", text === undefined ? undefined : STATUS_SEPARATOR + text);
+	writeBand("30:pwr", runStatusText(store), (text) => ui.setStatus("30:pwr", text));
 	ui.setWidget("pwr-runs", runWidgetLines(store));
 }

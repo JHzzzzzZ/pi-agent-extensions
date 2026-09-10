@@ -22,6 +22,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
 import { startAlignedTicker } from "./aligned-ticker.ts";
+import { writeBand } from "./status-band.ts";
+
+export { STATUS_SEPARATOR } from "./status-band.ts";
 
 // ===== 常量 =====
 
@@ -34,8 +37,6 @@ export const GOAL_RESULT_ENTRY = "goal-result-v1";
 export const GOAL_CONTINUE_MESSAGE = "goal-continue";
 /** 排序带前缀：宿主按 key localeCompare 拼接 footer 状态行（docs/cross/status-bar.md） */
 export const STATUS_KEY = "10:goal";
-/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头 */
-export const STATUS_SEPARATOR = "│ ";
 /** 活动 goal 期间的状态行刷新间隔（对齐秒边界） */
 const STATUS_TICK_MS = 1000;
 /** 状态行里目标文本的显示列上限（CJK/全角按 2 列计） */
@@ -408,32 +409,39 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
       stopStatusClock();
       return;
     }
-    try {
-      if (state.phase === "idle") {
-        stopStatusClock();
-        if (lastStatusText !== null) {
+    // 前缀由 status-band 统一决定（最前段不加 `│ `）：这里只提供逻辑文本与写 UI 回调。
+    const write = (text: string | undefined): void => {
+      try {
+        if (text === undefined) {
+          if (lastStatusText === null) return;
           lastStatusText = null;
           ctx.ui.setStatus(STATUS_KEY, undefined);
+          return;
         }
-        return;
+        const styled = ctx.mode === "tui" && ctx.ui.theme ? ctx.ui.theme.fg("dim", text) : text;
+        if (styled === lastStatusText) return;
+        lastStatusText = styled;
+        ctx.ui.setStatus(STATUS_KEY, styled);
+      } catch {
+        /* 状态行失败不破坏会话 */
       }
-      // 活动/暂停期间按对齐秒节拍刷新“已运行”时长（此前只靠事件点更新）。
-      if (!stopStatusTicker) {
-        stopStatusTicker = startAlignedTicker(() => {
-          if (statusCtx) updateStatus(statusCtx);
-        }, { intervalMs: STATUS_TICK_MS });
-      }
-      const line = STATUS_SEPARATOR + buildStatusLine(
-        { phase: state.phase, goal: state.goal, turns: state.turns, startedAtMs: state.startedAtMs },
-        nowMs(),
-      );
-      const text = ctx.mode === "tui" && ctx.ui.theme ? ctx.ui.theme.fg("dim", line) : line;
-      if (text === lastStatusText) return;
-      lastStatusText = text;
-      ctx.ui.setStatus(STATUS_KEY, text);
-    } catch {
-      /* 状态行失败不破坏会话 */
+    };
+    if (state.phase === "idle") {
+      stopStatusClock();
+      writeBand(STATUS_KEY, undefined, write);
+      return;
     }
+    // 活动/暂停期间按对齐秒节拍刷新“已运行”时长（此前只靠事件点更新）。
+    if (!stopStatusTicker) {
+      stopStatusTicker = startAlignedTicker(() => {
+        if (statusCtx) updateStatus(statusCtx);
+      }, { intervalMs: STATUS_TICK_MS });
+    }
+    const line = buildStatusLine(
+      { phase: state.phase, goal: state.goal, turns: state.turns, startedAtMs: state.startedAtMs },
+      nowMs(),
+    );
+    writeBand(STATUS_KEY, line, write);
   }
 
   function notifyStatus(ctx: ExtensionContext): void {
@@ -668,7 +676,8 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
     statusCtx = undefined;
     lastStatusText = null;
     try {
-      if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
+      // 经登记表清除，让更高排序带的段重算前缀（最前段易主）。
+      if (ctx.hasUI) writeBand(STATUS_KEY, undefined, (text) => ctx.ui.setStatus(STATUS_KEY, text));
     } catch {
       /* 忽略 */
     }

@@ -4,8 +4,9 @@
  * - footer：五个 `setStatus` 键带两位排序前缀，`localeCompare` 后顺序 =
  *   语义带顺序（goal 10 < provider-quota 20 < pwr 30 < solo-mode 40 <
  *   stream-token-speed 50）。宿主 footer.js 按 key `localeCompare` 拼接
- *   状态行，键本身即排序契约；同理段文本以 `│ ` 开头——宿主 join 只是单空格，
- *   段边界只能靠各插件自己写的前缀区分（同上卡「段分隔与瘦身契约」）。
+ *   状态行，键本身即排序契约；段前缀则由每插件本地 `status-band.ts` 的进程
+ *   共享登记表统一决定：**最前段不加 `│ `**（行首定格），其余段加，任一段
+ *   出现/消失重算（同上卡「段分隔与首段定格契约」）。
  * - 编辑器上方 widget：宿主按首次 `setWidget` 顺序堆叠，而 `session_start`
  *   按根 `package.json` `pi.extensions` 注册顺序逐个派发 ⇒ 扩展数组顺序
  *   即 widget 栈顺序契约（pwr-runs → run-timer → loop）。
@@ -47,18 +48,20 @@ test("footer 排序带：五个键 localeCompare 顺序固定且字面量来自�
   }
 });
 
-test("footer 段分隔：五个写入者均定义 `│ ` 前缀常量", () => {
+test("footer 段前缀：五个写入者各带一份 status-band.ts（最前段无前缀，其余段 `│ `）", () => {
   const writers = [
-    ["goal", "goal/index.ts"],
-    ["provider-quota", "provider-quota/index.ts"],
-    ["pwr", "pwr/src/ui/renderer.ts"],
-    ["solo-mode", "solo-mode/index.ts"],
-    ["stream-token-speed", "stream-token-speed/status-port.ts"],
+    ["goal", "goal/status-band.ts", "goal/index.ts"],
+    ["provider-quota", "provider-quota/status-band.ts", "provider-quota/index.ts"],
+    ["pwr", "pwr/src/ui/status-band.ts", "pwr/src/ui/renderer.ts"],
+    ["solo-mode", "solo-mode/status-band.ts", "solo-mode/index.ts"],
+    ["stream-token-speed", "stream-token-speed/status-band.ts", "stream-token-speed/status-port.ts"],
   ] as const;
-  for (const [name, file] of writers) {
-    assert.ok(
-      read(file).includes('export const STATUS_SEPARATOR = "│ ";'),
-      `${name} 缺少 \`│ \` 段前缀常量（段边界靠插件自写前缀，宿主 join 只有单空格）`,
-    );
+  for (const [name, bandFile, boundaryFile] of writers) {
+    const band = read(bandFile);
+    assert.ok(band.includes('export const STATUS_SEPARATOR = "│ ";'), `${name} 缺少段前缀常量`);
+    assert.ok(band.includes('Symbol.for("pi.status-bar.bands.v1")'), `${name} 未接入进程共享登记表`);
+    assert.ok(band.includes("localeCompare("), `${name} 未按 key localeCompare 判定最前段`);
+    assert.ok(band.includes("export function writeBand("), `${name} 缺少 writeBand 写入边界`);
+    assert.ok(read(boundaryFile).includes("writeBand("), `${name} 写入边界未走 writeBand（前缀会被绕过）`);
   }
 });
