@@ -2,7 +2,7 @@
 
 在 pi TUI 流式回复期间显示 **TTFT（首 token 延迟）** 与 **瞬时 tokens/s**，
 结束后保留本轮 **TTFT / 平均速度**（`~` 前缀标注平均值）。
-状态文本以 `│ ` 开头（footer 段前缀契约，见 `docs/cross/status-bar.md`）。
+段前缀由 `status-band` 统一决定：**最前段无前缀（行首定格）**，非最前段以 `│ ` 开头（footer 段前缀契约，见 `docs/cross/status-bar.md`）。
 
 计量范围：文本（`text_delta`）、thinking（`thinking_delta`）、tool call
 （`toolcall_delta`）的流式增量，每个统一流事件计 1 个 token；
@@ -22,12 +22,12 @@
 
 ## 使用效果
 
-| 阶段 | 状态区显示（键：`50:stream-token-speed`，段文本以 `│ ` 开头） |
+| 阶段 | 状态区显示（键：`50:stream-token-speed`；下列为单段/最前段形态，非最前段带 `│ ` 前缀） |
 | --- | --- |
-| assistant 消息开始 | `│ TTFT —` |
-| 流式生成中（v4 热身期：前 1s） | `│ TTFT 420ms · —` |
-| 流式生成中（满 1s 后，每 250ms 节流刷新） | `│ TTFT 420ms · 18.0 tok/s` |
-| 结束（有流式数据） | `│ TTFT 420ms · ~18.0 tok/s`（`~` 标注平均速度） |
+| assistant 消息开始 | `TTFT —` |
+| 流式生成中（v4 热身期：前 1s） | `TTFT 420ms · —` |
+| 流式生成中（满 1s 后，每 250ms 节流刷新） | `TTFT 420ms · 18.0 tok/s` |
+| 结束（有流式数据） | `TTFT 420ms · ~18.0 tok/s`（`~` 标注平均速度） |
 | 结束（无流式数据） | 清除状态（不显示任何文案 / 不显示 0 tok/s） |
 
 > 状态文本在 TUI 模式下以 `ctx.ui.theme.fg("dim", text)` 渲染为灰色

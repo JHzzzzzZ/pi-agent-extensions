@@ -2,14 +2,14 @@
 <!-- PROJECT KNOWLEDGE BASE / Generated: 2026-09-09T03:12:29Z / Commit: 56da138 / Branch: dev-laptop / Parent: 根 AGENTS.md -->
 
 ## OVERVIEW
-流式回复 TTFT + 实时 tokens/s 状态条，结束后留本轮 TTFT/平均速度（`~` 标注平均）；状态段以 `│ ` 开头。
+流式回复 TTFT + 实时 tokens/s 状态条，结束后留本轮 TTFT/平均速度（`~` 标注平均）；段前缀由本地 `status-band.ts` 决定（最前段无前缀、其余段 `│ `）。
 
 ## WHERE TO LOOK
 | 任务 | 位置 |
 |---|---|
 | 事件适配 | `adapter.ts`（文本/thinking/tool call 增量纳入，tool result 与执行进度排除） |
 | 节流/状态机 | `controller.ts` + `metrics.ts`（TTFT、瞬时、平均） |
-| UI 端口 | `status-port.ts`（`ctx.hasUI` 守卫，异常隔离，每扩展一状态键 + `│ ` 段前缀；键 `50:stream-token-speed` 带排序带，见 `docs/cross/status-bar.md`） |
+| UI 端口 | `status-port.ts`（`ctx.hasUI` 守卫，异常隔离，每扩展一状态键；经 `status-band.ts` 写前缀：最前段无前缀；键 `50:stream-token-speed` 带排序带，见 `docs/cross/status-bar.md`） |
 | 入口 | `index.ts`（运行时零依赖，无需 npm install） |
 | 测试固件 | `test/fixtures.ts` `RecordingStatusPort` |
 

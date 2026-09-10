@@ -18,7 +18,7 @@
 ## 核心数据流
 
 1. `/solo`（空参切换）/ `/solo:on|:off|:status`（独立静态命令）/ 未知参数 → usage 提示（`parseSoloCommand` 只识别空参 toggle，其余返回 usage，未知不抛错）；旧空格写法（`/solo on` 等）经裸入口只提示改名、绝不执行。
-2. 开启：无 UI（`hasUI` 假或 `ui.confirm` 缺失）→ 拒绝并 warning；否则 `ctx.ui.confirm`（静态清单文案）→ 取消则不写文件；确认后写状态文件 → `setStatus("40:solo-mode", "⚡ solo")`（写入边界统一加 `│ ` 前缀）→ notify。
+2. 开启：无 UI（`hasUI` 假或 `ui.confirm` 缺失）→ 拒绝并 warning；否则 `ctx.ui.confirm`（静态清单文案）→ 取消则不写文件；确认后写状态文件 → `writeBand(SOLO_STATUS_KEY, "⚡ solo", writer)`（前缀由 status-band 决定：最前段无前缀、其余段 `│ `）→ notify。
 3. 关闭：删状态文件 → 清状态条；**删除失败必须 error notify**（否则用户以为关了但读者仍会看到激活）。
 4. 读者（pwr / opencode-bridge / deep-init）各自在审批门处 `isSoloActive()` 现读，命中则跳过 prompt、走批准路径并 notify "solo：已自动…"。
 5. `session_start`（任意 reason）清 own-pid 状态文件 + 状态条；`reason === "reload"` 且确有残留时额外 notify"已随扩展重载复位"。`session_shutdown` 同样清理。
@@ -30,7 +30,7 @@
 - **写失败 fail-closed**：状态文件写不进去 → 保持关闭 + error notify，绝不"内存里当开启"。
 - **对 PWR 只产生 once**：solo 绝不写 remembered 批准记录（`pwr/index.ts` 三处接线都强制降级 once），solo 关闭后既有 remembered 批准不受影响。
 - **异常隔离**：fs / UI 调用全部 try/catch；notify/setStatus 失败不影响状态机。
-- 状态条文本是纯字符串（宿主 `ExtensionUIContext` 无 `theme` 字段，不能调 `theme.fg`），写入时在 `setStatus` 助手内拼 `│ ` 前缀；写入前 `ctx.hasUI` 守卫。键 `40:solo-mode` 为排序带（`docs/cross/status-bar.md`），不可改回 `solo-mode`；状态是静态的，不跑 ticker。
+- 状态条文本是纯字符串（宿主 `ExtensionUIContext` 无 `theme` 字段，不能调 `theme.fg`）；写入经本地 `status-band.ts`（最前段无前缀、其余段 `│ `，低带出现/消失会重渲染本段）；写入前 `ctx.hasUI` 守卫。键 `40:solo-mode` 为排序带（`docs/cross/status-bar.md`），不可改回 `solo-mode`；状态是静态的，不跑 ticker。
 
 ## 已知坑
 
@@ -42,7 +42,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test solo-mode/index.test.ts`（14 个，仓库根执行）。
+- 必跑：`node --experimental-strip-types --test solo-mode/index.test.ts`（15 个，仓库根执行）。
 - 改命令面/文案：只动 `index.ts` 常量区与 `parseSoloCommand`，同步 `index.test.ts` 的解析与文案断言 + 根 README 小节。
 - 改状态文件契约（路径/字段/判定）：同步 `docs/cross/solo-approval-gate.md` + pwr/opencode-bridge/deep-init 的 `solo-gate.ts` 与其测试——**契约卡与三份实现必须一致**。
 - 新增采纳方：按 `docs/cross/solo-approval-gate.md` 的"新增采纳方步骤"（复制 `solo-gate.ts` + 门处判定 + notify + 两类测试 + 文档）。

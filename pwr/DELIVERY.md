@@ -1,3 +1,16 @@
+# DELIVERY — PWR 合并交付包 v2.9.2（footer 首段定格：status-band 段前缀登记）
+
+> footer 段前缀改为由每插件一份的 `src/ui/status-band.ts` 统一决定：**按 key 排序后最靠前的可见段不加 `│ `**（行首定格），其余段以 `│ ` 连接；任一段出现/消失时，进程共享登记表（`Symbol.for("pi.status-bar.bands.v1")`）通知其余段重算前缀并重渲染。`refreshUiStatus` 不再自己拼前缀，改走 `writeBand("30:pwr", runStatusText(store), writer)`；`runStatusText` 格式与推送式刷新不变。安全不变量与 439 测试不变。
+
+## 本版变更（v2.9.2）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| footer 段前缀 | 新增 `status-band.ts`（`writeBand`：登记逻辑文本 + 写 UI 回调，最前段无前缀、出现/消失重渲染其余段）；`refreshUiStatus` 改接线；`STATUS_SEPARATOR` 改为再导出 | `src/ui/status-band.ts`（新）、`src/ui/renderer.ts` |
+| 测试 | `refreshUiStatus` 断言最前段无前缀、锚点低带出现/消失的重渲染 | `tests/ui-renderer.test.ts` |
+
+---
+
 # DELIVERY — PWR 合并交付包 v2.9.1（footer 段瘦身）
 
 > footer 状态段瘦身 + 段分隔前缀（跨插件契约 `docs/cross/status-bar.md`）：`runStatusText` 从 `workflows: N active (<名> <状态>), N finished` 改为计数式 `pwr <active>▶`（有已完成时补 ` <finished>✓`；无活跃 run 仍清状态），由 `refreshUiStatus` 在唯一写入边界拼 `│ ` 前缀。安全不变量与 439 测试不变。

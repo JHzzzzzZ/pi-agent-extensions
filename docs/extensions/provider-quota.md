@@ -4,18 +4,19 @@
 
 ## 职责与边界
 
-footer 状态行显示当前 provider 的余额/额度（文本以 `│ ` 开头，无 provider 前缀；智谱 `tokX% mcpY%(HH:mm)`、Go `X%/Y%/Z%(HH:mm)`）：session 启动即查、每 5 分钟轮询、切换 model 自动刷新、`/quota` 手动刷新。内置适配 openrouter/deepseek/chatanywhere/zhipu/opencode-go。**不做**：内置列表外 provider（anthropic/openai 直连等）静默不显示；**不读环境变量取 API key**（凭据只认 auth.json）。
+footer 状态行显示当前 provider 的余额/额度（无 provider 前缀；智谱 `tokX% mcpY%(HH:mm)`、Go `X%/Y%/Z%(HH:mm)`；段前缀由本地 `status-band.ts` 决定：最前段无前缀、其余段 `│ `）：session 启动即查、每 5 分钟轮询、切换 model 自动刷新、`/quota` 手动刷新。内置适配 openrouter/deepseek/chatanywhere/zhipu/opencode-go。**不做**：内置列表外 provider（anthropic/openai 直连等）静默不显示；**不读环境变量取 API key**（凭据只认 auth.json）。
 
 ## 文件地图
 
 - `index.ts` — 全部实现（单文件约 600 行，无 package.json）。`QUOTA_ENDPOINTS` 是加新 provider 的唯一入口（url / method / auth / parse 四件套）。
-- `index.test.ts` — 26 个测试；纯解析函数 `parseZhipuQuotaLimit` / `parseOpencodeGoUsage` 显式导出且 now 由参数注入——固定时钟测试的关键设计。`STATUS_ID` 也导出供键带断言；写入边界（含 `│ ` 段前缀）用临时 HOME + 带 query 的动态 import 实例化真实扩展钩子验证。
+- `index.test.ts` — 26 个测试；纯解析函数 `parseZhipuQuotaLimit` / `parseOpencodeGoUsage` 显式导出且 now 由参数注入——固定时钟测试的关键设计。`STATUS_ID` 也导出供键带断言；写入边界（最前段无前缀 / 非最前段 `│ ` / 低带出现消失重渲染）用临时 HOME + 带 query 的动态 import 实例化真实扩展钩子验证。
+- `status-band.ts` — 每插件一份的 footer 段前缀登记（`Symbol.for("pi.status-bar.bands.v1")` 进程共享表）；`writeBand` 是唯一写入口，改前缀规则只动此文件（五份拷贝同步）。
 - provider id 经 `PROVIDER_ALIASES` 归一（glm/zai/bigmodel→zhipu，zen/opencode→opencode-go），key 读取带 `AUTH_ID_FALLBACK` 回退链。
 
 ## 核心数据流
 
 1. `session_start` 新建 session 级 AbortController → refresh + 5 分钟 setInterval；`model_select` 与 `/quota` 各触发一次 refresh。
-2. refresh：provider id 归一 → 查 adapter → 读 auth.json key（按 id，含回退链）→ fetch（10s 超时）→ adapter.parse → `theme.fg("dim", "│ " + 文本)` 写入状态键 `20:provider-quota`（排序带与段前缀契约见 `docs/cross/status-bar.md`）。
+2. refresh：provider id 归一 → 查 adapter → 读 auth.json key（按 id，含回退链）→ fetch（10s 超时）→ adapter.parse → `writeBand(STATUS_ID, 文本, writer)` 写入状态键 `20:provider-quota`，`writer` 内用 `theme.fg("dim", 前缀+文本)`（排序带与段前缀契约见 `docs/cross/status-bar.md`）。
 3. 同一 provider 的并发刷新经 in-flight Map 去重复用；解析失败/HTTP 错显示 `<provider>: <label>`，parse 返回 null 显示 `<provider>: -`。
 
 ## 不变量
@@ -25,7 +26,7 @@ footer 状态行显示当前 provider 的余额/额度（文本以 `│ ` 开头
 - zhipu 鉴权 Authorization 是原始 token，**不加 Bearer 前缀**；quota-limit 请求不附时间窗 query 参数（参考实现契约）。
 - `session_shutdown` 后未完成请求不得回写 footer：每次 setStatus 前检查 `sessionSignal.aborted`，shutdown 后保留已中止的 controller 引用让残留链路立即短路（index.ts `write` 与 `session_shutdown`）。
 - 节奏常量：5 分钟轮询、10s 超时、重试 3 次、500ms 基础指数退避（`REFRESH_MS`/`FETCH_TIMEOUT_MS`/`MAX_RETRIES`/`BASE_BACKOFF_MS`）。低频刷新**不接对齐秒节拍**（非时间显示类，跨插件状态条契约只约束时间类状态）。
-- 状态键 `20:provider-quota` 带排序带前缀，不可改回 `provider-quota`（宿主按 key localeCompare 拼接 footer）；段文本以 `│ ` 开头，前缀在 `doRefresh` 的唯一 `write` 边界拼接（含错误态，如 `│ opencode-go: no key`）。
+- 状态键 `20:provider-quota` 带排序带前缀，不可改回 `provider-quota`（宿主按 key localeCompare 拼接 footer）；段前缀由 `status-band.ts` 统一决定——`doRefresh` 的 `write` 是唯一入口（含错误态如 `opencode-go: no key`），中止的 session 只清登记不写 UI；`session_shutdown` 必须清 UI + 清登记（避免 /reload 后残留影响首段判定）。
 - 可重试分类：5xx / timeout / net err 可重试，parse err 不可（`FetchResult.retryable`）。
 
 ## 已知坑

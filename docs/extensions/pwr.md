@@ -15,7 +15,7 @@
 - `runner/discover.ts` — .md agent 发现（用户 > 项目 > 内置，trust 门控）。
 - `runtime/` — 状态机（state.ts 迁移表）、FIFO 调度器、RunCache（digest 缓存回放）、仅元数据持久化。
 - `src/errors.ts`（20 码）/ `src/types.ts`（共享契约中枢 + 上限值）。**上限值改动三处同步：src/types.ts、engine/spec.ts、runtime/types.ts。**
-- `src/ui/` — 无宿主 TUI 层；`renderer.ts` 引 pi-tui 组件（Box/Text）并写 footer 状态键 `30:pwr`（排序带与段前缀见 `docs/cross/status-bar.md`；段文本为计数式 `pwr <active>▶[ <finished>✓]`；widget 键 `pwr-runs` 不带前缀），`viewer.ts` 引宿主文本工具（truncateToWidth/wrapTextWithAnsi/visibleWidth）与 matchesKey。
+- `src/ui/` — 无宿主 TUI 层；`renderer.ts` 引 pi-tui 组件（Box/Text）并写 footer 状态键 `30:pwr`（排序带与段前缀见 `docs/cross/status-bar.md`；段文本为计数式 `pwr <active>▶[ <finished>✓]`；前缀由本地 `status-band.ts` 决定，最前段无前缀、低带出现/消失会重渲染本段；widget 键 `pwr-runs` 不带前缀），`viewer.ts` 引宿主文本工具（truncateToWidth/wrapTextWithAnsi/visibleWidth）与 matchesKey。
 - `tests/ui-viewer-host.test.ts` — 唯一实例化真实 pi-tui（TuiMainScreen + 假终端仿真器）的测试：overlay 堆叠只存在于真实合成/diff 路径。
 
 ## 核心数据流
@@ -37,7 +37,7 @@
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
 - pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。
 - solo 审批门（`src/solo-gate.ts`）：只产生 once 批准，绝不写 remembered 记录；solo 关闭后既有 remembered 批准不受影响（契约见 `docs/cross/solo-approval-gate.md`）。
-- footer 状态键 `30:pwr` 带排序带前缀（宿主按 key localeCompare 拼接，不可改回 `pwr`），段文本以 `│ ` 开头（段边界靠插件自写前缀，不可省）；格式为计数式 `pwr <active>▶`（有已完成时补 ` <finished>✓`），无活跃 run 时清状态（`runStatusText` 返回 undefined）；状态刷新是推送式（store 事件驱动），不跑周期 ticker。
+- footer 状态键 `30:pwr` 带排序带前缀（宿主按 key localeCompare 拼接，不可改回 `pwr`）；段前缀由 `src/ui/status-band.ts` 决定（最前段无前缀、其余段 `│ `，不可绕过 `writeBand` 自己拼）；格式为计数式 `pwr <active>▶`（有已完成时补 ` <finished>✓`），无活跃 run 时清状态（`runStatusText` 返回 undefined）；状态刷新是推送式（store 事件驱动），不跑周期 ticker。
 
 ## 已知坑
 

@@ -21,6 +21,7 @@ import {
   resolveSoloStatePath,
   writeSoloState,
 } from "./index.ts";
+import { writeBand } from "./status-band.ts";
 
 // ===== fake =====
 
@@ -154,7 +155,7 @@ test("开启：确认通过 → 状态文件写入 + 状态条 + notify；关闭
 
   assert.equal(fs.existsSync(file), true, "确认后写入状态文件");
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { pid: process.pid, activatedAt: "2026-08-05T12:00:00.000Z" });
-  assert.ok(statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === "│ ⚡ solo"), "状态条显示 │ ⚡ solo");
+  assert.ok(statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === "⚡ solo"), "唯一段 = 最前，无前导分隔符");
   assert.ok(notifications.some((n) => n.message.includes("已启用")), "notify 已启用");
 
   await commands.get("solo:off")!.handler("", ctx);
@@ -255,4 +256,25 @@ test("session_shutdown：清除本进程状态文件与状态条", async () => {
 test("SOLO_STATUS_KEY 带排序带前缀（40:solo-mode）", () => {
   assert.equal(SOLO_STATUS_KEY, "40:solo-mode");
   assert.equal(STATUS_SEPARATOR + SOLO_STATUS_TEXT, "│ ⚡ solo");
+});
+
+test("段前缀：最前段无 `│ `；低带出现/消失时重渲染（docs/cross/status-bar.md）", async () => {
+  const anchorWrites: Array<string | undefined> = [];
+  const anchorWriter = (t: string | undefined): void => {
+    anchorWrites.push(t);
+  };
+  const { file } = makeTempStateFile();
+  const { commands, ctx, statuses } = boot({ statePath: file });
+  try {
+    await commands.get("solo:on")!.handler("", ctx);
+    assert.equal(statuses.at(-1)!.text, "⚡ solo", "唯一段 = 最前，无前缀");
+    writeBand("05:test-anchor", "锚点", anchorWriter);
+    assert.equal(anchorWrites.at(-1), "锚点", "最前段自身无前缀");
+    assert.equal(statuses.at(-1)!.text, "│ ⚡ solo", "非最前段带前缀");
+    writeBand("05:test-anchor", undefined, anchorWriter);
+    assert.equal(statuses.at(-1)!.text, "⚡ solo", "低带消失后重渲染为最前");
+  } finally {
+    writeBand("05:test-anchor", undefined, anchorWriter);
+    await commands.get("solo:off")!.handler("", ctx);
+  }
 });

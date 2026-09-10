@@ -59,6 +59,9 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { writeBand } from "./status-band.ts";
+
+export { STATUS_SEPARATOR } from "./status-band.ts";
 
 interface QuotaInfo {
 	text: string;
@@ -350,8 +353,6 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 
 /** footer 键带 `20:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md） */
 export const STATUS_ID = "20:provider-quota";
-/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头 */
-export const STATUS_SEPARATOR = "│ ";
 const REFRESH_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -499,14 +500,16 @@ export default function (pi: ExtensionAPI) {
 	): Promise<void> {
 		// 绑定本次刷新所属的 session；任何写状态前先确认该 session 未被中止，
 		// 保证 session_shutdown 之后未完成请求不会回写已清除的 footer 状态。
+		// 段前缀由 status-band 统一决定（最前段不加 `│ `）；中止后只清登记、不写 UI。
 		const write = (value: string | undefined): void => {
-			if (sessionSignal?.aborted) return;
-			ctx.ui.setStatus(
-				STATUS_ID,
-				value === undefined
-					? undefined
-					: ctx.ui.theme.fg("dim", STATUS_SEPARATOR + value),
-			);
+			const aborted = sessionSignal?.aborted ?? false;
+			writeBand(STATUS_ID, aborted ? undefined : value, (text) => {
+				if (aborted) return;
+				ctx.ui.setStatus(
+					STATUS_ID,
+					text === undefined ? undefined : ctx.ui.theme.fg("dim", text),
+				);
+			});
 		};
 
 		const apiKey = await readApiKeyFor(authIds);
@@ -550,7 +553,9 @@ export default function (pi: ExtensionAPI) {
 		const key = PROVIDER_ALIASES[norm] ?? norm;
 		const adapter = key ? QUOTA_ENDPOINTS[key] : undefined;
 		if (!providerId || !adapter) {
-			if (!sessionSignal?.aborted) ctx.ui.setStatus(STATUS_ID, undefined);
+			if (!sessionSignal?.aborted) {
+				writeBand(STATUS_ID, undefined, (text) => ctx.ui.setStatus(STATUS_ID, text));
+			}
 			return;
 		}
 		const authIds = [...new Set([providerId, ...(AUTH_ID_FALLBACK[key] ?? [])])];
@@ -585,6 +590,8 @@ export default function (pi: ExtensionAPI) {
 			timer = undefined;
 		}
 		ctx.ui.setStatus(STATUS_ID, undefined);
+		// 同时清共享登记（让更高排序带的段重算前缀），避免 /reload 后残留旧文本。
+		writeBand(STATUS_ID, undefined, () => {});
 	});
 
 	pi.registerCommand("quota", {

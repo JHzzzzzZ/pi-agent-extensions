@@ -20,6 +20,7 @@ import {
 	parseZhipuQuotaLimit,
 	parseOpencodeGoUsage,
 } from "./index.ts";
+import { writeBand } from "./status-band.ts";
 
 // 固定本地时钟：2026-08-05 11:47:00 本地时间
 const NOW = new Date(2026, 7, 5, 11, 47, 0);
@@ -448,15 +449,16 @@ test("STATUS_ID 带排序带前缀（20:provider-quota）", () => {
 	assert.equal(STATUS_ID, "20:provider-quota");
 });
 
-// ---- 写入边界：段分隔前缀（docs/cross/status-bar.md）----
+// ---- 写入边界：段前缀（最前段无 `│ `）与排序带键（docs/cross/status-bar.md）----
 // AUTH_FILE 在模块加载时按 homedir() 求值，故先把 HOME/USERPROFILE 改到临时目录，
 // 再用带 query 的动态 import 拿一份新模块实例（避开顶部静态 import 的缓存）。
-test("写入边界：状态文本带 `│ ` 段前缀（无 key 错误态同样加前缀）", async () => {
+test("写入边界：错误态文本无前导 `│ `（最前段）；有更低排序带时带前缀且低带消失后重渲染", async () => {
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), "provider-quota-home-"));
 	const prevHome = process.env.HOME;
 	const prevProfile = process.env.USERPROFILE;
 	process.env.HOME = home;
 	process.env.USERPROFILE = home;
+	const anchorWrites: Array<string | undefined> = [];
 	try {
 		const mod = await import("./index.ts?status-prefix-test");
 		const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
@@ -478,11 +480,25 @@ test("写入边界：状态文本带 `│ ` 段前缀（无 key 错误态同样�
 		await handlers.get("session_start")!(undefined, ctx);
 		const written = statuses.at(-1);
 		assert.equal(written?.key, STATUS_ID);
-		assert.ok(written?.text?.startsWith("│ "), "错误态也带段分隔前缀");
+		assert.ok(!written?.text?.startsWith("│ "), "唯一段 = 最前，无前导分隔符");
 		assert.ok(written?.text?.includes("opencode-go: no key"), "错误文案保持原样");
+
+		// 更低排序带出现：重渲染带前缀
+		const anchorWriter = (t: string | undefined): void => {
+			anchorWrites.push(t);
+		};
+		writeBand("05:test-anchor", "锚点", anchorWriter);
+		assert.ok(statuses.at(-1)?.text?.startsWith("│ "), "非最前段带前缀");
+		assert.ok(statuses.at(-1)?.text?.includes("opencode-go: no key"));
+
+		// 低带消失：重渲染回无前缀
+		writeBand("05:test-anchor", undefined, anchorWriter);
+		assert.ok(!statuses.at(-1)?.text?.startsWith("│ "), "低带消失后恢复最前（无前缀）");
+
 		await handlers.get("session_shutdown")!(undefined, ctx);
-		assert.equal(statuses.at(-1)?.text, undefined, "shutdown 清状态（不加前缀）");
+		assert.equal(statuses.at(-1)?.text, undefined, "shutdown 清状态");
 	} finally {
+		writeBand("05:test-anchor", undefined, () => {});
 		if (prevHome === undefined) delete process.env.HOME;
 		else process.env.HOME = prevHome;
 		if (prevProfile === undefined) delete process.env.USERPROFILE;

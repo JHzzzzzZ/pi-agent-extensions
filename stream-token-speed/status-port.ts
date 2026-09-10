@@ -13,9 +13,11 @@
  * 一样做异常隔离——theme.fg 或 setStatus 任一抛错都不影响度量流程。
  */
 
+import { writeBand } from "./status-band.ts";
+
+export { STATUS_SEPARATOR } from "./status-band.ts";
+
 export const STATUS_KEY = "50:stream-token-speed" as const;
-/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头。 */
-export const STATUS_SEPARATOR = "│ ";
 
 export interface StatusPort {
   available(): boolean;
@@ -44,13 +46,15 @@ export function createStatusPort(
     },
     setStatus(key, text): void {
       if (!isAvailable()) return;
-      try {
-        const prefixed = text === undefined ? undefined : STATUS_SEPARATOR + text;
-        const styled = prefixed !== undefined && style !== undefined ? style(prefixed) : prefixed;
-        ui.setStatus(key, styled);
-      } catch {
-        // 隔离 UI 异常：扩展故障不得中断、延迟或改写模型回复及工具调用。
-      }
+      // 段前缀由 status-band 统一决定（最前段不加 `│ `）；异常在本回调内隔离。
+      writeBand(key, text, (prefixed) => {
+        try {
+          const styled = prefixed !== undefined && style !== undefined ? style(prefixed) : prefixed;
+          ui.setStatus(key, styled);
+        } catch {
+          // 隔离 UI 异常：扩展故障不得中断、延迟或改写模型回复及工具调用。
+        }
+      });
     },
   };
 }

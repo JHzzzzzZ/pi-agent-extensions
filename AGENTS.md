@@ -24,8 +24,8 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 ## 关键目录
 
 - `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键/状态条/solo 审批门）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
-- `test/` — 根契约测试（`status-bar-contract.test.ts`：footer 排序带 + 段前缀 + widget 栈顺序，`npm run test:contract`）。
-- 卫星扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约）。
+- `test/` — 根契约测试（`status-bar-contract.test.ts`：footer 排序带 + 段分隔/首段定格 + widget 栈顺序，`npm run test:contract`）。
+- 卫星扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port/status-band + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota` + `status-band.ts`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器 + `status-band.ts`）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约 + `status-band.ts`）。
 
 pwr 与 agent-team 的目录地图、架构与数据流：见 `docs/extensions/pwr.md` + `pwr/DELIVERY.md`（权威架构/安全文档 + 版本历史）与 `docs/extensions/agent-team.md`。
 
@@ -52,9 +52,9 @@ npm run test:contract   # 状态条排序带 + 段前缀 + widget 栈顺序（3 
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 45 个测试
 cd agent-team && npm install && npm test                                        # 326 个测试（node --test test/*.test.ts）
 node --experimental-strip-types --test run-timer/run-timer.test.ts run-timer/aligned-ticker.test.ts   # 59 个测试，此目录无 package.json
-node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts                # 62 个测试，此目录无 package.json
+node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts                # 63 个测试，此目录无 package.json
 node --experimental-strip-types --test human-notify/index.test.ts                # 37 个测试，此目录无 package.json
-node --experimental-strip-types --test solo-mode/index.test.ts                    # 14 个测试，此目录无 package.json
+node --experimental-strip-types --test solo-mode/index.test.ts                    # 15 个测试，此目录无 package.json
 node --experimental-strip-types --test provider-quota/index.test.ts              # 26 个测试，此目录无 package.json
 node --experimental-strip-types --test chatanywhere-provider/test/*.test.ts        # 32 个测试，此目录无 package.json
 cd loop && npm install && npm test                                               # 193 个测试；另有 npm run typecheck
@@ -84,7 +84,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **安全不变量**（PWR）：无 `vm`/`eval`；执行前白名单校验；fail-closed 默认（缺 engine/runner ⇒ 类型化错误，无隐式回退）；脚本源码/args 永不持久化；`pwr-tmp://` 仅进程内；不存 API key；错误信息为静态模板。
 - **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
 - **TUI 约定（卫星扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
-- **状态条契约（跨插件，`docs/cross/status-bar.md`）：** ① 时间类状态一律对齐同一墙钟秒边界刷新——各插件带一份 `aligned-ticker.ts`（首跳对齐、自校正、异常吞掉），生产禁用裸 `setInterval` 计时器；非时间类刷新（流式节流/低频轮询/推送）不受约束；② 写入前做文本指纹比对，内容不变跳过 `setStatus`/`setWidget`；③ footer 状态键带两位排序前缀：`10:goal` / `20:provider-quota` / `30:pwr` / `40:solo-mode` / `50:stream-token-speed`（宿主按 key `localeCompare` 拼接，不得改回无前缀键）；④ 编辑器上方 widget 栈顺序 = 根 `package.json` `pi.extensions` 注册顺序（`pwr-runs` → `run-timer` → `loop`）——该顺序只在**首次挂载**时成立；宿主 `setExtensionWidget` 每次刷新都会把 key 移到栈底（周期性刷新 widget 因此逐秒换位），这是宿主行为，本仓库不打补丁（`AGENTS.md` 规则红线·仓库边界），问题走上游（issue 草稿 `docs/pi-widget-order-issue.md`）；改注册顺序须同步根契约测试；⑤ **段分隔与瘦身**：每段文本以 `│ `（U+2502+空格）开头，前缀在各自唯一写入边界拼接、包在自家 dim 样式内且计入文本指纹；段文本格式（goal 目标 ≤20 显示列、provider-quota 去 provider 前缀与倒计时、pwr 计数式 `pwr N▶ M✓`、stream-token-speed 汇总 `~` 标注平均/无数据清状态）锁定在 `docs/cross/status-bar.md`「段分隔与瘦身契约」；五个写入者各导出本地 `STATUS_SEPARATOR = "│ "` 常量（不跨插件共享），根契约测试校验，不得去掉前缀或改回无前缀键。
+- **状态条契约（跨插件，`docs/cross/status-bar.md`）：** ① 时间类状态一律对齐同一墙钟秒边界刷新——各插件带一份 `aligned-ticker.ts`（首跳对齐、自校正、异常吞掉），生产禁用裸 `setInterval` 计时器；非时间类刷新（流式节流/低频轮询/推送）不受约束；② 写入前做文本指纹比对，内容不变跳过 `setStatus`/`setWidget`；③ footer 状态键带两位排序前缀：`10:goal` / `20:provider-quota` / `30:pwr` / `40:solo-mode` / `50:stream-token-speed`（宿主按 key `localeCompare` 拼接，不得改回无前缀键）；④ 编辑器上方 widget 栈顺序 = 根 `package.json` `pi.extensions` 注册顺序（`pwr-runs` → `run-timer` → `loop`）——该顺序只在**首次挂载**时成立；宿主 `setExtensionWidget` 每次刷新都会把 key 移到栈底（周期性刷新 widget 因此逐秒换位），这是宿主行为，本仓库不打补丁（`AGENTS.md` 规则红线·仓库边界），问题走上游（issue 草稿 `docs/pi-widget-order-issue.md`）；改注册顺序须同步根契约测试；⑤ **段分隔与首段定格**：按 key 排序后**最靠前的可见段不加 `│ `**（行首定格），其余段以 `│ `（U+2502+空格）连接；任一段出现/消失时所有已登记段立即重算前缀并重渲染。协调走每插件一份 `status-band.ts`（`Symbol.for("pi.status-bar.bands.v1")` 进程共享登记表 + `writeBand(key, text, writer)`）——不跨插件 import、单目录仍可复制安装；只认识同样使用该模块的写入者（本仓库五个 footer 写入者）。写入边界不得自己拼前缀，且 `session_shutdown` 必须清登记（防 /reload 残留），前缀决策在插件 dim 样式之前且计入指纹；段文本格式（goal 目标 ≤20 显示列、provider-quota 去 provider 前缀与倒计时、pwr 计数式 `pwr N▶ M✓`、stream-token-speed 汇总 `~` 标注平均/无数据清状态）锁定在 `docs/cross/status-bar.md`「段分隔、首段定格与瘦身契约」；根契约测试校验五份 `status-band.ts` 与写入边界接线。
 - 缩进：`pwr/` 用 tab，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/`、`solo-mode/` 用 2 空格。
 
 
@@ -118,6 +118,6 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 326；run-timer 59；loop 193；goal 62；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 14；根契约 3。
+- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 326；run-timer 59；loop 193；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 15；根契约 3。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。

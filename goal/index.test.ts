@@ -29,6 +29,7 @@ import {
   truncateText,
   visualLen,
 } from "./index.ts";
+import { writeBand } from "./status-band.ts";
 
 // ===== 手写 fake:pi 宿主 =====
 
@@ -771,11 +772,35 @@ test("STATUS_KEY 带排序带前缀（10:goal）", () => {
   assert.equal(STATUS_KEY, "10:goal");
 });
 
-test("状态行带段分隔前缀 `│ `（docs/cross/status-bar.md）", async () => {
+test("状态行是逻辑文本（不含前缀），最前段行首定格（docs/cross/status-bar.md）", async () => {
   const { fake } = boot();
   await fake.commands.get("goal")!.handler("写文档", fake.makeCtx());
-  assert.ok(fake.statuses.at(-1)!.startsWith(STATUS_SEPARATOR), "状态行以 │ 开头");
-  assert.ok(fake.statuses.at(-1)!.includes("◎ 写文档 · 0轮"));
+  const line = fake.statuses.at(-1)!;
+  assert.ok(!line.startsWith(STATUS_SEPARATOR), "唯一段 = 最前，无前导分隔符");
+  assert.ok(line.startsWith("◎ 写文档 · 0轮"));
+});
+
+test("存在更低排序带时带 `│ ` 前缀；低带出现/消失触发重渲染", async () => {
+  const anchorWrites: Array<string | undefined> = [];
+  const anchorWriter = (t: string | undefined): void => {
+    anchorWrites.push(t);
+  };
+  try {
+    const fake = boot().fake;
+    writeBand("05:test-anchor", "锚点", anchorWriter);
+    assert.equal(anchorWrites.at(-1), "锚点", "最前段自身无前缀");
+    await fake.commands.get("goal")!.handler("写文档", fake.makeCtx());
+    assert.ok(fake.statuses.at(-1)!.startsWith(STATUS_SEPARATOR), "非最前段带前缀");
+    assert.ok(fake.statuses.at(-1)!.includes("◎ 写文档 · 0轮"));
+
+    // 低带消失：goal 的最前段易主，登记表触发重渲染（无需事件/节拍）
+    writeBand("05:test-anchor", undefined, anchorWriter);
+    const rerendered = fake.statuses.at(-1)!;
+    assert.ok(!rerendered.startsWith(STATUS_SEPARATOR), "低带消失后重渲染为最前（无前缀）");
+    assert.ok(rerendered.includes("◎ 写文档 · 0轮"));
+  } finally {
+    writeBand("05:test-anchor", undefined, anchorWriter);
+  }
 });
 
 test("active 期间启动对齐节拍：tick 刷新“已运行”时长", async () => {
@@ -787,8 +812,7 @@ test("active 期间启动对齐节拍：tick 刷新“已运行”时长", async
   const writes = fake.statuses.length;
   fireTick();
   assert.ok(fake.statuses.length > writes, "tick 写新状态");
-  assert.ok(fake.statuses.at(-1)!.startsWith(STATUS_SEPARATOR));
-  assert.ok(fake.statuses.at(-1)!.includes("◎ "));
+  assert.ok(fake.statuses.at(-1)!.startsWith("◎ "));
   assert.ok(
     fake.statusKeys.every((key) => key === STATUS_KEY),
     "所有状态都写排序带键",
