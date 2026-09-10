@@ -1,6 +1,6 @@
 # solo 审批门 — 跨扩展契约（solo-mode ↔ 审批方）
 
-> last verified @ 4ef27b6
+> last verified @ 134a3d6
 
 solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/solo` 开启后，**审批摩擦类**确认自动按批准路径通过。本卡是唯一语义事实来源——读者（pwr / opencode-bridge / deep-init 各一份 `solo-gate.ts`）与写者（solo-mode）都必须符合本卡。
 

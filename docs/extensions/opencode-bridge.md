@@ -1,6 +1,6 @@
 # opencode-bridge — HTTP CONNECT → SOCKS5 桥 helper 的拉起与 settings 联动
 
-> last verified @ 4ef27b6
+> last verified @ 134a3d6
 
 ## 职责与边界
 
