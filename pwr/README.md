@@ -125,7 +125,7 @@ pwr/
 ```powershell
 cd pwr
 npm install        # 仅开发依赖（typescript、@types/node、typebox、pi 宿主类型）
-npm test           # 437 个单测（test/ 103 + tests/ 233 + runtime/test/ 56 + runner/test/ 45）
+npm test           # 438 个单测（test/ 104 + tests/ 233 + runtime/test/ 56 + runner/test/ 45）
 npm run typecheck  # tsc --noEmit（strict）
 ```
 

@@ -174,6 +174,6 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
 D
-- **数量（grep 实测）：** pwr 437 个测试，分布在 35 个 `*.test.ts`（test/ 103、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 309；run-timer 59；loop 193；goal 61；provider-quota 25；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 14；根契约 2。
+- **数量（grep 实测）：** pwr 438 个测试，分布在 35 个 `*.test.ts`（test/ 104、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 43；agent-team 309；run-timer 59；loop 193；goal 61；provider-quota 25；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 14；根契约 2。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。

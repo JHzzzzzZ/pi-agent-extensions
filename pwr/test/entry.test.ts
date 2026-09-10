@@ -135,6 +135,44 @@ test("bare /workflow keeps generation；旧子命令词只提示改名不生成"
 	assert.equal(sentMessages[0]!.message.customType, PWR_GENERATION_CUSTOM_TYPE);
 });
 
+test("bare /workflows：旧子命令词只提示改名；自由形态（help/空参=列表）保留", async () => {
+	const { commandHandlers } = register();
+	const notifyCalls: Array<{ text: string; type: string }> = [];
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		ui: {
+			notify: (text: string, type: string) => notifyCalls.push({ text, type }),
+			setStatus() {},
+			setWidget() {},
+		},
+		sessionManager: { getEntries: () => [] },
+	} as never;
+	const handler = commandHandlers.get("workflows");
+	assert.ok(handler, "/workflows 命令 handler 可调用");
+
+	for (const head of ["list", "view", "pause", "approve"]) {
+		notifyCalls.length = 0;
+		await handler!(head, ctx);
+		assert.equal(notifyCalls.at(-1)?.type, "warning", `/${head} 提示为 warning`);
+		assert.match(notifyCalls.at(-1)?.text ?? "", new RegExp(`已改名为「/workflows:${head}」`));
+	}
+
+	notifyCalls.length = 0;
+	await handler!("help", ctx);
+	assert.match(notifyCalls.at(-1)?.text ?? "", /colon command surface/, "裸词 help 仍显示帮助");
+
+	notifyCalls.length = 0;
+	await handler!("", ctx);
+	assert.ok(!(notifyCalls.at(-1)?.text ?? "").includes("已改名"), "空参=列表，不是改名提示");
+
+	const listHandler = commandHandlers.get("workflows:list");
+	assert.ok(listHandler, "冒号 list 命令可调用");
+	notifyCalls.length = 0;
+	await listHandler!("", ctx);
+	assert.ok((notifyCalls.at(-1)?.text ?? "").length > 0, "冒号 list handler 有输出");
+});
+
 test("merged entry: workflow_validate fails with ENGINE_UNAVAILABLE until session_start resolves the engine", async () => {
 	const { tools } = register();
 	const validate = tools.find((t) => t.name === "workflow_validate")!;

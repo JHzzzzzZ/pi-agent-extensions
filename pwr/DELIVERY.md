@@ -9,7 +9,7 @@
 | 冒号命令面 | `/workflow` 裸命令（空参=用法；旧词 `run|delete|model` 只提示改名；其余=生成）+ 3 条独立命令；新增 `parseWorkflowRunArgs` 解析 `<name> [args]`；新增常表 `WORKFLOW_SUBCOMMANDS`/`RETIRED_WORKFLOW_SUBCOMMANDS`/`firstToken` | `src/intent.ts`、`index.ts` |
 | /workflows 冒号化 | 裸命令保留 `parseWorkflowsArgs` 自由形态（列表/详情/--filter/help）；12 条独立命令各有 handler；新增 `parseRunRefArgs` 收敛单 runId 参数；`parseControlArgs` usage 文案改冒号；新增常表 `WORKFLOWS_SUBCOMMANDS`/`RETIRED_WORKFLOWS_SUBCOMMANDS`（`help` 不入退役表） | `src/ui/commands.ts`、`src/ui/index.ts` |
 | 文案 | help/详情 Actions/saved 列表/保存回执/Usage 全部改冒号形式；快捷键与 solo 批准门接线不变 | `src/ui/views.ts`、`src/ui/save-flow.ts`、`src/tools.ts`、`index.ts` |
-| 测试（437） | intent 路由测试改常表/运行参数；ui-commands 删 router 测试、加 `parseRunRefArgs` 与退役词映射；ui-views 断言冒号 Actions；entry 断言完整 17 条命令集 + 裸 `/workflow` 改名提示不生成 | `tests/intent.test.ts`、`tests/ui-commands.test.ts`、`tests/ui-views.test.ts`、`test/entry.test.ts` |
+| 测试（438） | intent 路由测试改常表/运行参数；ui-commands 删 router 测试、加 `parseRunRefArgs` 与退役词映射；ui-views 断言冒号 Actions；entry 断言完整 17 条命令集 + 裸 `/workflow` 改名提示不生成 + 裸 `/workflows` 改名提示/自由形态保留 | `tests/intent.test.ts`、`tests/ui-commands.test.ts`、`tests/ui-views.test.ts`、`test/entry.test.ts` |
 
 ---
 

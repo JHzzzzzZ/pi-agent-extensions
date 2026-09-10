@@ -4,7 +4,7 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows:view` fleet 式分栏查看器；`/workflows:*` 与 `/workflow:run|:delete|:model` 冒号命令面） | 437 个（node:test） |
+| [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflows:view` fleet 式分栏查看器；`/workflows:*` 与 `/workflow:run|:delete|:model` 冒号命令面） | 438 个（node:test） |
 | [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 309 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 43 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
@@ -196,7 +196,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ```bash
 cd pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 437 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 438 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflows UI（无宿主）
 ```
