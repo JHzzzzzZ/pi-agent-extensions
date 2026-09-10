@@ -1,3 +1,16 @@
+# DELIVERY — PWR 合并交付包 v2.8.1（footer 段瘦身）
+
+> footer 状态段瘦身 + 段分隔前缀（跨插件契约 `docs/cross/status-bar.md`）：`runStatusText` 从 `workflows: N active (<名> <状态>), N finished` 改为计数式 `pwr <active>▶`（有已完成时补 ` <finished>✓`；无活跃 run 仍清状态），由 `refreshUiStatus` 在唯一写入边界拼 `│ ` 前缀。安全不变量与 438 测试不变。
+
+## 本版变更（v2.8.1）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| footer 段 | 计数式短文案（不再显示脚本名/状态词）+ `│ ` 前缀；新增 `STATUS_SEPARATOR` 常量；`refreshUiStatus` 对 undefined 仍写 undefined | `src/ui/renderer.ts` |
+| 测试 | `runStatusText` 精确串断言（`pwr 2▶ 1✓` / `pwr 1▶` / undefined）+ `refreshUiStatus` 前缀断言 | `tests/ui-renderer.test.ts` |
+
+---
+
 # DELIVERY — PWR 合并交付包 v2.8.0（命令面冒号化）
 
 > 把命令面从 v2.6.0 的空格子命令式改回冒号命名空间式（每个子命令一条独立静态注册命令）：`/workflow` 增加独立命令 `/workflow:run|:delete|:model`；`/workflows` 增加独立命令 `/workflows:list|:view|:open|:pause|:resume|:stop|:restart|:save|:saved|:script|:approve|:help`。裸 `/workflow` 保留生成入口（`/workflow <任务>` 与 `workflow:` 前缀），裸 `/workflows` 保留无参=列表、`<runId>`=详情、`--filter <状态>`、`help|--help|-h`=帮助。旧空格写法不再执行——裸命令命中旧子命令词时只提示改名（防止 `/workflow run …` 误触发生成回合）。`parseWorkflowCommandRoute`/`parseWorkflowsCommand` 退役；功能与安全不变量不变。

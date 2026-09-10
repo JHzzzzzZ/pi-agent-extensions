@@ -31,6 +31,26 @@
 
 规则：两位数字带 + `:`，留 10 的间隔供未来插入；新增插件按语义带编号，并同步 `test/status-bar-contract.test.ts` 的 bands 表（该测试同时校验键字面量确实出现在对应源码）。排序带键只是内部键，用户不可见。
 
+## 段分隔与瘦身契约（多源挤占优化）
+
+宿主 `footer.js` 把各扩展状态 `sortedStatuses.join(" ")` 后按宽度右截断：段间只有单空格、按字符硬切、无优先级；`setStatus` 文本里的 `\n` 也会被 `sanitizeStatusText()` 吞成空格——**多行 footer 必须接管 footer 渲染（`ctx.ui.setFooter`），本轮不做**（宿主补丁已禁用，见 `AGENTS.md`「仓库边界」）。替代约定：
+
+- **段前缀**：每段文本以 `│ `（U+2502 + 空格）开头。前缀在各插件自己的**唯一写入边界**拼接，且包在插件自己的 dim 样式内（goal `updateStatus`、provider-quota `doRefresh` 的 `write`、pwr `refreshUiStatus`、solo-mode `setStatus` 助手、stream-token-speed `status-port.setStatus`）；文本指纹比较含前缀，内容不变仍跳过写入。五个写入者各导出本地 `STATUS_SEPARATOR = "│ "` 常量（不跨插件共享，保持单目录可复制安装）。
+- **瘦身格式**（宽度按终端显示列；goal 目标按 CJK 双宽截到 20 列）：
+
+| 带 | 扩展 | 格式 | 示例 |
+| --- | --- | --- | --- |
+| 10 | goal | `◎ <目标≤20列> · <N>轮 · <时长>` / `⏸ <目标≤20列> · 已暂停 · <时长>` | `│ ◎ 修复全部测试 · 4轮 · 1m05s` |
+| 20 | provider-quota | 去 provider 前缀；智谱 `tokX% mcpY%(HH:mm)`、Go `X%/Y%/Z%(HH:mm)` | `│ tok72% mcp40%(14:30)` · `│ 15%/6%/3%(03:41)` |
+| 30 | pwr | `pwr <active>▶[ <finished>✓]`（无活跃 run 时清状态） | `│ pwr 2▶ 1✓` |
+| 40 | solo-mode | `⚡ solo`（静态） | `│ ⚡ solo` |
+| 50 | stream-token-speed | `TTFT <ms>ms · <值>`；汇总 `TTFT <ms>ms · ~<平均> tok/s` | `│ TTFT 412ms · 86.4 tok/s` |
+
+provider-quota 各 adapter 文本（前缀由写入边界统一加）：OpenRouter `$12.50 (used $3.25)`；DeepSeek `10.00 CNY`；ChatAnywhere `60.00`；智谱 `tok72% mcp40%(14:30)`（跨日 `(09-11 00:44)`，时间不可解析/早于 now-24h 则省略括号，只剩时间时输出 `(16:00)`）；OpenCode Go `15%/6%/3%(03:41)`（缺失窗口跳过，重置时间取命中限额窗口 rolling>weekly>monthly，否则 5h 窗口）。智谱/Go 只保留绝对时间，倒计时已删。stream-token-speed 等待态 `TTFT —`、热身 `TTFT 412ms · —`、无流式数据时清除状态（不再显示「无流式速度数据」）。
+
+- **宽度账**（120 列、五段全亮最坏）：38（goal 20 列 CJK）+ 22（GLM）+ 11（pwr）+ 9（solo）+ 26（stream 汇总）+ 4（宿主 join）≈ **110 列**。
+- 非目标：不做字段轮播、不做跨插件聚合、不改宿主排序/截断行为。
+
 ## widget 栈顺序
 
 - **编辑器上方**（`setWidget(key, lines)` 无 placement）顺序（**首次挂载**）= 扩展注册顺序 = 根 `package.json` `pi.extensions` 数组顺序：宿主 `session_start` 按注册顺序逐个 `await` 派发，首个 `setWidget` 决定 widget Map 插入序。当前契约：`pwr-runs → run-timer → loop`（loop 无任务时懒挂载，首次出现位于当时栈底）。
