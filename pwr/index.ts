@@ -6,23 +6,22 @@
  * - Injects generation constraints into the main agent
  * - workflow_validate / workflow_start / workflow_control / workflow_save
  * - Start approval card (once / remember / view script / reject)
- * - `/workflow:<name> <args>` saved commands (registered on save + at
- *   session_start; args schema-validated; digest-gated re-approval)
+ * - `/workflow run <name> [args]` saved workflows (read from disk at
+ *   invocation; args schema-validated; digest-gated re-approval)
  * - agent_settled -> final summary back to the main session
  *
  * Install location (when enabled): ~/.pi/agent/extensions/pwr/index.ts
  * or .pi/extensions/pwr/index.ts (trusted project).
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { argsSchemaHint } from "./src/args.ts";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { ApprovalStore } from "./src/approval.ts";
 import { canonicalProjectPath } from "./src/approval.ts";
 import { buildGenerationRequest } from "./src/constraints.ts";
 import { getValidationEngine } from "./src/engine.ts";
 import { AUTO_MODEL, PwrModelConfig } from "./src/model-config.ts";
 import { PWR_APPROVAL_ENTRY, PWR_GENERATION_CUSTOM_TYPE, PWR_RUN_ENTRY } from "./src/types.ts";
-import { matchWorkflowPrefix, parseWorkflowCommandArgs, WORKFLOW_COMMAND, type GenerationRequest } from "./src/intent.ts";
+import { matchWorkflowPrefix, parseWorkflowCommandArgs, parseWorkflowCommandRoute, WORKFLOW_COMMAND, type GenerationRequest } from "./src/intent.ts";
 import { RunNotifier } from "./src/notify.ts";
 import { RunRegistry, type SaveAdapter } from "./src/flow.ts";
 import { confirmApprovalCard, formatPlanText, registerPwrTools, type ApprovalCardInfo, type ToolDeps } from "./src/tools.ts";
@@ -36,8 +35,7 @@ import {
 	invokeSavedWorkflow,
 	isPwrError,
 	listSavedWorkflows,
-	loadSavedWorkflow,
-	readMetaFromSource,
+	normalizeCommandName,
 	saveWorkflowCommand,
 	type ApprovalDecision,
 } from "./src/save.ts";
@@ -94,9 +92,9 @@ async function resolveAgentRunner(
 export default function pwrExtension(pi: ExtensionAPI): void {
 	const approvals = new ApprovalStore();
 	const registry = new RunRegistry();
-	// Workflow default model: /pwr-model auto | <model-id>. Loaded at module
-	// load so the runner gets the persisted value immediately; the live
-	// main-session model id is tracked in session_start / model_select.
+	// Workflow default model: /workflow model auto | <model-id>. Loaded at
+	// module load so the runner gets the persisted value immediately; the
+	// live main-session model id is tracked in session_start / model_select.
 	const modelConfig = new PwrModelConfig();
 	modelConfig.load();
 	let generationRequest: GenerationRequest | null = null;
@@ -127,47 +125,19 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 	// persisted entry carry the path.
 	const resultsDir = (): string => path.join(deps.getUserWorkflowsDir?.() ?? defaultUserWorkflowsDir(), "results");
 
-	// ----- saved-workflow command registry (JHL-17) -----
-	// `workflow:<name>` commands are registered once per session (saved on
-	// demand, scanned from disk at session_start). Handlers always read the
-	// file fresh at invocation time, so an overwrite never needs to
-	// re-register a command.
-	const registeredCommands = new Set<string>();
+	// ----- saved-workflow invocation (JHL-17) -----
+	// 命令风格统一后不再动态注册 `/workflow:<name>`：saved 调用由统一
+	// `/workflow run <name> [args]` 子命令在运行时现读盘（loadSavedWorkflow
+	// 本就调用时读文件），保存/删除都无需再注册命令。
 
-	function registerSavedCommand(name: string): void {
-		if (registeredCommands.has(name)) return;
-		pi.registerCommand(`workflow:${name}`, {
-			description: savedCommandDescription(name),
-			handler: async (args, ctx) => {
-				const result = await invokeSavedWorkflow(deps, { name, rawArgs: args ?? "" }, (info) => approveSavedCommand(ctx, info));
-				if (result && isPwrError(result)) {
-					ctx.ui.notify(`[PWR] ${result.code}: ${result.message}`, "error");
-					return;
-				}
-				if (result && result.ok) {
-					ctx.ui.notify(`[PWR] ${result.message}`, "info");
-				}
-			},
-		});
-		registeredCommands.add(name);
-	}
-
-	/**
-	 * Static command description enriched with the saved script's args usage
-	 * hint (key=value forms, e.g. `files=string[] depth?=number`), so the
-	 * invocation syntax is discoverable from the command palette.
-	 */
-	function savedCommandDescription(name: string): string {
-		const base = `Run the saved PWR workflow "${name}" (loaded from ~/.pi/agent/workflows or .pi/workflows).`;
+	/** saved 名集合（信任门控与调用路径一致：未信任项目的 .pi/workflows 不参与）。 */
+	const isSavedWorkflowName = (name: string): boolean => {
 		try {
-			const loaded = loadSavedWorkflow(deps, name);
-			if (isPwrError(loaded)) return base;
-			const hint = argsSchemaHint(readMetaFromSource(loaded.source)?.argsSchema);
-			return hint ? `${base} Args: ${hint} (key=value or JSON).` : `${base} Args: key=value or JSON.`;
+			return listSavedWorkflows(deps).includes(normalizeCommandName(name));
 		} catch {
-			return base;
+			return false;
 		}
-	}
+	};
 
 	/** Bridges the saved-command approval card to the same UI loop as workflow_start. */
 	function approveSavedCommand(
@@ -186,15 +156,11 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		return confirmApprovalCard(c as never, cardInfo);
 	}
 
-	// ----- save adapter: persist + register (JHL-17) -----
+	// ----- save adapter: persist (JHL-17) -----
 	const saveAdapter: SaveAdapter = {
 		async save(input) {
 			const { runId, scope, name, overwrite } = input;
-			const result = await saveWorkflowCommand(deps, { runId, scope, name, overwrite });
-			if (!isPwrError(result)) {
-				registerSavedCommand(result.commandName);
-			}
-			return result;
+			return await saveWorkflowCommand(deps, { runId, scope, name, overwrite });
 		},
 	};
 	deps.saveAdapter = saveAdapter;
@@ -210,66 +176,84 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 	);
 	deps.notifier = notifier;
 
-	// ----- /pwr-model: workflow default model -----
-	pi.registerCommand("pwr-model", {
-		description: "Set the default model for PWR workflow agents: /pwr-model auto | <model-id> (no args shows current).",
-		handler: async (args, ctx) => {
-			const arg = (args ?? "").trim().split(/\s+/)[0] ?? "";
-			if (!arg) {
-				const s = modelConfig.describe();
-				ctx.ui.notify(
-					`[PWR] workflow model: ${s.mode === AUTO_MODEL ? "auto (follow main session)" : s.mode}` +
-						` · main session: ${s.sessionModel ?? "unknown"}` +
-						` · effective: ${s.effective ?? "child pi default (settings.json)"}`,
-					"info",
-				);
-				return;
-			}
-			if (arg === AUTO_MODEL || arg === "--auto" || arg === "-a") {
-				modelConfig.set(AUTO_MODEL);
-				ctx.ui.notify("[PWR] workflow model = auto: agents follow the main session model.", "info");
-				return;
-			}
-			modelConfig.set(arg);
-			ctx.ui.notify(`[PWR] workflow model = ${arg} (fixed for all workflow agents).`, "info");
-		},
-	});
+	// ----- /workflow model: workflow default model -----
+	async function runWorkflowModel(ctx: ExtensionCommandContext, arg: string): Promise<void> {
+		if (!arg) {
+			const s = modelConfig.describe();
+			ctx.ui.notify(
+				`[PWR] workflow model: ${s.mode === AUTO_MODEL ? "auto (follow main session)" : s.mode}` +
+					` · main session: ${s.sessionModel ?? "unknown"}` +
+					` · effective: ${s.effective ?? "child pi default (settings.json)"}`,
+				"info",
+			);
+			return;
+		}
+		if (arg === AUTO_MODEL || arg === "--auto" || arg === "-a") {
+			modelConfig.set(AUTO_MODEL);
+			ctx.ui.notify("[PWR] workflow model = auto: agents follow the main session model.", "info");
+			return;
+		}
+		modelConfig.set(arg);
+		ctx.ui.notify(`[PWR] workflow model = ${arg} (fixed for all workflow agents).`, "info");
+	}
 
-	// ----- /workflow-delete: remove a saved workflow -----
+	// ----- /workflow delete: remove a saved workflow -----
 	// Project-scope file is deleted first (trusted projects only), then the
-	// user-scope file — the same resolution order as loading. The previously
-	// registered /workflow:<name> command stays until /reload and reports
-	// WORKFLOW_NOT_FOUND on invocation (pi has no unregisterCommand API).
-	pi.registerCommand("workflow-delete", {
-		description: "Delete a saved PWR workflow: /workflow-delete <name> (no name lists saved workflows).",
-		handler: async (args, ctx) => {
-			const name = (args ?? "").trim().split(/\s+/)[0] ?? "";
-			if (!name) {
-				// No name: show what is saved instead of a bare usage line.
-				ctx.ui.notify(`${formatSavedWorkflows(describeSavedWorkflows(deps))}\n\nUsage: /workflow-delete <name>`, "info");
-				return;
-			}
-			const result = deleteSavedWorkflow(deps, name);
-			if (isPwrError(result)) {
-				ctx.ui.notify(`[PWR] ${result.code}: ${result.message}`, "error");
-				return;
-			}
-			ctx.ui.notify(`[PWR] Deleted workflow "${name}" (${result.scope} scope).`, "info");
-		},
-	});
+	// user-scope file — the same resolution order as loading. No dynamic
+	// command exists to go stale: `/workflow run <name>` re-reads disk.
+	function runWorkflowDelete(ctx: ExtensionCommandContext, name: string): void {
+		if (!name) {
+			// No name: show what is saved instead of a bare usage line.
+			ctx.ui.notify(`${formatSavedWorkflows(describeSavedWorkflows(deps))}\n\nUsage: /workflow delete <name>`, "info");
+			return;
+		}
+		const result = deleteSavedWorkflow(deps, name);
+		if (isPwrError(result)) {
+			ctx.ui.notify(`[PWR] ${result.code}: ${result.message}`, "error");
+			return;
+		}
+		ctx.ui.notify(`[PWR] Deleted workflow "${name}" (${result.scope} scope).`, "info");
+	}
+
+	// ----- /workflow run: invoke a saved workflow -----
+	async function runSavedWorkflow(ctx: ExtensionCommandContext, name: string, rawArgs: string): Promise<void> {
+		const result = await invokeSavedWorkflow(deps, { name, rawArgs }, (info) => approveSavedCommand(ctx, info));
+		if (isPwrError(result)) {
+			ctx.ui.notify(`[PWR] ${result.code}: ${result.message}`, "error");
+			return;
+		}
+		ctx.ui.notify(`[PWR] ${result.message}`, "info");
+	}
 
 	// ----- track live model switches so `auto` mode follows the main session -----
 	pi.on("model_select", (event) => {
 		modelConfig.setSessionModel((event as { model?: { id?: string } }).model?.id);
 	});
 
-	// ----- trigger: /workflow command -----
+	// ----- trigger: /workflow command (generate | run | delete | model) -----
 	pi.registerCommand(WORKFLOW_COMMAND, {
-		description: "Run a task as a PWR workflow: the agent generates a script, you approve, PWR runs it.",
+		description:
+			"PWR 工作流入口：/workflow <任务> 生成脚本；/workflow run <名称> [参数] 运行已保存工作流；/workflow delete <名称>；/workflow model [auto|<模型>]",
 		handler: async (args, ctx) => {
-			const request = parseWorkflowCommandArgs(args ?? "");
+			const route = parseWorkflowCommandRoute(args ?? "", isSavedWorkflowName);
+			if (route.kind === "run") {
+				await runSavedWorkflow(ctx, route.name, route.rawArgs);
+				return;
+			}
+			if (route.kind === "delete") {
+				runWorkflowDelete(ctx, route.name);
+				return;
+			}
+			if (route.kind === "model") {
+				await runWorkflowModel(ctx, route.arg);
+				return;
+			}
+			const request = parseWorkflowCommandArgs(route.task);
 			if (!request) {
-				ctx.ui.notify("Usage: /workflow <task description>", "error");
+				ctx.ui.notify(
+					"Usage: /workflow <task description> | /workflow run <name> [args] | /workflow delete <name> | /workflow model [auto|<model-id>]",
+					"error",
+				);
 				return;
 			}
 			generationRequest = request;
@@ -367,12 +351,6 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 			if (ev.type === "run_status") persistRunFromRuntime(ev.runId);
 		});
 		ui.refresh(ctx);
-		// JHL-17: register saved /workflow:<name> commands from disk so they
-		// survive restarts. Project-scope scripts are only registered in
-		// trusted projects.
-		for (const name of listSavedWorkflows(deps)) {
-			registerSavedCommand(name);
-		}
 	});
 
 	// 会话关闭（/new、/resume、/fork、/clone、exit 都触发，且先于新会话的

@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseControlArgs, parseWorkflowsArgs, resolveRunId, runApproveAction, runControlAction, workflowsHelpText } from "../src/ui/commands.ts";
+import { parseControlArgs, parseWorkflowsArgs, parseWorkflowsCommand, resolveRunId, runApproveAction, runControlAction, workflowsHelpText } from "../src/ui/commands.ts";
 import { PWR_SHORTCUTS } from "../src/ui/keybindings.ts";
 import { MemoryRunStore } from "../src/ui/run-store.ts";
 import { RunRegistry, type FlowDeps } from "../src/flow.ts";
@@ -67,12 +67,48 @@ test("parseWorkflowsArgs: no args -> list, runId -> detail, --filter -> filtered
 });
 
 test("parseControlArgs: restart requires taskId, stop's agentId is optional", () => {
-	assert.deepEqual(parseControlArgs("pause", ""), { ok: false, usage: "Usage: /workflows:pause <runId>" });
+	assert.deepEqual(parseControlArgs("pause", ""), { ok: false, usage: "Usage: /workflows pause <runId>" });
 	assert.deepEqual(parseControlArgs("pause", "abc"), { ok: true, runId: "abc", agentId: undefined });
 	assert.deepEqual(parseControlArgs("stop", "abc t1"), { ok: true, runId: "abc", agentId: "t1" });
 	assert.deepEqual(parseControlArgs("stop", "abc"), { ok: true, runId: "abc", agentId: undefined });
-	assert.deepEqual(parseControlArgs("restart_agent", "abc"), { ok: false, usage: "Usage: /workflows:restart <runId> <taskId>" });
+	assert.deepEqual(parseControlArgs("restart_agent", "abc"), { ok: false, usage: "Usage: /workflows restart <runId> <taskId>" });
 	assert.deepEqual(parseControlArgs("restart_agent", "abc t1"), { ok: true, runId: "abc", agentId: "t1" });
+});
+
+// ---------- unified /workflows sub-command router (命令风格统一) ----------
+
+test("parseWorkflowsCommand: every old /workflows:<name> maps to a sub-command", () => {
+	assert.deepEqual(parseWorkflowsCommand("list"), { kind: "list" });
+	assert.deepEqual(parseWorkflowsCommand("list running"), { kind: "list", status: "running" });
+	assert.deepEqual(parseWorkflowsCommand("view"), { kind: "view" });
+	assert.deepEqual(parseWorkflowsCommand("view abc"), { kind: "view", runId: "abc" });
+	assert.deepEqual(parseWorkflowsCommand("open abc"), { kind: "open", runId: "abc" });
+	assert.deepEqual(parseWorkflowsCommand("pause abc"), { kind: "pause", runId: "abc" });
+	assert.deepEqual(parseWorkflowsCommand("resume abc"), { kind: "resume", runId: "abc" });
+	assert.deepEqual(parseWorkflowsCommand("stop abc t1"), { kind: "stop", runId: "abc", agentId: "t1" });
+	assert.deepEqual(parseWorkflowsCommand("stop abc"), { kind: "stop", runId: "abc", agentId: undefined });
+	assert.deepEqual(parseWorkflowsCommand("restart abc t1"), { kind: "restart", runId: "abc", agentId: "t1" });
+	assert.deepEqual(parseWorkflowsCommand("save abc"), { kind: "save", runId: "abc" });
+	assert.deepEqual(parseWorkflowsCommand("saved"), { kind: "saved" });
+	assert.deepEqual(parseWorkflowsCommand("script abc"), { kind: "script", runId: "abc" });
+	assert.deepEqual(parseWorkflowsCommand("approve abc"), { kind: "approve", runId: "abc" });
+	assert.deepEqual(parseWorkflowsCommand("help"), { kind: "help" });
+	assert.deepEqual(parseWorkflowsCommand("--help"), { kind: "help" });
+});
+
+test("parseWorkflowsCommand: missing args yield typed usage, not actions", () => {
+	for (const args of ["open", "pause", "resume", "stop", "restart", "restart abc", "save", "script", "approve"]) {
+		assert.equal(parseWorkflowsCommand(args).kind, "usage", `usage for "${args}"`);
+	}
+});
+
+test("parseWorkflowsCommand: legacy free-form (/workflows <runId>, --filter) is kept", () => {
+	assert.deepEqual(parseWorkflowsCommand(""), { kind: "list" });
+	assert.deepEqual(parseWorkflowsCommand("   "), { kind: "list" });
+	assert.deepEqual(parseWorkflowsCommand("a1b2c3d4"), { kind: "detail", runId: "a1b2c3d4" });
+	assert.deepEqual(parseWorkflowsCommand("--filter running"), { kind: "list", status: "running" });
+	assert.deepEqual(parseWorkflowsCommand("--filter bogus"), { kind: "list" });
+	assert.deepEqual(parseWorkflowsCommand("--unknown"), { kind: "help" });
 });
 
 test("resolveRunId: exact id, 8-char prefix, ambiguous prefix", () => {
@@ -134,14 +170,18 @@ test("runControlAction: runtime error surfaces the { code, message } contract", 
 	assert.ok(out.text.includes("RUN_NOT_CONTROLLABLE"));
 });
 
-test("help text lists both commands and shortcuts (keyboard AND commands reachable)", () => {
+test("help text lists sub-commands and shortcuts (keyboard AND commands reachable)", () => {
 	const help = workflowsHelpText();
-	assert.ok(help.includes("/workflows:pause"));
-	assert.ok(help.includes("/workflows:stop"));
-	assert.ok(help.includes("/workflows:restart"));
-	assert.ok(help.includes("/workflows:save"));
-	assert.ok(help.includes("/workflows:approve"));
-	assert.ok(help.includes("/workflow-delete"));
+	assert.ok(help.includes("/workflows pause"));
+	assert.ok(help.includes("/workflows stop"));
+	assert.ok(help.includes("/workflows restart"));
+	assert.ok(help.includes("/workflows save"));
+	assert.ok(help.includes("/workflows approve"));
+	assert.ok(help.includes("/workflow delete"));
+	assert.ok(help.includes("/workflow model"));
+	assert.ok(!help.includes("/workflows:"), "colon namespaces retired");
+	assert.ok(!help.includes("/workflow-delete"), "hyphen command retired");
+	assert.ok(!help.includes("/pwr-model"), "hyphen command retired");
 	assert.ok(help.includes(PWR_SHORTCUTS.pause.key));
 	assert.ok(help.includes(PWR_SHORTCUTS.stop.key));
 	assert.ok(help.includes(PWR_SHORTCUTS.restart.key));
@@ -157,7 +197,7 @@ test("shortcut registry pins exact keys (update here + keybindings.ts when delib
 	assert.equal(new Set(keys).size, keys.length, "shortcut keys must be unique");
 });
 
-// ---------- /workflows:approve (runApproveAction) ----------
+// ---------- /workflows approve (runApproveAction) ----------
 
 /** Store + registry with the run left in awaiting_approval (approve target). */
 function makeApproveStore(): { store: MemoryRunStore; registry: RunRegistry; runId: string } {

@@ -6,8 +6,8 @@
  *    (user scope, all projects) or `<project>/.pi/workflows/<name>.js`
  *    (project scope, trusted projects only; project script shadows the
  *    same-name global script), auto-filling `meta.name/description/version`,
- *    re-validating the filled source, and registering `/workflow:<name>`.
- *  - `/workflow:<name> <args>` loads the script (project first), re-validates,
+ *    re-validating the filled source, and registering `/workflow run <name>`.
+ *  - `/workflow run <name> <args>` loads the script (project first), re-validates,
  *    converts args into a schema-validated structured `args` global and starts
  *    the run. Approval memory stays keyed on `canonical project path + digest`
  *    (JHL-16 ApprovalStore) so any script edit forces re-approval.
@@ -147,7 +147,7 @@ export interface SaveSuccess {
 }
 
 /**
- * Saves a validated run's script as a reusable `/workflow:<name>` command.
+ * Saves a validated run's script as a reusable `/workflow run <name>` command.
  * - auto-fills meta and RE-validates the filled source (never saves a script
  *   the engine rejects; engine missing -> ENGINE_UNAVAILABLE);
  * - project scope requires a trusted project (PROJECT_NOT_TRUSTED, no write);
@@ -302,7 +302,7 @@ export function readMetaFromSource(source: string): WorkflowMeta | undefined {
 	}
 }
 
-/** One row of the saved-workflow listing (/workflows:saved). */
+/** One row of the saved-workflow listing (/workflows saved). */
 export interface SavedWorkflowSummary {
 	name: string;
 	scope: "user" | "project";

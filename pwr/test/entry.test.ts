@@ -1,7 +1,7 @@
 /**
  * Merged-entry contract tests (v2.0.0): the single `pwr/index.ts` entry must
  * register the complete PWR surface — the four workflow tools, all commands
- * (/workflow, /workflow:<name>, /workflows:*), the UI shortcuts and the
+ * (/workflow, /workflows), the UI shortcuts and the
  * run-entry renderer — with the PRD §6.2 contracts. `workflow_validate`
  * takes `{ source, argsSchema? }` and fails with ENGINE_UNAVAILABLE until
  * the engine is resolved at session_start (never the structural gate).
@@ -83,25 +83,12 @@ test("merged entry registers the full tool set with PRD §6.2 contracts", () => 
 
 test("merged entry registers /workflow + /workflows UI commands, shortcuts and the run-entry renderer", () => {
 	const { commands, shortcuts, renderers } = register();
-	for (const expected of [
-		"workflow",
-		"workflow-delete",
-		"pwr-model",
-		"workflows",
-		"workflows:list",
-		"workflows:view",
-		"workflows:open",
-		"workflows:pause",
-		"workflows:resume",
-		"workflows:stop",
-		"workflows:restart",
-		"workflows:save",
-		"workflows:script",
-		"workflows:approve",
-		"workflows:help",
-	]) {
+	for (const expected of ["workflow", "workflows"]) {
 		assert.ok(commands.includes(expected), `command ${expected} must be registered`);
 	}
+	assert.ok(!commands.some((name) => name.includes(":")), "colon command namespaces retired");
+	assert.ok(!commands.includes("workflow-delete"), "hyphen command retired (now /workflow delete)");
+	assert.ok(!commands.includes("pwr-model"), "hyphen command retired (now /workflow model)");
 	assert.equal(shortcuts.length, 3, "pause/stop/restart shortcuts registered (JHL-15)");
 	assert.deepEqual(renderers, [PWR_RUN_ENTRY], "run entry renderer registered (JHL-15)");
 });

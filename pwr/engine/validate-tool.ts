@@ -48,7 +48,7 @@ export type WorkflowValidateOutcome = WorkflowValidateSuccess | WorkflowValidate
  * Validate a PWR workflow script without executing it.
  *
  * `argsSchema` (optional) is the JSON Schema that constrains the `args`
- * global when the workflow is later invoked via `/workflow:<name>`; it must
+ * global when the workflow is later invoked via `/workflow run <name>`; it must
  * itself be plain JSON data. On success the structured result follows the
  * PRD §6.2 contract: `{ script, plan, budgetEstimate }`.
  */
