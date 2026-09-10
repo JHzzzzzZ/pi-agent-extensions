@@ -108,7 +108,7 @@ export function createTask(
   genId: () => string,
 ): { ok: true; task: LoopTask } | { ok: false; message: string } {
   if (tasks.length >= MAX_TASKS) {
-    return { ok: false, message: `已达上限（每会话最多 ${MAX_TASKS} 个任务），请先用 /loop delete 清理` };
+    return { ok: false, message: `已达上限（每会话最多 ${MAX_TASKS} 个任务），请先用 /loop:delete 清理` };
   }
   if (input.task.length > MAX_TASK_LEN) {
     return { ok: false, message: `任务内容过长（最多 ${MAX_TASK_LEN} 字符）` };
@@ -160,7 +160,7 @@ function resolveOrMessage(
   if (r.status === "ambiguous") {
     return { ok: false, message: `"${idOrPrefix}" 匹配到多个任务，请用更长的 ID` };
   }
-  return { ok: false, message: `未找到任务 "${idOrPrefix}"，用 /loop list 查看现有任务` };
+  return { ok: false, message: `未找到任务 "${idOrPrefix}"，用 /loop:list 查看现有任务` };
 }
 
 export function pauseTask(
@@ -379,7 +379,7 @@ export function formatTimeOfDay(msOfDay: number): string {
   return `${p(Math.floor(totalMin / 60) % 24)}:${p(totalMin % 60)}`;
 }
 
-/** 任务调度的人类描述（创建回执、/loop list、loop_create 返回共用） */
+/** 任务调度的人类描述（创建回执、/loop:list、loop_create 返回共用） */
 export function describeRecurrence(t: {
   recurring: boolean;
   intervalMs?: number;
@@ -394,7 +394,7 @@ export function describeRecurrence(t: {
   return `每 ${formatInterval(t.intervalMs ?? FALLBACK_INTERVAL_MS)}`;
 }
 
-/** 后台运行状态的人类描述（/loop list 上次运行行共用） */
+/** 后台运行状态的人类描述（/loop:list 上次运行行共用） */
 export function formatBgRunStatus(status: BgRunStatus): string {
   switch (status) {
     case "running":
@@ -423,7 +423,7 @@ export function formatBgRunLine(t: LoopTask): string | undefined {
   return parts.join(" · ");
 }
 
-/** /loop list 与裸 /loop 的任务列表行，按触发先后排序 */
+/** /loop:list 与裸 /loop 的任务列表行，按触发先后排序 */
 export function formatTaskLines(tasks: LoopTask[], nowMs: number): string[] {
   const sorted = [...tasks].sort((a, b) => a.nextDueAt - b.nextDueAt);
   return sorted.flatMap((t) => {
