@@ -1,9 +1,9 @@
 {
   "name": "pi-extension-deep-init",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
-  "description": "deep-init — /deep-init 深度初始化：扫描仓库结构并生成层级 AGENTS.md 项目知识库（update 增量 / --create-new 全量重建）",
+  "description": "deep-init — /deep-init 深度初始化：扫描仓库结构并生成层级 AGENTS.md 项目知识库（update 增量 / --create-new 全量重建；solo 开启时二次确认自动放行）",
   "engines": {
     "node": ">=22.18"
   },

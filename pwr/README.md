@@ -2,7 +2,7 @@
 
 PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P0，Stage 3）：**PiAgentRunner 适配层**（PRD §5.4、§9 子任务 3），并内含全部既有模块。
 
-> 版本：**v2.4.2**（2026-09-10：会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
+> 版本：**v2.5.0**（2026-09-11：solo 审批门——`/solo` 开启时批准卡按 once 自动批准；v2.4.2 会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
 >
 > 依赖说明：本包是 JHL-16 交付（`src/` 触发/批准层）的延续，内置 JHL-12 引擎 v1.1.2（`engine/` + `vendor/`，单次快照安全边界已收敛）。Runtime 未注入 runner 时，保存/加载/参数校验/批准全部可用，仅实际启动返回 `AGENT_RUNNER_UNAVAILABLE`（不隐式回退）。JHL-14 起入口在 session_start 自动构造 PiAgentRunner 注入 runtime。
 
@@ -39,6 +39,7 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 ### 批准记忆（复用 JHL-16 ApprovalStore）
 - 批准键 = **项目 canonical path + script digest**；保存命令的启动同样走该记忆
 - 已记住的脚本被编辑（digest 变化）→ 再次调用 `/workflow:<name>` 时**必须重新批准**（重新展示批准卡），批准记录以新 digest 落库
+- **solo 免审批模式**（v2.5.0）：`/solo` 开启时批准卡按 once 自动批准（不弹卡），`workflow_start` 强制降级 once、已保存命令同口径——**绝不写 remembered 记录**；契约见 [`docs/cross/solo-approval-gate.md`](../docs/cross/solo-approval-gate.md)
 
 ### 覆盖确认（`NAME_CONFLICT` 处理）
 - 重名保存返回 `NAME_CONFLICT`（不覆盖任何现有文件）；工具契约新增可选 `overwrite: boolean`，确认后替换

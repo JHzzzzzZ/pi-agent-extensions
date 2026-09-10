@@ -1,9 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   buildDeepInitPrompt,
   buildFinalReport,
   clampDepth,
+  createDeepInitExtension,
+  DEEP_INIT_COMMAND,
   findExistingAgentsMd,
   parseDeepInitArgs,
   planDispatch,
@@ -241,6 +246,63 @@ describe("planDispatch — 纯决策", () => {
     if (d.kind === "dispatch") {
       assert.ok(d.notice.includes("增量更新") && d.notice.includes("docs"));
       assert.ok(d.prompt.includes("阶段 1") && d.prompt.includes("=== init-deep Complete ==="));
+    }
+  });
+});
+
+describe("solo 审批门（docs/cross/solo-approval-gate.md）", () => {
+  it("planDispatch：soloActive 放行 --create-new 的 confirm-required，notice 标注自动确认", () => {
+    const d = planDispatch(opts({ mode: "create-new" }), ["./AGENTS.md"], META, { soloActive: true });
+    assert.ok(d.kind === "dispatch");
+    if (d.kind === "dispatch") {
+      assert.ok(d.notice.includes("全量重建"));
+      assert.ok(d.notice.includes("solo 已自动确认"), "notice 标注 solo 自动确认");
+    }
+  });
+
+  it("planDispatch：soloActive 缺省为 false → 仍拦截", () => {
+    const d = planDispatch(opts({ mode: "create-new" }), ["./AGENTS.md"], META, {});
+    assert.ok(d.kind === "blocked");
+  });
+
+  it("命令接线：solo 激活时 /deep-init --create-new 直接下发提示词", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deep-init-solo-"));
+    const stateFile = path.join(dir, "solo-mode.json");
+    fs.writeFileSync(stateFile, JSON.stringify({ pid: process.pid, activatedAt: "2026-08-05T12:00:00Z" }), "utf8");
+    const previous = process.env.PI_SOLO_MODE_FILE;
+    process.env.PI_SOLO_MODE_FILE = stateFile;
+    try {
+      const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+      const sent: Array<{ message: { customType?: string }; options?: unknown }> = [];
+      const notifications: Array<{ message: string; level?: string }> = [];
+      const pi = {
+        registerCommand: (name: string, opts: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
+          commands.set(name, opts);
+        },
+        sendMessage: (message: { customType?: string }, options?: unknown) => {
+          sent.push({ message, options });
+        },
+      };
+      createDeepInitExtension(pi as never, {
+        scanner: fakeScanner({ ".": ["AGENTS.md", "src"], "./src": [] }),
+        cwd: ".",
+        nowIso: () => "2026-08-05T12:00:00.000Z",
+        gitInfo: () => ({ commit: "abc1234", branch: "dev" }),
+      });
+      const ctx = {
+        hasUI: true,
+        ui: { notify: (message: string, level?: string) => notifications.push({ message, level }) },
+      };
+
+      await commands.get(DEEP_INIT_COMMAND)!.handler("--create-new", ctx);
+
+      assert.equal(sent.length, 1, "solo 下直接下发提示词（不被二次确认拦截）");
+      assert.ok(notifications.some((n) => n.message.includes("solo 已自动确认")), "启动通知标注自动确认");
+      assert.ok(!notifications.some((n) => n.level === "warning"), "无拦截警告");
+    } finally {
+      if (previous === undefined) delete process.env.PI_SOLO_MODE_FILE;
+      else process.env.PI_SOLO_MODE_FILE = previous;
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });
