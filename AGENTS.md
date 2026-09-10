@@ -5,69 +5,29 @@
 
 ## 项目概览
 
-Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。扩展通过复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目）加载，然后在 Pi 中执行 `/reload` 生效。
+Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。主项目 `pwr/`（Pi Workflow Runtime，本地工作流编排）加 11 个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
-- **`pwr/` — 主项目。** PWR（Pi Workflow Runtime）v2.9.0：用户编写受约束的 ECMAScript 工作流脚本；PWR 校验后弹出批准卡，再通过派生子 `pi` 进程作为 sub-agent 执行（`PiAgentRunner`）。v2.4.0 新增逐步实时运行 trace（runner `onEvent` → runtime `task_event` → 查看器 agent 行）与 `/workflow:saved` 列表，以及 saved 工作流的 schema 引导 `key=value` 参数输入（仍兼容 JSON）；v2.4.2 接线会话生命周期（`session_shutdown` 中止在途 run + `session_start` 复活单例 runtime）；v2.5.0 接 solo 审批门（`/solo` 开启时批准卡按 once 自动批准，绝不写 remembered，`src/solo-gate.ts`）；v2.6.0 曾把命令面收拢为空格子命令（后于 v2.8.0 改回冒号独立命令）；v2.7.0 `/workflow:view` 分栏化（fleet 式 roster + detail 外壳，键位/几何/750ms 指纹门控对齐，`D` 两步停止，`tests/ui-viewer-host.test.ts` 真实宿主防堆叠）+ 删自写文本工具改用宿主 `truncateToWidth`/`wrapTextWithAnsi`（tui-sync 矩阵 A2–A4）与 footer 状态键排序带 `30:pwr`（段文本计数式 `│ pwr <active>▶[ <finished>✓]`，跨插件契约 `docs/cross/status-bar.md`）；v2.8.0 命令面冒号化（`/workflow:run|:delete|:model` 与 `/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help` 独立静态命令；裸 `/workflows` 保留列表/详情/`--filter`/`help`，裸 `/workflow` 保留生成；旧空格子命令只提示改名）；v2.9.0 命令面归一（`/workflows` 根与 12 条子命令全部并入单一 `/workflow:*`，旧前缀硬切不注册；裸 `/workflow` 空参/`help`=完整分组帮助，14 个旧词只提示改名、绝不生成；`:list` 非法状态 warning）。零构建 TypeScript ESM，由 Node ≥ 22.18 原生 type-stripping 直接执行。
+每个扩展的职责边界、文件地图、数据流、不变量与已知坑：见 [`docs/INDEX.md`](docs/INDEX.md) 路由到的卡片与各扩展 README。安装/加载：复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目），Pi 中执行 `/reload` 生效。
 
-D
-- **卫星扩展**（相互独立，扩展形态相同）：`agent-team/`（可复用多 agent 团队：独立 leader 子进程通过 `team_dispatch` 调度成员子进程；输入栏下方可选中亮块（数据驱动挂载：有活跃 run 才挂帧、落定即 `setWidget(undefined)` 自动卸载，事件即时刷新 + 1s tick 兜底）——默认折叠单行 `agent-team <团队> · ↓/← 查看详情`，`↓`/`←`（焦点在主编辑器且编辑器为空时；v1.9.1 补 fleet `editorHasFocus` 半条焦点门控，选择器/对话框打开时 widget 完全不介入、方向键让行）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行；成员行带状态图标与 ≤30 字尾注）+ 底部提示行，`↑`/`↓`/`j`/`k` 移动（第 0 行再按 `↑`/`k` 收回折叠，fleet-status 同构）、`enter` 在 `main` 行只收起选中、在 leader/成员行直达查看器对应 actor、`esc`/其它键退出并放行编辑器；TUI 行为对照 pi-subagents fleet v0.66.0 代码级同步，矩阵见 `agent-team/docs/tui-sync.md`；`team_run` 默认后台派单，报告经 followUp 自动送达；`team_stop` 按 runId 中止（settle-aware，终态可靠）；查看器内 `D` 停止整个 run（两步确认，fleet v0.66.0 对齐：Enter/Y 确认、Esc/ctrl+c/N/backspace 取消，确认后经 `viewerStopAction` → `stopAndSettle()`，横幅占右栏正文窗口顶部、帧总高不变）与 `r`/`R` 手动刷新；`m` 发消息与选中成员/leader 直接对话（派单语义：消息编成新 run task、运行中排队、落定后链式派出，`chat.ts`；子进程不可注入，见 docs 卡不变量）；v1.5.0：run 元数据落盘 + session_start reconcile（孤儿 leader 只报告不杀）、frontmatter `budget:` 预算块（dispatch/成员运行 + 可选费用/token 硬上限，超限自动中止）、派单前 model 预检（`MODEL_NOT_FOUND` 不 spawn）、`/team:doctor` 自检（v1.12.0 冒号命令面：裸 `/team` 无参=列团队/带参=用法，`/team:list|:run|:status|:stop|:view|:clear|:doctor` 各自独立注册；v1.9.0 的空格子命令路由与 `/team <团队名> <任务>` 参数路由均已退役，团队名可与子命令同名）；v1.7.0：viewer 改 fleet inspector 同款左右分栏——左栏成员 roster（选中标记 + 状态图标 + 右对齐状态，窗口化滚动），右栏 Run/State/成员 三行元信息头 + 完整转录正文，最小宽度门 36 列；v1.8.0：viewer/widget 按键全面对齐 fleet `DEFAULT_FLEET_KEYBINDINGS`（viewer 内 `↑↓/j/k` 切成员、`Shift+J/K` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行，旧键 `←→/h/l/Tab/1-9/g/G` 退役，仅保留 `m` 发消息特有键）；终态亮块自动消失（落定即卸载；`/team:clear` 收窄为清排队 viewer 对话消息，session_start 无条件挂 controller、帧仍由数据决定））、`stream-token-speed/`（TTFT + 实时 tokens/s 状态：`│ TTFT 412ms · 86.4 tok/s`，汇总 `│ TTFT 412ms · ~78.6 tok/s`（~ 标注平均），无流式数据时清状态）、`chatanywhere-provider/`（运行时自动发现：加载时探测 `GET {base}/models`，按家族线归并去重注册（每线 ≤3 档、仅最新代、非 chat 与 thinking 变体去重），探测失败 fail-closed；Claude 系模型分派到 Anthropic Messages provider）、`provider-quota/`（余额/额度状态 + `/quota`；段文本无 provider 前缀、以 `│ ` 开头：`│ 10.00 CNY` / `│ tok72% mcp40%(14:30)` / `│ 15%/6%/3%(03:41)`；适配器含 OpenRouter/DeepSeek/ChatAnywhere/智谱/OpenCode Go，Go 的限额窗口重置时间跟随命中的限额窗口）、`run-timer/`（会话/任务/回合计时 widget）、`loop/`（`/loop` 固定间隔循环 + 每天定时循环 + 每日窗口间隔循环（v1.2.0）+ 一次性提醒 + `--bg` 后台 agent 模式（v1.3.0：前台 followUp 送达，或拉起可恢复的子 `pi --mode json -p` 进程，其会话 id 会被捕获、可用 `pi --session <id>` 恢复；v1.4.0 起 `--bg` 支持可选 `--model <provider/id>` 透传子 pi 模型指定，仅后台模式支持），管理命令为冒号子命令 `/loop:list|:pause|:resume|:delete|:clear`（v1.6.0；裸 `/loop` 只管创建/用法，旧空格管理词只提示改名），见 `runner.ts`），followUp 送达 + 会话条目快照持久化，agent 工具 `loop_create/list/delete`）、`goal/`（`/goal` 会话目标循环——agent 跨回合自动推进，直至独立 LLM 评估器判定条件达成，footer 段 `│ ◎ <目标≤20列> · N轮 · 时长`；清除非阻塞项走冒号子命令 `/goal:clear|:stop|:off|:reset|:none|:cancel`，`/goal:resume` 恢复，`/goal:status` 查状态，v1.3.0）、`opencode-bridge/`（拉起/复用本地 HTTP CONNECT → SOCKS5 桥 helper（`opencode-bridge-helper.mjs`，零依赖独立进程），使 Pi 的 `httpProxy` 能经由本地 SOCKS5（v2rayN）转发；`session_start` 先探测 `127.0.0.1:<port>`，多 Pi/subagent 实例共享同一桥，detached + unref 派生（Pi 不持有子进程资源），扩展**绝不自动改** settings.json（solo 审批门开启时例外：确认自动按批准路径，见 `docs/cross/solo-approval-gate.md`）——裸 `/opencode-bridge`（无参=状态）+ 冒号子命令（v1.7.0：`/opencode-bridge:sync [port]` 人工确认后仅增/删 `httpProxy` 字段，`:restore` 从备份恢复，`:status` 状态副本；v1.6.0 曾合并为空格子命令），写前备份原文到 `settings.json.bak-opencode-bridge-<时间戳>`，端口可跟参或交互询问并持久化到 settings.json 同目录 `opencode-bridge.json`（优先级 参数 > 环境变量 > 配置文件 > 默认值），改端口后指纹确认停旧桥、起新桥、httpProxy 联动（一次确认，fail-closed），settings/端口配置读写经 `ProxySyncDeps` 注入（plan/apply 两阶段，防竞态）（restore 恢复前先把当前配置再备份一份，保证可撤销），环境变量 `PI_BRIDGE_PORT`/`PI_BRIDGE_SOCKS_HOST`/`PI_BRIDGE_SOCKS_PORT`；helper 可在 socket 错误/ECONNRESET 下存活，端口被占用时以 0 退出）、`deep-init/`（`/deep-init` 深度初始化——提示词驱动复刻 init-deep 四阶段：参数解析 + 已有 AGENTS.md 预检 + `--create-new` 二次确认门控，下发提示词由主 agent 用 read/bash/edit/write 执行发现/评分/生成/复核；v1.1.0 起 Discovery 按规模并行派 subagent 探索并汇总）、`human-notify/`（人工介入 Windows Toast——`ui_prompt_start` 审批/输入等待与 `agent_settled` 完全结束时通知，正文按触发类型差异化：均带一句话摘要（审批/结束取最新 assistant 尾部文本，等人工具优先取 args 中的问题文本），标题不变；用户取消回合（Esc / Ctrl+C）后不弹完成 Toast（照抄 goal 的取消标记模式：turn_end/agent_end 记录 ctx.signal?.aborted，agent_start 重置，settle 在 fire 前守卫、不消耗防抖窗口）；内联 WinRT PowerShell 零依赖，detached + unref 派生，Linux / macOS no-op，`PI_HUMAN_NOTIFY=0` 一键关闭）、`solo-mode/`（`/solo` 免审批模式：裸 `/solo` 切换（v1.2.0 起开关/状态为冒号子命令 `/solo:on|:off|:status`，旧空格写法只提示改名），footer 段静态 `│ ⚡ solo`；审批摩擦门自动按批准路径通过——PWR 批准卡按 once、opencode-bridge 的 sync/端口切换/restore 确认（restore 自动选最新备份）、deep-init `--create-new` 二次确认；开启需一次确认、仅当前会话（`/reload`、`/new`、`/resume`、`/fork` 与退出即复位）、子 pi 进程不继承；状态文件 pid 作用域 fail-closed，契约 `docs/cross/solo-approval-gate.md`；误触保护确认（agent-team viewer `D` 停止等）不自动过）。
+## 规则红线（强制）
 
+以下规则无例外；与其他考量冲突时以本节为准。
 
-## 仓库边界（强制）——禁止改动仓库之外的文件
-
-**默认只准改本仓库内的文件。** 仓库之外的任何东西——宿主 npm 全局安装（`@earendil-works/pi-coding-agent` / `pi-tui` 的 `dist/`、`bundle/chunks/` 等）、其它全局包、用户配置（`~/.pi/agent/`）、系统文件——一律不动，除非用户对具体改动**逐次人工批准**。
-
-- 宿主/依赖行为不满足需求时只有两条路：① 用公开扩展 API 在插件侧解决；② 向上游提 issue/PR（或请用户人工处理）。
-- 需要动仓库外文件时：先说明「改哪个文件、为什么、风险、回滚方式」，取得用户明确同意后才可动手；改完在交付报告中登记（文件、备份、回滚）。
-- 仓库内文档/待办不得把「已应用宿主补丁」当作插件行为的前提或契约。
-- 违反本规则的历史改动一律还原（用备份恢复原文件并删除备份），并在 `todos/` 记录真实状态。
-
-## 需求受理 → `todos/` 登记（强制）
-
-所有需求入口（对话中提出的新需求、子代理/团队派单任务、bug/重构请求等）在动手实现前，必须先到 `todos/` 目录完成登记，规则如下：
-
-1. **定位对应文件** — `todos/` 下每个插件一份 `<插件名>-todo.md`（如 `todos/pwr-todo.md`、`todos/agent-team-todo.md`）。先判断需求归属哪个插件，打开对应文件；跨插件需求在涉及的各文件中分别登记。
-2. **领取或新建条目** — 文件内已有匹配的条目 → 直接领取该条；没有 → 在文件末尾追加一条 `- [ ] <需求描述>` 新建。
-3. **标注 processing（进行中）** — 领取或新建后立即把该条目标注为处理中：`- [ ] <需求描述>（processing）`；需求完成前始终保持此状态。未开始的条目保持 `- [ ]`，已完成条目为 `- [x] <需求描述>`。
-4. **完成后标注完成** — 需求全部完成（代码 + README/AGENTS/package.json 同步，见交付节）后，改为 `- [x] <需求描述>` 并去掉 processing 标注。
-5. 取消/搁置的需求在条目上注明原因后还原为 `- [ ]` 或删除，`todos/` 始终反映真实状态。
-
-## 分支与 Worktree（强制）
-
-所有需求（todo 条目、bug 修复、重构）一律在独立 git worktree 里实现，自测通过后才合回主干。禁止直接在主干工作区改代码——主干工作区只做评审、只读命令与 `todos/` 登记。
-
-1. **开 worktree** — 从主干（当前为 `dev-laptop`）开，位置固定 `.worktrees/<短名>`（已在 `.gitignore`，不污染状态）：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`。
-2. **在里面做完** — 实现 + 自测：全量测试绿 + `npm run typecheck` 零错误（见“测试与 QA”质量门），达标前不合回。
-3. **合回主干** — 回主干工作区 `git merge --no-ff feat/<插件名>-<事项>`，有冲突就地解决不绕行。
-4. **删 worktree** — 合完确认没问题（主干状态正常）后 `git worktree remove .worktrees/<短名>`，保持工作区干净；如合完发现问题，可暂留 worktree 排查，解决后再删。分支可留可删（已推远端的按远端清理）。
-
-## 架构与数据流
-
-PWR（`pwr/`）分层组织，`src/types.ts` 是共享契约中枢（`RuntimeAdapter`、`ScriptEngine`、`WorkflowRun`、`PwrErrorResult`、entry/自定义消息常量、上限值）。并非严格分层——`runtime/` 引用 `src/plan.ts` 与 `src/ui/types.ts`（RunEvent）；`engine/interpreter.ts` 再导出 `runner/errors.ts` 的 `RunnerError`。
-
-1. **`engine/`** — 独立 DSL：`vendor/acorn.mjs`（内置 acorn 8.18.0，仅解析）→ `parser.ts` → `validator.ts`（`validateScript`/`validateScriptStrict`、`extractPlan`）→ `interpreter.ts`（AST 树遍历解释器，全局 `meta/args/agent/pipeline/parallel/sleep/JSON`，信号量 ≤ 128，循环预算 100k，`plain.ts` 单次快照安全边界）→ `concurrency.ts`。公开 API 由 `engine/index.ts` 再导出；`engine/spec.ts` 是 DSL 唯一事实来源（白名单、上限、`SCRIPT_VERSION = '1.1.2'`）。
-2. **`runner/`** — `PiAgentRunner`（`runner/index.ts`）：`discover.ts`（.md agent 发现，优先级 用户 > 项目 > 内置，trust 门控 `agentScope`）、`pi.ts`（子 `pi --mode json -p --no-session`，按行 JSON 事件，SIGTERM → 5s 后 SIGKILL（`KILL_GRACE_MS=5000`））。运行契约 `{ runId, agentId, prompt, label, tools, schema, signal }` → `{ result, summary, usage, events }`；result 上限 50KB（`RESULT_TOO_LARGE`），summary 8KB。工具交集：readonly = read/grep/find/ls/glob，write = +bash/write/edit。v2.4.0：`pi.ts` 还解析 `tool_execution_start/update/end`（toolName + 截断的参数/输出尾部）与节流的 assistant `message_update` 尾部，实时调用 `onEvent` 观察者（经 `AgentRunSpec.onEvent` 注入，仅 runtime 使用）；所有 trace 文本单行 + 尾部截断，绝不透传原始工具输出。
-3. **`runtime/`** — `WorkflowRuntime` 实现 `RuntimeAdapter`：`state.ts` 迁移表、`scheduler.ts` FIFO 队列、`cache.ts` `RunCache`（digest + 规范化输入的 sha256；缓存命中直接回放，不派生进程、不占预算）、`persist.ts` 仅元数据条目。模块级单例 `export default runtime`。
-4. **`src/`** — 编排：`flow.ts` 纯流程 + `RunRegistry`、`approval.ts` `ApprovalStore`（键 = 项目 canonical path|digest——脚本被编辑后必须重新批准，`APPROVAL_STALE`）、`notify.ts` `RunNotifier`、`save.ts` 保存/加载/调用、`args/plan/intent/constraints/digest/errors.ts`、`model-config.ts`（`/workflow:model`）、`engine.ts` 适配器（fail-closed `ENGINE_UNAVAILABLE`）。
-5. **`src/ui/`** — 无宿主 TUI 层：`MemoryRunStore`（同步快照）、`views.ts` 纯文本格式化、`commands.ts`、`save-flow.ts`、`approval-card.ts`、`renderer.ts`（引 `pi-tui` `Box/Text` 组件）、`viewer.ts`（`/workflow:view` fleet 式分栏查看器；引宿主文本工具与 `matchesKey`）。`ui/index.ts` `createWorkflowsUi` 注册 12 条 `/workflow:*` 冒号子命令、快捷键 `ctrl+alt+z/x/r`（按键只在 `pwr/src/ui/keybindings.ts` 快捷键注册表中定义）、entry 渲染器、widget/status。
-
-**运行数据流：** `/workflow <任务>` 或 `workflow:` 前缀 → `pwr-generation-request` 自定义消息（`before_agent_start`）→ 主 agent 调 `workflow_validate` → `tool_result` 上弹批准卡（once/remember/查看脚本/拒绝；关闭卡片仍是待批准）→ `workflow_start`（批准门控）→ `WorkflowRuntime.start` → 调度器 → 解释器 → 派发（缓存回放 | 预算 vs `AGENT_LIMIT=1000` | `PiAgentRunner.run` 子 `pi`）→ `RunCache` + `RunEvent` 流 → `MemoryRunStore` → widget/entry 渲染器。完成：`RunNotifier`（runId 作用域；被取消的运行不会唤醒它）→ `pi.sendMessage(pwr-workflow-result)`。已保存路径：`/workflow:run <name> [args]` → `invokeSavedWorkflow`（项目覆盖用户；重新校验；JSON args 按 schema 校验；digest 门控批准；saved 名运行时现读盘，无动态命令注册）。
-
-**生命周期：** 无 init/onLoad 钩子。入口 `index.ts` 在加载时注册命令/钩子；`session_start` 动态 import `runtime/` + `runner/`，并从 `ctx.sessionManager` 水合持久化条目（`pwr-approval-v1`、`pi-workflow-run-v1`）。缺 runner ⇒ `AGENT_RUNNER_UNAVAILABLE`——绝不隐式回退。持久化仅元数据；脚本源码/args 永不写盘。
-
-**已知怪癖：** pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域处理）；engine↔runner 相互引用；上限值在 `src/types.ts` / `engine/spec.ts` / `runtime/types.ts` 三处重复；`engine/validate-tool.ts` 的 `runWorkflowValidate` 仅被测试消费。
+1. **仓库边界**——默认只改本仓库内文件。宿主 npm 全局安装（`@earendil-works/pi-coding-agent` / `pi-tui` 的 `dist/`、`bundle/chunks/` 等）、其它全局包、用户配置（`~/.pi/agent/`）、系统文件一律不动。宿主/依赖行为不满足需求只有两条路：① 插件侧用公开扩展 API 解决；② 向上游提 issue/PR（或请用户人工处理）。确需动仓库外文件：先说明「改哪个文件、为什么、风险、回滚方式」，取得用户对具体改动的逐次明确同意，改完在交付报告中登记（文件、备份、回滚）；仓库内文档/待办不得把「已应用宿主补丁」当作插件行为的前提或契约；违反本规则的历史改动一律还原并在 `todos/` 记录真实状态。
+2. **需求先登记 `todos/`**——动手实现前，在 `todos/<插件名>-todo.md` 登记（跨插件需求在涉及的各文件分别登记）：已有匹配条目直接领取，没有则末尾追加 `- [ ] <需求描述>`；领取/新建后立即标注 `（processing）`，完成前保持该状态；完成（代码 + 文档同步）后改 `- [x]` 并去标注；取消/搁置的注明原因后还原或删除——`todos/` 始终反映真实状态。
+3. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记。自测达标（全量测试绿 + `npm run typecheck` 零错误）后才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`。
+4. **命令必须显式超时**——每次执行命令都传 bash 工具的 `timeout` 参数：快速 shell 操作（ls/grep/git）30–60 秒，`npm test`/`npm run typecheck` 120–300 秒；不允许不带超时的命令，长工作拆成多个有界小步骤。
+5. **TDD 测试先行**——新能力、bug 修复与重构一律测试先行：先写能复现问题或锁定新行为的失败测试（红），再实现到绿；没有保护网不动被测代码。
+6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
+7. **交付四处同步 + 收尾核对**——任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数）、AGENTS.md（架构/布局/约定/命令/测试数变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 必须与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应，新增插件同变更创建 todo 文件。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
 
 ## 关键目录
 
-- `pwr/engine/` — DSL 解析/校验/解释；`spec.ts` 是 DSL 唯一事实来源（白名单，上限 128/1000/100k/256KB，`SCRIPT_VERSION`）。
-- `pwr/runtime/` — 运行状态机、FIFO 调度器、运行缓存、仅元数据持久化。
-- `pwr/runner/` — 子 `pi` 进程适配器、agent 发现。
-- `pwr/src/` + `pwr/src/ui/` — 编排契约与 TUI 层。
-- `pwr/test/`、`pwr/tests/`、`pwr/runtime/test/`、`pwr/runner/test/` — node:test 套件（见"测试与 QA"）。
-- `pwr/vendor/` — 内置 acorn 8.18.0（`acorn.mjs` + 手写 `acorn.d.mts` + license）；生成文件，勿修改。仅被 `engine/parser.ts` 引入，使 PWR 运行时零 npm 依赖。
+- `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键/状态条/solo 审批门）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
 - `test/` — 根契约测试（`status-bar-contract.test.ts`：footer 排序带 + 段前缀 + widget 栈顺序，`npm run test:contract`）。
-- `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
-- 卫星扩展：`agent-team/`（扁平模块：types/config/runner/worktree/runstore/preflight/doctor/leader-prompt/dispatch/manage/cockpit/chat/widget/session/index + test/ + examples/）、`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约）。
+- 卫星扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约）。
+
+pwr 与 agent-team 的目录地图、架构与数据流：见 `docs/extensions/pwr.md` + `pwr/DELIVERY.md`（权威架构/安全文档 + 版本历史）与 `docs/extensions/agent-team.md`。
 
 ## 开发命令
 
@@ -104,8 +64,6 @@ cd deep-init && npm install && npm test                                         
 
 无构建步骤、无 linter、无 formatter。
 
-**命令超时（强制）：** 每次执行命令都必须显式传入超时（bash 工具的 `timeout` 参数），防止挂起或意外死循环阻塞会话——快速 shell 操作（ls/grep/git）约 30–60 秒，`npm test`/`npm run typecheck` 约 120–300 秒。不允许不带超时的命令；长时间工作应拆成多个有界小步骤，而非一次无上限调用。
-
 ## 代码约定与常见模式
 
 tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm run typecheck` 失败：
@@ -126,9 +84,8 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **安全不变量**（PWR）：无 `vm`/`eval`；执行前白名单校验；fail-closed 默认（缺 engine/runner ⇒ 类型化错误，无隐式回退）；脚本源码/args 永不持久化；`pwr-tmp://` 仅进程内；不存 API key；错误信息为静态模板。
 - **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
 - **TUI 约定（卫星扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
-- **状态条契约（跨插件，`docs/cross/status-bar.md`）：** ① 时间类状态一律对齐同一墙钟秒边界刷新——各插件带一份 `aligned-ticker.ts`（首跳对齐、自校正、异常吞掉），生产禁用裸 `setInterval` 计时器；非时间类刷新（流式节流/低频轮询/推送）不受约束；② 写入前做文本指纹比对，内容不变跳过 `setStatus`/`setWidget`；③ footer 状态键带两位排序前缀：`10:goal` / `20:provider-quota` / `30:pwr` / `40:solo-mode` / `50:stream-token-speed`（宿主按 key `localeCompare` 拼接，不得改回无前缀键）；④ 编辑器上方 widget 栈顺序 = 根 `package.json` `pi.extensions` 注册顺序（`pwr-runs` → `run-timer` → `loop`）——该顺序只在**首次挂载**时成立；宿主 `setExtensionWidget` 每次刷新都会把 key 移到栈底（周期性刷新 widget 因此逐秒换位），这是宿主行为，本仓库不打补丁（`AGENTS.md`「仓库边界」），问题走上游（issue 草稿 `docs/pi-widget-order-issue.md`）；改注册顺序须同步根契约测试；⑤ **段分隔与瘦身**：每段文本以 `│ `（U+2502+空格）开头，前缀在各自唯一写入边界拼接、包在自家 dim 样式内且计入文本指纹；段文本格式（goal 目标 ≤20 显示列、provider-quota 去 provider 前缀与倒计时、pwr 计数式 `pwr N▶ M✓`、stream-token-speed 汇总 `~` 标注平均/无数据清状态）锁定在 `docs/cross/status-bar.md`「段分隔与瘦身契约」；五个写入者各导出本地 `STATUS_SEPARATOR = "│ "` 常量（不跨插件共享），根契约测试校验，不得去掉前缀或改回无前缀键。
+- **状态条契约（跨插件，`docs/cross/status-bar.md`）：** ① 时间类状态一律对齐同一墙钟秒边界刷新——各插件带一份 `aligned-ticker.ts`（首跳对齐、自校正、异常吞掉），生产禁用裸 `setInterval` 计时器；非时间类刷新（流式节流/低频轮询/推送）不受约束；② 写入前做文本指纹比对，内容不变跳过 `setStatus`/`setWidget`；③ footer 状态键带两位排序前缀：`10:goal` / `20:provider-quota` / `30:pwr` / `40:solo-mode` / `50:stream-token-speed`（宿主按 key `localeCompare` 拼接，不得改回无前缀键）；④ 编辑器上方 widget 栈顺序 = 根 `package.json` `pi.extensions` 注册顺序（`pwr-runs` → `run-timer` → `loop`）——该顺序只在**首次挂载**时成立；宿主 `setExtensionWidget` 每次刷新都会把 key 移到栈底（周期性刷新 widget 因此逐秒换位），这是宿主行为，本仓库不打补丁（`AGENTS.md` 规则红线·仓库边界），问题走上游（issue 草稿 `docs/pi-widget-order-issue.md`）；改注册顺序须同步根契约测试；⑤ **段分隔与瘦身**：每段文本以 `│ `（U+2502+空格）开头，前缀在各自唯一写入边界拼接、包在自家 dim 样式内且计入文本指纹；段文本格式（goal 目标 ≤20 显示列、provider-quota 去 provider 前缀与倒计时、pwr 计数式 `pwr N▶ M✓`、stream-token-speed 汇总 `~` 标注平均/无数据清状态）锁定在 `docs/cross/status-bar.md`「段分隔与瘦身契约」；五个写入者各导出本地 `STATUS_SEPARATOR = "│ "` 常量（不跨插件共享），根契约测试校验，不得去掉前缀或改回无前缀键。
 - 缩进：`pwr/` 用 tab，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/`、`solo-mode/` 用 2 空格。
-- `agent-team/` 细节：团队 = 持久化 Markdown 文件（frontmatter `leader` + `members[]`，含每成员 `provider/model`、`tools`、`worktree`、可选 `budget:` 预算块、块标量 `prompt`），位于 `~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`（同名时项目优先）；每次使用时重新扫描（无缓存）。一套代码、两种模式，以环境变量 `PI_AGENT_TEAM_FILE` 区分：leader 模式只注册 `team_dispatch` 工具（消费 frontmatter 预算，默认 12/40）；cockpit 模式注册 `team_create`/`team_list`/`team_run`/`team_status`/`team_stop`/`team_transcript` 工具、冒号命令面（裸 `/team` + `/team:list|:run|:status|:stop|:view|:clear|:doctor`；派单统一 `/team:run <团队名> <任务>`，团队增删即时生效、团队名可与子命令同名；空格子命令路由与保留词概念退役，v1.12.0）、下方可选中亮块（`widget.ts`：`setWidget(key, string[], { placement: "belowEditor" })`——数据驱动挂载：controller 每会话挂一次（session_start 无条件），宿主 widget 由 `snapshot.running` 决定注册（running ⇒ string[] 帧，落定 ⇒ `undefined` 自动卸载，终态不常驻）；刷新双触发 = coordinator `onProgress` 事件即时 + 1s tick 兜底，渲染串指纹相同跳过（宿主包装的 string 渲染是跨构建最稳的路径，组件工厂式逐帧重绘在某 bundle 构建宿主上会产生逐秒追加残影行）；默认（未选中）为折叠单行 `agent-team <团队> · ↓/← 查看详情`（不含状态/耗时/并行数，running 不再逐秒 churn），选中态展开 `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（末行恒为成员行；`esc`/到顶 `↑`/`k` 收回；`main` 行 enter 只收起选中），行文本先 `\s+` 压平再截断（任务摘要 44 字符/成员尾注 30 字符）；选中经 `ctx.ui.onTerminalInput` 特性检测拦截，激活门控对齐 fleet-status——焦点=主编辑器（v1.9.1 补齐 `editorHasFocus` 半条：挂载时经 factory 形态 `setWidget` 一次性捕获宿主 TUI，`probeEditorFocus` 优先 `getFocusedComponent()`、否则读 `focusedComponent` 字段，五方法结构判定编辑器形状；宿主无焦点信息/取用抛错 → 降级为旧门控）∧ 编辑器为空（`ctx.ui.getEditorText() === ""` 经 `editorState` 端口注入，宿主缺该 API 时降级为仅 `alt+↓/↑` 通道）才允许进入选中，选择器/对话框（`/login`、`/model`、`ctx.ui.select`、overlay 对话框）打开时 widget 完全不介入（含 alt 通道）且选中态退出让行，`j`/`k` 与 `↑`/`↓` 移动；无变化（渲染串指纹相同）跳过 `setWidget`（对齐 fleet-status renderKey），`PI_AGENT_TEAM_WIDGET=0` 可整体关闭）、entry 渲染器（`agent-team-run-v1`）。`team_run` 默认后台派单（立即返回，报告经 `finalizeRun` 单一终态路径送达 followUp），`wait: true` 保留同步契约；派单前 model 预检（`preflight.ts` 纯函数，`MODEL_NOT_FOUND` 硬失败不 spawn，无鉴权 warning 放行）；run 元数据落盘（`runstore.ts`：`teams/runs/<runId>/status.json`，claim 即写 running + leaderPid，每条退出路径落终态），`session_start` reconcile 残留 running → failed + 孤儿 leader 诊断（只报告不杀；排除 in-memory run）；费用/token 超限 → abort + `BUDGET_EXCEEDED`（累计值折叠自 leader usage 与 dispatch `details.totalUsage`）；`team_stop` 按 runId 中止（省略/未知/已结束分别返回类型化错误 `RUN_ID_REQUIRED`/`RUN_NOT_FOUND`/`RUN_ALREADY_FINISHED`；`stopAndSettle` 有界等待落定返回 aborted 终态，start() 提前同步 claim + finally 清空 progress，aborted 记录补全 roster）；查看器（`viewer.ts`）定时刷新经数据指纹门控（`elapsed` 空转不重绘）、刷新间隔对齐 fleet `REFRESH_MS` 750ms、选中按 actor id 保持、帧高 ±1 行消抖、`buildViewerData` roster 排序固定（leader 首位 + 按 actor id，选中钉 id）、帧几何对齐 fleet（36 列最小门、rosterWidth/detailWidth 公式、`VIEWER_CHROME_ROWS = 6`，测试锁死）、overlay 盒模型与参考对齐（`VIEWER_OVERLAY_OPTIONS`：宽 95% + `maxHeight` 85% + `margin` 1，测试锁死）、close 键集对齐 fleet（`q`/`Esc`/`ctrl+c`）、v1.8.0 起动作键位全集对齐 fleet `DEFAULT_FLEET_KEYBINDINGS`（锁在 `VIEWER_ACTION_KEYS`：`↑↓/k/j` 切成员、`Shift+K/J` 滚动、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行、`D` 两步确认、`r`/`R` 刷新；确认态按键集对齐 fleet.ts:1134-1150；旧键 `←→/h/l/Tab/1-9/g/G` 退役按下忽略）、widget 选中态到顶（cursor 0）再按 `↑`/`k` 退出选中（fleet-status 同构）、确认横幅/notice 按右栏 detail 宽换行后占正文窗口顶部且帧总行数恒定（`VIEWER_CHROME_ROWS` 约束，busy > 确认 > notice 互斥，busy 守卫防重复调 stop；`viewerStopAction` 映射 notice 文案，settled→success/未落定→warning/异常→error））、viewer 打开期间暂停下方 widget（`RunWidgetController.setPaused` 停 tick 并隐藏亮块，关闭恢复）（防标题+roster 重影堆叠）；viewer 发消息（`chat.ts` 纯逻辑 + index 接线：`m` 单行输入、Enter 提交、`chatSubmitNotice` 映射顶部 notice；队列条目只存 `{targetLabel, message}`，上文尾部 ≤2000 字节派出时刻现读；链式门控仅 completed 续发，failed/aborted 及显式停止清空队列）；扩展入口接受 `{ spawn }` 供工具级测试（`test/run-tool.test.ts`），`PI_AGENT_TEAM_RUNS_DIR` 重定向 run artifacts 根（测试隔离）。成员/leader 子进程沿用与 pwr runner 相同的子 `pi` JSON 模式（`team-tmp://` prompt 物化，SIGTERM→SIGKILL），自包含（不引 pwr）。结果联合用 `TeamErrorCodes`；上限：每 dispatch 8 任务、4 并发成员、50KB 结果、8KB 摘要（协议级常量，不可配）。
 
 ## 编码规范（Clean Code）
 
@@ -144,27 +101,6 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **通过现有接缝扩展：** 新增能力的方式是加一个模块并在 `index.ts` 接线，或扩展 deps/port 对象——而不是把标志参数穿透深层。新上限/常量进所属层的规范文件（`engine/spec.ts`、`src/types.ts`），调用点不写魔法数。这就是全部扩展方式：今天的接缝足够应对明天的需求；有具体需求到来时再回来改。
 - **让代码更好而不是更大：** 每次改动保持全量测试 + `npm run typecheck` 绿；死代码与"以防万一"分支直接删除，不注释保留。
 
-## 交付与文档同步（强制）
-
-每次代码变更只有在其文档与清单在同一变更中同步更新后才算完成——绝不留到后续处理：
-
-- **README**：更新根 `README.md` 中受影响扩展的章节（PWR 另有 `pwr/README.md` / `pwr/DELIVERY.md`）——新增/变更的功能、用法与实测测试数。
-- **docs/ 知识库卡（强制）**：动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
-- **AGENTS.md**：架构、文件布局、约定、命令或实测测试数变化时同步更新（项目概览/关键目录中的卫星描述，开发命令与测试 QA 中的测试数）。
-- **任务收尾核对（强制）**：任务结束前逐项核对四处同步——AGENTS.md、README.md、根/扩展 `package.json`、`docs/` 中与本任务相关的全部内容。其中 `docs/`：不再成立的内容直接删除（不留注释尸体）；仍成立的更新其 `last verified @ <commit>` 行为最新 HEAD，保持卡片与代码一致。
-- **`todos/`**：每个插件必须对应一份 `todos/<插件名>-todo.md`，与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应；**新增插件时必须在同一变更里同步创建该 todo 文件**，缺失视为交付不完整。
-- **package.json**：每个被触及的扩展 `package.json` bump `version`（若 description 提及特性则一并更新）；根 `package.json` 的 `version` 同步 bump（与发布特性版本对齐，如 loop v1.3.0 → 根 1.3.0）。
-- 文档/清单更新在同一 push 中以独立 commit 提交（约定：`docs:` / `chore(pi):` 前缀）。
-
-## 重要文件
-
-- `pwr/index.ts` — 扩展入口；`export default pwrExtension(pi: ExtensionAPI)`；命令（裸 `/workflow`：生成 + 空参/`help` 帮助 + 14 个旧词改名提示；15 条 `/workflow:*` 冒号子命令 —— v2.9.0 归一，v2.8.0 冒号化）、钩子（`input`、`before_agent_start`、`session_start`、`session_shutdown`、`model_select`、`tool_call`、`tool_result`）、工具经 `registerPwrTools`（`workflow_validate`、`workflow_start`、`workflow_control`、`workflow_save`）、批准卡、entry 渲染器、runner 注入。
-- `pwr/src/types.ts` — 共享契约中枢：跨层接口 + 消息/条目常量（`pi-workflow-run-v1`、`pwr-approval-v1`、`pwr-generation-request`、`pwr-workflow-result`）、上限（`AGENT_LIMIT=1000`、`CONCURRENCY_MAX=128`、`CONCURRENCY_DEFAULT=4`、`MAX_SCRIPT_SIZE=256*1024`、`MAX_FINAL_SUMMARY_SIZE=8*1024`）。
-- `pwr/engine/spec.ts` — DSL 唯一事实来源（白名单、限制、钳制、脚本版本 1.1.2）。
-- `pwr/DELIVERY.md` — 权威架构/安全文档 + 版本历史（v2.0.0 → v2.4.0，JHL 工单映射 JHL-10..18）。注：含损坏痕迹（行首字符丢失、重复标题）。
-- `pwr/README.md`、根 `README.md` — 中文功能/安装文档。
-- `pwr/test/helpers.ts`、`pwr/runner/test/helpers.ts` — fake 构建器，新测试请复用；`pwr/package.json`、`pwr/tsconfig.json` — 脚本与强制约定。
-
 ## 运行时/工具链偏好
 
 - **Node ≥ 22.18**（原生 type-stripping——`.ts` 直接运行；已在 Node 22.23.1 / Windows 验证）。不用 Bun、无构建步骤、无 bundler。
@@ -176,13 +112,11 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 
 ## 测试与 QA
 
-- **TDD 实现（强制）：** 新能力、bug 修复与重构一律测试先行——先写能复现问题或锁定新行为的失败测试（红），再实现到绿；没有保护网不动被测代码。测试是回归资产，随变更一起入库。
 - **测试要抓住真正的问题，不止"纸面正确"：** 纯函数单测绿 ≠ 真机行为对——此前 /team:view 修堆叠三轮正栽在"纸面正确"上：纯函数单测全绿，真机照样重影。凡风险在宿主/进程边界（真实渲染管线、子进程契约、时钟/IO），测试必须接到真实实现上跑：agent-team `viewer-host.test.ts`（真实 `TuiMainScreen` + 假终端 headless 渲染）与 `viewer-mutex.test.ts`（打开互斥）各自抓住了纯函数测不出的 bug。纯函数测试只用于真正隔离的逻辑，并在文件头写明边界与动机。
 - **框架：`node:test` + `node:assert/strict`**——无 vitest/jest、无 mock 库。pwr、stream-token-speed、goal 用扁平 `test("名称", fn)` 命名（叙述式断言，部分中文名）；`run-timer.test.ts`（50 个 `it`，经 before/after 钩子 mock `setTimeout`）与 `loop/test/` 用 `describe`/`it`。统一 `*.test.ts` 后缀。
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-D
 - **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 323；run-timer 59；loop 193；goal 62；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 14；根契约 3。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。
