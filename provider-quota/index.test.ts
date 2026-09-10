@@ -11,6 +11,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
 	QUOTA_ENDPOINTS,
 	STATUS_ID,
@@ -50,12 +53,12 @@ test("zhipu: 仅百分比、无时间字段，输出与现状一致（回归）"
 			]),
 			NOW,
 		),
-		"GLM tok 32% mcp 5%",
+		"tok32% mcp5%",
 	);
 });
 
 test("zhipu: nextResetTime 毫秒/秒/ISO 字符串三种格式输出一致", () => {
-	const expected = "GLM tok 32% → 14:00 (2h13m)";
+	const expected = "tok32%(14:00)";
 	assert.equal(
 		parseZhipuQuotaLimit(
 			limitsBody([
@@ -127,7 +130,7 @@ test("zhipu: 真实响应结构 smoke（实测 nextResetTime 毫秒 epoch）", (
 	};
 	assert.equal(
 		parseZhipuQuotaLimit(body, NOW),
-		"GLM tok 6% mcp 0% → 14:00 (2h13m)",
+		"tok6% mcp0%(14:00)",
 	);
 });
 
@@ -139,11 +142,11 @@ test("zhipu: 同日显示 HH:mm，跨日显示 MM-dd HH:mm", () => {
 	]);
 	assert.equal(
 		parseZhipuQuotaLimit(body, now),
-		"GLM tok 50% → 08-06 00:10 (20m)",
+		"tok50%(08-06 00:10)",
 	);
 });
 
-test("zhipu: 刚过去的刷新时间（now-24h 内）只显示绝对时间、无倒计时", () => {
+test("zhipu: 刚过去的刷新时间（now-24h 内）只显示绝对时间", () => {
 	const body = limitsBody([
 		{
 			type: "TOKENS_LIMIT",
@@ -152,30 +155,27 @@ test("zhipu: 刚过去的刷新时间（now-24h 内）只显示绝对时间、�
 		},
 		{ type: "TIME_LIMIT", percentage: 5 },
 	]);
-	assert.equal(parseZhipuQuotaLimit(body, NOW), "GLM tok 32% mcp 5% → 11:00");
+	assert.equal(parseZhipuQuotaLimit(body, NOW), "tok32% mcp5%(11:00)");
 });
 
 test("zhipu: 早于 now-24h 的垃圾时间不追加后缀", () => {
 	const body = tokTimeBody({
 		nextResetTime: new Date(2026, 7, 4, 10, 0, 0).getTime(), // now-25h47m
 	});
-	assert.equal(parseZhipuQuotaLimit(body, NOW), "GLM tok 32% mcp 5%");
+	assert.equal(parseZhipuQuotaLimit(body, NOW), "tok32% mcp5%");
 });
 
-test("zhipu: 未来不足 1 小时显示 Ym，不足 1 分钟显示 <1m", () => {
+test("zhipu: 无论剩余多少，后缀始终为绝对时间", () => {
 	const in20min = new Date(NOW.getTime() + 20 * 60_000);
 	const body20 = limitsBody([
 		{ type: "TOKENS_LIMIT", percentage: 32, nextResetTime: in20min.getTime() },
 	]);
-	assert.equal(
-		parseZhipuQuotaLimit(body20, NOW),
-		"GLM tok 32% → 12:07 (20m)",
-	);
+	assert.equal(parseZhipuQuotaLimit(body20, NOW), "tok32%(12:07)");
 	const in30s = new Date(NOW.getTime() + 30_000);
 	const body30s = limitsBody([
 		{ type: "TOKENS_LIMIT", percentage: 32, nextResetTime: in30s.getTime() },
 	]);
-	assert.equal(parseZhipuQuotaLimit(body30s, NOW), "GLM tok 32% → 11:47 (<1m)");
+	assert.equal(parseZhipuQuotaLimit(body30s, NOW), "tok32%(11:47)");
 });
 
 test("zhipu: 刷新时间取值优先级 TOKENS_LIMIT > TIME_LIMIT > 任意条目", () => {
@@ -189,7 +189,7 @@ test("zhipu: 刷新时间取值优先级 TOKENS_LIMIT > TIME_LIMIT > 任意条�
 	]);
 	assert.equal(
 		parseZhipuQuotaLimit(both, NOW),
-		"GLM tok 1% mcp 2% → 14:00 (2h13m)",
+		"tok1% mcp2%(14:00)",
 	);
 	// 仅 TIME_LIMIT 有 → 取 TIME_LIMIT
 	const onlyTime = limitsBody([
@@ -197,13 +197,13 @@ test("zhipu: 刷新时间取值优先级 TOKENS_LIMIT > TIME_LIMIT > 任意条�
 	]);
 	assert.equal(
 		parseZhipuQuotaLimit(onlyTime, NOW),
-		"GLM mcp 2% → 15:00 (3h13m)",
+		"mcp2%(15:00)",
 	);
 	// 两者皆无、任意条目有 → 取任意条目（无百分比时仅显示后缀）
 	const anyEntry = limitsBody([
 		{ type: "OTHER", percentage: 9, nextResetTime: t3 },
 	]);
-	assert.equal(parseZhipuQuotaLimit(anyEntry, NOW), "GLM → 16:00 (4h13m)");
+	assert.equal(parseZhipuQuotaLimit(anyEntry, NOW), "(16:00)");
 });
 
 test("zhipu: 防御式兼容 nextRefreshTime / next_refresh_time / resetTime / reset_time", () => {
@@ -217,7 +217,7 @@ test("zhipu: 防御式兼容 nextRefreshTime / next_refresh_time / resetTime / r
 		const body = tokTimeBody({ [name]: REFRESH.getTime() });
 		assert.equal(
 			parseZhipuQuotaLimit(body, NOW),
-			"GLM tok 32% mcp 5% → 14:00 (2h13m)",
+			"tok32% mcp5%(14:00)",
 			`字段 ${name}`,
 		);
 	}
@@ -226,7 +226,7 @@ test("zhipu: 防御式兼容 nextRefreshTime / next_refresh_time / resetTime / r
 test("zhipu: 过小的时间戳（< 1e9）视为解析失败，不追加后缀", () => {
 	assert.equal(
 		parseZhipuQuotaLimit(tokTimeBody({ nextResetTime: 12345 }), NOW),
-		"GLM tok 32% mcp 5%",
+		"tok32% mcp5%",
 	);
 });
 
@@ -252,7 +252,7 @@ test("openrouter: 正常额度与缺 data 返回 null", () => {
 		QUOTA_ENDPOINTS.openrouter.parse({
 			data: { total_credits: 12.5, total_usage: 3.25 },
 		})?.text,
-		"OR $12.50 (used $3.25)",
+		"$12.50 (used $3.25)",
 	);
 	assert.equal(QUOTA_ENDPOINTS.openrouter.parse({}), null);
 	assert.equal(QUOTA_ENDPOINTS.openrouter.parse(null), null);
@@ -263,7 +263,7 @@ test("deepseek: 正常余额与缺 balance_infos 返回 null", () => {
 		QUOTA_ENDPOINTS.deepseek.parse({
 			balance_infos: [{ total_balance: "10.00", currency: "CNY" }],
 		})?.text,
-		"DS 10.00 CNY",
+		"10.00 CNY",
 	);
 	assert.equal(QUOTA_ENDPOINTS.deepseek.parse({}), null);
 	assert.equal(QUOTA_ENDPOINTS.deepseek.parse(null), null);
@@ -273,7 +273,7 @@ test("chatanywhere: 余额差值与非法输入返回 null", () => {
 	assert.equal(
 		QUOTA_ENDPOINTS.chatanywhere.parse({ balanceTotal: 100, balanceUsed: 40 })
 			?.text,
-		"CA 60.00",
+		"60.00",
 	);
 	assert.equal(
 		QUOTA_ENDPOINTS.chatanywhere.parse({ balanceTotal: "not-a-number" }),
@@ -290,7 +290,7 @@ test("zhipu adapter: parse 委托 parseZhipuQuotaLimit", () => {
 				{ type: "TIME_LIMIT", percentage: 5 },
 			]),
 		)?.text,
-		"GLM tok 32% mcp 5%",
+		"tok32% mcp5%",
 	);
 	assert.equal(QUOTA_ENDPOINTS.zhipu.parse(null), null);
 });
@@ -303,7 +303,7 @@ function goBody(rolling: unknown, weekly: unknown, monthly: unknown): unknown {
 
 // rolling 重置时刻固定为本地 2026-09-08 19:41:10，now 比它早 2h28m；
 // resetsAt 用 ISO 字符串，跨时区解析回同一时刻后按本地字段格式化。
-test("opencode-go: 实测响应，输出 5h/周/月百分比 + rolling 下次重置后缀", () => {
+test("opencode-go: 实测响应，输出各窗口百分比 + rolling 下次重置后缀", () => {
 	const resets = new Date(2026, 8, 8, 19, 41, 10);
 	const now = new Date(2026, 8, 8, 17, 13, 10);
 	assert.equal(
@@ -315,7 +315,7 @@ test("opencode-go: 实测响应，输出 5h/周/月百分比 + rolling 下次重
 			),
 			now,
 		),
-		"GO 5h 14% 周 5% 月 2% → 19:41 (2h28m)",
+		"14%/5%/2%(19:41)",
 	);
 });
 
@@ -327,7 +327,7 @@ test("opencode-go: 跨日重置时间显示 MM-dd HH:mm（同 zhipu 规则）", 
 			goBody({ percent: 90, resetsAt: resets.toISOString() }, undefined, undefined),
 			now,
 		),
-		"GO 5h 90% → 09-09 00:30 (2h30m)",
+		"90%(09-09 00:30)",
 	);
 });
 
@@ -343,7 +343,7 @@ test("opencode-go: rolling 缺 resetsAt 时后缀回退 weekly，再回退 month
 			),
 			now,
 		),
-		"GO 5h 1% 周 2% 月 3% → 09-09 10:00 (16h46m)",
+		"1%/2%/3%(09-09 10:00)",
 	);
 });
 
@@ -354,7 +354,7 @@ test("opencode-go: 百分比非数字的窗口跳过，全部缺失返回 null",
 			goBody({ percent: "x" }, { resetsAt: "2026-09-14T00:00:00.080Z" }, undefined),
 			now,
 		),
-		"GO → 09-14 08:00 (134h46m)",
+		"(09-14 08:00)",
 	);
 	assert.equal(parseOpencodeGoUsage(goBody({}, {}, {}), now), null);
 	assert.equal(parseOpencodeGoUsage({ usage: null }, now), null);
@@ -376,7 +376,7 @@ test("opencode-go: rolling 达到限额时，后缀显示 5h 窗口重置时间�
 			),
 			now,
 		),
-		"GO 5h 100% 周 5% 月 2% → 21:00 (4h0m)",
+		"100%/5%/2%(21:00)",
 	);
 });
 
@@ -393,7 +393,7 @@ test("opencode-go: weekly 达到限额时后缀显示周重置时间，rolling �
 			),
 			now,
 		),
-		"GO 5h 40% 周 100% 月 3% → 09-14 08:00 (135h0m)",
+		"40%/100%/3%(09-14 08:00)",
 	);
 });
 
@@ -410,7 +410,7 @@ test("opencode-go: monthly 达到限额（rolling/weekly 未限额）时后缀�
 			),
 			now,
 		),
-		"GO 5h 10% 周 4% 月 100% → 10-01 00:00 (535h0m)",
+		"10%/4%/100%(10-01 00:00)",
 	);
 });
 
@@ -427,7 +427,7 @@ test("opencode-go: 多窗口同时限额按 rolling > weekly > monthly 取第一
 			),
 			now,
 		),
-		"GO 5h 100% 月 100% → 19:00 (2h0m)",
+		"100%/100%(19:00)",
 	);
 });
 
@@ -436,7 +436,7 @@ test("opencode-go adapter: parse 委托 parseOpencodeGoUsage（走 adapter 默�
 		QUOTA_ENDPOINTS["opencode-go"].parse({
 			usage: { rolling: { percent: 7, resetsAt: "2020-01-01T00:00:00.000Z" } },
 		})?.text,
-		"GO 5h 7%",
+		"7%",
 	);
 	assert.equal(QUOTA_ENDPOINTS["opencode-go"].parse(null), null);
 	assert.equal(QUOTA_ENDPOINTS["opencode-go"].url, "https://opencode.ai/zen/go/v1/usage");
@@ -446,4 +446,47 @@ test("opencode-go adapter: parse 委托 parseOpencodeGoUsage（走 adapter 默�
 
 test("STATUS_ID 带排序带前缀（20:provider-quota）", () => {
 	assert.equal(STATUS_ID, "20:provider-quota");
+});
+
+// ---- 写入边界：段分隔前缀（docs/cross/status-bar.md）----
+// AUTH_FILE 在模块加载时按 homedir() 求值，故先把 HOME/USERPROFILE 改到临时目录，
+// 再用带 query 的动态 import 拿一份新模块实例（避开顶部静态 import 的缓存）。
+test("写入边界：状态文本带 `│ ` 段前缀（无 key 错误态同样加前缀）", async () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "provider-quota-home-"));
+	const prevHome = process.env.HOME;
+	const prevProfile = process.env.USERPROFILE;
+	process.env.HOME = home;
+	process.env.USERPROFILE = home;
+	try {
+		const mod = await import("./index.ts?status-prefix-test");
+		const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+		const pi = {
+			on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => handlers.set(name, handler),
+			registerCommand: () => {},
+		};
+		const statuses: Array<{ key: string; text: string | undefined }> = [];
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
+				theme: { fg: (_color: string, text: string) => text },
+			},
+			model: { provider: "opencode-go" },
+			signal: undefined,
+		};
+		mod.default(pi as never);
+		await handlers.get("session_start")!(undefined, ctx);
+		const written = statuses.at(-1);
+		assert.equal(written?.key, STATUS_ID);
+		assert.ok(written?.text?.startsWith("│ "), "错误态也带段分隔前缀");
+		assert.ok(written?.text?.includes("opencode-go: no key"), "错误文案保持原样");
+		await handlers.get("session_shutdown")!(undefined, ctx);
+		assert.equal(statuses.at(-1)?.text, undefined, "shutdown 清状态（不加前缀）");
+	} finally {
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
+		if (prevProfile === undefined) delete process.env.USERPROFILE;
+		else process.env.USERPROFILE = prevProfile;
+		fs.rmSync(home, { recursive: true, force: true });
+	}
 });

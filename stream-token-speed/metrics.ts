@@ -12,9 +12,11 @@
  * - 平均速度：总增量 / 有效流式时长。有效流式时长 =（最后一个可计量增量
  *   时刻 − 首个可计量增量时刻），即「首 token → message_end」区间扣除
  *   末端无输出/工具执行间隙；消息间的工具执行本就不计入消息时长。
- * - 结束汇总：末尾 1s 窗口无输出（瞬时原始值为 0）时，「最后」沿用最近
- *   一次渲染的非零平滑值并以 ~ 前缀标注（热身期未完成且无种子时退回
- *   有效时长平均，恒非零）；有输出时按末尾原始值更新/播种 EMA。
+ * - 结束汇总：输出为 `TTFT <ms>ms · ~<平均> tok/s`（`~` 标注平均值）；末尾 1s
+ *   窗口无输出（瞬时原始值为 0）时，「最后」沿用最近一次渲染的非零平滑值
+ *   （热身期未完成且无种子时退回有效时长平均，恒非零），但该值不再上屏——
+ *   仅保留在 CompletedSummary 中供兼容/回归；无样本时不输出 0 tok/s，
+ *   渲染层直接清除状态。
  *
  * 本模块为纯函数/纯数据结构，不依赖 pi API，便于注入时钟做单元测试。
  * 所有时间必须来自同一单调时钟（默认 performance.now）。
@@ -49,7 +51,7 @@ export interface CompletedSummary {
   lastInstantTps: number;
   averageTps: number;
   hasStreamingData: boolean;
-  /** 末尾 1s 窗口无输出，「最后」沿用了最近非零值（显示时以 ~ 标注）。 */
+  /** 末尾 1s 窗口无输出，「最后」沿用了最近非零值（仅保留在汇总结构中）。 */
   lastInstantCarried: boolean;
 }
 
@@ -141,10 +143,10 @@ export function shouldRender(run: MetricRun, now: ClockMs): boolean {
 
 /**
  * 结束汇总：有样本时补算最后瞬时与平均速度；无样本时返回 hasStreamingData=false，
- * 由渲染层输出“无流式速度数据”，绝不输出 0 tok/s。
+ * 由渲染层清除状态（绝不输出 0 tok/s）。
  * 末尾 1s 窗口无输出时，「最后」沿用最近渲染的非零平滑值并置 lastInstantCarried
- * （显示层以 ~ 前缀标注）；热身期未完成（EMA 无种子）时退回有效时长平均，
- * 保证恒非零。
+ * （仅保留在汇总结构中，上屏格式只用平均速度）；热身期未完成（EMA 无种子）时
+ * 退回有效时长平均，保证恒非零。
  */
 export function computeSummary(run: MetricRun, endAt: ClockMs): CompletedSummary {
   if (run.firstEligibleDeltaAt === undefined || run.totalEligibleTokens === 0) {
@@ -178,25 +180,20 @@ export function formatTps(tps: number): string {
 
 /** 生成中（TTFT 未确定）。 */
 export function formatWaitingStatus(): string {
-  return "生成中：TTFT 等待中｜速度 —";
+  return "TTFT —";
 }
 
 /** 生成中（TTFT 已确定）。 */
 export function formatStreamingStatus(ttftMs: number, instantTps: number): string {
-  return `生成中：TTFT ${ttftMs} ms｜速度 ${formatTps(instantTps)}`;
+  return `TTFT ${ttftMs}ms · ${formatTps(instantTps)}`;
 }
 
 /** 生成中（TTFT 已确定，热身期：速度保持 `—` 不更新，v4）。 */
 export function formatWarmupStatus(ttftMs: number): string {
-  return `生成中：TTFT ${ttftMs} ms｜速度 —`;
+  return `TTFT ${ttftMs}ms · —`;
 }
 
-/** 结束汇总。末尾瞬时为沿用值时以 ~ 标注（v3）。 */
+/** 结束汇总：本轮 TTFT + 平均速度（`~` 前缀标注平均值）。 */
 export function formatSummary(s: CompletedSummary): string {
-  const last = s.lastInstantCarried
-    ? `最后 ~${formatTps(s.lastInstantTps)}`
-    : `最后 ${formatTps(s.lastInstantTps)}`;
-  return `TTFT ${s.ttftMs} ms｜${last}｜平均 ${formatTps(s.averageTps)}`;
+  return `TTFT ${s.ttftMs}ms · ~${formatTps(s.averageTps)}`;
 }
-
-export const NO_DATA_STATUS = "无流式速度数据";

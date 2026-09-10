@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createStreamAdapter } from "../adapter.ts";
 import { TokenSpeedController } from "../controller.ts";
-import { createStatusPort, STATUS_KEY } from "../status-port.ts";
+import { createStatusPort, STATUS_KEY, STATUS_SEPARATOR } from "../status-port.ts";
 import {
   assistantMessage,
   messageEndEvent,
@@ -42,7 +42,7 @@ test("AC-01：正常路径实时计量（TTFT 420ms，1s 窗口 18 增量 -> 18.
   const m = msg("m1");
   h.at(0);
   h.controller.onMessageStart(messageStartEvent(m), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 等待中｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT —");
 
   // 首个 thinking_delta 于 420ms；随后每 50ms 一个，共 17 个（420..1220）
   const times = [420, 470, 520, 570, 620, 670, 720, 770, 820, 870, 920, 970, 1020, 1070, 1120, 1170, 1220];
@@ -52,14 +52,14 @@ test("AC-01：正常路径实时计量（TTFT 420ms，1s 窗口 18 增量 -> 18.
   }
 
   // 420ms 到达时 TTFT 已确定，但处于 v4 热身期（前 1s）：速度保持 —
-  assert.ok(h.ui.statuses().some((s) => s === "生成中：TTFT 420 ms｜速度 —"));
+  assert.ok(h.ui.statuses().some((s) => s === "│ TTFT 420ms · —"));
   // 热身期内其余刷新点不更新速度（无 1000.0 之类未满窗口放大值）
 
   // 第 18 个增量于 1420ms 到达：满 1s 热身结束，以首个完整窗口值播种 EMA
   // （窗口 [420,1420] 恰好 1s、18 个样本 -> 种子 = 18.0）
   h.at(1420);
   h.controller.onMessageUpdate(messageUpdateEvent(m, "text_delta"), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 420 ms｜速度 18.0 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 420ms · 18.0 tok/s");
 });
 
 test("AC-02：边界路径未满窗口（500ms 内 5 增量 -> 全程热身期，速度保持 —）", () => {
@@ -73,7 +73,7 @@ test("AC-02：边界路径未满窗口（500ms 内 5 增量 -> 全程热身期�
     h.controller.onMessageUpdate(messageUpdateEvent(m, "toolcall_delta"), h.status);
   }
   // 热身期：TTFT 确定但速度保持 —（不出现未满窗口的放大值）
-  assert.equal(h.ui.last(), "生成中：TTFT 0 ms｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT 0ms · —");
 });
 
 test("AC-03：未知事件与用户消息不影响计数与 TTFT", () => {
@@ -98,7 +98,7 @@ test("AC-03：未知事件与用户消息不影响计数与 TTFT", () => {
   h.at(600);
   h.controller.onMessageUpdate(messageUpdateEvent(m, "text_delta"), h.status);
   // 只有 2 个有效增量，TTFT 仍是 100ms；600ms 仍在热身期（<1s）-> 速度保持 —
-  assert.equal(h.ui.last(), "生成中：TTFT 100 ms｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · —");
 });
 
 test("AC-04：结束汇总（v4：EMA 种子=首个完整窗口 + 有效流式时长平均）", () => {
@@ -114,7 +114,7 @@ test("AC-04：结束汇总（v4：EMA 种子=首个完整窗口 + 有效流式�
   h.controller.onMessageEnd(messageEndEvent(m), h.status);
   // 种子（1420ms 首个完整窗口）≈19；末尾原始 18 -> EMA ≈18.7；
   // 平均：36 / (2364−420)ms ≈ 18.5
-  assert.equal(h.ui.last(), "TTFT 420 ms｜最后 18.7 tok/s｜平均 18.5 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 420ms · ~18.5 tok/s");
 });
 
 test("AC-05：首增量后立即结束 -> 补算汇总，无 NaN/Infinity/除零", () => {
@@ -128,7 +128,7 @@ test("AC-05：首增量后立即结束 -> 补算汇总，无 NaN/Infinity/除零
   h.controller.onMessageEnd(messageEndEvent(m), h.status);
   // 短流（未满热身期）：末尾窗口含样本 -> EMA 以末尾原始值 20.0 播种；
   // 平均：单样本有效时长 1ms -> 1000.0
-  assert.equal(h.ui.last(), "TTFT 100 ms｜最后 20.0 tok/s｜平均 1000.0 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · ~1000.0 tok/s");
 });
 
 test("AC-06：产生增量后取消/报错 -> 按已收增量生成汇总且停止刷新", () => {
@@ -145,11 +145,11 @@ test("AC-06：产生增量后取消/报错 -> 按已收增量生成汇总且停�
   h.controller.onMessageEnd(messageEndEvent(aborted), h.status);
   // 短流（未满热身期）：末尾窗口含样本 -> EMA 以末尾原始值 10.0 播种；
   // 平均：5 / 0.4s = 12.5
-  assert.equal(h.ui.last(), "TTFT 100 ms｜最后 10.0 tok/s｜平均 12.5 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · ~12.5 tok/s");
   // 结束后的 message_update 不再刷新
   h.at(700);
   h.controller.onMessageUpdate(messageUpdateEvent(m, "text_delta"), h.status);
-  assert.equal(h.ui.last(), "TTFT 100 ms｜最后 10.0 tok/s｜平均 12.5 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · ~12.5 tok/s");
 });
 
 test("AC-07：tool result / 工具进度不影响计数与速度（10 个增量保持 10）", () => {
@@ -167,7 +167,7 @@ test("AC-07：tool result / 工具进度不影响计数与速度（10 个增量�
   const summaryBefore = h.ui.last();
   // 短流（未满热身期）：末尾窗口含样本 -> EMA 以末尾原始值 20.0 播种；
   // 平均：10 / (550−100)ms = 22.2
-  assert.equal(summaryBefore, "TTFT 100 ms｜最后 20.0 tok/s｜平均 22.2 tok/s");
+  assert.equal(summaryBefore, "│ TTFT 100ms · ~22.2 tok/s");
 
   // 工具执行：tool result 消息开始/结束、工具进度事件（未知类型）全部到达
   const callsBefore = h.ui.calls.length;
@@ -195,13 +195,13 @@ test("AC-08：新轮 message_start 立即替换上一轮，旧轮 tool result �
   h.controller.onMessageUpdate(messageUpdateEvent(m1, "text_delta"), h.status);
   h.at(200);
   h.controller.onMessageEnd(messageEndEvent(m1), h.status);
-  assert.ok(h.ui.last()!.startsWith("TTFT 100 ms"));
+  assert.ok(h.ui.last()!.startsWith("│ TTFT 100ms"));
 
   // 新轮开始
   const m2 = msg("m2");
   h.at(1000);
   h.controller.onMessageStart(messageStartEvent(m2), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 等待中｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT —");
   // 上一轮的 tool result 随后到达：不得改变新轮
   h.at(1100);
   h.controller.onMessageStart(messageStartEvent(toolResultMessage()), h.status);
@@ -212,28 +212,28 @@ test("AC-08：新轮 message_start 立即替换上一轮，旧轮 tool result �
   h.controller.onMessageUpdate(messageUpdateEvent(m2, "text_delta"), h.status);
   h.at(1600);
   h.controller.onMessageUpdate(messageUpdateEvent(m2, "text_delta"), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 300 ms｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT 300ms · —");
   h.at(1700);
   h.controller.onMessageEnd(messageEndEvent(m2), h.status);
   // 短流（未满热身期）：末尾窗口含样本 -> EMA 以末尾原始值 5.0 播种；
   // 平均：2 / 0.3s = 6.7
-  assert.equal(h.ui.last(), "TTFT 300 ms｜最后 5.0 tok/s｜平均 6.7 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 300ms · ~6.7 tok/s");
 });
 
-test("AC-09：无流式增量 -> 无流式速度数据；非流式消息同样处理", () => {
+test("AC-09：无流式增量 -> 清除状态（不显示 0 tok/s）；非流式消息同样处理", () => {
   const h = makeHarness();
   const m = msg("m1");
   h.at(0);
   h.controller.onMessageStart(messageStartEvent(m), h.status);
   h.at(50);
   h.controller.onMessageEnd(messageEndEvent(m), h.status);
-  assert.equal(h.ui.last(), "无流式速度数据");
+  assert.equal(h.ui.last(), undefined, "无流式数据 -> 清除状态");
   // 非流式：message_start(final) 后立即 message_end
   h.at(100);
   h.controller.onMessageStart(messageStartEvent(msg("m2")), h.status);
   h.at(101);
   h.controller.onMessageEnd(messageEndEvent(msg("m2")), h.status);
-  assert.equal(h.ui.last(), "无流式速度数据");
+  assert.equal(h.ui.last(), undefined, "非流式消息同样清除状态");
 });
 
 test("AC-09：TUI 不可用（print/json 模式）时静默降级，零渲染调用", () => {
@@ -263,7 +263,7 @@ test("AC-09：setStatus 抛错被端口隔离，不中断度量与后续渲染",
   // 新一轮仍可正常渲染
   h.at(300);
   h.controller.onMessageStart(messageStartEvent(msg("m2")), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 等待中｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT —");
 });
 
 test("状态键固定为 50:stream-token-speed（排序带前缀，原位更新）", () => {
@@ -280,36 +280,59 @@ test("状态键固定为 50:stream-token-speed（排序带前缀，原位更新�
   assert.ok(h.ui.calls.every((c) => c.key === STATUS_KEY));
 });
 
+test("段分隔前缀：状态端口统一加 `│ `，style 包装含前缀的完整文本（docs/cross/status-bar.md）", () => {
+  const h = makeHarness();
+  const m = msg("m1");
+  h.at(0);
+  h.controller.onMessageStart(messageStartEvent(m), h.status);
+  h.at(100);
+  h.controller.onMessageUpdate(messageUpdateEvent(m, "text_delta"), h.status);
+  h.at(200);
+  h.controller.onMessageEnd(messageEndEvent(m), h.status);
+  assert.ok(h.ui.statuses().length > 0);
+  assert.ok(h.ui.statuses().every((s) => s.startsWith("│ ")), "每帧状态都以 │ 开头");
+  // style 在端口内部包在前缀之外：样式函数看到的是含前缀的完整文本
+  const ui = new RecordingStatusPort();
+  const styled: Array<string | undefined> = [];
+  const status = createStatusPort(ui, () => true, (t) => {
+    styled.push(t);
+    return t;
+  });
+  const controller = new TokenSpeedController(createStreamAdapter(() => 0));
+  controller.onMessageStart(messageStartEvent(msg("m2")), status);
+  assert.equal(styled[0], STATUS_SEPARATOR + "TTFT —");
+});
+
 test("修复#2 回归：真实 provider 时序（start 无 responseId，update/end 有）完整计量", () => {
   // 与 pi v0.83.0 真实行为一致：message_start 的 partial 尚无 responseId，
   // responseId 在流开始后才可知，故 message_update / message_end 才携带。
   // 旧实现对“assistant-N 匿名 id vs 真实 responseId”的硬性不匹配会丢弃
-  // 全部增量并卡死在“生成中：TTFT 等待中｜速度 —”。
+  // 全部增量并卡死在“│ TTFT —”。
   const h = makeHarness();
   const startMsg = assistantMessage(undefined); // message_start：无 responseId
   h.at(0);
   h.controller.onMessageStart(messageStartEvent(startMsg), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 等待中｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT —");
 
   // 首个增量携带真实 responseId：必须被计入（TTFT 起点 100ms，热身期速度 —）
   const realIdMsg = assistantMessage("msg_real_001");
   h.at(100);
   h.controller.onMessageUpdate(messageUpdateEvent(realIdMsg, "thinking_delta"), h.status);
-  assert.ok(h.ui.statuses().some((s) => s === "生成中：TTFT 100 ms｜速度 —"));
+  assert.ok(h.ui.statuses().some((s) => s === "│ TTFT 100ms · —"));
 
   // 后续增量（带真实 id）正常累计；600ms 仍在热身期（<1s）-> 速度保持 —
   h.at(200);
   h.controller.onMessageUpdate(messageUpdateEvent(realIdMsg, "text_delta"), h.status);
   h.at(600);
   h.controller.onMessageUpdate(messageUpdateEvent(realIdMsg, "text_delta"), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 100 ms｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · —");
 
   // message_end 携带真实 id：轮次正常收尾为汇总（旧实现会因不匹配而永不收尾）
   // 短流：EMA 以末尾原始值 5.0 播种；平均：3 / 0.5s = 6.0
   const endMsg = assistantMessage("msg_real_001", "stop");
   h.at(700);
   h.controller.onMessageEnd(messageEndEvent(endMsg), h.status);
-  assert.equal(h.ui.last(), "TTFT 100 ms｜最后 5.0 tok/s｜平均 6.0 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · ~6.0 tok/s");
 });
 
 test("修复#2 回归：收编真实 responseId 后，跨轮事件仍被精确隔离", () => {
@@ -328,13 +351,13 @@ test("修复#2 回归：收编真实 responseId 后，跨轮事件仍被精确�
   h.at(600);
   h.controller.onMessageEnd(messageEndEvent(assistantMessage("msg_b", "stop")), h.status);
   // 状态仍为 msg_a 的生成中（msg_b 的增量被隔离；热身期显示 —）
-  assert.equal(h.ui.last(), "生成中：TTFT 100 ms｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · —");
 
   // 本轮的 message_end（msg_a）正常收尾：单样本 -> EMA 播种 1.7；
   // 平均：单样本有效时长 1ms -> 1000.0
   h.at(700);
   h.controller.onMessageEnd(messageEndEvent(assistantMessage("msg_a", "stop")), h.status);
-  assert.equal(h.ui.last(), "TTFT 100 ms｜最后 1.7 tok/s｜平均 1000.0 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · ~1000.0 tok/s");
 });
 
 test("修复#1：style 样式函数作用于全部状态文本（theme.fg(\"dim\") 场景）", () => {
@@ -357,7 +380,7 @@ test("修复#1：style 样式函数作用于全部状态文本（theme.fg(\"dim\
   const plain = createStatusPort(ui, () => true);
   const controller2 = new TokenSpeedController(createStreamAdapter(() => 0));
   controller2.onMessageStart(messageStartEvent(msg("m2")), plain);
-  assert.equal(ui.last(), "生成中：TTFT 等待中｜速度 —");
+  assert.equal(ui.last(), "│ TTFT —");
 });
 
 test("修复#1：style 抛错被端口隔离，不影响度量与后续渲染", () => {
@@ -387,7 +410,7 @@ test("v3：末端无输出（工具执行间隙）-> 最后沿用最近非零值
   h.controller.onMessageEnd(messageEndEvent(m), h.status);
   // 平均：5 / 0.4s = 12.5（末端 1.5s 间隙不拉低平均速度）
   // 最后：末尾窗口无样本且热身期未完成（EMA 无种子）-> 退回有效时长平均并标注
-  assert.match(h.ui.last()!, /^TTFT 100 ms｜最后 ~12\.5 tok\/s｜平均 12\.5 tok\/s$/);
+  assert.match(h.ui.last()!, /^│ TTFT 100ms · ~12\.5 tok\/s$/);
   assert.ok(!h.ui.last()!.includes("0.0 tok/s"));
 });
 
@@ -401,16 +424,16 @@ test("v4：热身期（前 1s 速度 —）-> 满 1s 以首个完整窗口值为
     h.at(t);
     h.controller.onMessageUpdate(messageUpdateEvent(m, "text_delta"), h.status);
   }
-  assert.equal(h.ui.last(), "生成中：TTFT 100 ms｜速度 —");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · —");
   // 1100ms：满 1s，首个完整窗口 [100,1100] = 11 个增量 -> 种子 11.0
   h.at(1100);
   h.controller.onMessageUpdate(messageUpdateEvent(m, "text_delta"), h.status);
-  assert.equal(h.ui.last(), "生成中：TTFT 100 ms｜速度 11.0 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · 11.0 tok/s");
   h.at(1200);
   h.controller.onMessageEnd(messageEndEvent(m), h.status);
   // 末尾窗口 [200,1200] = 10 个增量 -> EMA 0.3*10 + 0.7*11 = 10.7；
   // 平均：11 / 1.0s = 11.0
-  assert.equal(h.ui.last(), "TTFT 100 ms｜最后 10.7 tok/s｜平均 11.0 tok/s");
+  assert.equal(h.ui.last(), "│ TTFT 100ms · ~11.0 tok/s");
 });
 
 test("v4：EMA 平滑抑制瞬时波动（热身期后原始速率变化时渲染值平滑收敛、无跳变）", () => {
@@ -426,12 +449,12 @@ test("v4：EMA 平滑抑制瞬时波动（热身期后原始速率变化时渲�
   }
   const statuses = h.ui.statuses();
   // [0]=waiting, [1]=热身期（速度保持 —），[2..]=正式计量
-  assert.equal(statuses[0], "生成中：TTFT 等待中｜速度 —");
-  assert.equal(statuses[1], "生成中：TTFT 100 ms｜速度 —");
+  assert.equal(statuses[0], "│ TTFT —");
+  assert.equal(statuses[1], "│ TTFT 100ms · —");
   // 满 1s 后：首个完整窗口 [100,1100] = 11 个增量 -> 种子 11.0（无 1000 级放大值）
-  assert.equal(statuses[2], "生成中：TTFT 100 ms｜速度 11.0 tok/s");
+  assert.equal(statuses[2], "│ TTFT 100ms · 11.0 tok/s");
   // EMA 平滑序列：11.0 -> 10.1 -> 8.6 -> 6.9 -> 5.7（原始值 11/8/5/3/3 被阻尼）
-  const emaSeq = statuses.slice(2).map((s) => Number(/速度 ([\d.]+) tok\/s/.exec(s)?.[1]));
+  const emaSeq = statuses.slice(2).map((s) => Number(/· ([\d.]+) tok\/s/.exec(s)?.[1]));
   assert.deepEqual(emaSeq, [11.0, 10.1, 8.6, 6.9, 5.7]);
   assert.ok(emaSeq.every((v) => v > 0));
 });

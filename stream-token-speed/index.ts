@@ -2,7 +2,7 @@
  * JHL-10 流式 Token 速度显示 — pi TUI 扩展
  *
  * 在 pi TUI 流式回复期间显示 TTFT（首 token 延迟）与瞬时 tokens/s，
- * 结束后保留本轮 TTFT、最后瞬时值与平均速度。计量范围覆盖文本、
+ * 结束后保留本轮 TTFT 与平均速度。计量范围覆盖文本、
  * thinking、tool call 的流式增量；tool result 与工具执行进度一律排除。
  *
  * 安装：将本目录（stream-token-speed）复制到

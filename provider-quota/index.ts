@@ -18,16 +18,19 @@
  *    生命周期事件中常为 undefined，不能作为 session 取消依据）
  *  - 错误状态可辨识：timeout / net err / parse err / HTTP <code>
  *
- * 内置支持：
+ * 内置支持（段文本均以 `│ ` 开头，前缀在写入边界统一拼接，见 docs/cross/status-bar.md）：
  *  - openrouter  GET https://openrouter.ai/api/v1/credits   -> total_credits / total_usage（美元）
+ *                输出 `$12.50 (used $3.25)`
  *  - deepseek    GET https://api.deepseek.com/user/balance  -> total_balance
+ *                输出 `10.00 CNY`
  *  - chatanywhere POST https://api.chatanywhere.tech/v1/query/balance
- *                -> balanceTotal - balanceUsed（CA）
+ *                -> balanceTotal - balanceUsed（输出 `60.00`）
  *  - zhipu(GLM Coding Plan) GET {base}/api/monitor/usage/quota/limit
  *                -> data.limits[] 内 TOKENS_LIMIT / TIME_LIMIT 的 percentage；
- *                   响应带刷新时间戳时（实测字段 nextResetTime，毫秒 epoch，
- *                   兼容 nextRefreshTime / next_refresh_time / resetTime / reset_time 变体）
- *                   追加 `→ HH:mm (Xh Ym)` 下次刷新后缀
+ *                   输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`），重置时间
+ *                   不可解析或早于 now-24h 时不加括号；
+ *                   响应带刷新时间戳时实测字段 nextResetTime，毫秒 epoch，
+ *                   兼容 nextRefreshTime / next_refresh_time / resetTime / reset_time 变体
  *                （base 仅接受 https + 无端口 + 白名单主机 open.bigmodel.cn / dev.bigmodel.cn /
  *                 api.z.ai，取自 ANTHROPIC_BASE_URL；未设置 / 非法时回退到
  *                 https://open.bigmodel.cn/api/monitor/usage/quota/limit 默认地址。
@@ -35,10 +38,10 @@
  *                 实现参考 zai-coding-plugins/glm-plan-usage）
  *  - opencode-go(OpenCode Go 订阅) GET https://opencode.ai/zen/go/v1/usage
  *                -> usage.rolling/weekly/monthly 的 percent（5 小时滚动窗口/周/月，
- *                   resetsAt 为 ISO 字符串）；追加 `→ HH:mm (Xh Ym)` 下次重置后缀：
- *                   哪个窗口 status != "ok"（达到限额）后缀就显示哪个的 resetsAt，
- *                   都未限额时依次回退 rolling/weekly/monthly；跨日显示 MM-dd HH:mm，
- *                   同 zhipu 规则）。
+ *                   resetsAt 为 ISO 字符串）；输出 `14%/5%/2%(HH:mm)`（缺失窗口
+ *                   跳过、百分比以 `/` 分隔）：哪个窗口 status != "ok"（达到限额）
+ *                   后缀就显示哪个的 resetsAt，都未限额时依次回退
+ *                   rolling/weekly/monthly；跨日显示 MM-dd HH:mm，同 zhipu 规则。
  *                鉴权 Bearer sk-…，即 auth.json 里 opencode-go 条目的 key（实测 2026-09）。
  *
  * 不在内置列表的 provider（如 anthropic / openai 直连）会静默不显示状态行。
@@ -211,30 +214,16 @@ function formatZhipuRefreshTime(d: Date, now: Date): string {
 	return sameDay ? hhmm : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${hhmm}`;
 }
 
-// 倒计时：向下取整；不足 1 分钟显示 <1m。
-function formatZhipuCountdown(diffMs: number): string {
-	const totalMinutes = Math.floor(diffMs / 60_000);
-	const hours = Math.floor(totalMinutes / 60);
-	const minutes = totalMinutes % 60;
-	if (hours > 0) return `${hours}h${minutes}m`;
-	if (minutes > 0) return `${minutes}m`;
-	return "<1m";
-}
-
+// 倒计时已移除：后缀只显示绝对时间 `(HH:mm)`（跨日 `(MM-dd HH:mm)`）。
 // 后缀规则：
-//  - 刷新时间在未来 → `→ HH:mm (Xh Ym)`（跨日为 MM-dd HH:mm）
-//  - 过去但在 now-24h 内 → 只显示绝对时间（应对 footer 5 分钟轮询的短暂过期窗口）
-//  - 早于 now-24h / 无法解析 → null（输出与无时间字段时完全一致）
+//  - 刷新时间早于 now-24h / 无法解析 → null（输出与无时间字段时完全一致）
 function formatZhipuRefreshSuffix(
 	refresh: Date | null,
 	now: Date,
 ): string | null {
 	if (!refresh) return null;
-	const diffMs = refresh.getTime() - now.getTime();
-	if (diffMs < -STALE_WINDOW_MS) return null;
-	const absolute = formatZhipuRefreshTime(refresh, now);
-	if (diffMs <= 0) return `→ ${absolute}`;
-	return `→ ${absolute} (${formatZhipuCountdown(diffMs)})`;
+	if (refresh.getTime() - now.getTime() < -STALE_WINDOW_MS) return null;
+	return `(${formatZhipuRefreshTime(refresh, now)})`;
 }
 
 // ---- OpenCode Go usage 解析（实测端点 https://opencode.ai/zen/go/v1/usage，2026-09）----
@@ -243,16 +232,12 @@ function formatZhipuRefreshSuffix(
 // {"usage":{"rolling":{"status":"ok","percent":14,"resetsAt":"2026-09-08T19:41:10.080Z"},
 //            "weekly":{"status":"ok","percent":5,"resetsAt":"2026-09-14T00:00:00.080Z"},
 //            "monthly":{"status":"ok","percent":2,"resetsAt":"2026-10-08T14:35:13.080Z"}}}
-// rolling 为 5 小时滚动窗口。输出 `GO 5h X% 周 Y% 月 Z%`，并追加 `→ HH:mm (Xh Ym)`
-// 下次重置后缀（复用智谱的刷新时间格式化）。后缀时间取自哪个窗口：
+// rolling 为 5 小时滚动窗口。输出 `14%/5%/2%(HH:mm)`：只保留各窗口百分比，
+// 重置时间取自哪个窗口：
 //  - 某窗口 status != "ok"（达到限额）→ 显示该窗口的 resetsAt（多窗口同时限额取
 //    rolling > weekly > monthly 顺位第一个）
 //  - 都未限额 → 依次回退 rolling/weekly/monthly 的 resetsAt（默认展示 5h 窗口重置时间）
-const GO_WINDOW_LABELS = [
-	["rolling", "5h"],
-	["weekly", "周"],
-	["monthly", "月"],
-] as const;
+const GO_WINDOWS = ["rolling", "weekly", "monthly"] as const;
 const GO_OK_STATUS = "ok";
 
 export function parseOpencodeGoUsage(body: unknown, now: Date): string | null {
@@ -262,13 +247,13 @@ export function parseOpencodeGoUsage(body: unknown, now: Date): string | null {
 	const parts: string[] = [];
 	let defaultRefresh: Date | null = null;
 	let limitedRefresh: Date | null = null;
-	for (const [name, label] of GO_WINDOW_LABELS) {
+	for (const name of GO_WINDOWS) {
 		const entry = windows[name] as
 			| { status?: unknown; percent?: unknown; resetsAt?: unknown }
 			| undefined;
 		if (!entry || typeof entry !== "object") continue;
 		if (typeof entry.percent === "number" && Number.isFinite(entry.percent)) {
-			parts.push(`${label} ${entry.percent}%`);
+			parts.push(`${entry.percent}%`);
 		}
 		const parsed = toZhipuRefreshDate(entry.resetsAt);
 		if (!parsed) continue;
@@ -284,14 +269,14 @@ export function parseOpencodeGoUsage(body: unknown, now: Date): string | null {
 	// 都未限额时依次回退 rolling/weekly/monthly（默认展示 5h 窗口）。
 	const suffix = formatZhipuRefreshSuffix(limitedRefresh ?? defaultRefresh, now);
 	if (!parts.length && !suffix) return null;
-	return `GO ${[...parts, ...(suffix ? [suffix] : [])].join(" ")}`;
+	return `${parts.join("/")}${suffix ?? ""}`;
 }
 
 /**
  * 解析智谱 quota-limit 响应为 footer 状态行文本。
  *
- * 输出 `GLM tok X% mcp Y%`，并在能解析出刷新时间时追加 `→ HH:mm (Xh Ym)`。
- * 百分比与刷新时间都缺失时返回 null（沿用 GLM: - 路径）。
+ * 输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`），刷新时间不可解析时
+ * 省略括号；百分比与刷新时间都缺失时返回 null。
  */
 export function parseZhipuQuotaLimit(body: unknown, now: Date): string | null {
 	const limits = extractZhipuLimits(body);
@@ -301,13 +286,13 @@ export function parseZhipuQuotaLimit(body: unknown, now: Date): string | null {
 	const time = findZhipuLimit(limits, "TIME_LIMIT");
 	const parts: string[] = [];
 	if (tok && typeof tok.percentage === "number")
-		parts.push(`tok ${tok.percentage}%`);
+		parts.push(`tok${tok.percentage}%`);
 	if (time && typeof time.percentage === "number")
-		parts.push(`mcp ${time.percentage}%`);
+		parts.push(`mcp${time.percentage}%`);
 
 	const suffix = formatZhipuRefreshSuffix(pickZhipuRefreshTime(limits), now);
 	if (!parts.length && !suffix) return null;
-	return `GLM ${[...parts, ...(suffix ? [suffix] : [])].join(" ")}`;
+	return `${parts.join(" ")}${suffix ?? ""}`;
 }
 
 export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
@@ -318,7 +303,7 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 			if (!d) return null;
 			const total = Number(d.total_credits ?? 0);
 			const used = Number(d.total_usage ?? 0);
-			return { text: `OR $${total.toFixed(2)} (used $${used.toFixed(2)})` };
+			return { text: `$${total.toFixed(2)} (used $${used.toFixed(2)})` };
 		},
 	},
 	deepseek: {
@@ -328,7 +313,7 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 			if (!info) return null;
 			const bal = info.total_balance ?? "?";
 			const cur = info.currency ?? "";
-			return { text: `DS ${bal} ${cur}`.trim() };
+			return { text: `${bal} ${cur}`.trim() };
 		},
 	},
 	chatanywhere: {
@@ -342,7 +327,7 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 			const total = Number(b?.balanceTotal);
 			const used = Number(b?.balanceUsed);
 			if (!Number.isFinite(total) || !Number.isFinite(used)) return null;
-			return { text: `CA ${(total - used).toFixed(2)}` };
+			return { text: (total - used).toFixed(2) };
 		},
 	},
 	zhipu: {
@@ -365,6 +350,8 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 
 /** footer 键带 `20:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md） */
 export const STATUS_ID = "20:provider-quota";
+/** 段分隔前缀（跨插件契约 docs/cross/status-bar.md）：每段状态文本以 `│ ` 开头 */
+export const STATUS_SEPARATOR = "│ ";
 const REFRESH_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -516,7 +503,9 @@ export default function (pi: ExtensionAPI) {
 			if (sessionSignal?.aborted) return;
 			ctx.ui.setStatus(
 				STATUS_ID,
-				value === undefined ? undefined : ctx.ui.theme.fg("dim", value),
+				value === undefined
+					? undefined
+					: ctx.ui.theme.fg("dim", STATUS_SEPARATOR + value),
 			);
 		};
 

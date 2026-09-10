@@ -59,7 +59,7 @@ test("runWidgetLines empty store", () => {
 	assert.ok(lines.some((l) => l.includes("no runs")));
 });
 
-test("refreshUiStatus 写 footer 排序带键 30:pwr（docs/cross/status-bar.md）", () => {
+test("refreshUiStatus 写 footer 排序带键 30:pwr + 段分隔前缀（docs/cross/status-bar.md）", () => {
 	const store = storeWith([{ name: "a", at: "2026-08-05T12:00:00Z", status: "running" }]);
 	const statusCalls: Array<{ key: string; text: string | undefined }> = [];
 	const widgetCalls: Array<{ key: string; lines: string[] }> = [];
@@ -70,19 +70,21 @@ test("refreshUiStatus 写 footer 排序带键 30:pwr（docs/cross/status-bar.md�
 		} as never,
 		store,
 	);
-	assert.ok(statusCalls.some((c) => c.key === "30:pwr"), "footer 状态键带排序前缀");
+	const footer = statusCalls.find((c) => c.key === "30:pwr");
+	assert.ok(footer, "footer 状态键带排序前缀");
+	assert.equal(footer!.text, "│ pwr 1▶");
 	assert.ok(widgetCalls.some((c) => c.key === "pwr-runs"), "widget 键不变");
 });
 
-test("runStatusText counts only active runs; undefined when none", () => {
+test("runStatusText 计数式短文案；无活跃 run 返回 undefined", () => {
 	const store = storeWith([
 		{ name: "a", at: "2026-08-05T12:00:00Z", status: "running" },
 		{ name: "b", at: "2026-08-05T11:00:00Z", status: "running" },
 		{ name: "c", at: "2026-08-05T10:00:00Z", status: "completed" },
 	]);
-	const text = runStatusText(store)!;
-	assert.ok(text.includes("2 active"));
-	assert.ok(text.includes("1 finished"));
+	assert.equal(runStatusText(store), "pwr 2▶ 1✓");
+	const single = storeWith([{ name: "a", at: "2026-08-05T12:00:00Z", status: "running" }]);
+	assert.equal(runStatusText(single), "pwr 1▶", "无已完成时不输出 0✓");
 	const done = storeWith([{ name: "c", at: "2026-08-05T10:00:00Z", status: "completed" }]);
 	assert.equal(runStatusText(done), undefined);
 });

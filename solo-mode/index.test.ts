@@ -12,6 +12,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   SOLO_STATUS_KEY,
   SOLO_STATUS_TEXT,
+  STATUS_SEPARATOR,
   clearSoloState,
   createSoloModeExtension,
   isSoloActive,
@@ -153,7 +154,7 @@ test("开启：确认通过 → 状态文件写入 + 状态条 + notify；关闭
 
   assert.equal(fs.existsSync(file), true, "确认后写入状态文件");
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { pid: process.pid, activatedAt: "2026-08-05T12:00:00.000Z" });
-  assert.ok(statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === SOLO_STATUS_TEXT), "状态条显示 ⚡ solo");
+  assert.ok(statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === "│ ⚡ solo"), "状态条显示 │ ⚡ solo");
   assert.ok(notifications.some((n) => n.message.includes("已启用")), "notify 已启用");
 
   await commands.get("solo:off")!.handler("", ctx);
@@ -253,4 +254,5 @@ test("session_shutdown：清除本进程状态文件与状态条", async () => {
 
 test("SOLO_STATUS_KEY 带排序带前缀（40:solo-mode）", () => {
   assert.equal(SOLO_STATUS_KEY, "40:solo-mode");
+  assert.equal(STATUS_SEPARATOR + SOLO_STATUS_TEXT, "│ ⚡ solo");
 });
