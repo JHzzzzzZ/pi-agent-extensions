@@ -62,7 +62,7 @@
   - 仍待实现时定：逐成员行/树/滚动/展开；spinner 与身份色是否照搬；组件工厂式渲染 vs 保持 string[]（硬约束①先证残影）；`/team clear` 命令去留。
   - 验收思路：真机（派单看状态条渲染/动画/按键）+ 真实宿主测试（复用 `viewer-host.test.ts` / `widget-focus-host.test.ts` 的 TuiMainScreen 仿真路径）+ 全量测试/typecheck 绿。
 - [ ] `/team` 帮助与命令编排合理性：统一路由后仍无 `help` 子命令（帮助只靠命令面板 description + 出错 usage），且 `/team help` 会被当作团队名（无任务时提示 `用法：/team help <任务描述>`，若有同名团队则直接派单）——与 `/workflows help` 不对称，`help` 也未进保留词。待办：给 `/team` 增加 `help` 子命令（列全部子命令 + 用法 + 撞保留词的显式 `run` 规则），把 `help` 纳入 `RESERVED_TEAM_COMMAND_NAMES`；顺带复核无参行为（列团队 vs 显示帮助）、子命令命名/顺序与 `getArgumentCompletions` 补全。细节待定，未领取。
-- [ ] widget 默认态太丑：亮块常显 2-3 行，需按 pi-subagents fleet-status 折叠——默认只留一行小提示，按 `↓`/`←` 才展开（用户 2026-09-10 截图反馈，processing 2026-09-14 @ widget-fold）
+- [x] widget 默认态太丑：亮块常显 2-3 行，需按 pi-subagents fleet-status 折叠——默认只留一行小提示，按 `↓`/`←` 才展开（用户 2026-09-10 截图反馈；完成 2026-09-14 @ merge 073d66b，agent-team 1.11.0 / 307 测试）
   - 现象：只要存在 run（running 或终态），输入栏下方就常驻多行亮块（头行 `agent-team … status…` + `任务: …`，失败再加 `✗ …`），选中态再多一行提示——占地方且与 fleet-status 的紧凑观感不一致；用户原话「这一块非常丑」。
   - 截图实读（`C:/Users/12967/AppData/Local/Temp/pi-clipboard-798090fd-79fa-4ff4-8dde-93492ee5383f.png`，临时路径，实现时先拷进 `agent-team/docs/assets/` 存档再引用）——选中态共 4 个显示行：
     1. `  agent-team count-duet ✓ completed · 26.8s · $0.0060`
