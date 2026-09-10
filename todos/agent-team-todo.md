@@ -62,3 +62,18 @@
   - 仍待实现时定：逐成员行/树/滚动/展开；spinner 与身份色是否照搬；组件工厂式渲染 vs 保持 string[]（硬约束①先证残影）；`/team clear` 命令去留。
   - 验收思路：真机（派单看状态条渲染/动画/按键）+ 真实宿主测试（复用 `viewer-host.test.ts` / `widget-focus-host.test.ts` 的 TuiMainScreen 仿真路径）+ 全量测试/typecheck 绿。
 - [ ] `/team` 帮助与命令编排合理性：统一路由后仍无 `help` 子命令（帮助只靠命令面板 description + 出错 usage），且 `/team help` 会被当作团队名（无任务时提示 `用法：/team help <任务描述>`，若有同名团队则直接派单）——与 `/workflows help` 不对称，`help` 也未进保留词。待办：给 `/team` 增加 `help` 子命令（列全部子命令 + 用法 + 撞保留词的显式 `run` 规则），把 `help` 纳入 `RESERVED_TEAM_COMMAND_NAMES`；顺带复核无参行为（列团队 vs 显示帮助）、子命令命名/顺序与 `getArgumentCompletions` 补全。细节待定，未领取。
+- [ ] widget 默认态太丑：亮块常显 2-3 行，需按 pi-subagents fleet-status 折叠——默认只留一行小提示，按 `↓`/`←` 才展开（用户 2026-09-10 截图反馈，未领取）
+  - 现象：只要存在 run（running 或终态），输入栏下方就常驻多行亮块（头行 `agent-team … status…` + `任务: …`，失败再加 `✗ …`），选中态再多一行提示——占地方且与 fleet-status 的紧凑观感不一致；用户原话「这一块非常丑」。
+  - 截图实读（`C:/Users/12967/AppData/Local/Temp/pi-clipboard-798090fd-79fa-4ff4-8dde-93492ee5383f.png`，临时路径，实现时先拷进 `agent-team/docs/assets/` 存档再引用）——选中态共 4 个显示行：
+    1. `  agent-team count-duet ✓ completed · 26.8s · $0.0060`
+    2. `▸ 任务: 目标: 输出小写单词 hello。`
+    3. `特别注意：这是对 count-duet 的一次复用任…`（**任务文本换行残留**：`truncateTask` 按字符截断但未压平 `\n`，宿主把残留换行渲染成额外一行）
+    4. `↑↓ 选择 · enter 查看 · esc 退出`
+  - 附带缺陷（同源，与折叠/展开改造一并修）：`widget.ts` `truncateTask`（44 字符截断）未把连续空白/换行压成单空格——多行任务一律多出残行；折叠单行文案同样必须压平换行，否则一行会变多行。
+  - 目标行为（对齐 pi-subagents fleet-status，参考 `~/.pi/agent/npm/node_modules/pi-subagents/src/tui/fleet-status.ts:757-789`）：
+    - 折叠态（默认，未激活）：**单行**小提示，形如 `… · ↓/← 查看详情`（fleet 参考行为：`{label} · {usage} · ↓/← to inspect` 一行；agent-team 允许保留最小状态信息——团队/状态/耗时——但必须 ≤1 行，具体文案实现时定）。
+    - 展开态（按 `↓`/`←`；`alt+↓/↑` 第二通道照旧）：显示现有 rows（状态行 + 任务行 + 可选错误行）+ 底部 `↑↓ 选择 · enter 查看 · esc 退出`；`esc` 或到顶再按 `↑` 收回折叠态。
+    - 键盘门控不变：`editorHasFocus` 短路 + 空编辑器判定（v1.9.1 已对齐）；焦点非编辑器（/login、/model 选择器等）时完全不介入。
+  - 现状差距（`agent-team/widget.ts`）：`buildWidgetRows` 直接产出常显 rows；`renderWidgetView` 在 `state.selected === false` 时把 rows 全量 `dim` 输出——没有折叠态概念。改动点：行投影拆「折叠单行」/「展开 rows」两支，`renderWidgetView` 按 `selected` 选分支；`RunWidgetController.refresh` 的指纹门控与 `setWidget(key, string[])` 推送路径不变。
+  - 约束：① 保持字符串 `setWidget` 路径，不做组件工厂化（`tui-sync.md` §3.1 残影教训）；② 时间类刷新继续走 `aligned-ticker`（当前 1s tick，§3.4）；③ 同步更新 `agent-team/docs/tui-sync.md`（§2 门控行、差异表新增折叠/展开行、§4 几何/文案字面量）；④ 版本 bump + AGENTS.md + 根 README（截图/用法）同步。
+  - 验收：默认态只占 1 行且含激活提示；`↓`/`←` 展开出现 rows + 提示行；`esc` 收起回折叠；选择器/对话框场景不抢键；widget 纯函数测试 + 真宿主路径（`widget-focus-host.test.ts` 的 TuiMainScreen 仿真）锁定；全量测试 + typecheck 绿；真机截图复核。
