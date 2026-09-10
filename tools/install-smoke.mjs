@@ -23,6 +23,14 @@
  *   node tools/install-smoke.mjs --task     # 冒烟通过后再跑一条真实模型任务（opt-in）
  *   node tools/install-smoke.mjs --keep     # 保留临时安装目录（排查用）
  *   node tools/install-smoke.mjs --json     # 机器可读结果
+ *   node tools/install-smoke.mjs --install <pi install 源>
+ *       # 真跑一遍 README 推荐的 `pi install` 安装路径（opt-in，需联网）：
+ *       # 全新临时配置目录里执行真实 `pi install <源>`，再核对装到的包
+ *       # 版本/扩展清单与全部命令/TUI 键；本地路径源同样适用。
+ *       # 例：node tools/install-smoke.mjs --install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
+ *
+ * --install 与 --task 可叠加：先证明 pi install 装出来的包能用，再让模型在
+ * 该安装形态下真调一次扩展工具。
  *
  * --task 深度任务（GOAL.md §2「别人这把」：从零装到跑通核心流程）：在同一个临时安装目录里
  * 复制用户 auth.json（只在临时目录内使用、随目录一起删除，绝不打印内容），拉起
@@ -31,7 +39,8 @@
  * 模型默认从真实配置 settings.json 的 defaultProvider/defaultModel 推导，可用 --model 覆盖。
  *
  * 纯校验逻辑（loadManifest / extensionDirsFromManifest / parseRpcOutput /
- * checkSmoke / buildDeepArgs / parseJsonEvents / checkDeepRun / deepModelFromSettings）
+ * checkSmoke / buildDeepArgs / parseJsonEvents / checkDeepRun / deepModelFromSettings /
+ * installSourceKind / piPackageSearchRoots / findPiPackage / checkInstallRun）
  * 导出给 `test/install-smoke.test.ts` 单测；CLI 只在直接执行时跑。
  */
 
@@ -170,8 +179,9 @@ export function parseRpcOutput(text, id) {
 
 /**
  * 纯校验：输入一次冒烟的全部观察值，输出问题清单（空 = 通过）。
- * baseDir 是本次临时安装目录——任何扩展命令的 sourceInfo.path 不在其下，
- * 都说明加载的不是这份拷贝（真实用户配置串入 / 路径拼错）。
+ * baseDir 允许传多个根（本地路径安装时命令来自源目录而非临时配置目录）——任何
+ * 扩展命令的 sourceInfo.path 不在任一允许根下，都说明加载的不是这份拷贝
+ * （真实用户配置串入 / 路径拼错）。
  */
 export function checkSmoke({ exitCode, stderr, spawnError, commands, uiKeys, baseDir, expectations = EXTENSION_EXPECTATIONS, dirs }) {
   const problems = [];
@@ -185,7 +195,7 @@ export function checkSmoke({ exitCode, stderr, spawnError, commands, uiKeys, bas
   if (problems.length > 0) return problems;
 
   const byName = new Set(commands.map((command) => command.name));
-  const root = baseDir ? path.resolve(baseDir) : undefined;
+  const roots = (Array.isArray(baseDir) ? baseDir : [baseDir]).filter(Boolean).map((dir) => path.resolve(dir));
   const expectedDirs = dirs ?? Object.keys(expectations);
   for (const dir of expectedDirs) {
     const expected = expectations[dir];
@@ -197,12 +207,12 @@ export function checkSmoke({ exitCode, stderr, spawnError, commands, uiKeys, bas
       if (!uiKeys.has(key)) problems.push(`扩展 ${dir} 未写入启动期 TUI 键 ${key}`);
     }
   }
-  if (root) {
+  if (roots.length > 0) {
     for (const command of commands) {
       const sourcePath = command?.sourceInfo?.path;
       if (!sourcePath || sourcePath.startsWith("<")) continue; // 宿主内联扩展（llama.cpp）
-      if (!path.resolve(sourcePath).startsWith(root)) {
-        problems.push(`命令 /${command.name} 来自 ${sourcePath}，不在本次安装目录 ${root} 内`);
+      if (!roots.some((root) => path.resolve(sourcePath).startsWith(root))) {
+        problems.push(`命令 /${command.name} 来自 ${sourcePath}，不在本次安装目录 ${roots.join(" / ")} 内`);
       }
     }
   }
@@ -218,6 +228,83 @@ export function copyExtension(srcDir, destDir) {
       return name !== "node_modules" && name !== ".git";
     },
   });
+}
+
+/**
+ * 安装源类型判定（对齐宿主 `parseSource` 的口径）：`npm:` → npm；git URL（`git:`
+ * 前缀 / http(s) / ssh / github.com 简写）→ git；其余按本地路径处理。
+ */
+export function installSourceKind(source) {
+  if (typeof source !== "string" || source.trim() === "") return undefined;
+  if (source.startsWith("npm:")) return "npm";
+  if (source.startsWith("git:") || source.startsWith("http://") || source.startsWith("https://") || source.startsWith("ssh://") || source.startsWith("github.com/")) {
+    return "git";
+  }
+  return "local";
+}
+
+/**
+ * 安装产物搜索根（镜像宿主落盘位置）：git → `<configDir>/git`；npm →
+ * `<configDir>/npm/node_modules`；本地路径 → 源目录本身（不复制不克隆）。
+ * 本地路径排在前面：先认可源目录，再回退到临时目录。
+ */
+export function piPackageSearchRoots(source, configDir) {
+  const roots = [path.join(configDir, "git"), path.join(configDir, "npm", "node_modules")];
+  if (installSourceKind(source) === "local") roots.unshift(path.resolve(source));
+  return roots;
+}
+
+/** 从磁盘定位已安装的 pi 包：带非空 `pi.extensions` 清单的 package.json。 */
+export function findPiPackage(roots, maxDepth = 6) {
+  for (const root of roots) {
+    const found = findPiPackageInDir(root, maxDepth);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function findPiPackageInDir(dir, depth) {
+  if (depth < 0) return undefined;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+  if (entries.some((entry) => entry.isFile() && entry.name === "package.json")) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+      if (Array.isArray(manifest?.pi?.extensions) && manifest.pi.extensions.length > 0) {
+        return { dir, name: manifest.name, version: manifest.version, extensions: manifest.pi.extensions };
+      }
+    } catch {
+      // 坏 package.json：跳过本目录，继续往下找。
+    }
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const found = findPiPackageInDir(path.join(dir, entry.name), depth - 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** 纯校验：`pi install <源>` 的观察值 → 问题清单；成功后由 findPiPackage 核对落地产物。 */
+export function checkInstallRun({ exitCode, stderr, spawnError, stdout = "", source }) {
+  if (spawnError) return [`安装源：无法启动 pi 进程：${spawnError}`];
+  const problems = [];
+  if (exitCode !== 0) {
+    problems.push(`安装源：pi install 退出码 ${exitCode}`);
+    const stderrText = (stderr ?? "").trim();
+    if (stderrText) problems.push(`安装源：pi install stderr：\n${stderrText}`);
+    return problems;
+  }
+  // git 克隆进度写在 stderr（“Cloning into …”），所以具体错误看退出码；
+  // stdout 的确认行是“确实装了”的响亮信号（宿主 install 成功后打印 Installed <source>）。
+  if (!stdout.includes(`Installed ${source}`)) {
+    problems.push(`安装源：pi install 输出未见 "Installed ${source}"（安装被静默跳过？）`);
+  }
+  return problems;
 }
 
 const SMOKE_REQUEST_ID = "install-smoke-1";
@@ -350,6 +437,24 @@ function removeFileQuietly(file) {
   }
 }
 
+/**
+ * 临时目录收尾：成功即删、失败/--keep 保留（便于排查）。无论哪条路都先摘掉
+ * auth.json 凭据副本（深任务会拷进去）。清理失败不能弄崩工具，返回警告文案。
+ */
+async function finishTempDir(configDir, { keep, failed }) {
+  if (!keep && !failed) {
+    // 子进程退出后 Windows 对新写文件可能短暂占用句柄，先等一拍再删。
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (!removeDirQuietly(configDir)) {
+      removeFileQuietly(path.join(configDir, "auth.json"));
+      return `临时安装目录未能删除（${configDir}）；auth.json 已单独清理，请手动删除该目录`;
+    }
+    return undefined;
+  }
+  removeFileQuietly(path.join(configDir, "auth.json"));
+  return undefined;
+}
+
 /** 运行一次完整的全新安装冒烟；返回结果对象（不打印、不退出）。 */
 export async function runInstallSmoke({ repoRoot = REPO_ROOT, keep = false, timeoutMs = 120_000, deep = false } = {}) {
   const manifest = loadManifest(repoRoot);
@@ -391,19 +496,7 @@ export async function runInstallSmoke({ repoRoot = REPO_ROOT, keep = false, time
       problems = deepResult.problems;
     }
   } finally {
-    // 失败时自动保留临时目录（便于排查），成功时清掉；--keep 一律保留。
-    // 清理失败不能弄崩工具，但必须保证 auth.json 不在临时目录里残留（深任务会拷贝凭据）。
-    // 子进程退出后 Windows 对新写文件可能短暂占用句柄，先等一拍再删。
-    if (!keep && problems.length === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      if (!removeDirQuietly(configDir)) {
-        removeFileQuietly(path.join(configDir, "auth.json"));
-        cleanupWarning = `临时安装目录未能删除（${configDir}）；auth.json 已单独清理，请手动删除该目录`;
-      }
-    } else {
-      // 保留目录（排查 / --keep）时也不留凭据副本。
-      removeFileQuietly(path.join(configDir, "auth.json"));
-    }
+    cleanupWarning = await finishTempDir(configDir, { keep, failed: problems.length > 0 });
   }
   return {
     problems,
@@ -412,6 +505,67 @@ export async function runInstallSmoke({ repoRoot = REPO_ROOT, keep = false, time
     uiKeys: parsed?.uiKeys ?? new Set(),
     configDir,
     run,
+    deep: deepResult,
+    cleanupWarning,
+  };
+}
+
+/**
+ * `--install` 冒烟：把 README 推荐的 `pi install` 路径真跑一遍（opt-in，需联网）。
+ * 全新临时配置目录里执行 `pi install <源>` → 定位落地产物（findPiPackage）→
+ * 复用加载冒烟核对全部命令/启动期 TUI 键；本地路径源不复制不克隆，命令来自
+ * 源目录，因此 sourceInfo 白名单同时包含临时目录与包目录。
+ */
+export async function runPackageInstallSmoke({ source, repoRoot = REPO_ROOT, keep = false, installTimeoutMs = 300_000, timeoutMs = 120_000, deep = false } = {}) {
+  const kind = installSourceKind(source);
+  if (!kind) {
+    return { problems: ['安装源为空：用法 node tools/install-smoke.mjs --install <源>（例 git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop）'], source, dirs: [], commands: [], uiKeys: new Set() };
+  }
+  // 本地路径源统一绝对化：`pi install` 以仓库根为 cwd 执行，加载时 cwd 不同也能解析。
+  const installSource = kind === "local" ? path.resolve(repoRoot, source) : source;
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-package-smoke-"));
+  let problems = [];
+  let installRun;
+  let pkg;
+  let parsed;
+  let deepResult;
+  let cleanupWarning;
+  try {
+    installRun = await spawnPi({ configDir, args: ["install", installSource], timeoutMs: installTimeoutMs, cwd: repoRoot });
+    problems = checkInstallRun({ exitCode: installRun.exitCode, stderr: installRun.stderr, spawnError: installRun.spawnError, stdout: installRun.stdout, source: installSource });
+    if (problems.length === 0) {
+      pkg = findPiPackage(piPackageSearchRoots(installSource, configDir));
+      if (!pkg) problems = [`安装源：安装完成但未在安装根下找到带 pi.extensions 的 package.json`];
+    }
+    if (problems.length === 0) {
+      const smoke = await runPi({ configDir, timeoutMs });
+      parsed = parseRpcOutput(smoke.stdout ?? "", SMOKE_REQUEST_ID);
+      problems = checkSmoke({
+        exitCode: smoke.exitCode,
+        stderr: smoke.stderr,
+        spawnError: smoke.spawnError,
+        commands: parsed.commands,
+        uiKeys: parsed.uiKeys,
+        baseDir: [configDir, pkg.dir],
+        dirs: extensionDirsFromManifest(pkg.extensions),
+      });
+      if (deep && problems.length === 0) {
+        deepResult = await runDeepTask({ configDir, deep });
+        problems = deepResult.problems;
+      }
+    }
+  } finally {
+    cleanupWarning = await finishTempDir(configDir, { keep, failed: problems.length > 0 });
+  }
+  return {
+    problems,
+    source: installSource,
+    dirs: pkg ? extensionDirsFromManifest(pkg.extensions) : [],
+    pkg,
+    commands: parsed?.commands ?? [],
+    uiKeys: parsed?.uiKeys ?? new Set(),
+    configDir,
+    installRun,
     deep: deepResult,
     cleanupWarning,
   };
@@ -461,6 +615,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const asJson = process.argv.includes("--json");
   const keep = process.argv.includes("--keep");
   const withTask = process.argv.includes("--task");
+  const withInstall = process.argv.includes("--install");
   const valueAfter = (flag) => {
     const index = process.argv.indexOf(flag);
     const value = index >= 0 ? process.argv[index + 1] : undefined;
@@ -469,12 +624,17 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const deep = withTask
     ? { model: valueAfter("--model"), tool: valueAfter("--task-tool"), authFrom: valueAfter("--auth-from") }
     : false;
-  const result = await runInstallSmoke({ keep, deep });
+  const result = withInstall
+    ? await runPackageInstallSmoke({ source: valueAfter("--install"), keep, deep })
+    : await runInstallSmoke({ keep, deep });
   if (asJson) {
     console.log(
       JSON.stringify(
         {
           ok: result.problems.length === 0,
+          mode: withInstall ? "install" : "copy",
+          source: result.source,
+          package: result.pkg ? { name: result.pkg.name, version: result.pkg.version, dir: result.pkg.dir } : undefined,
           extensions: result.dirs,
           commands: result.commands.length,
           uiKeys: [...result.uiKeys],
@@ -495,7 +655,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       ),
     );
   } else if (result.problems.length === 0) {
-    console.log(`✓ 全新安装冒烟通过：${result.dirs.length} 个扩展在 ${result.configDir ?? "(temp)"} 下全部加载`);
+    if (withInstall) {
+      const version = result.pkg?.version ? `@${result.pkg.version}` : "";
+      console.log(`✓ pi install 冒烟通过：${result.source} → ${result.pkg?.name ?? "(包)"}${version}（${result.dirs.length} 个扩展）在全新配置目录下全部加载`);
+    } else {
+      console.log(`✓ 全新安装冒烟通过：${result.dirs.length} 个扩展在 ${result.configDir ?? "(temp)"} 下全部加载`);
+    }
     console.log(`  · 命令面 ${result.commands.length} 条，全部来自本次安装目录`);
     console.log(`  · 启动期 TUI 键：${[...result.uiKeys].sort().join(", ")}`);
     if (result.deep) {
@@ -503,7 +668,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     }
     if (result.cleanupWarning) console.error(`  ! ${result.cleanupWarning}`);
   } else {
-    console.error(`✗ 全新安装冒烟失败（${result.problems.length} 个问题）：`);
+    console.error(withInstall ? `✗ pi install 冒烟失败（${result.problems.length} 个问题）：` : `✗ 全新安装冒烟失败（${result.problems.length} 个问题）：`);
     for (const problem of result.problems) console.error(`  - ${problem}`);
     if (result.configDir) console.error(`  已保留临时安装目录（排查用）：${result.configDir}`);
   }
