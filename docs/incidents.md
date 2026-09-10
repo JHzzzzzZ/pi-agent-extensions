@@ -48,7 +48,7 @@
 ## 远程/深目录长命令挂起
 
 - 症状：无界命令（无 timeout 的长测试、交互式命令）阻塞会话。
-- 教训：每次命令显式传 timeout（快速操作 30–60s，npm test 120–300s）；长工作拆有界小步骤。见 AGENTS.md「命令超时（强制）」。
+- 教训：每次命令显式传 timeout（快速操作 30–60s，npm test 120–300s）；长工作拆有界小步骤。见 AGENTS.md 规则红线·命令超时。
 
 ## worktree 内 junction node_modules 被 `git worktree remove` 沿链深删（主干 node_modules 两度受损）
 
@@ -72,4 +72,4 @@
 
 - 症状：run-timer 计时行与 loop 倒计时各自 `setInterval`，相位互不相关；同屏时 widget 相对顺序逐秒翻转（宿主 `setExtensionWidget` 每次 delete+set 移到底部）；footer 排序靠 key 字母序的巧合，随时加插件就变；倒计时粗粒度（>1h 只到分钟）时还每秒无意义重绘。
 - 根因：刷新节拍没有跨插件契约；widget 栈顺序依赖宿主按注册序派发但从未被锁定/断言；footer 顺序依赖字母序巧合；UI 写入无内容指纹去重。
-- 教训：跨插件「同屏时间类状态」必须显式契约化（`docs/cross/status-bar.md`）——统一对齐秒边界节拍（`aligned-ticker.ts`）+ 文本指纹跳过 + footer 两位排序带键 + 根契约测试锁定 `pi.extensions` 相对顺序与键带序；宿主 widget 刷新重排属宿主行为，本仓库不打补丁（AGENTS.md「仓库边界」），走上游（`docs/pi-widget-order-issue.md`）。
+- 教训：跨插件「同屏时间类状态」必须显式契约化（`docs/cross/status-bar.md`）——统一对齐秒边界节拍（`aligned-ticker.ts`）+ 文本指纹跳过 + footer 两位排序带键 + 根契约测试锁定 `pi.extensions` 相对顺序与键带序；宿主 widget 刷新重排属宿主行为，本仓库不打补丁（AGENTS.md 规则红线·仓库边界），走上游（`docs/pi-widget-order-issue.md`）。
