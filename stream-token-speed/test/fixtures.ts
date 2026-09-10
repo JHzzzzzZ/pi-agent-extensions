@@ -3,6 +3,8 @@
  * （按结构识别，仅含测试所需字段，不含内容解析依赖）。
  */
 
+import { STATUS_KEY } from "../status-port.ts";
+
 export interface FakeMessage {
   role: string;
   responseId?: string;
@@ -79,7 +81,7 @@ export class RecordingStatusPort {
   /** 仅返回本扩展状态键的文本序列。 */
   statuses(): string[] {
     return this.calls
-      .filter((c) => c.key === "stream-token-speed")
+      .filter((c) => c.key === STATUS_KEY)
       .map((c) => c.text ?? "");
   }
 }

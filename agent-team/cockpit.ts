@@ -10,6 +10,7 @@
  */
 
 import * as path from "node:path";
+import { startAlignedTicker } from "./aligned-ticker.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
@@ -415,7 +416,7 @@ export class TeamRunCoordinator {
         : `BUDGET_EXCEEDED: 累计 tokens ${b.spentTokens} 超过预算上限 ${maxTokens}，run 已自动中止`;
       controller.abort();
     };
-    let ticker: ReturnType<typeof setInterval> | undefined;
+    let stopTicker: (() => void) | undefined;
 
     try {
       // Pre-flight: worktree requirements must be satisfiable BEFORE spawning
@@ -546,9 +547,8 @@ export class TeamRunCoordinator {
       const leaderCwd = sharedWorktree?.path ?? baseCwd;
 
       // 1s progress ticker (onProgress observers; the widget repaints on its
-      // own tick). Never keeps the process alive.
-      ticker = setInterval(render, 1000);
-      if (typeof ticker.unref === "function") ticker.unref();
+      // own tick), aligned to the shared wall-clock second (status-bar contract).
+      stopTicker = startAlignedTicker(render, { intervalMs: 1000 });
 
       const outcome = await runChildPi({
         command: invocation.command,
@@ -647,7 +647,7 @@ export class TeamRunCoordinator {
       this.active = null;
       this.pending = null;
       this.currentProgress = null;
-      if (ticker !== undefined) clearInterval(ticker);
+      if (stopTicker !== undefined) stopTicker();
     }
   }
 }

@@ -17,6 +17,7 @@
  */
 
 import { matchesKey } from "@earendil-works/pi-tui";
+import { startAlignedTicker } from "./aligned-ticker.ts";
 import { elapsedLabel, type RunStatusSnapshot } from "./cockpit.ts";
 import { LEADER_ACTOR } from "./transcript.ts";
 import { truncateVisible, type Styles } from "./viewer.ts";
@@ -226,7 +227,7 @@ export interface RunWidgetControllerOptions {
 export class RunWidgetController {
   private state = initialWidgetKeyState();
   private rows: WidgetRowSpec[] = [];
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private stopTicker: (() => void) | null = null;
   /** True while the transcript viewer overlay is open (tick paused). */
   private paused = false;
   /** True once start() has run (pause/resume never starts a fresh loop). */
@@ -248,15 +249,19 @@ export class RunWidgetController {
     this.attachInput = attachInput;
   }
 
+  /** 对齐墙钟秒边界的重绘节拍（docs/cross/status-bar.md；tickMs 仅供测试覆盖）。 */
+  private startTicker(): () => void {
+    return startAlignedTicker(() => this.refresh(), { intervalMs: this.opts.tickMs ?? WIDGET_TICK_MS });
+  }
+
   /** Starts the repaint loop and (when available) the input hook. */
   start(): void {
-    if (this.timer) return;
+    if (this.stopTicker) return;
     this.started = true;
     this.removeInput = this.attachInput?.((data) => this.onData(data));
     if (this.paused) return;
     this.refresh();
-    this.timer = setInterval(() => this.refresh(), this.opts.tickMs ?? WIDGET_TICK_MS);
-    if (typeof this.timer.unref === "function") this.timer.unref();
+    this.stopTicker = this.startTicker();
   }
 
   /**
@@ -270,9 +275,9 @@ export class RunWidgetController {
     if (this.paused === paused) return;
     this.paused = paused;
     if (paused) {
-      if (this.timer !== null) {
-        clearInterval(this.timer);
-        this.timer = null;
+      if (this.stopTicker !== null) {
+        this.stopTicker();
+        this.stopTicker = null;
       }
       try {
         this.setWidget(undefined);
@@ -281,9 +286,8 @@ export class RunWidgetController {
       }
       return;
     }
-    if (this.started && this.timer === null) {
-      this.timer = setInterval(() => this.refresh(), this.opts.tickMs ?? WIDGET_TICK_MS);
-      if (typeof this.timer.unref === "function") this.timer.unref();
+    if (this.started && this.stopTicker === null) {
+      this.stopTicker = this.startTicker();
     }
     // 恢复必须强制重绘一帧：上一帧渲染串可能未变，若不清指纹，refresh 会
     // 跳过 setWidget，亮块将停留在隐藏态（fleet-status 恢复时同样重置 key）。
@@ -351,9 +355,9 @@ export class RunWidgetController {
   /** Stops the repaint loop and removes the input hook. */
   stop(): void {
     this.started = false;
-    if (this.timer !== null) {
-      clearInterval(this.timer);
-      this.timer = null;
+    if (this.stopTicker !== null) {
+      this.stopTicker();
+      this.stopTicker = null;
     }
     this.removeInput?.();
     this.removeInput = undefined;

@@ -98,8 +98,11 @@ export function runStatusText(store: RunStore): string | undefined {
 	return `workflows: ${active.length} active (${top.scriptName} ${top.status}), ${done} finished`;
 }
 
-/** Non-blocking push of status + widget from the store. */
+/**
+ * Non-blocking push of status + widget from the store.
+ * footer 键带 `30:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md）。
+ */
 export function refreshUiStatus(ui: ExtensionUIContext, store: RunStore): void {
-	ui.setStatus("pwr", runStatusText(store));
+	ui.setStatus("30:pwr", runStatusText(store));
 	ui.setWidget("pwr-runs", runWidgetLines(store));
 }

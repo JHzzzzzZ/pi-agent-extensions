@@ -8,40 +8,46 @@ import runTimer, {
 } from "./index.ts";
 import type { TimerState } from "./index.ts";
 
-// Mock setInterval/clearInterval to prevent real timers and track active ones
-const activeTimers = new Set<ReturnType<typeof setInterval>>();
+// Mock setTimeout/clearTimeout to prevent real timers and track active ones.
+// 节拍器对齐秒边界用 setTimeout（aligned-ticker.ts），测试需手动触发 tick。
+const activeTimers = new Map<number, () => void>();
 let timerIdCounter = 0;
 
 function installTimerMock(): void {
   timerIdCounter = 0;
   activeTimers.clear();
-  const origSet = globalThis.setInterval.bind(globalThis);
-  const origClear = globalThis.clearInterval.bind(globalThis);
-  globalThis.setInterval = ((_fn: Function, _ms: number, ..._args: any[]) => {
-    const id = ++timerIdCounter as any;
-    activeTimers.add(id);
-    return id;
-  }) as typeof globalThis.setInterval;
-  globalThis.clearInterval = (id: any) => {
+  const origSet = globalThis.setTimeout.bind(globalThis);
+  const origClear = globalThis.clearTimeout.bind(globalThis);
+  globalThis.setTimeout = ((fn: () => void, _ms?: number, ..._args: any[]) => {
+    const id = ++timerIdCounter;
+    activeTimers.set(id, fn);
+    return id as any;
+  }) as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((id: any) => {
     activeTimers.delete(id);
-  };
+  }) as typeof globalThis.clearTimeout;
   // Keep references for restore
-  (globalThis as any).__origSetInterval = origSet;
-  (globalThis as any).__origClearInterval = origClear;
+  (globalThis as any).__origSetTimeout = origSet;
+  (globalThis as any).__origClearTimeout = origClear;
 }
 
 function restoreTimerMock(): void {
-  if ((globalThis as any).__origSetInterval) {
-    globalThis.setInterval = (globalThis as any).__origSetInterval;
-    globalThis.clearInterval = (globalThis as any).__origClearInterval;
-    delete (globalThis as any).__origSetInterval;
-    delete (globalThis as any).__origClearInterval;
+  if ((globalThis as any).__origSetTimeout) {
+    globalThis.setTimeout = (globalThis as any).__origSetTimeout;
+    globalThis.clearTimeout = (globalThis as any).__origClearTimeout;
+    delete (globalThis as any).__origSetTimeout;
+    delete (globalThis as any).__origClearTimeout;
   }
   activeTimers.clear();
 }
 
 function timerCount(): number {
   return activeTimers.size;
+}
+
+/** 手动触发所有存活实例的 tick 回调（对齐节拍器：每跳只排一个 setTimeout）。 */
+function fireTick(): void {
+  for (const fn of [...activeTimers.values()]) fn();
 }
 
 before(() => installTimerMock());
@@ -214,10 +220,12 @@ function createFakeAPI() {
   const widgets = new Map<string, FakeWidget>();
   const handlers = new Map<string, (e: any, ctx: any) => void | Promise<void>>();
   let hasUIFlag = true;
+  let setWidgetCalls = 0;
 
   const api = {
     _widgets: widgets,
     _handlers: handlers,
+    get _setWidgetCalls() { return setWidgetCalls; },
 
     get hasUI() { return hasUIFlag; },
     set hasUI(v: boolean) { hasUIFlag = v; },
@@ -238,6 +246,7 @@ function createFakeAPI() {
         modelRegistry: undefined,
         ui: {
           setWidget: (id: string, content?: string | string[]) => {
+            setWidgetCalls += 1;
             if (content === undefined) {
               widgets.delete(id);
             } else {
@@ -306,22 +315,41 @@ describe("real factory — widget lifecycle", () => {
   it("turn_end triggers immediate widget update", async () => {
     const fake = createFakeAPI();
     runTimer(fake as any);
-    await fake.fire("session_start");
-    fake._widgets.delete("run-timer");
-    await fake.fire("turn_end");
-    const w = fake._widgets.get("run-timer");
-    assert.ok(w, "widget should update immediately after turn_end");
+    // 指纹跳过语义下，turn_end 只有内容确实变化才重写；推进时钟跨越 5s。
+    const originalPerfNow = performance.now.bind(performance);
+    let fakePerf = originalPerfNow();
+    performance.now = () => fakePerf;
+    try {
+      await fake.fire("session_start");
+      await fake.fire("agent_start");
+      await fake.fire("turn_start");
+      fakePerf += 5000;
+      fake._widgets.delete("run-timer");
+      await fake.fire("turn_end");
+      const w = fake._widgets.get("run-timer");
+      assert.ok(w, "widget should update immediately after turn_end");
+    } finally {
+      performance.now = originalPerfNow;
+    }
   });
 
   it("agent_settled triggers immediate widget update", async () => {
     const fake = createFakeAPI();
     runTimer(fake as any);
-    await fake.fire("session_start");
-    await fake.fire("agent_start");
-    fake._widgets.delete("run-timer");
-    await fake.fire("agent_settled");
-    const w = fake._widgets.get("run-timer");
-    assert.ok(w, "widget should update immediately after agent_settled");
+    const originalPerfNow = performance.now.bind(performance);
+    let fakePerf = originalPerfNow();
+    performance.now = () => fakePerf;
+    try {
+      await fake.fire("session_start");
+      await fake.fire("agent_start");
+      fakePerf += 5000; // 结束后行文切换为“上次任务 …（已结束）”
+      fake._widgets.delete("run-timer");
+      await fake.fire("agent_settled");
+      const w = fake._widgets.get("run-timer");
+      assert.ok(w, "widget should update immediately after agent_settled");
+    } finally {
+      performance.now = originalPerfNow;
+    }
   });
 });
 
@@ -498,6 +526,50 @@ describe("real factory — dedup accounting", () => {
     await fake.fire("session_shutdown");
     const w2 = fake._widgets.get("run-timer");
     assert.ok(!w2, "widget removed on shutdown");
+  });
+});
+
+describe("real factory — aligned ticker + fingerprint skip", () => {
+  it("tick 驱动：无任务无回合时内容不变，不重复 setWidget（指纹跳过）", async () => {
+    const fake = createFakeAPI();
+    runTimer(fake as any);
+    await fake.fire("session_start");
+    const afterStart = (fake as any)._setWidgetCalls as number;
+    assert.ok(afterStart >= 1, "session_start 先写一帧");
+    fireTick();
+    fireTick();
+    assert.equal((fake as any)._setWidgetCalls, afterStart, "同内容 tick 跳过");
+  });
+
+  it("tick 驱动：内容跨秒变化时写入新帧", async () => {
+    const fake = createFakeAPI();
+    runTimer(fake as any);
+    await fake.fire("session_start");
+    await fake.fire("agent_start");
+    const afterAgentStart = (fake as any)._setWidgetCalls as number;
+
+    const originalPerfNow = performance.now.bind(performance);
+    let fakePerf = originalPerfNow();
+    performance.now = () => fakePerf;
+    try {
+      fireTick(); // 同一时刻触发：内容不变 → 跳过
+      assert.equal((fake as any)._setWidgetCalls, afterAgentStart, "同刻 tick 跳过");
+      fakePerf += 5000; // 快进 5s：任务/本会话计时变化
+      fireTick();
+      assert.ok((fake as any)._setWidgetCalls > afterAgentStart, "跨秒 tick 写入新帧");
+    } finally {
+      performance.now = originalPerfNow;
+    }
+  });
+
+  it("session_shutdown 后 tick 被清理", async () => {
+    activeTimers.clear();
+    const fake = createFakeAPI();
+    runTimer(fake as any);
+    await fake.fire("session_start");
+    assert.equal(timerCount(), 1);
+    await fake.fire("session_shutdown");
+    assert.equal(timerCount(), 0, "节拍器随会话关闭停止");
   });
 });
 

@@ -15,30 +15,31 @@ let fakeNow = BASE;
 
 const timers = new Map<number, () => void>();
 let timerSeq = 0;
-let origSetInterval: typeof globalThis.setInterval | undefined;
-let origClearInterval: typeof globalThis.clearInterval | undefined;
+let origSetTimeout: typeof globalThis.setTimeout | undefined;
+let origClearTimeout: typeof globalThis.clearTimeout | undefined;
 let origDateNow: (() => number) | undefined;
 
 function installMocks(): void {
-  origSetInterval = globalThis.setInterval;
-  origClearInterval = globalThis.clearInterval;
+  // 节拍器（aligned-ticker.ts）用 setTimeout 对齐秒边界；捕获回调手动触发。
+  origSetTimeout = globalThis.setTimeout;
+  origClearTimeout = globalThis.clearTimeout;
   origDateNow = globalThis.Date.now;
   timerSeq = 0;
   timers.clear();
-  globalThis.setInterval = ((fn: () => void, _ms?: number) => {
+  globalThis.setTimeout = ((fn: () => void, _ms?: number) => {
     const id = ++timerSeq;
     timers.set(id, fn);
-    return id as unknown as ReturnType<typeof setInterval>;
-  }) as typeof globalThis.setInterval;
-  globalThis.clearInterval = ((id: number) => {
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((id: number) => {
     timers.delete(id as number);
-  }) as typeof globalThis.clearInterval;
+  }) as typeof globalThis.clearTimeout;
   globalThis.Date.now = () => fakeNow;
 }
 
 function restoreMocks(): void {
-  if (origSetInterval) globalThis.setInterval = origSetInterval;
-  if (origClearInterval) globalThis.clearInterval = origClearInterval;
+  if (origSetTimeout) globalThis.setTimeout = origSetTimeout;
+  if (origClearTimeout) globalThis.clearTimeout = origClearTimeout;
   if (origDateNow) globalThis.Date.now = origDateNow;
   timers.clear();
 }
@@ -104,6 +105,7 @@ function createFakePi() {
     execute: (toolCallId: string, params: Record<string, unknown>, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => Promise<unknown>;
   }>();
   const widgets = new Map<string, { id: string; content?: string[] }>();
+  let widgetWrites = 0;
   const sent: Array<{ message: Record<string, unknown>; options: Record<string, unknown> }> = [];
   const persisted: Array<{ type: string; data: unknown }> = [];
   const notifications: Array<{ message: string; level?: string }> = [];
@@ -123,6 +125,7 @@ function createFakePi() {
         notifications.push({ message, level });
       },
       setWidget: (key: string, content?: string[]) => {
+        widgetWrites += 1;
         if (content === undefined) {
           widgets.delete(key);
         } else {
@@ -145,6 +148,7 @@ function createFakePi() {
     _notifications: notifications,
     _sessionEntries: sessionEntries,
     _ctx: ctx,
+    get _widgetWrites() { return widgetWrites; },
     get hasUI() {
       return hasUIFlag;
     },
@@ -596,6 +600,20 @@ describe("widget", () => {
     assert.ok(!fake._widgets.has("loop"), "widget removed after clear");
   });
 
+  it("倒计时粗粒度（>1h）时 tick 不重复写 widget（指纹跳过）", async () => {
+    const fake = createFakePi();
+    // 距触发 3h39m30s：同一分钟内 formatCountdown 只到分钟，文本不变
+    seedSnapshot(fake, [rawTask({ id: "widget02", nextDueAt: BASE + 3 * 3600_000 + 39 * 60_000 + 30_000 })]);
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    const writesAfterStart = fake._widgetWrites;
+    fakeNow = BASE + 1_000;
+    fireTick();
+    fakeNow = BASE + 2_000;
+    fireTick();
+    assert.equal(fake._widgetWrites, writesAfterStart, "同一分钟内倒计时文本未变 → 跳过重绘");
+  });
+
   it("无 UI 时不建 widget，但调度与送达照常", async () => {
     const fake = createFakePi();
     fake.hasUI = false;
@@ -791,7 +809,8 @@ describe("loop_list / loop_delete 工具", () => {
 // ---------- 后台模式（v1.3） ----------
 
 type RunBgCall = { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal };
-const flush = () => new Promise((r) => setTimeout(r, 0));
+// 用 installMocks 捕获的真实 setTimeout：测试内全局 setTimeout 已被节拍器 mock。
+const flush = () => new Promise((r) => (origSetTimeout ?? globalThis.setTimeout)(r, 0));
 const bgDone: BgRunOutcome = { status: "done", exitCode: 0, summary: "全部通过", stderr: "" };
 
 /** 后台模式公共脚手架：假 runBg 收集调用并返回手工 resolve 的 deferred */

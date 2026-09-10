@@ -26,6 +26,7 @@
  * session_shutdown 清理；模块级 dispose 防 /reload 双实例叠加（同 run-timer）。
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { startAlignedTicker } from "./aligned-ticker.ts";
 import { parseLoopCommand } from "./parse.ts";
 import { runBgAgent, type BgRunOutcome } from "./runner.ts";
 import { registerLoopTools } from "./tools.ts";
@@ -87,8 +88,10 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
   const tasks: LoopTask[] = [];
   const bgEntries = new Map<string, BgEntry>();
   const runBg = overrides?.runBg ?? ((opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal }) => runBgAgent(opts));
-  let tickTimer: ReturnType<typeof setInterval> | undefined;
+  let stopTicker: (() => void) | undefined;
   let savedCtx: ExtensionContext | undefined;
+  /** 上次写入 widget 的纯文本指纹：tick 驱动下内容不变就跳过 setWidget。 */
+  let lastWidgetLine: string | null = null;
 
   const genId = () => crypto.randomUUID().slice(0, 8);
 
@@ -122,6 +125,8 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     if (!savedCtx?.hasUI) return;
     try {
       if (tasks.length === 0) {
+        if (lastWidgetLine === null) return; // 已无 widget，重复清除无需再写
+        lastWidgetLine = null;
         savedCtx.ui.setWidget(WIDGET_ID, undefined);
         return;
       }
@@ -134,6 +139,8 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
         line += ` · 下次 ${formatCountdown(nextAt - Date.now())}`;
       }
       if (bgEntries.size > 0) line += ` · 后台运行 ${bgEntries.size}`;
+      if (line === lastWidgetLine) return; // 跨秒倒计时文本未变则跳过重绘
+      lastWidgetLine = line;
       savedCtx.ui.setWidget(WIDGET_ID, [line]);
     } catch {
       // widget 失败不影响调度
@@ -141,10 +148,11 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
   }
 
   function stopSession(): void {
-    if (tickTimer) {
-      clearInterval(tickTimer);
-      tickTimer = undefined;
+    if (stopTicker) {
+      stopTicker();
+      stopTicker = undefined;
     }
+    lastWidgetLine = null;
     // v1.3：终止在途后台子进程，任务标记 interrupted（子进程的会话文件仍在，可 resume 查看）
     if (bgEntries.size > 0) {
       for (const [id, entry] of bgEntries) {
@@ -402,7 +410,7 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     }
 
     refreshWidget();
-    tickTimer = setInterval(tick, TICK_MS);
+    stopTicker = startAlignedTicker(() => tick(), { intervalMs: TICK_MS });
   });
 
   pi.on("session_shutdown", async (_event, _ctx) => {

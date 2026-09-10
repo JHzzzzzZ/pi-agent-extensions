@@ -229,3 +229,7 @@ test("session_shutdown：清除本进程状态文件与状态条", async () => {
   assert.equal(fs.existsSync(file), false, "shutdown 清状态文件");
   assert.ok(b.statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === undefined), "状态条清除");
 });
+
+test("SOLO_STATUS_KEY 带排序带前缀（40:solo-mode）", () => {
+  assert.equal(SOLO_STATUS_KEY, "40:solo-mode");
+});
