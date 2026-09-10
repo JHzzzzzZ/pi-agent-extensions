@@ -1,6 +1,6 @@
 # stream-token-speed — 流式回复 TTFT 与实时 tokens/s 状态显示
 
-> last verified @ 1db39e3
+> last verified @ 8bee163
 
 ## 职责与边界
 

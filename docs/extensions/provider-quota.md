@@ -1,6 +1,6 @@
 # provider-quota — 余额/额度状态行 + /quota 手动刷新
 
-> last verified @ 1db39e3
+> last verified @ 8bee163
 
 ## 职责与边界
 
