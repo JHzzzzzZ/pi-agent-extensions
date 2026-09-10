@@ -27,6 +27,7 @@
 - 时间类刷新走 `aligned-ticker.ts`（widget 重绘 + cockpit 进度 ticker，勿用裸 `setInterval`）—— 相位漂移会让多个 widget 逐秒换位；`tickMs` 仅测试覆盖。
 - 亮块行文本不允许含换行：任务/尾注先 `\s+` 压平再截断（任务 44 + `…`、成员尾注 ≤30）—— 残余换行由宿主渲染成额外行（截图回归）；折叠单行只报团队名，状态/耗时/并行数只在展开树。
 - 亮块挂载由数据决定（v1.13.0）：`buildWidgetView` 仅在 `running && progress` 时产出视图，否则返回空——`RunWidgetController.refresh()` 空视图即卸载（setWidget undefined + 复位选择态）；刷新由 coordinator `onProgress` 事件即时驱动 + 1s tick 兜底，`/team:clear` 不碰 widget（只清排队对话）。
+- 按键 reducer（widget `handleWidgetKey` / viewer `handleViewerKey`）顶部必须 `isKeyRelease` 短路（fleet-status.ts:699）：Kitty 键盘协议 flag 2 下 release 事件（`:3` 编码）同样能被 `matchesKey` 命中，漏过滤 = 一次按键生效两次（激活+移动/跳两行/开关两回）；repeat（`:2`）故意保留（长按连移）。
 
 ## ANTI-PATTERNS
 - 从 pwr import 复用 —— 实证：自包含声明，`runner.ts` 另写一份子 pi 适配，不引 `pwr/runner`。
@@ -36,6 +37,6 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 323 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 326 测试（node --test test/*.test.ts）
 npm run typecheck
 ```

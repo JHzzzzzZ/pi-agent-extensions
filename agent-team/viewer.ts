@@ -21,7 +21,7 @@
  * the thin host opener.
  */
 
-import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type OverlayOptions } from "@earendil-works/pi-tui";
+import { Markdown, isKeyRelease, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type OverlayOptions } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { type TranscriptEntry } from "./transcript.ts";
 import { VIEWER_HEIGHT_JITTER_ROWS, VIEWER_TICK_MS } from "./types.ts";
@@ -696,6 +696,11 @@ function isPrintableInput(data: string): boolean {
  * Enter/Y 确认、Esc/ctrl+c/N/backspace 取消（取消不关闭查看器）、其余键忽略。
  */
 export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKeyContext): ViewerKeyResult {
+  // Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码）：
+  // 不过滤则一次按键生效两次（↓ 跳两个成员、x 开关两次等于无变化、
+  // Enter release 重复确认停止）。fleet-status.ts:699 同款过滤，所有模式
+  // （输入/确认/普通）统一在此短路。
+  if (isKeyRelease(data)) return { type: "update", state };
   // 输入模式分支在最前面：优先于一切现有按键——输入模式中 j/k/D/r/q 等都
   // 进 buffer；Esc/ctrl+c 只退出输入（绝不关 viewer）；Enter 提交。
   if (state.inputMode) {

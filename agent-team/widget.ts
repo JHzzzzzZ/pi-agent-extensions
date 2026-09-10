@@ -31,7 +31,7 @@
  * `RunWidgetController` wires them to the host without a pi-tui component.
  */
 
-import { matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import { startAlignedTicker } from "./aligned-ticker.ts";
 import { elapsedLabel, type RunStatusSnapshot } from "./cockpit.ts";
 import { LEADER_ACTOR, sanitizeActorName } from "./transcript.ts";
@@ -178,6 +178,10 @@ export function handleWidgetKey(
   rows: readonly WidgetRowSpec[],
   canActivate = false,
 ): WidgetKeyResult {
+  // Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码），release
+  // 同样能被 matchesKey 命中——不过滤会让一次按键生效两次（激活+移动、
+  // 或移动两行）。fleet-status.ts:699 同款过滤。
+  if (isKeyRelease(data)) return { type: "none" };
   const clamp = (n: number): number => Math.min(Math.max(0, n), Math.max(0, rows.length - 1));
 
   if (!state.selected) {

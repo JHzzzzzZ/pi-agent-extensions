@@ -24,6 +24,7 @@
 | 刷新节流 | `REFRESH_MS = 750`（`fleet.ts:25`，`MIN_REFRESH_MS = 250`） | viewer tick 800；widget tick 1000 | viewer 800→**750**；widget 1000 保留（下方亮块是宿主纯字符串表面，见差异表） |
 | widget 挂载/卸载 | 数据驱动活跃表面：有活跃工作即挂载，全部落定 → `setWidget(undefined)` 卸载（`fleet-status.ts:543-596` 隐藏/恢复语义 + 活跃判定） | v1.12.0 及以前：派单时 `ensureRunWidget` 挂、终态常驻到 `/team/clear`（动作驱动） | v1.13.0 **已对齐**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由 `RunStatusSnapshot.running` 决定——running ⇒ string[] 帧，落定 ⇒ `setWidget(key, undefined)` 自动卸载（终态行不再常驻）；`/team:clear` 收窄为清排队对话 |
 | widget 刷新触发 | 事件即时 + 定时兜底：fleet-status 500ms tick + renderKey，running 时 `requestRender()` 驱动 spinner | v1.12.0 及以前：仅 1s aligned ticker 拉取快照 | v1.13.0 **已对齐（触发形式）**：状态变化点事件即时刷新（coordinator `onProgress` 观察点接线：leader 事件/派发起止 → `refreshWidget()`，不等 tick）+ 1s aligned ticker 兜底 + 渲染串指纹门控；spinner/身份色不做（差异表 §3.4） |
+| 按键 release 过滤 | `isKeyRelease(data)` 在 `handleKey` 顶部短路（`fleet-status.ts:699`） | v1.13.1 及以前：reducer 只调 `matchesKey`，Kitty 键盘协议 flag 2 的 release 事件（`:3` 编码）被当第二次按键（一次按键生效两次） | v1.13.2 **已对齐**：widget `handleWidgetKey` 与 viewer `handleViewerKey` 顶部统一 `isKeyRelease` 短路；repeat（`:2`）不过滤，长按仍连续移动 |
 | viewer 关闭键 | `close: ["escape", "ctrl+c", "q"]`（`fleet.ts:33-34`） | 仅 `q`/Esc | **补 ctrl+c** |
 | widget 激活门控 | `editorHasFocus()` 短路（焦点非编辑器/选择器打开 → 不消费且退出选中，`fleet-status.ts:701/965`）+ `matchesKey(data,"down") \|\| matchesKey(data,"left")`，且 `ctx.ui.getEditorText() === ""` 才激活（`fleet-status.ts:606-607`） | v1.8.0：`alt+↓/↑` 激活，仅「编辑器为空」半条门控 | v1.9.1：补 **焦点门控**（`editorFocus` 端口 + `probeEditorFocus` 结构判定，经 factory 形态 `setWidget` 一次性捕获宿主 TUI）+ ↓/← 空编辑器激活；`alt+↓/↑` 保留为不受空编辑器门控的第二通道（差异表 §3.3） |
 | widget 选中导航 | `down/j`、`up/k`（`fleet.ts:36-37`，`fleet-status.ts:616-625`）；up 到顶再按 = 退出选中 | `↑/↓` | **补 j/k**；`↑/↓` 保留 |
@@ -82,6 +83,7 @@
 | widget 任务摘要 | 压平后 44 字符 + `…`（截断后 `trimEnd()`）；空白任务省略 ` · <任务>` 段 | agent-team 特有（v1.13.1；leader 行内，不占独立行） |
 | widget 成员尾注 | 取 `note`，否则 `latest`；`\s+` 压平后 ≤30 字符（超出 29 字 + `…`）；空白尾注省略 ` · ` 段 | agent-team 特有（v1.13.0）；`widget.ts` `truncateMemberTail` |
 | widget 挂载不变量 | `snapshot.running && snapshot.progress` ⇒ string[] 帧；否则 `setWidget(key, undefined)`（终态自动卸载；`running` 但无 progress 同样隐藏） | agent-team 特有接线（v1.13.0，触发形式对齐 fleet 活跃表面） |
+| 按键 release 过滤 | `isKeyRelease(data)`（Kitty flag 2 的 `:3u`/`:3~`/`:3A`/`:3B`/`:3C`/`:3D`/`:3H`/`:3F` 编码）在 key reducer 顶部短路；repeat `:2` 不禁（长按连移） | `fleet-status.ts:699`；agent-team widget（`handleWidgetKey`）+ viewer（`handleViewerKey`）双侧同款（v1.13.2） |
 | widget 刷新触发 | 事件即时（coordinator `onProgress`）+ 1s aligned ticker 兜底 + 渲染串指纹跳过 | fleet 500ms + renderKey（`fleet-status.ts:585-591`）；差异表 §3.4 |
 | widget 展开提示行 | `↑↓ 选择 · enter 查看 · esc 退出`（底部、无缩进） | agent-team 特有（见差异表 §3.11） |
 | widget 文本截断 | 先压平（`\s+` → 单空格 + trim），再 44 字符 + `…`，截断后 `trimEnd()` | fleet 无同款截断；换行残行修复（截图回归），任务摘要/成员尾注共用 |
@@ -114,6 +116,7 @@
 | agent-team 1.11.0 | 2026-09-14 | widget 折叠默认态：未选中只占 1 行 `agent-team <团队> · ↓/← 查看详情`（无状态/耗时/并行数/余额；running 与终态同格式），按 `↓`/`←`（空编辑器 ∧ 焦点门控）或 `alt+↓/↑` 展开为 rows + 底部提示行，`esc`/到顶 `↑`/`k` 收回；行投影 `buildWidgetRows` → `buildWidgetView {collapsed, rows}`（`renderWidgetView` 按 `selected` 选分支）；`truncateTask` 增加 `\s+` 压平（换行残行修复），折叠行复用 `flatten`；折叠行不含时间 → running 不再逐秒 churn（renderKey 自然跳过）。§2 折叠/展开行、§3.10 改写、§3.11 新增、§4 折叠行/提示行/截断字面量；改动前截图存档 `agent-team/docs/assets/widget-before-collapse.png`；widget 测试锁定 | `feat/agent-team-widget-fold` |
 | agent-team 1.13.0 | 2026-09-14 | widget 触发形式对齐 fleet-status（数据驱动活跃表面）：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由 `snapshot.running` 决定——running ⇒ string[] 帧、落定 ⇒ `setWidget(undefined)` 自动卸载（终态不再常驻）；刷新双触发 = coordinator `onProgress` 事件即时 + 1s aligned ticker 兜底 + renderKey 指纹；展开态改 `main → leader → 成员… → 任务` 树（`|- ` 连接符、成员状态图标 queued `·`/running `●`/done `✓`/failed `✗`/aborted `⊘`、尾注 ≤30 字、leader 行余额提示保留）；`main` 行 enter 只收起选中（fleet main 语义）；`/team:clear` 收窄为清排队对话（不再手动卸亮块，无内容时提示「亮块随 run 结束自动隐藏」）。§2 新增挂载/刷新行并改写折叠行、§3.1/§3.4/§3.11 改写、§4 新增树行/尾注/挂载/刷新字面量；widget-lifecycle 宿主测试锁定派单出帧/落定卸载/事件同步刷新/链式派单不闪卸载 | `feat/agent-team-widget-tree` |
 | agent-team 1.13.1 | 2026-09-15 | widget 真机反馈修复：任务摘要并入 leader 行（`leader <团队> · <任务摘要> ▶ running · …`，44 字截断），删除独立 `任务: …` 行——**末行恒为成员行**，消除“末行任务像成员、enter 却打开 leader”的假成员陷阱；宿主回归测试锁“成员行 enter → 查看器 roster 定位该成员”；§3.11/§4 改写，截图存档 `docs/assets/widget-tree-feedback.png` | `feat/agent-team-widget-leader-summary` |
+| agent-team 1.13.2 | 2026-09-15 | 按键 release 过滤（修复“一次按键生效两次”真机问题，也是“选不中成员”的真凶）：Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码），release 同样能被 matchesKey 命中——widget `handleWidgetKey` 与 viewer `handleViewerKey` 顶部统一 `isKeyRelease(data)` 短路（`fleet-status.ts:699` 同款）；repeat（`:2`）保留（长按连续移动）；§2/§4 新增行，widget/viewer 测试锁定（press+release 序列只生效一次）；参考截图存档 `docs/assets/widget-fleet-status-reference.png` | `fix/agent-team-widget-key-release` |
 
 ## 6. 范围外（明确不做）
 
