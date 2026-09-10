@@ -35,7 +35,7 @@
 | opencode-bridge | 本地 HTTP CONNECT → SOCKS5 桥（裸 `/opencode-bridge` 状态 + 冒号子命令 `:sync`/`:restore`/`:status`），让 Pi 的 httpProxy 走 v2rayN |
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
 | run-timer | 会话/任务/回合计时 widget |
-| solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status` |
+| solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启 |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 
 ## 收录与淘汰

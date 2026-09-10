@@ -16,6 +16,8 @@
  * 生命周期：仅当前会话有效。`session_start`（含 /reload、/new、/resume、/fork）
  * 与 `session_shutdown` 都清掉本进程的状态文件与状态条；关闭时命令直接生效，
  * 开启时先经一次 `ctx.ui.confirm` 防误触，无 UI 环境拒绝激活（fail-closed）。
+ * `pi --solo` 启动 flag 经宿主 `registerFlag`/`getFlag` 原生通道读取（boolean，默认 false），
+ * 每次 session_start 后若为真则启用（显式意图、跳过确认，写失败仍 fail-closed 保持关闭）。
  *
  * 安全边界：只豁免"审批摩擦"，绝不自动批准误触保护类确认；对 PWR 只产生 once
  * 批准，绝不写 remembered 记录；solo 关闭后既有 remembered 批准不受影响。
@@ -41,6 +43,9 @@ export const SOLO_STATE_FILE_ENV = "PI_SOLO_MODE_FILE";
 export const SOLO_STATUS_KEY = "40:solo-mode";
 /** 状态条文本（纯字符串,宿主 ExtensionUIContext 无 theme 字段） */
 export const SOLO_STATUS_TEXT = "⚡ solo";
+/** `pi --solo` 启动 flag 名（宿主 CLI flag 通道，非 argv 直读） */
+export const SOLO_FLAG_NAME = "solo";
+
 /** 命令行用法 */
 export const SOLO_USAGE = [
   "用法：",
@@ -48,6 +53,7 @@ export const SOLO_USAGE = [
   "  /solo:on       开启：危险操作将自动批准",
   "  /solo:off      关闭",
   "  /solo:status   查看当前状态",
+  "  pi --solo      启动时默认开启（等价 /solo:on，显式意图不弹确认）",
 ].join("\n");
 
 /** 冒号子命令（v1.2.0）：独立静态注册命令名。 */
@@ -90,6 +96,8 @@ export interface SoloModeDeps {
   env?: Record<string, string | undefined>;
   /** 进程号（测试用）；缺省 `process.pid` */
   pid?: number;
+  /** 启动 flag 读取（测试用）；缺省 `pi.getFlag("solo")`。 */
+  readFlag?: () => boolean | string | undefined;
   /** 注入时钟（测试用）；缺省 `Date.now` 的 ISO 串 */
   nowIso?: () => string;
 }
@@ -101,6 +109,14 @@ export function parseSoloCommand(raw: unknown): SoloAction {
   const token = String(raw ?? "").trim();
   if (token === "") return "toggle";
   return "usage";
+}
+
+/**
+ * `solo` 启动 flag 是否开启。宿主 boolean flag 显式给出时为 `true`（`--solo` /
+ * `--solo=1` 均归一为 true）；未给出、默认 false 或其他取值一律关闭。
+ */
+export function soloFlagEnabled(value: boolean | string | undefined): boolean {
+  return value === true || value === "true" || value === "1";
 }
 
 /** 状态文件路径：`PI_SOLO_MODE_FILE` 优先，缺省 `~/.pi/agent/solo-mode.json` */
@@ -165,6 +181,24 @@ export function createSoloModeExtension(pi: ExtensionAPI, deps: SoloModeDeps = {
   const pid = deps.pid ?? process.pid;
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
   const statePath = resolveSoloStatePath(env);
+  const readFlag =
+    deps.readFlag ??
+    (() => {
+      try {
+        return pi.getFlag?.(SOLO_FLAG_NAME);
+      } catch {
+        return undefined;
+      }
+    });
+
+  // 宿主 CLI flag 注册：`pi --solo`（旧宿主无此 API 时静默降级，仅少一个入口）。
+  if (typeof pi.registerFlag === "function") {
+    pi.registerFlag(SOLO_FLAG_NAME, {
+      type: "boolean",
+      default: false,
+      description: "启动即开启 solo 免审批模式（等价 /solo:on；仅当前会话）",
+    });
+  }
 
   function notify(ctx: SoloUi, message: string, type: "info" | "warning" | "error"): void {
     try {
@@ -266,6 +300,7 @@ export function createSoloModeExtension(pi: ExtensionAPI, deps: SoloModeDeps = {
 
   // 会话边界一律复位（/reload、/new、/resume、/fork）：仅清本进程 pid 的状态文件，
   // 绝不触碰异 pid 文件（并发 pi 实例互不干扰）。
+  // 复位后按 `pi --solo` 启动参数重新启用：显式意图跳过误触确认，写失败仍 fail-closed。
   pi.on("session_start", async (event, ctx) => {
     try {
       const ui = ctx as unknown as SoloUi;
@@ -274,6 +309,15 @@ export function createSoloModeExtension(pi: ExtensionAPI, deps: SoloModeDeps = {
       setStatus(ui, undefined);
       const reason = (event as { reason?: string } | undefined)?.reason;
       if (reset && reason === "reload") notify(ui, "solo 模式已随扩展重载复位", "info");
+      if (!soloFlagEnabled(readFlag())) return;
+      try {
+        writeSoloState(statePath, { pid, activatedAt: nowIso() });
+      } catch {
+        notify(ui, "solo 模式未启用：状态文件无法写入（--solo）", "error");
+        return;
+      }
+      setStatus(ui, SOLO_STATUS_TEXT);
+      notify(ui, "solo 模式已由 --solo 启动参数启用：危险操作将自动批准（仅当前会话）", "info");
     } catch {
       /* 忽略 */
     }
