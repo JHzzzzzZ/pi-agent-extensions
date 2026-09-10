@@ -13,7 +13,7 @@
  *  - `applyControlView()` - merged with the `{ run }` view returned by
  *    `workflow_control`.
  *  - `applyRuntimeView()` - full snapshot merge from the runtime's rich view
- *    (stages + tasks + usage), pulled on every /workflows view refresh tick
+ *    (stages + tasks + usage), pulled on every /workflows:view refresh tick
  *    (JHL-18).
  *
  * All reads are synchronous from memory so commands/widgets render without

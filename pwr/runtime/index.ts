@@ -759,7 +759,7 @@ export class WorkflowRuntime implements RuntimeAdapter {
 
 	/**
 	 * A cache hit (cross-run reuse or resume replay) still produces a
-	 * completed task record for THIS run so the /workflows view stays
+	 * completed task record for THIS run so the /workflows:view stays
 	 * accurate. Full results stay in the private cache only.
 	 */
 	private recordCacheHit(

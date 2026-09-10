@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchWorkflowPrefix, parseWorkflowCommandArgs, parseWorkflowCommandRoute } from "../src/intent.ts";
+import { firstToken, matchWorkflowPrefix, parseWorkflowCommandArgs, parseWorkflowRunArgs, RETIRED_WORKFLOW_SUBCOMMANDS, WORKFLOW_SUBCOMMANDS } from "../src/intent.ts";
 
 test("/workflow command args parse to a generation request", () => {
 	const req = parseWorkflowCommandArgs("audit src/routes auth");
@@ -33,33 +33,32 @@ test("non-workflow input passes through", () => {
 	assert.equal(matchWorkflowPrefix("my workflow: is broken"), null);
 });
 
-// ---------- /workflow sub-command routing (命令风格统一) ----------
+// ---------- /workflow 冒号子命令（v2.8.0） ----------
 
-test("/workflow run <已保存名> [args] routes to the saved workflow", () => {
-	const has = (name: string) => name === "audit";
-	assert.deepEqual(parseWorkflowCommandRoute("run audit files=a.js depth=2", has), {
-		kind: "run",
-		name: "audit",
-		rawArgs: "files=a.js depth=2",
-	});
-	assert.deepEqual(parseWorkflowCommandRoute("run audit", has), { kind: "run", name: "audit", rawArgs: "" });
+test("/workflow:run args split the saved name from the raw args", () => {
+	assert.deepEqual(parseWorkflowRunArgs("audit files=a.js depth=2"), { name: "audit", rawArgs: "files=a.js depth=2" });
+	assert.deepEqual(parseWorkflowRunArgs("audit"), { name: "audit", rawArgs: "" });
+	assert.deepEqual(parseWorkflowRunArgs("  audit   a=1  "), { name: "audit", rawArgs: "a=1" });
+	assert.equal(parseWorkflowRunArgs(""), null);
+	assert.equal(parseWorkflowRunArgs("   "), null);
 });
 
-test("/workflow run <未保存名> falls back to generation with the whole input as task", () => {
-	const has = (name: string) => name === "audit";
-	assert.deepEqual(parseWorkflowCommandRoute("run nope audit the routes", has), {
-		kind: "generate",
-		task: "run nope audit the routes",
-	});
+test("firstToken returns the first whitespace-delimited token (or empty)", () => {
+	assert.equal(firstToken("delete audit"), "delete");
+	assert.equal(firstToken("  audit  "), "audit");
+	assert.equal(firstToken(""), "");
 });
 
-test("/workflow delete|model are sub-commands; other input stays a generation task", () => {
-	assert.deepEqual(parseWorkflowCommandRoute("delete audit"), { kind: "delete", name: "audit" });
-	assert.deepEqual(parseWorkflowCommandRoute("delete"), { kind: "delete", name: "" });
-	assert.deepEqual(parseWorkflowCommandRoute("model --auto"), { kind: "model", arg: "--auto" });
-	assert.deepEqual(parseWorkflowCommandRoute("model"), { kind: "model", arg: "" });
-	// "run" without a name is not the run sub-command — it is a plain task.
-	assert.deepEqual(parseWorkflowCommandRoute("run"), { kind: "generate", task: "run" });
-	assert.deepEqual(parseWorkflowCommandRoute("audit src/routes"), { kind: "generate", task: "audit src/routes" });
-	assert.deepEqual(parseWorkflowCommandRoute("  "), { kind: "generate", task: "" });
+test("retired space-separated words map to the colon sub-commands", () => {
+	const expected: Record<string, string> = {
+		run: WORKFLOW_SUBCOMMANDS.run,
+		delete: WORKFLOW_SUBCOMMANDS.delete,
+		model: WORKFLOW_SUBCOMMANDS.model,
+	};
+	for (const [head, target] of Object.entries(expected)) {
+		assert.equal(RETIRED_WORKFLOW_SUBCOMMANDS[head]?.command, target, `retired word ${head}`);
+	}
+	assert.equal(WORKFLOW_SUBCOMMANDS.run, "workflow:run");
+	assert.equal(WORKFLOW_SUBCOMMANDS.delete, "workflow:delete");
+	assert.equal(WORKFLOW_SUBCOMMANDS.model, "workflow:model");
 });

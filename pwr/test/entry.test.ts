@@ -1,7 +1,7 @@
 /**
  * Merged-entry contract tests (v2.0.0): the single `pwr/index.ts` entry must
  * register the complete PWR surface — the four workflow tools, all commands
- * (/workflow, /workflows), the UI shortcuts and the
+ * (/workflow generation + colon sub-commands), the UI shortcuts and the
  * run-entry renderer — with the PRD §6.2 contracts. `workflow_validate`
  * takes `{ source, argsSchema? }` and fails with ENGINE_UNAVAILABLE until
  * the engine is resolved at session_start (never the structural gate).
@@ -14,7 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import pwrExtension from "../index.ts";
 import { ErrorCode } from "../src/errors.ts";
-import { PWR_RESULT_CUSTOM_TYPE, PWR_RUN_ENTRY } from "../src/types.ts";
+import { PWR_GENERATION_CUSTOM_TYPE, PWR_RESULT_CUSTOM_TYPE, PWR_RUN_ENTRY } from "../src/types.ts";
 import { RunnerError, RunnerErrorCodes } from "../runner/errors.ts";
 import { runtime as rt } from "../runtime/index.ts";
 
@@ -86,16 +86,53 @@ test("merged entry registers the full tool set with PRD §6.2 contracts", () => 
 	assert.ok(saveParams.properties?.overwrite, "workflow_save declares the optional overwrite flag (JHL-17)");
 });
 
-test("merged entry registers /workflow + /workflows UI commands, shortcuts and the run-entry renderer", () => {
+test("merged entry registers the colon command surface, shortcuts and the run-entry renderer", () => {
 	const { commands, shortcuts, renderers } = register();
-	for (const expected of ["workflow", "workflows"]) {
-		assert.ok(commands.includes(expected), `command ${expected} must be registered`);
-	}
-	assert.ok(!commands.some((name) => name.includes(":")), "colon command namespaces retired");
-	assert.ok(!commands.includes("workflow-delete"), "hyphen command retired (now /workflow delete)");
-	assert.ok(!commands.includes("pwr-model"), "hyphen command retired (now /workflow model)");
+	assert.deepEqual(commands, [
+		"workflow",
+		"workflow:run",
+		"workflow:delete",
+		"workflow:model",
+		"workflows",
+		"workflows:list",
+		"workflows:view",
+		"workflows:open",
+		"workflows:pause",
+		"workflows:resume",
+		"workflows:stop",
+		"workflows:restart",
+		"workflows:save",
+		"workflows:saved",
+		"workflows:script",
+		"workflows:approve",
+		"workflows:help",
+	]);
+	assert.ok(!commands.includes("workflow-delete"), "hyphen command retired (now /workflow:delete)");
+	assert.ok(!commands.includes("pwr-model"), "hyphen command retired (now /workflow:model)");
 	assert.equal(shortcuts.length, 3, "pause/stop/restart shortcuts registered (JHL-15)");
 	assert.deepEqual(renderers, [PWR_RUN_ENTRY], "run entry renderer registered (JHL-15)");
+});
+
+test("bare /workflow keeps generation；旧子命令词只提示改名不生成", async () => {
+	const { commandHandlers, sentMessages } = register();
+	const notifyCalls: Array<{ text: string; type: string }> = [];
+	const ctx = { ui: { notify: (text: string, type: string) => notifyCalls.push({ text, type }) } } as never;
+	const handler = commandHandlers.get("workflow");
+	assert.ok(handler, "/workflow 命令 handler 可调用");
+
+	for (const head of ["run", "delete", "model"]) {
+		await handler!(head, ctx);
+		assert.equal(sentMessages.length, 0, `/${head} 不得触发生成回合`);
+		assert.match(notifyCalls.at(-1)?.text ?? "", new RegExp(`已改名为「/workflow:${head}」`));
+	}
+
+	await handler!("", ctx);
+	assert.equal(sentMessages.length, 0, "空参 = 用法提示，不生成");
+	assert.match(notifyCalls.at(-1)?.text ?? "", /Usage: \/workflow <task description>/);
+
+	await handler!("audit the routes", ctx);
+	assert.equal(sentMessages.length, 1, "普通任务文本仍走生成回合");
+	assert.equal(sentMessages[0]!.message.customType, PWR_GENERATION_CUSTOM_TYPE);
 });
 
 test("merged entry: workflow_validate fails with ENGINE_UNAVAILABLE until session_start resolves the engine", async () => {
@@ -343,7 +380,7 @@ test("solo 审批门：workflow_validate 不弹批准卡（按 once 自动批准
 	}
 });
 
-test("solo 审批门：已保存命令 /workflow run <name> 不弹批准卡，直接按 once 启动", async () => {
+test("solo 审批门：已保存命令 /workflow:run <name> 不弹批准卡，直接按 once 启动", async () => {
 	const cleanup = enableSolo();
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pwr-solo-cwd-"));
 	try {
@@ -359,13 +396,13 @@ test("solo 审批门：已保存命令 /workflow run <name> 不弹批准卡，�
 		const fakeCtx = makeUiCtx(selects, notifyCalls, { isProjectTrusted: () => true });
 		await (handlers.get("session_start")![0] as (e: unknown, c: unknown) => unknown)({}, fakeCtx);
 
-		// 命令面统一（v2.6.0）：动态 `/workflow:<name>` 退役，saved 调用走 `/workflow run <name>`。
-		const handler = commandHandlers.get("workflow");
-		assert.ok(handler, "/workflow 命令 handler 可调用");
+		// 命令面冒号化（v2.8.0）：saved 调用走独立命令 `/workflow:run <name>`。
+		const handler = commandHandlers.get("workflow:run");
+		assert.ok(handler, "/workflow:run 命令 handler 可调用");
 
 		// 不派真子进程：假 runner 挂起，run 停在 running。
 		rt.setRunner({ run: () => new Promise(() => {}) });
-		await handler!("run solo-saved", fakeCtx);
+		await handler!("solo-saved", fakeCtx);
 
 		assert.equal(selects.length, 0, "solo 下已保存命令不弹批准卡");
 		assert.ok(notifyCalls.some((n) => n.text.includes("started")), "命令按 once 启动");

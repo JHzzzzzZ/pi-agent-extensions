@@ -1,5 +1,5 @@
 /**
- * PWR UI - full-screen live run viewer (/workflows view, JHL-18)
+ * PWR UI - full-screen live run viewer (/workflows:view, JHL-18)
  *
  * Split-pane frame copied structurally from the sibling agent-team
  * extension's /team view (itself pi-subagents' fleet inspector layout,

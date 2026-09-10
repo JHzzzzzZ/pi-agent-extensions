@@ -1,5 +1,5 @@
 /**
- * PWR — /workflows view viewer through the REAL host stack (headless)
+ * PWR — /workflows:view viewer through the REAL host stack (headless)
  *
  * 纯函数单测绿 ≠ 真机行为对：overlay 堆叠（每 tick 追加一组标题+分栏）
  * 只存在于真实合成/diff 路径里。本文件把 RunViewer 接到真实的
@@ -292,7 +292,7 @@ function driveHostViewer(opts: { cols?: number; rows?: number; resizeTo?: number
 		showCursor: (): void => {},
 	};
 	const tui = new TuiMainScreen(term as never);
-	const baseLines = ["$ pi /workflows view", "leader turn 0 thinking…"];
+	const baseLines = ["$ pi /workflows:view", "leader turn 0 thinking…"];
 	const base: Component = {
 		render: () => [...baseLines],
 		handleInput: () => {},

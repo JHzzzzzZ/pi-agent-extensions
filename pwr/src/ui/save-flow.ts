@@ -93,7 +93,7 @@ export async function runSaveFlow(deps: SaveFlowDeps, actions: SaveFlowActions, 
 	}
 
 	actions.notify(
-		`Saved as /workflow run ${result.commandName} (${result.pathScope === "user" ? "user scope" : "project scope"})${overwritten ? ", overwrote existing file" : ""}.`,
+		`Saved as /workflow:run ${result.commandName} (${result.pathScope === "user" ? "user scope" : "project scope"})${overwritten ? ", overwrote existing file" : ""}.`,
 		"info",
 	);
 	return { ok: true, commandName: result.commandName, pathScope: result.pathScope, overwritten };

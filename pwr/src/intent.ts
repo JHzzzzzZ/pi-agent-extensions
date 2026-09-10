@@ -3,8 +3,8 @@
  *
  * Triggers: `/workflow <task>` (extension command) and `workflow: <task>`
  * prefix (input event). Both produce a generation request that is injected
- * into the main agent. The `/workflow` command also routes the sub-commands
- * `run` / `delete` / `model` (命令风格统一).
+ * into the main agent. Saved-workflow sub-commands are separate static
+ * commands (v2.8.0): `/workflow:run` / `/workflow:delete` / `/workflow:model`.
  */
 
 export const WORKFLOW_COMMAND = "workflow";
@@ -34,39 +34,36 @@ export function matchWorkflowPrefix(text: string): GenerationRequest | null {
 	return { task, requestedAt: new Date().toISOString() };
 }
 
-/** Parsed shape of the `/workflow` command arguments (sub-command router). */
-export type WorkflowCommandRoute =
-	| { kind: "generate"; task: string }
-	| { kind: "run"; name: string; rawArgs: string }
-	| { kind: "delete"; name: string }
-	| { kind: "model"; arg: string };
+/** 冒号子命令（v2.8.0）：独立静态注册命令名。 */
+export const WORKFLOW_SUBCOMMANDS = {
+	run: "workflow:run",
+	delete: "workflow:delete",
+	model: "workflow:model",
+} as const;
 
 /**
- * Routes `/workflow` args: `run <name> [args]` (only when the name is a saved
- * workflow), `delete <name>`, `model [auto|<id>]`; anything else — including
- * a `run` head naming nothing saved — stays a generation task with the whole
- * input as the task. The 歧义 edge (a task literally starting with "run <已保存名>")
- * is documented in the help text: use the `workflow:` input prefix instead.
+ * 旧空格子命令 → 新命令 + 用法。裸 `/workflow` 命中时只提示改名、绝不生成
+ * （防止 `/workflow run <name>` 误触发生成回合）。
  */
-export function parseWorkflowCommandRoute(
-	raw: string,
-	hasSavedWorkflow: (name: string) => boolean = () => false,
-): WorkflowCommandRoute {
-	const trimmed = (raw ?? "").trim();
-	const spaceIndex = trimmed.indexOf(" ");
-	const head = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
-	const rest = spaceIndex === -1 ? "" : trimmed.slice(spaceIndex + 1).trim();
-	if (head === "delete") return { kind: "delete", name: firstToken(rest) };
-	if (head === "model") return { kind: "model", arg: firstToken(rest) };
-	if (head === "run" && rest) {
-		const name = firstToken(rest);
-		if (hasSavedWorkflow(name)) {
-			return { kind: "run", name, rawArgs: rest.slice(rest.indexOf(name) + name.length).trim() };
-		}
-	}
-	return { kind: "generate", task: trimmed };
+export const RETIRED_WORKFLOW_SUBCOMMANDS: Record<string, { command: string; usage: string }> = {
+	run: { command: WORKFLOW_SUBCOMMANDS.run, usage: "/workflow:run <名称> [参数]" },
+	delete: { command: WORKFLOW_SUBCOMMANDS.delete, usage: "/workflow:delete [名称]" },
+	model: { command: WORKFLOW_SUBCOMMANDS.model, usage: "/workflow:model [auto|<模型>]" },
+};
+
+/** 取首个空白分隔 token（无则空串）：各子命令的单参数解析用。 */
+export function firstToken(text: string): string {
+	return (text ?? "").trim().split(/\s+/)[0] ?? "";
 }
 
-function firstToken(text: string): string {
-	return text.split(/\s+/)[0] ?? "";
+/**
+ * 解析 `/workflow:run` 参数：首个 token = saved 名，其余为原始参数串
+ * （key=value 或 JSON，交给 invokeSavedWorkflow 按 schema 校验）。
+ */
+export function parseWorkflowRunArgs(raw: string): { name: string; rawArgs: string } | null {
+	const trimmed = (raw ?? "").trim();
+	if (!trimmed) return null;
+	const spaceIndex = trimmed.indexOf(" ");
+	if (spaceIndex === -1) return { name: trimmed, rawArgs: "" };
+	return { name: trimmed.slice(0, spaceIndex), rawArgs: trimmed.slice(spaceIndex + 1).trim() };
 }
