@@ -25,20 +25,29 @@
 
 ### 方式一：pi install（推荐）
 
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（12 个扩展）。不带 ref 的安装会装到 master 旧包。
+
 ```bash
-# 全局安装（写入 ~/.pi/agent/settings.json，跟随默认分支）
-pi install git:github.com/JHzzzzzZ/pi-agent-extensions
+# 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
+pi install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
 
 # 或仅当前项目使用（写入项目 .pi/settings.json，项目信任后启动自动补装）
-pi install -l git:github.com/JHzzzzzZ/pi-agent-extensions
+pi install -l git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
 
 # 免安装试用（仅本次运行，装到临时目录）
-pi -e git:github.com/JHzzzzzZ/pi-agent-extensions
+pi -e git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
+```
+
+想用本机克隆的代码（开发中的未推送改动）时，用本地路径安装（不复制、不克隆）：
+
+```bash
+git clone -b dev-laptop git@github.com:JHzzzzzZ/pi-agent-extensions.git
+pi install ./pi-agent-extensions
 ```
 
 安装后由 pi 统一管理：
 
-- **升级**：仓库 push 后执行 `pi update --extensions`（或 `pi update --all`）拉取最新即可
+- **升级**：仓库 push 后执行 `pi update --extensions`（或 `pi update --all`）拉取最新即可——分支 ref 跟随分支头更新，tag/commit ref 则固定不动
 - `pi list` 查看已装包；`pi config` 可单独启停包内的某个扩展
 - 如需锁定版本，可带 tag 安装（如 `pi install git:...@v1.0.0`）；此时 `pi update` 只把克隆对齐到该 ref，不会自动跳新版本，升级需重新 `pi install git:...@新tag`
 
@@ -83,7 +92,7 @@ pi                                                                 # 首次启�
 **Step 1 · 装本扩展包并验证**
 
 ```bash
-pi install git:github.com/JHzzzzzZ/pi-agent-extensions
+pi install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
 pi                                                                 # 重新启动 pi
 ```
 
