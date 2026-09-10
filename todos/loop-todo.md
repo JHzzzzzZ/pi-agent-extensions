@@ -3,3 +3,4 @@
 - [x] 根 README 为每个插件增加效果示意图
 - [x] devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞
 - [x] 命令风格统一（跨插件）：子命令式 `/loop list|pause|resume|delete|clear` 与 agent-team 的冒号命名空间式 `/team:run|stop|status|view|clear|doctor` 用法不一致，需统一（倾向于哪种、是否连带 provider-quota `/quota`、如何向后兼容旧写法待定）。跨插件需求，已在 agent-team-todo.md 同步登记。（完成 2026-09-10 @ merge a03e525：子命令式为全仓统一基准，范围=全部命令面，直接替换不留别名。loop 已是子命令式，本插件代码不动仅文档口径同步；loop 182 测试回归绿）
+- [ ] 命令面改冒号形式（跨插件，全量任务一部分）：`/loop list|pause|resume|delete|clear` → `/loop:list|:pause|:resume|:delete|:clear`；无参 `/loop` 与循环创建参数保持不变。全量清单与待定项见 `todos/commands-colon-todo.md`。（未领取）
