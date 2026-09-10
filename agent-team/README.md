@@ -131,7 +131,7 @@ agent-team count-duet · ↓/← 查看详情
 | `esc` | 退出选中并收回折叠 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget(key, string[], { placement: "belowEditor" })`——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由快照决定（`running` ⇒ string[] 帧；落定 ⇒ `setWidget(key, undefined)` 卸载）；**刷新双触发**：coordinator `onProgress` 状态变化点事件即时重绘 + 1s aligned ticker（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`）兜底，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey；折叠行不含时间 → 未展开时不逐秒 churn）；宿主自行包装渲染是跨宿主构建最稳的路径（组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行，`docs/tui-sync.md` §3.1）；行投影 `buildWidgetView` 产出「折叠单行 + 展开树」（`main`/`leader`（含任务摘要）/成员行），`renderWidgetView` 按 `selected` 选分支；任务摘要/成员尾注文本先 `\s+` 压平再截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
+实现：`setWidget(key, string[], { placement: "belowEditor" })`——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由快照决定（`running` ⇒ string[] 帧；落定 ⇒ `setWidget(key, undefined)` 卸载）；**刷新双触发**：coordinator `onProgress` 状态变化点事件即时重绘 + 1s aligned ticker（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`）兜底，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey；折叠行不含时间 → 未展开时不逐秒 churn）；宿主自行包装渲染是跨宿主构建最稳的路径（组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行，`docs/tui-sync.md` §3.1）；行投影 `buildWidgetView` 产出「折叠单行 + 展开树」（`main`/`leader`（含任务摘要）/成员行），`renderWidgetView` 按 `selected` 选分支；任务摘要/成员尾注文本先 `\s+` 压平再截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理（reducer 顶部 `isKeyRelease` 过滤 Kitty 协议 release 事件，一次按键只生效一次；repeat 保留供长按连续移动）；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
@@ -178,7 +178,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（323 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（326 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

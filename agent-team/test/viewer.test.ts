@@ -365,6 +365,30 @@ test("handleViewerKey 普通字符不关闭（ctrl+c 不被吞也不会误关）
   }
 });
 
+// Kitty 键盘协议 flag 2 下每次按键额外发送 release 事件（`:3` 编码）；
+// 不过滤则一次按键生效两次（↓ 跳两个成员、x 切换两次等于没反应、
+// D 确认后 release 再次确认）。fleet-status.ts:699 同款过滤。
+test("handleViewerKey: Kitty release 事件一律忽略（状态零变化）", () => {
+  const state = initialViewerState();
+  const ctx = keyCtx(50, 3, 10);
+  for (const release of [
+    "\x1b[1;1:3B", // ↓ release
+    "\x1b[1;1:3A", // ↑ release
+    "\x1b[1;1:3D", // ← release
+    "\x1b[1;1:3C", // → release
+    "\x1b[13;1:3u", // enter release
+    "\x1b[120;1:3u", // x release（工具行开关不得双切）
+  ]) {
+    const r = handleViewerKey(state, release, ctx);
+    assert.ok(r.type === "update", `release ${JSON.stringify(release)} 应为 no-op update`);
+    assert.deepEqual(r.state, state, `release ${JSON.stringify(release)} 不得改变状态`);
+  }
+  // 确认态：Enter 的 release 不得触发 stop-confirm。
+  const confirming = { ...initialViewerState(), stopConfirming: true };
+  const r = handleViewerKey(confirming, "\x1b[13;1:3u", ctx);
+  assert.ok(r.type === "update" && r.state.stopConfirming === true, "release 不得确认停止");
+});
+
 test("handleViewerKey 滚动正文：Shift+K 上滚 unfollow、Shift+J 下滚到底 re-follow", () => {
   // 滚动键对齐 fleet scrollUp: ["K"] / scrollDown: ["J"]（fleet.ts:35-36，
   // 大写绑定→shift+小写经 matchesKey 判定）；小写 k/j 现在是成员切换键。

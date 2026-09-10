@@ -324,6 +324,28 @@ test("key reducer: enter 而行为空（run 恰落定）→ 收起选中并放�
   assert.ok(result.type === "passthrough" && result.state.selected === false);
 });
 
+// Kitty 键盘协议 flag 2（report event types）下每次按键额外发送 release 事件
+// （`:3` 编码，如 ↓ press `\x1b[1;1B` / release `\x1b[1;1:3B`）。release 同样
+// 能被 matchesKey 命中——不过滤会让一次按键生效两次（用户 2026-09-15 真机
+// 反馈；fleet-status.ts:699 同款 `isKeyRelease` 过滤）。
+test("key reducer: Kitty release 事件一律忽略（一次按键不得生效两次）", () => {
+  const RELEASE_DOWN = "\x1b[1;1:3B";
+  const RELEASE_UP = "\x1b[1;1:3A";
+  const RELEASE_LEFT = "\x1b[1;1:3D";
+  const RELEASE_ENTER = "\x1b[13;1:3u";
+
+  // 未选中：release ↓/← 不得激活（编辑器空/非空都不行）。
+  for (const canActivate of [true, false]) {
+    assert.equal(handleWidgetKey(initialWidgetKeyState(), RELEASE_DOWN, rows, canActivate).type, "none");
+    assert.equal(handleWidgetKey(initialWidgetKeyState(), RELEASE_LEFT, rows, canActivate).type, "none");
+  }
+  // 选中态：release 不移动、不 confirm、不退出。
+  const selected = { selected: true, cursor: 1 };
+  assert.equal(handleWidgetKey(selected, RELEASE_DOWN, rows).type, "none");
+  assert.equal(handleWidgetKey(selected, RELEASE_UP, rows).type, "none");
+  assert.equal(handleWidgetKey(selected, RELEASE_ENTER, rows).type, "none");
+});
+
 // ---------------------------------------------------------------------------
 // Rendering (pure)
 // ---------------------------------------------------------------------------
@@ -812,6 +834,25 @@ test("controller 宿主无 editorState 端口 → 降级：仅 alt 通道激活"
   try {
     assert.equal(handlers[0]!("\x1b[B"), undefined, "降级时 bare ↓ 不消费");
     assert.equal(handlers[0]!("\x1b[1;3B")?.consume, true, "降级时 alt+↓ 仍激活");
+  } finally {
+    controller.stop();
+  }
+});
+
+// 真机回归（用户 2026-09-15）：Kitty 协议下一次按键 = press + release，
+// release 必须被忽略，否则光标一次跳两格（表现成“选不中成员”）。
+test("controller: press+release 序列只生效一次（光标只移动一格）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+  });
+  try {
+    handlers[0]!("\x1b[B"); // press：激活，cursor 0
+    handlers[0]!("\x1b[1;1:3B"); // release：必须忽略
+    assert.equal(cursorRow(lastLines(pushed)), 0, "release 不得把光标推到下一行");
+    handlers[0]!("\x1b[B"); // 第二次 ↓ press
+    handlers[0]!("\x1b[1;1:3B"); // 第二次 release
+    assert.equal(cursorRow(lastLines(pushed)), 1, "两次按键 = 移动一格，不跳行");
   } finally {
     controller.stop();
   }
