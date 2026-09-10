@@ -26,6 +26,7 @@
 | widget 激活门控 | `editorHasFocus()` 短路（焦点非编辑器/选择器打开 → 不消费且退出选中，`fleet-status.ts:701/965`）+ `matchesKey(data,"down") \|\| matchesKey(data,"left")`，且 `ctx.ui.getEditorText() === ""` 才激活（`fleet-status.ts:606-607`） | v1.8.0：`alt+↓/↑` 激活，仅「编辑器为空」半条门控 | v1.9.1：补 **焦点门控**（`editorFocus` 端口 + `probeEditorFocus` 结构判定，经 factory 形态 `setWidget` 一次性捕获宿主 TUI）+ ↓/← 空编辑器激活；`alt+↓/↑` 保留为不受空编辑器门控的第二通道（差异表 §3.3） |
 | widget 选中导航 | `down/j`、`up/k`（`fleet.ts:36-37`，`fleet-status.ts:616-625`）；up 到顶再按 = 退出选中 | `↑/↓` | **补 j/k**；`↑/↓` 保留 |
 | 无变化跳过重绘 | `renderKey` 相同则跳过；running 时仍强制重绘（墙钟 spinner，`fleet-status.ts:585-591`） | 每次 refresh 必 setWidget | **渲染串指纹相同则跳过**；running + elapsed 变化照常重建 |
+| widget 折叠/展开形态 | 未激活：单行 `  <label> · <usage> · ↓/← to inspect`（`fleet-status.ts:757-789`）；激活：顶部提示行 + 空行 + 内容 | agent-team：未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`（不含状态/耗时/并行数/余额）；选中态 = rows + 底部提示行 | 折叠默认态**已对齐**；提示行位置差异见 §3.11 |
 | open/close 互斥 | 单实例（`fleetInspectorOpen` 等守卫） | `openViewer` early-return + `viewerOpen` 门控 | 已对齐 |
 | widget 隐藏/恢复 | inspector 打开期间 `clearWidget` + 恢复时 `refresh`（`fleet-status.ts:543-596`） | `setPaused(true)` 隐藏 + `setPaused(false)` 立即重绘 | 已对齐 |
 | 销毁与重入 | 组件 `dispose` 清理订阅/timer | `dispose` 先停 timer 再调 done；幂等 | 已对齐（测试锁死） |
@@ -48,7 +49,8 @@
 | 3.7 | 选中态 up 到顶再按 | **已采纳（v1.8.0，退出选中）** | fleet-status `up` 在选中第 0 行时退出选中（`fleet-status.ts:620-625`）；agent-team v1.8.0 起同构（cursor 0 再按 `↑`/`k` 退出选中放行编辑器，保持 cursor 供再次激活恢复；底部仍钳位），废弃旧钳位行为。见 `widget.ts` `handleWidgetKey`。 |
 | 3.8 | 停止确认横幅/notice 占**正文窗口顶部**，窗口收缩、帧总高不变 | **特有语义保留** | fleet 的 `withActionLines` 是把 action 行插在 detail 正文之前（总高可变）；agent-team 帧是定高（ghost-host 稳定性约束，`fitLine` 逐行定宽），故改为横幅占窗口顶部 + 窗口 slice 少取对应行数，帧总行数恒为 `bodyHeight + VIEWER_CHROME_ROWS`。优先级 busy > 确认 > notice（对齐 fleet `actionLines` 顺序）。见 `viewer.ts` `actionLines` + `renderViewerFrame`。 |
 | 3.9 | 停止粒度 = 整个 run（`viewerStopAction` → `stopAndSettle()`） | **特有语义保留** | fleet 按选中的单个 async run 停；agent-team 的成员子进程归 leader 进程管，cockpit 只能停整个 run（与 team_stop 工具同一路径）。 |
-| 3.10 | 亮块 running 头行可选余额提示（`· 剩 $X.XX`） | **特有语义新增** | fleet 无预算概念；仅当团队 frontmatter 配了 `budget.maxCostUsd` 且未超限时显示（超限即自动中止，不再显示）；无费用上限时头行与 fleet 对齐不变。 |
+| 3.10 | 亮块 running **展开**头行可选余额提示（`· 剩 $X.XX`） | **特有语义新增** | fleet 无预算概念；仅当团队 frontmatter 配了 `budget.maxCostUsd` 且未超限时显示（超限即自动中止，不再显示）；无费用上限时头行与 fleet 对齐不变。余额提示只出现在展开态头行，折叠单行不含。 |
+| 3.11 | 展开态提示行在**底部**（fleet 在顶部 + 空行）且无缩进 | **特有语义保留** | fleet 激活态先出 `  ↑↓/jk select · enter inspect · esc back` + 空行（`fleet-status.ts:783-784`）；agent-team 展开块 = rows + 底部 `↑↓ 选择 · enter 查看 · esc 退出`（无空行、无缩进，`renderWidgetView`）。折叠默认形态对齐 fleet 折叠单行（§2）。改动前截图（多行常显 + 任务换行残行）存档：`docs/assets/widget-before-collapse.png`。 |
 
 ## 4. 规格字面量表（测试期望值唯一来源）
 
@@ -72,6 +74,9 @@
 | 翻页键 | `pageUp: ["pageUp"]`、`pageDown: ["pageDown"]`（视口高 = 右栏实际可见行数） | `fleet.ts:41-42`、`fleet.ts:1161-1162` |
 | 工具行开关 | `toggleTools: ["x", "X", "ctrl+o"]` | `fleet.ts:48`、`fleet.ts:1205-1207` |
 | 无变化跳过 | 渲染串指纹相同且无 running 强制 → 跳过 | `fleet-status.ts:585-591` |
+| widget 折叠行 | `agent-team <团队> · ↓/← 查看详情`（running 与终态同格式；不含状态/耗时/并行数/余额） | agent-team 特有文案，对齐 fleet 折叠单行语义（`fleet-status.ts:757-789`）；纯函数 `buildWidgetView.collapsed` |
+| widget 展开提示行 | `↑↓ 选择 · enter 查看 · esc 退出`（底部、无缩进） | agent-team 特有（见差异表 §3.11） |
+| widget 文本截断 | 先压平（`\s+` → 单空格 + trim），再 44 字符 + `…`，截断后 `trimEnd()` | fleet 无同款截断；换行残行修复（截图回归），任务行/错误行共用 |
 | stop 键位 | `["D"]`（确认态按键：Enter/Y 确认；Esc/ctrl+c/N/backspace 取消） | `fleet.ts:46`、`fleet.ts:1134-1150` |
 | refresh 键位 | `["r", "R"]` | `fleet.ts:43` |
 | close 键位 | `["escape", "ctrl+c", "q"]` | `fleet.ts:34`、`fleet.ts:1150-1154` |
@@ -98,6 +103,7 @@
 | agent-team 1.7.0 | 2026-09-09 | viewer 改 roster+detail 左右双栏（对照 `fleet.ts:1319-1381` 抄改）：左栏成员 roster（选中标记+状态图标+右对齐状态，窗口化滚动），右栏 = 三行元信息头（Run/State/成员）+ 完整转录正文（滚动/follow/Markdown/x 工具行保留）；`VIEWER_CHROME_ROWS` 3→6、帧高公式换 `max(2, floor(rows*0.85) - 6)`、最小宽度门 36 列；键位不变，差异条目 §3.2 改写，§4 新增几何字面量（另修正 AGENTS 卡里 overlay 宽度的陈旧记载 96%→95%，常量从未变过） | `feat/agent-team-viewer-split` |
 | agent-team 1.8.0 | 2026-09-14 | viewer/widget 按键全面对齐 fleet：viewer 动作键位全集逐字对齐 `DEFAULT_FLEET_KEYBINDINGS`（`↑↓/k/j` 切成员+钉 actor id、`Shift+K/J` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行；旧键 `←→/h/l/Tab/1-9/g/G` 退役忽略，特有仅剩 `m`）；widget 选中态到顶（cursor 0）再按 `↑`/`k` 退出选中（§3.7 改已采纳）。§2 新增成员切换/滚动键位行、§3.2/§3.7 改写、§4 新增键位字面量（selectUp/Down/First/Last、scrollUp/Down、pageUp/Down、toggleTools、close、退役键）；另清理 §4 尾部残留合并冲突标记 | `feat/agent-team-viewer-keys` |
 | agent-team 1.9.1 | 2026-09-10 | widget 补焦点门控（`editorHasFocus` 半条）：`probeEditorFocus`（`getFocusedComponent()` 优先/`focusedComponent` 字段回退/未知 → undefined 降级）经 index factory 形态 `setWidget` 一次性捕获宿主 TUI 接线；焦点确定非编辑器（`/login`、`/model`、`/settings` 选择器，`ctx.ui.select`，overlay 对话框）时 widget 完全不介入（含 alt 通道），选中态退出让行。§2 门控行、§3.3、§4 激活条件/焦点探测改写；widget（7）、widget-focus-host（3，真 TuiMainScreen + 真 CustomEditor/OAuthSelector/ExtensionSelector）、viewer-mutex（1）共 11 测试锁定 | `feat/agent-team-widget-focus` |
+| agent-team 1.11.0 | 2026-09-14 | widget 折叠默认态：未选中只占 1 行 `agent-team <团队> · ↓/← 查看详情`（无状态/耗时/并行数/余额；running 与终态同格式），按 `↓`/`←`（空编辑器 ∧ 焦点门控）或 `alt+↓/↑` 展开为 rows + 底部提示行，`esc`/到顶 `↑`/`k` 收回；行投影 `buildWidgetRows` → `buildWidgetView {collapsed, rows}`（`renderWidgetView` 按 `selected` 选分支）；`truncateTask` 增加 `\s+` 压平（换行残行修复），折叠行复用 `flatten`；折叠行不含时间 → running 不再逐秒 churn（renderKey 自然跳过）。§2 折叠/展开行、§3.10 改写、§3.11 新增、§4 折叠行/提示行/截断字面量；改动前截图存档 `docs/assets/widget-before-collapse.png`；widget 测试锁定 | `feat/agent-team-widget-fold` |
 
 ## 6. 范围外（明确不做）
 
