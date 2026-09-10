@@ -176,3 +176,9 @@ export interface OverwritableSaveAdapter {
 export const LARGE_RUN_AGENTS = 25;
 export const LARGE_RUN_TOKENS = 1_500_000;
 export const COST_WARN_USD = 2;
+
+/** Viewer refresh interval (fleet/agent-team `REFRESH_MS = 750`; matrix A3). */
+export const VIEWER_TICK_MS = 750;
+
+/** Terminal-row wobble tolerance that keeps the previous frame height (fleet). */
+export const VIEWER_HEIGHT_JITTER_ROWS = 1;

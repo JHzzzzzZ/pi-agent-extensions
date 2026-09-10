@@ -6,6 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { extractPlan } from "../src/plan.ts";
 import { buildDiagramModel, renderDiagramRows, renderUnmatchedStages } from "../src/ui/diagram.ts";
 import type { RunDetail } from "../src/ui/types.ts";
@@ -208,7 +209,9 @@ test("renderDiagramRows 输出树形连接符、状态图标与进度并按宽�
 	assert.ok(lines[2]!.includes("静态"), "synthesized 节点带静态标记");
 
 	const clipped = renderDiagramRows(model, 20);
-	assert.ok(clipped.every((line) => line.endsWith("…")), "超宽行以省略号截断");
+	// A2：宿主 truncateToWidth 语义——能放下就原样（不强制加省略号），超宽才截断。
+	assert.ok(clipped.every((line) => visibleWidth(line) <= 20), "超宽行截断到宽度内");
+	assert.ok(clipped.some((line) => stripTerminalSequences(line).endsWith("…")), "确实发生过截断");
 });
 
 test("renderUnmatchedStages：空时无输出，有则带 ⚡ 与进度", () => {

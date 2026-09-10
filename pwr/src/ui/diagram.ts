@@ -20,7 +20,7 @@
 import type { PlanNode } from "../types.ts";
 import type { AgentView, RunDetail, StageStatus, StageView } from "./types.ts";
 import { formatDuration, formatTokens } from "./views.ts";
-import { truncateVisible } from "./text.ts";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 /** Stage status glyphs (mirrors views.ts labels; shared with viewer tabs). */
 export const STAGE_ICON: Record<StageStatus, string> = {
@@ -220,7 +220,7 @@ export function renderDiagramRows(model: DiagramModel, width: number): string[] 
 		} else {
 			right.push("未开始");
 		}
-		lines.push(truncateVisible(`${left} · ${right.join(" · ")}`, width));
+		lines.push(truncateToWidth(`${left} · ${right.join(" · ")}`, width, "…"));
 	}
 	if (lines.length === 0) lines.push("（暂无结构信息）");
 	return lines;
@@ -234,7 +234,7 @@ export function renderUnmatchedStages(model: DiagramModel, width: number): strin
 		const parts = [`${STAGE_ICON[live.status]} ${live.label} · ${live.completed}/${live.total}`];
 		if (live.cacheHits > 0) parts.push(`⚡${live.cacheHits}`);
 		if (live.elapsedMs !== undefined && live.elapsedMs > 0) parts.push(formatDuration(live.elapsedMs));
-		lines.push(`  ${truncateVisible(parts.join(" · "), Math.max(4, width - 2))}`);
+		lines.push(`  ${truncateToWidth(parts.join(" · "), Math.max(4, width - 2), "…")}`);
 	}
 	return lines;
 }

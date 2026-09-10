@@ -1,6 +1,6 @@
 # pwr — Pi Workflow Runtime
 
-> last verified @ a03e525
+> last verified @ 31446bc
 
 ## 职责与边界
 
@@ -15,7 +15,8 @@
 - `runner/discover.ts` — .md agent 发现（用户 > 项目 > 内置，trust 门控）。
 - `runtime/` — 状态机（state.ts 迁移表）、FIFO 调度器、RunCache（digest 缓存回放）、仅元数据持久化。
 - `src/errors.ts`（20 码）/ `src/types.ts`（共享契约中枢 + 上限值）。**上限值改动三处同步：src/types.ts、engine/spec.ts、runtime/types.ts。**
-- `src/ui/` — 无宿主 TUI 层；`renderer.ts` 是唯一引 pi-tui 组件的文件。
+- `src/ui/` — 无宿主 TUI 层；`renderer.ts` 引 pi-tui 组件（Box/Text），`viewer.ts` 引宿主文本工具（truncateToWidth/wrapTextWithAnsi/visibleWidth）与 matchesKey。
+- `tests/ui-viewer-host.test.ts` — 唯一实例化真实 pi-tui（TuiMainScreen + 假终端仿真器）的测试：overlay 堆叠只存在于真实合成/diff 路径。
 
 ## 核心数据流
 
@@ -32,6 +33,7 @@
 - 错误消息静态模板，绝不插值用户输入；脚本源码 / args 永不写盘；结果 ≤50KB（`RESULT_TOO_LARGE`）、summary ≤8KB。
 - 命令面统一为子命令式（v2.6.0）：`/workflows list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`（无参=列表；`/workflows <runId>` 与 `--filter` 保留兼容）；`/workflow run|delete|model` 为 `/workflow` 子命令。动态 `workflow:<name>` 注册退役——saved 名由 `/workflow run` 调用时现读盘，与保存/删除无命令同步问题。
 - trace 文本（v2.4.0）单行 + 尾部截断，绝不透传原始工具输出。
+- `/workflows view`（v2.7.0）是 fleet 式分栏 overlay：左 roster（结构/stage/结果/脚本，选中钉 itemId 跨刷新）右 detail（三行元信息头 + 可滚动正文）；chrome 区零每秒文本（elapsed 只在正文），750ms 刷新经指纹门控（忽略 elapsed 纯时钟变化）+ 帧高消抖；`D` 两步停止（Enter/Y 确认，Esc/ctrl+c/N/backspace 取消不关查看器），停止复用 `runControlAction("stop")` 路径。
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
 - pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。
 - solo 审批门（`src/solo-gate.ts`）：只产生 once 批准，绝不写 remembered 记录；solo 关闭后既有 remembered 批准不受影响（契约见 `docs/cross/solo-approval-gate.md`）。
@@ -46,7 +48,7 @@
 
 ## 改动清单
 
-- 必跑：`cd pwr && npm test`（416 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。
+- 必跑：`cd pwr && npm test`（436 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。viewer 改动跑 `tests/ui-viewer.test.ts`（纯函数）+ `tests/ui-viewer-host.test.ts`（真实宿主，防 overlay 堆叠）。
 - DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `pwr/DELIVERY.md` 版本历史。
 - 测试 fake：`test/helpers.ts` 的 `makeFakeRunner`（fake AgentRunner）、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn`（fake 子进程）。集成模式见 `runner/test/integration.test.ts`。
 - 完整架构 / 安全文档 / 版本历史 → `pwr/DELIVERY.md`（权威，勿在别处重复）。

@@ -1,8 +1,26 @@
-# DELIVERY — PWR 合并交付包 v2.5.0（命令面统一为子命令式）
+# DELIVERY — PWR 合并交付包 v2.7.0（TUI 对齐 A2–A4：/workflows view 分栏化）
+
+> `/workflows view` 从「单栏 + 页签」重做为 fleet/agent-team 同款分栏外壳：左 roster（结构 / stage / 结果 / 脚本，选中钉 itemId 跨刷新）+ 右 detail（三行元信息头 Run/State/条目 + 可滚动正文 + busy>confirm>notice 横幅）。键位/几何/刷新全面对齐 pi-subagents fleet inspector（v0.66.0）：`VIEWER_OVERLAY_OPTIONS` verbatim、`computeFrameHeight`/`computeViewerLayout`/`VIEWER_CHROME_ROWS=6`、`D` 两步停止（Enter/Y 确认；Esc/ctrl+c/N/backspace 取消）、750ms 指纹门控 + 帧高消抖、每帧 `fitLine` 精确列宽；旧键 `←→/h/l/Tab/1-9/g/G` 退役。顺带完成 tui-sync 矩阵 A2（删自写 `src/ui/text.ts`，改用宿主 `truncateToWidth`/`wrapTextWithAnsi`/`visibleWidth`）、A3（750ms）、A4（overlay 几何）；A5（结果页 Markdown）缓办。安全不变量不变（脚本源码/args 不落盘、trace 单行截断、错误静态模板）。
+
+## 本版变更（v2.7.0）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| 分栏外壳（重写） | `ViewerItem`/`ViewerData.items` 取代 pages/pageTitles（结构 → stage* → 结果 → 脚本）；`rosterLines` + `detailHeaderLines` + `viewerViewportHeight` + `renderViewerFrame`（恒 `bodyHeight + 6` 行、`width < 36` 单行提示）；`fitLine = truncateToWidth(line, width, "…", true)` | `src/ui/viewer.ts` |
+| 键位对齐 | `VIEWER_ACTION_KEYS`（fleet 键集；大写绑定经 `shift+小写` 转换）；`↑↓/k/j` 选条目、`Shift+K/J` 滚正文、`Home/End`、`PgUp/PgDn`、`x/X/ctrl+o` trace 开关、`r/R` 强制刷新、`D` 停止、`[/]` 换 run（pwr 特有）；确认态键集对齐 fleet.ts:1134-1150 | `src/ui/viewer.ts`、`tests/ui-viewer.test.ts` |
+| 停止接线 | `RunViewer.beginStop()`（busy 守卫 + ok→success / ok:false→warning / reject→error notice）；`openRunViewer` 新增 `onStop`；`ui/index.ts` 接 `runControlAction(deps, store, "stop", runId)`（store 同步刷新） | `src/ui/viewer.ts`、`src/ui/index.ts` |
+| 刷新门控 | `VIEWER_TICK_MS=750`、`VIEWER_HEIGHT_JITTER_ROWS=1`（`src/ui/types.ts`）；`viewerDataFingerprint` 剔除 elapsedMs（run/stage/agent）——纯时钟推进不重绘；`stabilizeBodyHeight` ±1 保持旧高 | `src/ui/viewer.ts`、`src/ui/types.ts` |
+| A2 文本工具 | 删除 `src/ui/text.ts`（自写 CJK 宽度）；`viewer.ts`/`diagram.ts` 换宿主工具；`ui-diagram.test.ts` 截断断言改锁宿主语义 | `src/ui/viewer.ts`、`src/ui/diagram.ts`、`src/ui/text.ts`（删） |
+| 真实宿主测试（新） | `tests/ui-viewer-host.test.ts`：真实 `TuiMainScreen` + 假终端 VT 仿真器，6 tick（主屏增长 + elapsed 推进 + 中途 resize）断言屏模型与像素屏恒为一组标题/roster/边框（移植 agent-team 模式） | `tests/ui-viewer-host.test.ts` |
+| 测试（tests/ 212 → 232，共 436） | ui-viewer 重写 30（几何/条目/帧/正文/键位/停止状态机/指纹/消抖/定时门控）+ host 3；ui-diagram 断言随 A2 更新 | `tests/ui-viewer.test.ts`、`tests/ui-viewer-host.test.ts`、`tests/ui-diagram.test.ts` |
+
+---
+
+# DELIVERY — PWR 合并交付包 v2.6.0（命令面统一为子命令式）
 
 > 在 v2.4.2 基础上统一命令面：13 个 `/workflows:*` 合并为单 `/workflows` + 子命令（原各 handler 逻辑不变），`/workflow` 增加 `run|delete|model` 子命令，动态 `/workflow:<name>` 注册退役（saved 调用运行时现读盘，保存/删除即时生效）。旧冒号/连字符写法不再注册（pi 无 unregisterCommand API，直接替换）。功能与安全不变量不变。
 
-## 本版变更（v2.5.0）
+## 本版变更（v2.6.0）
 
 | 模块 | 变更 | 位置 |
 | --- | --- | --- |

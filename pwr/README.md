@@ -2,7 +2,7 @@
 
 PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P0，Stage 3）：**PiAgentRunner 适配层**（PRD §5.4、§9 子任务 3），并内含全部既有模块。
 
-> 版本：**v2.6.0**（2026-09-11：命令面统一为子命令式——13 个 `/workflows:*` 合并为单 `/workflows` + 子命令，`/workflow run|delete|model`；动态 `/workflow:<name>` 注册退役，saved 调用运行时现读盘。v2.5.0：solo 审批门——`/solo` 开启时批准卡按 once 自动批准；v2.4.2 会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
+> 版本：**v2.7.0**（2026-09-11：`/workflows view` 分栏化——fleet/agent-team 同款 roster + detail 外壳，键位/几何/750ms 指纹门控全面对齐，`D` 两步停止；删自写 `text.ts` 改用宿主文本工具。v2.6.0：命令面统一为子命令式——13 个 `/workflows:*` 合并为单 `/workflows` + 子命令，`/workflow run|delete|model`；动态 `/workflow:<name>` 注册退役，saved 调用运行时现读盘。v2.5.0：solo 审批门——`/solo` 开启时批准卡按 once 自动批准；v2.4.2 会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
 >
 > 依赖说明：本包是 JHL-16 交付（`src/` 触发/批准层）的延续，内置 JHL-12 引擎 v1.1.2（`engine/` + `vendor/`，单次快照安全边界已收敛）。Runtime 未注入 runner 时，保存/加载/参数校验/批准全部可用，仅实际启动返回 `AGENT_RUNNER_UNAVAILABLE`（不隐式回退）。JHL-14 起入口在 session_start 自动构造 PiAgentRunner 注入 runtime。
 
@@ -73,12 +73,12 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 - 已 remember 或已 once 批准的直接启动（不再弹卡）；Reject 取消运行；Esc 保持等待
 - 批准卡在 `workflow_validate` 成功后立即弹出（无需等 agent 调用 `workflow_start`）；生成约束已指示 agent 校验后调用 `workflow_start { runId, approval: 'once' }`
 
-### 全屏运行查看器（`/workflows view [runId]`）
-- 以全屏边框页（捕获式 overlay，约 82% 终端高度）实时查看一个流程的运行状态；不传 runId 时默认查看最近查看过 / 最近活跃的运行
-- **第一页「结构」是脚本结构图**：`agent / pipeline / parallel` 调用树（├─ └─ 连接符）+ 每个节点实时状态（▶ 运行 ✓ 完成 ✗ 失败 ⊘ 排队 ⋅ 未开始）+ 进度 `n/m` + 耗时/tokens；带 `label` 的调用与运行时 stage 精确关联，未标注调用静态展示、其实际派发进「未标注/动态派发」分组
-- 之后**每个 stage 一页**：任务表（状态 · taskId · attempt · ⚡cache 命中 · tokens · 耗时 · 错误码）+ 失败详情 + 最近结果摘要；**运行中 agent 行下方实时滚动最近活动 trace**（工具步骤/文本尾部，v2.4.0）；末两页为**最终结果**与**脚本源码**（只读；历史会话的 run 不保留源码）
-- 按键：`←→/h/l/Tab` 翻页 · `↑↓/j/k` 滚动（贴底自动跟随）· `g/G` 首末 · `1-9` 直达页 · `[ ]` 切换 run · `q/Esc` 关闭
-- 运行中每 800ms 拉取 runtime 快照实时刷新；运行结束或重启后仍可查看（冻结快照；重启后的 run 只有元数据，结构图退化为 stage 平铺）
+### 全屏运行查看器（`/workflows view [runId]`，v2.7.0 分栏化）
+- fleet/agent-team 同款分栏外壳（捕获式 overlay：95% 宽 · maxHeight 85% · margin 1）：**左栏 roster** = 结构 / 每个 stage / 结果 / 脚本（选中 `›` + 状态图标 + 右对齐状态；条目多于窗口高时窗口跟随选中滚动），**右栏 detail** = 固定三行元信息头（Run / State / 条目 i/n）+ 可滚动正文。不传 runId 时默认查看最近查看过 / 最近活跃的运行
+- **「结构」正文是脚本结构图**：`agent / pipeline / parallel` 调用树（├─ └─ 连接符）+ 每个节点实时状态（▶ 运行 ✓ 完成 ✗ 失败 ⋅ 未开始）+ 进度 `n/m` + 耗时/tokens；带 `label` 的调用与运行时 stage 精确关联，未标注调用静态展示、其实际派发进「未标注/动态派发」分组
+- **每个 stage 一条**：任务表（状态 · taskId · attempt · ⚡cache 命中 · tokens · 耗时 · 错误码）+ 失败详情 + 最近结果摘要；**运行中 agent 行下方实时滚动最近活动 trace**（工具步骤/文本尾部，v2.4.0；`x/X/ctrl+o` 开关）；末两条为**结果**与**脚本源码**（只读；历史会话的 run 不保留源码）
+- 按键（对齐 fleet）：`↑↓/k/j` 选条目 · `Shift+K/J` 滚正文（贴底自动跟随）· `Home/End` 首末 · `PgUp/PgDn` 翻页 · `x/X/ctrl+o` trace 开关 · `r/R` 强制刷新 · `D` 两步停止 run（Enter/Y 确认；Esc/ctrl+c/N/backspace 取消）· `[`/`]` 切换 run（pwr 特有）· `q/Esc/ctrl+c` 关闭；窄终端（<36 列）显示单行提示
+- 运行中每 **750ms** 拉取 runtime 快照刷新；只 elapsed 走秒不触发重绘（指纹门控，防宿主 overlay 堆叠），内容变化即刷新，`r/R` 绕过门控强制重载；运行结束或重启后仍可查看（冻结快照；重启后的 run 只有元数据，结构图退化为 stage 平铺）
 
 ## 目录结构
 
@@ -114,10 +114,10 @@ pwr/
 │       ├── run-store.ts   # MemoryRunStore（事件 reducer + applyRuntimeView 快照合并）
 │       ├── views.ts       # 纯文本视图（列表/详情/卡片）
 │       ├── diagram.ts     # 脚本结构图（label 关联 + 容器 rollup + 树形渲染）
-│       ├── viewer.ts      # /workflows view 全屏查看器（Component 注入端口 + 纯函数渲染/按键）
-│       └── text.ts        # ANSI/CJK 宽度辅助（边框精确填充）
-├── test/                  # 引擎/入口契约单测（100 个）+ helpers/perf 门禁
-└── tests/                 # 流程/引擎/UI 套件单测（189 个用例）
+│       ├── viewer.ts      # /workflows view 分栏查看器（fleet 几何/键位 + 指纹门控 + D 两步停止）
+│       └── types.ts       # 共享视图模型与常量（VIEWER_TICK_MS 等）
+├── test/                  # 引擎/入口契约单测（103 个）+ helpers/perf 门禁
+└── tests/                 # 流程/引擎/UI 套件单测（232 个用例，含真实宿主 viewer-host 测试）
 ```
 
 ## 运行单测（Windows PowerShell）
@@ -125,7 +125,7 @@ pwr/
 ```powershell
 cd pwr
 npm install        # 仅开发依赖（typescript、@types/node、typebox、pi 宿主类型）
-npm test           # 416 个单测（test/ 103 + tests/ 212 + runtime/test/ 56 + runner/test/ 45）
+npm test           # 436 个单测（test/ 103 + tests/ 232 + runtime/test/ 56 + runner/test/ 45）
 npm run typecheck  # tsc --noEmit（strict）
 ```
 

@@ -272,7 +272,7 @@ export function workflowsHelpText(): string {
 		"  /workflows <runId>             run detail",
 		"  /workflows --filter <status>   filtered list (draft|awaiting_approval|queued|running|paused|completed|failed|cancelled)",
 		"  /workflows list [status]       list (optionally filtered)",
-		"  /workflows view [runId]        full-screen live viewer (structure diagram + per-stage pages)",
+		"  /workflows view [runId]        full-screen live viewer (split pane: roster + detail)",
 		"  /workflows open <runId>        detail view",
 		"  /workflows pause <runId>       pause run",
 		"  /workflows resume <runId>      resume run",
