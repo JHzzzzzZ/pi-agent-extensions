@@ -71,19 +71,31 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 - 单段超宽续行而非截断——不引入分隔符、不做段内截断、行数不限；
 - pwd / stats / model 固定两行不受影响。
 
-## 已应用位置
+## 已应用位置（两个文件都改，缺一不生效）
 
-- 全局安装（**运行时实际生效**）：v0.85.1
-  `C:/Users/12967/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/footer.js`
-  （备份：同目录 `footer.js.bak-footer-status`，回滚 = 还原备份）
+- **运行时实际生效**：v0.85.1 打包产物
+  `.../pi-coding-agent/dist/bundle/chunks/chunk-JVUZSMYM.js`
+  （备份：同目录 `chunk-JVUZSMYM.js.bak-footer-status`，回滚 = 还原备份）。
+  `pi` CLI 入口是 660B 的 `dist/bundle/cli.js`，真正加载的是 esbuild 打包后的
+  `dist/bundle/chunks/*.js`（本版该 chunk 约 4MB）；压缩产物里的变量名与源码版不同
+  （排序回调参数是 `b2`），锚点是 `getExtensionStatuses()` 后同一行的
+  `.join(" ")` + `truncateToWidth(...)` 状态块，用精确字符串替换补丁最稳。
+- **源码组件（非运行路径，保持同步）**：
+  `.../pi-coding-agent/dist/modes/interactive/components/footer.js`
+  （备份：同目录 `footer.js.bak-footer-status`）。
 - 应用后需**重启 pi** 才生效（运行中的进程仍持有旧代码）。
+
+> 坑（2026-09-11 首轮踩过）：只改 `dist/modes/interactive/components/footer.js` **不会生效**，
+> 真机仍显示拼接截断行。CLI 走 bundle，必须改 `dist/bundle/chunks/` 里的同一段代码；
+> 改完从 chunk 导入真实 `FooterComponent` 复验（见下方验证方式）。
 
 注：工作区内 `pwr/node_modules`、`agent-team/node_modules` 等 0.83.0/0.85.1 副本仅用于
 typecheck，运行时不加载，未打补丁。
 
 ## 验证方式（打补丁后本机实测）
 
-用真实 `FooterComponent` + fake session/footerData 直跑 `render(width)`：
+用真实 `FooterComponent` + fake session/footerData 直跑 `render(width)`（**从 bundle
+chunk 导入**，即运行时实际执行的代码；未打包组件同跑一遍）：
 
 1. 五段同屏（宽终端）：2 基础行 + 5 状态行，顺序 10→50，逐行完整；
 2. 40 列窄终端：长段经 `wrapTextWithAnsi` 续行，所有行 `visibleWidth ≤ 40`，
@@ -95,10 +107,14 @@ typecheck，运行时不加载，未打补丁。
 
 `npm` 升级 `@earendil-works/pi-coding-agent` 会覆盖 dist 产物，补丁丢失需重打：
 
-1. 在新版 `dist/modes/interactive/components/footer.js` 中搜索 `sortedStatuses.join`。
-2. 按上文"补丁内容"替换 import 行与状态渲染块（行号随版本漂移，以
-   `getExtensionStatuses` / `sortedStatuses` 为锚点）。
-3. `node --check <该文件>` 校验，重启 pi。
+1. **先定位 bundle chunk**：`grep -l getExtensionStatuses dist/bundle/chunks/*.js`
+   （chunk 文件名哈希随版本变化，勿照抄 `chunk-JVUZSMYM.js`）。
+2. 按上文“补丁内容”在同一行内替换状态块：删掉 `join(" ")` 与整行
+   `truncateToWidth`，改为逐段 `visibleWidth` 判定 + 超宽 `wrapTextWithAnsi`；
+   过滤空串。`wrapTextWithAnsi` 与 `visibleWidth` 同在该 chunk 作用域内，直接调用。
+3. 同步替换未打包组件 `dist/modes/interactive/components/footer.js`（import 行加
+   `wrapTextWithAnsi`）——若该版本仍分发组件文件。
+4. 两处 `node --check` 校验，重启 pi。
 
 若上游已修复则无需重打（见下）。
 
