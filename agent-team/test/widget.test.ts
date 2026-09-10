@@ -7,7 +7,15 @@
 
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { RunWidgetController, buildWidgetRows, handleWidgetKey, initialWidgetKeyState, renderWidgetView } from "../widget.ts";
+import {
+  RunWidgetController,
+  buildWidgetRows,
+  handleWidgetKey,
+  initialWidgetKeyState,
+  isEditorComponentLike,
+  probeEditorFocus,
+  renderWidgetView,
+} from "../widget.ts";
 import type { RunStatusSnapshot } from "../cockpit.ts";
 import { plainStyles, visibleWidth } from "../viewer.ts";
 
@@ -338,6 +346,7 @@ test("controller 暂停后 tick 不再 setWidget", async () => {
 function controllerHarness(opts: {
   load: () => RunStatusSnapshot;
   editorState?: () => { text: string };
+  editorFocus?: () => boolean | undefined;
 }) {
   const pushed: Array<string[] | undefined> = [];
   const handlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
@@ -350,6 +359,7 @@ function controllerHarness(opts: {
       nowMs: () => 65000,
       tickMs: 60 * 60 * 1000, // 长 tick：本用例只验证键盘事件路径
       editorState: opts.editorState,
+      editorFocus: opts.editorFocus,
     },
     (lines) => {
       pushed.push(lines);
@@ -447,6 +457,140 @@ test("controller 宿主无 editorState 端口 → 降级：仅 alt 通道激活"
     assert.equal(handlers[0]!("\x1b[1;3B")?.consume, true, "降级时 alt+↓ 仍激活");
   } finally {
     controller.stop();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Slice 8：焦点门控（对齐 fleet-status editorHasFocus，v0.66.0
+// fleet-status.ts:701/965）——结构判定 + probe + controller 端口
+// ---------------------------------------------------------------------------
+
+function editorShape(): Record<string, unknown> {
+  return { render: () => [], invalidate: () => {}, handleInput: () => {}, getText: () => "", setText: () => {} };
+}
+
+function selectorShape(): Record<string, unknown> {
+  return { render: () => [], invalidate: () => {}, handleInput: () => {} };
+}
+
+test("isEditorComponentLike：五方法齐全的编辑器形状为真，选择器/空对象为假（fleet-status 同款结构判定）", () => {
+  assert.equal(isEditorComponentLike(editorShape()), true);
+  // 选择器形状（无 getText/setText，如 OAuthSelectorComponent/ExtensionSelectorComponent）
+  assert.equal(isEditorComponentLike(selectorShape()), false);
+  assert.equal(isEditorComponentLike(null), false);
+  assert.equal(isEditorComponentLike(undefined), false);
+  assert.equal(isEditorComponentLike({}), false);
+  assert.equal(isEditorComponentLike({ handleInput: () => {} }), false, "仅 handleInput 的对话框组件不是编辑器");
+  assert.equal(isEditorComponentLike({ getText: () => "", setText: () => {} }), false, "缺 render 也不是编辑器");
+});
+
+test("probeEditorFocus：getFocusedComponent 优先、字段回退、皆无/抛错 → undefined（未知=降级）", () => {
+  assert.equal(probeEditorFocus({ getFocusedComponent: () => editorShape() }), true);
+  assert.equal(probeEditorFocus({ getFocusedComponent: () => selectorShape() }), false);
+  assert.equal(probeEditorFocus({ focusedComponent: editorShape() }), true);
+  assert.equal(probeEditorFocus({ focusedComponent: selectorShape() }), false);
+  // 方法优先于运行时字段（宿主同时具备时以公共 getter 为准）
+  assert.equal(probeEditorFocus({ getFocusedComponent: () => editorShape(), focusedComponent: selectorShape() }), true);
+  // 宿主无字段也无方法 → undefined（未知识别，controller 侧保留旧门控）
+  assert.equal(probeEditorFocus({}), undefined);
+  assert.equal(probeEditorFocus(null), undefined);
+  assert.equal(probeEditorFocus(undefined), undefined);
+  // 取用抛错 → undefined（门控绝不弄崩按键路径）
+  assert.equal(
+    probeEditorFocus({
+      getFocusedComponent: () => {
+        throw new Error("host getter exploded");
+      },
+    }),
+    undefined,
+  );
+  // 字段存在但值 null → false（确定没有编辑器焦点）
+  assert.equal(probeEditorFocus({ focusedComponent: null }), false);
+});
+
+test("controller 焦点非编辑器（选择器/对话框）：裸 ↓ 与 alt+↓ 都不消费、不选中（对话框期 widget 完全不介入）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+    editorFocus: () => false,
+  });
+  try {
+    assert.equal(handlers[0]!("\x1b[B"), undefined, "焦点在 /login 选择器时裸 ↓ 必须让行");
+    assert.equal(handlers[0]!("\x1b[D"), undefined, "裸 ← 同样让行");
+    assert.equal(handlers[0]!("\x1b[1;3B"), undefined, "alt+↓ 第二通道在对话框期也不介入");
+    assert.equal(handlers[0]!("\x1b[1;3A"), undefined, "alt+↑ 同样不介入");
+    assert.equal(cursorRow(lastLines(pushed)), -1, "不得进入选中");
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 选中态焦点丢失（选择器打开）：退出选中且该键放行（保留 cursor 供再激活）", () => {
+  let focused: boolean | undefined = true;
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+    editorFocus: () => focused,
+  });
+  try {
+    handlers[0]!("\x1b[B"); // 编辑器焦点 + 空编辑器 → 激活
+    assert.equal(cursorRow(lastLines(pushed)), 0);
+    focused = false; // 宿主把焦点交给选择器
+    assert.equal(handlers[0]!("\x1b[B"), undefined, "焦点丢失后按键放行选择器（不消费）");
+    assert.equal(cursorRow(lastLines(pushed)), -1, "选中态自动退出（无行光标）");
+    focused = true;
+    handlers[0]!("\x1b[1;3B"); // alt 通道重新激活
+    assert.equal(cursorRow(lastLines(pushed)), 0, "焦点回来后可从原 cursor 再激活");
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller editorFocus=true + 空编辑器：裸 ↓ 照常激活（真编辑器焦点不被误伤）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+    editorFocus: () => true,
+  });
+  try {
+    assert.equal(handlers[0]!("\x1b[B")?.consume, true, "主编辑器焦点时空编辑器裸 ↓ 仍应激活");
+    assert.equal(cursorRow(lastLines(pushed)), 0);
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller editorFocus=undefined（宿主无焦点信息）→ 与旧门控语义一致：空编辑器裸 ↓ 照常激活", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+    editorFocus: () => undefined,
+  });
+  try {
+    assert.equal(handlers[0]!("\x1b[B")?.consume, true, "焦点未知时不得改变既有行为（降级）");
+    assert.equal(cursorRow(lastLines(pushed)), 0);
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 无 editorFocus 端口 → 旧语义回归锁（空编辑器裸 ↓ 激活、非空不激活、alt 照旧）", () => {
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+  });
+  try {
+    assert.equal(handlers[0]!("\x1b[B")?.consume, true);
+    assert.equal(cursorRow(lastLines(pushed)), 0);
+  } finally {
+    controller.stop();
+  }
+  const nonEmpty = controllerHarness({ load: liveSnapshot, editorState: () => ({ text: "x" }) });
+  try {
+    assert.equal(nonEmpty.handlers[0]!("\x1b[B"), undefined);
+    assert.equal(nonEmpty.handlers[0]!("\x1b[1;3B")?.consume, true, "alt 第二通道照旧");
+  } finally {
+    nonEmpty.controller.stop();
   }
 });
 

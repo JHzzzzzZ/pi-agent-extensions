@@ -4,13 +4,17 @@
  * Renders the coordinator's run snapshot BELOW the editor (placement
  * "belowEditor") as plain `setWidget(key, string[], …)` refreshed on a 1s
  * interval, and makes the block selectable: bare ↓/← (only while the
- * editor is empty — aligned to fleet-status) and alt+down/up (ungated
- * second channel) activate a modal selection; ↑/↓/j/k move the row
- * cursor (到顶再按 ↑/k 退出选中，fleet-status 同构), enter opens the
+ * editor is empty AND focused — aligned to fleet-status) and alt+down/up
+ * (ungated second channel) activate a modal selection; ↑/↓/j/k move the
+ * row cursor (到顶再按 ↑/k 退出选中，fleet-status 同构), enter opens the
  * transcript viewer on the row's actor, esc (or any other key) leaves
  * selection and — except for esc — passes the key
  * through to the editor untouched. Repaints skip when the render string
  * is unchanged (aligned to fleet-status renderKey).
+ *
+ * While a host selector/dialog owns the keyboard (`probeEditorFocus` →
+ * false) the widget is fully inert: no activation key is consumed and an
+ * active selection auto-exits, so /login & friends keep their arrows.
  *
  * Row building and the key reducer are pure and unit-tested; the
  * `RunWidgetController` wires them to the host without a pi-tui component.
@@ -159,6 +163,62 @@ export function handleWidgetKey(
 }
 
 // ---------------------------------------------------------------------------
+// Focus probe (aligns to fleet-status `editorHasFocus`, v0.66.0
+// fleet-status.ts:701/965)
+// ---------------------------------------------------------------------------
+
+/**
+ * Structural editor check: the pi-tui focus getter/field returns whatever
+ * component is focused (selector, dialog, editor…). `instanceof` is
+ * unreliable across jiti module boundaries, so the editor is recognized by
+ * the five-method shape the host editor interface requires (fleet-status
+ * uses the same predicate).
+ */
+export function isEditorComponentLike(focused: unknown): boolean {
+  if (!focused || typeof focused !== "object") return false;
+  const candidate = focused as {
+    render?: unknown;
+    invalidate?: unknown;
+    handleInput?: unknown;
+    getText?: unknown;
+    setText?: unknown;
+  };
+  return (
+    typeof candidate.render === "function" &&
+    typeof candidate.invalidate === "function" &&
+    typeof candidate.handleInput === "function" &&
+    typeof candidate.getText === "function" &&
+    typeof candidate.setText === "function"
+  );
+}
+
+/**
+ * Reads the host TUI's focused component without new pi-tui API
+ * dependencies: prefers the public `getFocusedComponent()` getter, falls
+ * back to the runtime `focusedComponent` field (fleet-status's read).
+ * Returns undefined when the host exposes neither (focus unknown → caller
+ * keeps legacy gating) or when the probe throws — the key path must never
+ * break. false means focus is KNOWN to be elsewhere (selector/dialog).
+ */
+export function probeEditorFocus(tui: unknown): boolean | undefined {
+  if (!tui || typeof tui !== "object") return undefined;
+  const candidate = tui as { getFocusedComponent?: unknown; focusedComponent?: unknown };
+  if (typeof candidate.getFocusedComponent === "function") {
+    try {
+      return isEditorComponentLike((candidate.getFocusedComponent as () => unknown)());
+    } catch {
+      return undefined;
+    }
+  }
+  try {
+    if (!("focusedComponent" in candidate)) return undefined;
+    return isEditorComponentLike(candidate.focusedComponent);
+  } catch {
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Rendering (pure)
 // ---------------------------------------------------------------------------
 
@@ -206,6 +266,15 @@ export interface RunWidgetControllerOptions {
    * fleet-status.ts:607). Absent = degraded: only the alt channel activates.
    */
   editorState?: () => { text: string };
+  /**
+   * Keyboard-focus provider (`probeEditorFocus` over the captured host TUI).
+   * `false` = focus is known to be elsewhere (selector/dialog open): the
+   * widget consumes nothing and exits selection. `true`/`undefined` = the
+   * main editor is focused / focus unknown → existing gating (bare ↓/←
+   * only while the editor is empty). Aligns to fleet-status
+   * `editorHasFocus` (v0.66.0 fleet-status.ts:701/965).
+   */
+  editorFocus?: () => boolean | undefined;
   /** Terminal width provider; defaults to process.stdout.columns ?? 80. */
   width?: () => number;
   /** Test seam; defaults to Date.now(). */
@@ -319,6 +388,18 @@ export class RunWidgetController {
   private onData(data: string): { consume?: boolean } | undefined {
     try {
       if (this.opts.gate?.()) return undefined;
+      // 焦点门控（对齐 fleet-status editorHasFocus，v0.66.0
+      // fleet-status.ts:701/965）：宿主选择器/对话框（/login、/model、
+      // /settings…）打开时键盘焦点不在主编辑器，widget 完全不介入（含
+      // alt 第二通道）；选中态则退出选中并把该键让行（保留 cursor 供
+      // 焦点回来后恢复）。
+      if (this.opts.editorFocus?.() === false) {
+        if (this.state.selected) {
+          this.state = { selected: false, cursor: this.state.cursor };
+          this.refresh();
+        }
+        return undefined;
+      }
       // 编辑器为空才允许 bare ↓/← 激活（对齐 fleet-status getEditorText===""）；
       // 宿主无 editorState 端口时降级为仅 alt 通道（canActivate=false）。
       const canActivate = this.opts.editorState ? this.opts.editorState().text === "" : false;

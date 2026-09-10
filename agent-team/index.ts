@@ -33,7 +33,7 @@ import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
 import { orphanRunError, reconcileStaleRuns } from "./runstore.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
-import { RunWidgetController } from "./widget.ts";
+import { RunWidgetController, probeEditorFocus } from "./widget.ts";
 import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
 import {
   FileTranscriptSink,
@@ -251,6 +251,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     /** Below-editor run widget mounted once per session. */
     widgetMounted: boolean;
     widget: RunWidgetController | undefined;
+    /** Host TUI instance captured from the widget factory (focus probe source). */
+    tui: unknown;
     /** True while the transcript viewer overlay is open (widget key gate). */
     viewerOpen: boolean;
   } = {
@@ -265,6 +267,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     projectTrusted: false,
     widgetMounted: false,
     widget: undefined,
+    tui: undefined,
     viewerOpen: false,
   };
 
@@ -421,6 +424,23 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     if (process.env.PI_AGENT_TEAM_WIDGET === "0") return;
     if (state.widgetMounted || !ctx.hasUI || ctx.mode !== "tui") return;
     try {
+      // 一次性捕获宿主 TUI 供焦点门控（factory 由宿主同步调用，见
+      // interactive-mode setExtensionWidget）。widget 本身仍用 string[]
+      // 渲染（差异表 §3.1）；空组件在 controller 首帧（同步 refresh）即被
+      // string[] 替换，宿主渲染是异步帧，无可见变化。捕获失败则焦点
+      // 未知，controller 走降级语义（保持旧门控）。
+      try {
+        ctx.ui.setWidget(
+          WIDGET_ID,
+          (tui: unknown) => {
+            state.tui = tui;
+            return { render: () => [], invalidate: () => {} };
+          },
+          { placement: "belowEditor" },
+        );
+      } catch {
+        /* 捕获失败：不阻断 widget 挂载 */
+      }
       const controller = new RunWidgetController(
         {
           load: () => state.coordinator.getStatus(),
@@ -431,6 +451,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
             });
           },
           gate: () => state.viewerOpen,
+          // 焦点=主编辑器才允许激活（对齐 fleet-status editorHasFocus）：
+          // 宿主选择器/对话框（/login、/model…）打开时 widget 不让任何
+          // 激活键；probe 返回 undefined（宿主无焦点信息）时 controller
+          // 保持旧门控（仅编辑器为空）。
+          editorFocus: () => probeEditorFocus(state.tui),
           // 空编辑器才允许 bare ↓/← 激活 widget（对齐 fleet-status
           // `getEditorText() === ""`）；宿主无 getEditorText 时省略该端口
           // → controller 降级为仅 alt 通道激活。

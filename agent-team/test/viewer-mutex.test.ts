@@ -130,16 +130,42 @@ test("team:view 互斥：viewer 打开期间再进入不开第二个 overlay", a
 // 防重影核心：① viewer 打开 → widget 隐藏（setWidget(undefined) 先于 custom）；
 // ② 关闭 → widget 恢复并立即重绘一次；③ 打开期间再进入 → custom 只进一次。
 
+/**
+ * 焦点接线捕获（可选）：factory 形态 setWidget 的调用方是宿主，这里用假 TUI
+ * 顶替——factory 调用次数、捕获到的宿主 TUI 引用、onTerminalInput handlers
+ * 与推入的亮块行都记录下供断言。
+ */
+interface WidgetFocusCapture {
+  factoryCalls: number;
+  tui: { focusedComponent?: unknown };
+  inputHandlers: Array<(data: string) => { consume?: boolean } | undefined>;
+  pushed: Array<string[] | undefined>;
+}
+
 /** 带记录 setWidget 的 session ctx（widget 隐藏/恢复都走这里）。 */
-function widgetSessionCtx(timeline: string[], cwd: string) {
+function widgetSessionCtx(timeline: string[], cwd: string, capture?: WidgetFocusCapture) {
   return {
     cwd,
     hasUI: true,
     mode: "tui",
     isProjectTrusted: (): boolean => true,
     ui: {
-      setWidget: (_key: string, lines: string[] | undefined): void => {
-        timeline.push(lines === undefined ? "hide" : "draw");
+      getEditorText: (): string => "",
+      setWidget: (_key: string, content: unknown): void => {
+        if (typeof content === "function") {
+          if (capture) {
+            capture.factoryCalls += 1;
+            (content as (tui: unknown) => unknown)(capture.tui);
+          }
+          timeline.push("factory");
+          return;
+        }
+        if (capture) capture.pushed.push(content as string[] | undefined);
+        timeline.push(content === undefined ? "hide" : "draw");
+      },
+      onTerminalInput: (handler: (data: string) => { consume?: boolean } | undefined): (() => void) => {
+        capture?.inputHandlers.push(handler);
+        return () => {};
       },
       notify: (): void => {},
       theme: { fg: (_color: string, text: string): string => text },
@@ -171,7 +197,7 @@ function widgetSessionCtx(timeline: string[], cwd: string) {
  * 让 ensureRunWidget 走真实挂载路径。水合不再从终态记录挂 widget
  * （/team:clear + 水合门控语义），所以这里必须经真实派单挂载。
  */
-async function mountedSession(timeline: string[]): Promise<{
+async function mountedSession(timeline: string[], capture?: WidgetFocusCapture): Promise<{
   pi: ReturnType<typeof fakePi>;
   child: Awaited<ReturnType<typeof waitForChild>>;
   sessionCtx: unknown;
@@ -187,7 +213,7 @@ async function mountedSession(timeline: string[]): Promise<{
   const spawn = makeFakeSpawn();
   const pi = fakePi();
   agentTeamExtension(pi as never, { spawn: spawn.spawn });
-  const sessionCtx = widgetSessionCtx(timeline, projectDir);
+  const sessionCtx = widgetSessionCtx(timeline, projectDir, capture);
   await pi.fire("session_start", sessionCtx);
   const run = pi.tools.get("team_run") as unknown as {
     execute: (id: string, params: Record<string, unknown>, signal?: undefined, onUpdate?: undefined, ctx?: unknown) => Promise<unknown>;
@@ -302,3 +328,45 @@ test("接线：viewer 打开期间再次 /team:view → custom 只进一次（wi
     else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Slice 9：widget 焦点门控接线（真实 ensureRunWidget + 假 ctx.ui）
+// ---------------------------------------------------------------------------
+// index.ts 必须一次性捕获宿主 TUI（factory 形态 setWidget）并把
+// probeEditorFocus 接到 controller；否则选择器焦点时裸 ↓ 仍被 widget 抢。
+
+test("接线：widget 挂载一次性捕获宿主 TUI；焦点非编辑器时裸 ↓ 让行、焦点在主编辑器时照常选中", async () => {
+  const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
+  delete process.env.PI_AGENT_TEAM_WIDGET;
+  const capture: WidgetFocusCapture = { factoryCalls: 0, tui: {}, inputHandlers: [], pushed: [] };
+  const mounted = await mountedSession([], capture);
+  try {
+    assert.equal(capture.factoryCalls, 1, "挂载时应恰一次 factory 调用（一次性捕获宿主 TUI）");
+    assert.equal(capture.inputHandlers.length, 1, "应恰挂一个 onTerminalInput handler");
+
+    // 焦点 = 选择器形状（无 getText/setText，如 /login 选择器）：widget 不介入。
+    capture.tui.focusedComponent = { render: () => [], invalidate: () => {}, handleInput: () => {} };
+    assert.equal(capture.inputHandlers[0]!("\x1b[B"), undefined, "选择器焦点时裸 ↓ 不消费");
+    assert.equal(cursorRowOf(capture.pushed), -1, "不得进入选中");
+
+    // 焦点 = 编辑器形状：空编辑器裸 ↓ 照常激活（接线没把 editorFocus 接反）。
+    capture.tui.focusedComponent = {
+      render: () => [],
+      invalidate: () => {},
+      handleInput: () => {},
+      getText: () => "",
+      setText: () => {},
+    };
+    assert.equal(capture.inputHandlers[0]!("\x1b[B")?.consume, true, "编辑器焦点时裸 ↓ 照常激活");
+    assert.equal(cursorRowOf(capture.pushed), 0, "出现行光标");
+  } finally {
+    await mounted.stop();
+    if (previousWidget === undefined) delete process.env.PI_AGENT_TEAM_WIDGET;
+    else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
+  }
+});
+
+const cursorRowOf = (pushed: Array<string[] | undefined>): number => {
+  const lines = pushed[pushed.length - 1] ?? [];
+  return lines.findIndex((line) => line.startsWith("▸ "));
+};
