@@ -65,7 +65,7 @@ type ViewerComponentLike = {
   dispose: () => void;
 };
 
-/** 捕获真实 TranscriptViewer 实例的 closable /team view ctx。 */
+/** 捕获真实 TranscriptViewer 实例的 closable /team:view ctx。 */
 function closableViewCtx() {
   let viewerComponent: ViewerComponentLike | undefined;
   let resolveCustom: ((v: unknown) => void) | undefined;
@@ -154,10 +154,10 @@ async function openViewer(host: HostFixture): Promise<ViewerComponentLike> {
   const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
   process.env.PI_AGENT_TEAM_WIDGET = "0";
   try {
-    const view = host.pi.commands.get("team");
+    const view = host.pi.commands.get("team:view");
     assert.ok(view);
     const closable = closableViewCtx();
-    void view.handler("view", closable.ctx as never);
+    void view.handler("", closable.ctx as never);
     await sleep(30);
     return closable.component();
   } finally {

@@ -9,11 +9,23 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { buildLeaderSystemPrompt } from "../leader-prompt.ts";
 import { serializeTeam } from "../config.ts";
-import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
+import agentTeamExtension, { resetDoubleLoadGuardForTests, TEAM_COMMAND_NAMES } from "../index.ts";
 import { VALID_TEAM_MD, fixtureTeam } from "./fixtures.ts";
 import { isolateRunsDir } from "./helpers.ts";
 
 isolateRunsDir();
+
+/** Cockpit command surface: bare root + one static command per sub-command. */
+const COCKPIT_COMMANDS = [
+  "team",
+  TEAM_COMMAND_NAMES.list,
+  TEAM_COMMAND_NAMES.run,
+  TEAM_COMMAND_NAMES.status,
+  TEAM_COMMAND_NAMES.stop,
+  TEAM_COMMAND_NAMES.view,
+  TEAM_COMMAND_NAMES.clear,
+  TEAM_COMMAND_NAMES.doctor,
+];
 
 test("leader prompt embeds the user strategy verbatim, then roster and tool rules", () => {
   const team = fixtureTeam({
@@ -160,14 +172,14 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     assert.ok(pi.tools.has("team_transcript"));
     assert.ok(pi.tools.has("team_stop"));
     assert.ok(!pi.tools.has("team_dispatch"));
-    assert.deepEqual([...pi.commands.keys()], ["team"], "the unified /team router is the only command");
+    assert.deepEqual([...pi.commands.keys()], COCKPIT_COMMANDS, "the bare root + colon commands are registered");
     assert.ok(pi.entryRenderers.has("agent-team-run-v1"));
 
-    // session_start no longer registers dynamic per-team commands: the router
-    // resolves any non-reserved first token as a team name at invocation time.
+    // session_start never registers dynamic per-team commands: dispatch is
+    // always the explicit /team:run <name> <task> form.
     await pi.fire("session_start", { reason: "startup" }, fakeCtx(projectDir, true));
-    assert.ok(!pi.commands.has("team:proj-team"), "dynamic /team:<name> registrations are retired");
-    assert.deepEqual([...pi.commands.keys()], ["team"]);
+    assert.ok(!pi.commands.has("team:proj-team"), "dynamic /team:<name> registrations stay retired");
+    assert.deepEqual([...pi.commands.keys()], COCKPIT_COMMANDS);
   });
 });
 
@@ -191,7 +203,7 @@ test("after session_shutdown the guard resets and a fresh load registers everyth
     for (const name of ["team_run", "team_status", "team_transcript", "team_stop"]) {
       assert.ok(second.tools.has(name), `tool ${name} re-registered after reload`);
     }
-    assert.deepEqual([...second.commands.keys()], ["team"], "the /team router re-registered after reload");
+    assert.deepEqual([...second.commands.keys()], COCKPIT_COMMANDS, "the /team* commands re-registered after reload");
     assert.ok(second.entryRenderers.has("agent-team-run-v1"));
   });
 });
@@ -224,7 +236,7 @@ test("repeated session_shutdown keeps the guard usable", async () => {
     const second = fakePi();
     agentTeamExtension(second as never);
     assert.ok(second.tools.has("team_run"), "tool registered after two shutdowns");
-    assert.deepEqual([...second.commands.keys()], ["team"]);
+    assert.deepEqual([...second.commands.keys()], COCKPIT_COMMANDS);
   });
 });
 
@@ -235,6 +247,6 @@ test("double load is a no-op (installed package + -e copy)", () => {
   const toolsAfterFirst = pi.tools.size;
   agentTeamExtension(pi as never);
   assert.equal(pi.tools.size, toolsAfterFirst, "second instance registers nothing");
-  assert.deepEqual([...pi.commands.keys()], ["team"]);
+  assert.deepEqual([...pi.commands.keys()], COCKPIT_COMMANDS);
   resetDoubleLoadGuardForTests();
 });

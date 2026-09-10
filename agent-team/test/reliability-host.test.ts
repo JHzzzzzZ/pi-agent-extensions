@@ -5,7 +5,7 @@
  * - team_run model preflight fails typed (MODEL_NOT_FOUND) before any
  *   spawn and warns on models without configured auth;
  * - leader mode consumes the frontmatter budget block;
- * - /team doctor renders the self-check report.
+ * - /team:doctor renders the self-check report.
  */
 
 import * as assert from "node:assert/strict";
@@ -309,10 +309,10 @@ test("leader mode consumes the frontmatter budget block (dispatch cap enforced)"
 });
 
 // ---------------------------------------------------------------------------
-// /team doctor
+// /team:doctor
 // ---------------------------------------------------------------------------
 
-test("/team doctor renders the self-check report (registry refreshed, error surfaced)", async () => {
+test("/team:doctor renders the self-check report (registry refreshed, error surfaced)", async () => {
   resetDoubleLoadGuardForTests();
   const projectDir = setupProjectTeam("doctor-team", fixtureTeam({ name: "doctor-team", filePath: "" }));
   const spawn: FakeSpawnHandle = makeFakeSpawn();
@@ -323,9 +323,9 @@ test("/team doctor renders the self-check report (registry refreshed, error surf
   const { ctx, notifications } = fakeCtx(projectDir, { registry });
   try {
     await pi.fire("session_start", { reason: "startup" }, ctx);
-    assert.deepEqual([...pi.commands.keys()], ["team"], "the unified /team router is registered");
-    const handler = pi.commands.get("team")!.handler;
-    await handler("doctor", ctx);
+    assert.ok(pi.commands.has("team:doctor"), "the /team:doctor command is registered");
+    const handler = pi.commands.get("team:doctor")!.handler;
+    await handler("", ctx);
     assert.equal(refreshed, true, "registry refreshed before reading");
     const info = notifications.find((n) => n.level === "info");
     assert.ok(info, "report notified");
@@ -337,7 +337,7 @@ test("/team doctor renders the self-check report (registry refreshed, error surf
   }
 });
 
-test("a team named doctor cannot shadow the /team doctor sub-command", async () => {
+test("a team named doctor cannot shadow /team:doctor (separate static commands)", async () => {
   resetDoubleLoadGuardForTests();
   const projectDir = setupProjectTeam("doctor", fixtureTeam({ name: "doctor", description: "自定义团队", filePath: "" }));
   const pi = fakePi();
@@ -345,9 +345,9 @@ test("a team named doctor cannot shadow the /team doctor sub-command", async () 
   const { ctx } = fakeCtx(projectDir, { trusted: true });
   try {
     await pi.fire("session_start", { reason: "startup" }, ctx);
-    assert.deepEqual([...pi.commands.keys()], ["team"], "no dynamic team command can shadow the router");
-    const description = pi.commands.get("team")!.description;
-    assert.match(description, /doctor/, "the router description exposes the doctor sub-command");
+    assert.ok(pi.commands.has("team:doctor"), "the doctor command exists independently of team names");
+    const description = pi.commands.get("team:doctor")!.description;
+    assert.match(description, /自检/, "the doctor command description explains itself");
   } finally {
     fs.rmSync(projectDir, { recursive: true, force: true });
   }

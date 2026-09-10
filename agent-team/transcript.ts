@@ -5,7 +5,7 @@
  * dispatched member) under `<agentDir>/teams/runs/<runId>/`. The dispatch
  * executor (inside the leader process) streams member activity there; the
  * cockpit (main session) streams the leader's own activity there. The
- * full-screen viewer (`/team view`) and the `team_transcript` tool read
+ * full-screen viewer (`/team:view`) and the `team_transcript` tool read
  * these files back — the same run-artifacts pattern pi-subagents uses for
  * its fleet inspector.
  *

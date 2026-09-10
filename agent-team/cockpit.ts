@@ -51,7 +51,7 @@ export interface CoordinatorDeps {
   piCommand?: string;
   gitRunner?: GitRunner;
   killGraceMs?: number;
-  /** Root for per-run transcript artifacts (leader activity for /team view). */
+  /** Root for per-run transcript artifacts (leader activity for /team:view). */
   transcriptRoot?: string;
   /**
    * Run status persistence (status.json per run dir). Defaults to a file
@@ -115,7 +115,7 @@ export interface RunStatusSnapshot {
   lastRecord: TeamRunRecord | null;
 }
 
-/** Formats a status snapshot for /team status and the team_status tool. */
+/** Formats a status snapshot for /team:status and the team_status tool. */
 export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number, dim?: (t: string) => string): string {
   const line = (t: string): string => (dim ? dim(t) : t);
   const icon = (status: string): string =>
@@ -170,7 +170,7 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     return lines.join("\n");
   }
 
-  return "当前没有 team run 记录。用 /team run <团队> <任务> 或 team_run 工具派单。";
+  return "当前没有 team run 记录。用 /team:run <团队> <任务> 或 team_run 工具派单。";
 }
 
 /**
@@ -205,7 +205,7 @@ export class TeamRunCoordinator {
     return this.active !== null;
   }
 
-  /** Current/most recent run snapshot (team_status tool + /team status). */
+  /** Current/most recent run snapshot (team_status tool + /team:status). */
   getStatus(): RunStatusSnapshot {
     return { running: this.active !== null, progress: this.currentProgress, lastRecord: this.lastRecord };
   }
@@ -309,7 +309,7 @@ export class TeamRunCoordinator {
       return {
         ok: false,
         code: "RUN_IN_PROGRESS",
-        message: "另一个 team run 正在进行中；先 /team stop 或等它结束。",
+        message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。",
       };
     }
     const { team, task } = options;
@@ -367,7 +367,7 @@ export class TeamRunCoordinator {
     const git = this.deps.gitRunner ?? defaultGitRunner();
     const baseCwd = this.deps.cwd();
 
-    // Leader transcript artifacts (best-effort; read back by /team view and
+    // Leader transcript artifacts (best-effort; read back by /team:view and
     // the team_transcript tool). Member transcripts are written by the
     // leader process itself — both sides share the run dir. Hoisted above
     // the try so the catch can always report (pre-flight failures have no
