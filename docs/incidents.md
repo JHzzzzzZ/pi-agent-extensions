@@ -73,3 +73,9 @@
 - 症状：run-timer 计时行与 loop 倒计时各自 `setInterval`，相位互不相关；同屏时 widget 相对顺序逐秒翻转（宿主 `setExtensionWidget` 每次 delete+set 移到底部）；footer 排序靠 key 字母序的巧合，随时加插件就变；倒计时粗粒度（>1h 只到分钟）时还每秒无意义重绘。
 - 根因：刷新节拍没有跨插件契约；widget 栈顺序依赖宿主按注册序派发但从未被锁定/断言；footer 顺序依赖字母序巧合；UI 写入无内容指纹去重。
 - 教训：跨插件「同屏时间类状态」必须显式契约化（`docs/cross/status-bar.md`）——统一对齐秒边界节拍（`aligned-ticker.ts`）+ 文本指纹跳过 + footer 两位排序带键 + 根契约测试锁定 `pi.extensions` 相对顺序与键带序；宿主 widget 刷新重排属宿主行为，本仓库不打补丁（AGENTS.md 规则红线·仓库边界），走上游（`docs/pi-widget-order-issue.md`）。
+
+## overlay 帧行带原始换行 → 行错位残行（agent-team viewer「重复行第四轮」）
+
+- 症状：`/team:view` 打开时，左栏（roster 列）下方每派发一条出现 `  - front: 请数出数字 N（计数序列的一部分）…` 残行；run 摘要文本出现在错误行、与相邻行重叠（用户截图：`统计: 8 次 team_dispatch…`、`行。` 片段）；帧边框/页脚位置漂移；残行跨刷新持久（computer-use 抓屏 pane1/pane2 相隔 3s 像素级相同）。
+- 根因：`cockpit.ts:499` 把每次派发写成多行 tool 条目（`team_dispatch 派发 →\n  - <member>: <task>`），`viewer.ts` 的 tools 渲染分支把它当单行输出——帧行字符串携带原始 `\n`（`fitLine` 按显示宽度算，换行符宽 0，照样通过宽度校验）。宿主按物理行写屏时，换行把尾巴挤到下一行同列（roster 列区域），且实际行数比声明多 1 → 帧几何错位；diff 渲染器不知道这些脏格，残行持久。最小复现：`bodyLines([{kind:'tool',text:'team_dispatch 派发 →\n  - front: …'}], true, 100, plainStyles())` 返回的行含原始 `\n`。
+- 教训：① overlay/帧渲染的边界契约是「每个帧行必为单物理行」——任何来自子进程/持久化文本的 `\n` 都必须在块渲染层拆行，`fitLine` 再兜底折叠，绝不依赖宿主替我们处理；② 同族路径（widget）早已 `\s+` 压平（`widget.ts:66`）所以无此 bug——对照实现时「哪些字段压平了」必须逐路径对齐；③ 纯函数单测绿 ≠ 真机对：本 bug 只在真实合成/写屏路径显现，`viewer-host.test.ts` 的 FakeScreen 的 `\n` 语义（row+1 同列）与真机一致，可稳定复现；④ 真机取证优先用 computer-use + PowerShell 全分辨率抓屏（跨 3s 两帧像素级对比），比低分辨率截图更能定位「哪一列/哪一行」在错位。

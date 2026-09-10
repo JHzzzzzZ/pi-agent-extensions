@@ -208,7 +208,13 @@ function entry(kind: TranscriptEntry["kind"], text: string): TranscriptEntry {
 function scenarioData(elapsedSec: number, dispatches: number): ViewerData {
   const leader: TranscriptEntry[] = [entry("task", "从1数到10，leader 数奇数"), entry("assistant", "收到，开始派单")];
   for (let i = 0; i < dispatches; i++) {
-    leader.push(entry("tool", `team_dispatch ${i} → done (11.1s)`), entry("assistant", `第${i}个成员已回复`));
+    // i=0 用真机同款多行派发条目（cockpit.ts:499）：多行文本必须拆成帧行，
+    // 否则宿主按物理行写屏时换行会把尾巴挤到下一行（真机事故：overlay 左缘残行）。
+    const dispatch =
+      i === 0
+        ? "team_dispatch 派发 →\n  - front: 请数出数字 2（计数序列的一部分）。只输出数字 2，不要任何额外文字。"
+        : `team_dispatch ${i} → done (11.1s)`;
+    leader.push(entry("tool", dispatch), entry("assistant", `第${i}个成员已回复`));
   }
   return {
     team: "count-duet",
@@ -233,6 +239,8 @@ interface HostCounts {
   modelTitles: number;
   gridTitles: number;
   gridRoster: number;
+  model: string[];
+  grid: string[];
 }
 
 /**
@@ -286,6 +294,8 @@ function driveHostViewer(opts: { cols?: number; rows?: number; resizeTo?: number
       modelTitles: model.filter(isTitleRow).length,
       gridTitles: grid.filter(isTitleRow).length,
       gridRoster: grid.filter(isRosterRow).length,
+      model,
+      grid,
     };
   } finally {
     viewer.dispose();
@@ -304,6 +314,26 @@ test("真实宿主中途改终端高度：重绘后仍为一组标题+roster", (
   assert.equal(counts.modelTitles, 1, `改高度后屏模型标题应恰 1，实得 ${counts.modelTitles}`);
   assert.equal(counts.gridTitles, 1, `改高度后像素屏标题应恰 1，实得 ${counts.gridTitles}`);
   assert.equal(counts.gridRoster, 1, `改高度后像素屏 roster 应恰 1，实得 ${counts.gridRoster}`);
+});
+
+// 真机事故（重复行第四轮）：多行 tool 条目（team_dispatch 派发 →\n  - 成员: 任务）
+// 旧实现整体进入一个帧行，宿主写屏时换行把尾巴挤到下一行，overlay 左缘出现残行。
+// 断言钉在"宿主待写帧行"（previousLines：合成分隔后真正落终端的字符串）上——
+// 这是恒不变量，不依赖 diff 何时跳过哪行。
+test("真实宿主：多行 tool 条目不得在帧行残留原始换行，任务文本只出现在 detail 列", () => {
+  const { model, grid } = driveHostViewer();
+  for (const line of model) {
+    assert.doesNotMatch(line, /[\r\n]/, `宿主待写帧行含原始换行：${JSON.stringify(line)}`);
+  }
+  const header = grid.find((line) => stripAnsi(line).includes("Run: run-"));
+  assert.ok(header, "detail 头在屏上");
+  const detailCol = stripAnsi(header).indexOf("Run:");
+  for (const line of grid) {
+    const at = stripAnsi(line).indexOf("请数出数字");
+    if (at >= 0) {
+      assert.ok(at >= detailCol, `任务文本越出 detail 列（col ${at} < ${detailCol}）：${stripAnsi(line)}`);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

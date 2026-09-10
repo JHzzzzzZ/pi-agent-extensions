@@ -408,6 +408,22 @@ test("renderWidgetView truncates every line to terminal width (collapsed + expan
   assert.match(selected[selected.length - 1], /↑↓ 选择/);
 });
 
+test("widget rows never carry raw newlines (multi-line task/activity/latest flattened)", () => {
+  // 与 viewer 同族的边界契约：宿主逐行渲染 widget 字符串项，任何残余换行都会
+  // 变成额外残行（widget.ts 的 flatten/truncateTask 是唯一防线，此测试钉住它）。
+  const snapshot = liveSnapshot();
+  snapshot.progress!.task = "第一行\n第二行";
+  snapshot.progress!.leaderActivity = "审查中\n回显第二行";
+  snapshot.progress!.members[0]!.latest = "编辑中\n回显第二行";
+  const view = buildWidgetView(snapshot, 65000);
+  const styles = plainStyles();
+  for (const selected of [false, true]) {
+    for (const line of renderWidgetView(view, { selected, cursor: 1 }, 120, styles)) {
+      assert.doesNotMatch(line, /[\r\n]/, `widget 行不得含原始换行：${JSON.stringify(line)}`);
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Controller: data-driven registration (mount/unmount + fingerprint)
 // ---------------------------------------------------------------------------
