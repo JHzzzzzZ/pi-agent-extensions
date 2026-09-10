@@ -1,14 +1,14 @@
 /**
  * loop — /loop 参数解析（纯函数，时钟 nowMs 由调用方注入）。
  *
- * 语法：
+ * 语法（命令面冒号化 v1.6.0：裸 /loop 只管创建，管理走 /loop:* 独立命令）：
  *   /loop 5m <任务>            固定间隔循环（单位 s/m/h/d，最小 1 分钟，秒向上取整）
  *   /loop in 30m <任务>        一次性提醒（相对时间）
  *   /loop at 15:00 <任务>      一次性提醒（本地时刻，已过则排到明天）
  *   /loop daily at 09:00 <任务>                每天固定时刻循环（= every day at）
  *   /loop every 1h from 00:00 to 09:00 <任务>  每日时间窗口 [start, end] 闭区间内按间隔循环
  *   /loop --bg <上述任意创建形态>  v1.3：后台模式——到期拉起独立子 pi 进程执行（会话可 resume）
- *   /loop list | pause <id> | resume <id> | delete <id> | clear
+ *   /loop:list | /loop:pause <id> | /loop:resume <id> | /loop:delete <id> | /loop:clear
  */
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; message: string };
@@ -35,12 +35,28 @@ export interface CreateSpec {
 
 export type LoopCommand =
   | { kind: "create"; spec: CreateSpec }
-  | { kind: "list" }
-  | { kind: "pause"; id: string }
-  | { kind: "resume"; id: string }
-  | { kind: "delete"; id: string }
-  | { kind: "clear" }
   | { kind: "usage" };
+
+/** 冒号子命令（v1.6.0）：独立静态注册命令名。 */
+export const LOOP_SUBCOMMANDS = {
+  list: "loop:list",
+  pause: "loop:pause",
+  resume: "loop:resume",
+  delete: "loop:delete",
+  clear: "loop:clear",
+} as const;
+
+/**
+ * 旧空格子命令 → 新命令 + 用法。裸 `/loop` 命中时只提示改名、绝不执行
+ * （防止 `/loop pause 3` 被误当成任务文本）。
+ */
+export const RETIRED_LOOP_SUBCOMMANDS: Record<string, { command: string; usage: string }> = {
+  list: { command: LOOP_SUBCOMMANDS.list, usage: "/loop:list" },
+  pause: { command: LOOP_SUBCOMMANDS.pause, usage: "/loop:pause <id>" },
+  resume: { command: LOOP_SUBCOMMANDS.resume, usage: "/loop:resume <id>" },
+  delete: { command: LOOP_SUBCOMMANDS.delete, usage: "/loop:delete <id>" },
+  clear: { command: LOOP_SUBCOMMANDS.clear, usage: "/loop:clear" },
+};
 
 export const MIN_INTERVAL_MS = 60_000;
 export const DAY_MS = 86_400_000;
@@ -159,16 +175,8 @@ export function parseLoopCommand(args: string, nowMs: number): ParseResult<LoopC
 
   const tokens = trimmed.split(/\s+/);
 
-  // 子命令仅在整体形态完全匹配时生效，避免与任务文本冲突（如 "5m list pods"）；
-  // --bg 不参与子命令（管理操作始终在当前会话内进行）
-  if (tokens.length === 1) {
-    if (tokens[0] === "list") return { ok: true, value: { kind: "list" } };
-    if (tokens[0] === "clear") return { ok: true, value: { kind: "clear" } };
-  }
-  if (tokens.length === 2 && (tokens[0] === "pause" || tokens[0] === "resume" || tokens[0] === "delete")) {
-    return { ok: true, value: { kind: tokens[0], id: tokens[1]! } };
-  }
-
+  // 管理子命令已拆为独立冒号命令（/loop:list 等）；旧管理词在这里不再匹配，
+  // 与任意其它文本一样落到 usage（裸命令入口会先提示改名，见 index.ts）。
   const bg = takeBackgroundFlag(tokens);
   const mdl = takeModelFlag(bg.rest, bg.background);
   if (!mdl.ok) return mdl;

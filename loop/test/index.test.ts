@@ -182,6 +182,11 @@ function createFakePi() {
       if (!cmd) throw new Error("no /loop command");
       await cmd.handler(args, ctx);
     },
+    runNamed: async (name: string, args: string) => {
+      const cmd = commands.get(name);
+      if (!cmd) throw new Error(`no /${name} command`);
+      await cmd.handler(args, ctx);
+    },
     runTool: async (name: string, params: Record<string, unknown>) => {
       const tool = tools.get(name);
       if (!tool) throw new Error(`no tool ${name}`);
@@ -220,16 +225,44 @@ beforeEach(() => {
 // ---------- 命令注册 ----------
 
 describe("命令注册", () => {
-  it("注册 /loop 命令，带描述与参数补全", () => {
+  it("注册裸 /loop + 五个冒号管理命令，均有描述；补全只剩创建模板", () => {
     const fake = createFakePi();
     loopFactory(fake as never);
-    const cmd = fake._commands.get("loop");
-    assert.ok(cmd, "/loop command registered");
-    assert.ok(cmd!.description && cmd!.description.length > 0);
-    const items = cmd!.getArgumentCompletions?.("de") as Array<{ value: string }>;
-    assert.deepEqual(items, [{ value: "delete ", label: "delete" }]);
-    const dailyItems = cmd!.getArgumentCompletions?.("daily") as Array<{ value: string }>;
+    assert.deepEqual([...fake._commands.keys()], ["loop", "loop:list", "loop:pause", "loop:resume", "loop:delete", "loop:clear"]);
+    for (const name of fake._commands.keys()) {
+      const cmd = fake._commands.get(name)!;
+      assert.ok(cmd.description && cmd.description.length > 0, `${name} has a description`);
+    }
+    const cmd = fake._commands.get("loop")!;
+    const items = cmd.getArgumentCompletions?.("in") as Array<{ value: string }>;
+    assert.deepEqual(items, [{ value: "in ", label: "in" }]);
+    const dailyItems = cmd.getArgumentCompletions?.("daily") as Array<{ value: string }>;
     assert.deepEqual(dailyItems, [{ value: "daily ", label: "daily" }]);
+    assert.deepEqual(cmd.getArgumentCompletions?.("de"), [], "管理词补全已退役");
+  });
+
+  it("裸 /loop 的旧管理词只提示改名，绝不执行", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    for (const head of ["list", "pause", "resume", "delete", "clear"]) {
+      await fake.runCommand(head);
+      const note = fake.lastNotification();
+      assert.equal(note!.level, "warning");
+      assert.match(note!.message, new RegExp(`「/loop ${head}」已改名为「/loop:${head}」`));
+    }
+    assert.equal(fake._persisted.length, 0, "rename hints never mutate tasks");
+  });
+
+  it("/loop:pause 缺 id → 用法提示（不抛错、不改任务）", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    await fake.runNamed("loop:pause", "");
+    const note = fake.lastNotification();
+    assert.equal(note!.level, "warning");
+    assert.match(note!.message, /用法：\/loop:pause <id>/);
+    assert.equal(fake._persisted.length, 0);
   });
 });
 
@@ -291,7 +324,7 @@ describe("创建与持久化", () => {
     seedSnapshot(fake, [rawTask({ id: "seed0001", nextDueAt: BASE + 60_000 })]);
     loopFactory(fake as never);
     await fake.fire("session_start");
-    await fake.runCommand("list");
+    await fake.runNamed("loop:list", "");
     note = fake.lastNotification();
     assert.match(note!.message, /seed0001/);
   });
@@ -519,13 +552,13 @@ describe("命令管理", () => {
     await fake.runCommand("1m 巡检服务");
     const id = (fake._persisted[0]!.data as { tasks: LoopTask[] }).tasks[0]!.id;
 
-    await fake.runCommand(`pause ${id.slice(0, 3)}`);
+    await fake.runNamed("loop:pause", id.slice(0, 3));
     assert.match(fake.lastNotification()!.message, /已暂停/);
     fakeNow = BASE + 600_000;
     fireTick();
     assert.equal(fake._sent.length, 0);
 
-    await fake.runCommand(`resume ${id.slice(0, 3)}`);
+    await fake.runNamed("loop:resume", id.slice(0, 3));
     assert.match(fake.lastNotification()!.message, /已恢复/);
     const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
     assert.equal(last.tasks[0]!.nextDueAt, BASE + 600_000 + 60_000);
@@ -537,7 +570,7 @@ describe("命令管理", () => {
     await fake.fire("session_start");
     await fake.runCommand("5m 任务甲");
     const id = (fake._persisted[0]!.data as { tasks: LoopTask[] }).tasks[0]!.id;
-    await fake.runCommand(`delete ${id.slice(0, 4)}`);
+    await fake.runNamed("loop:delete", id.slice(0, 4));
     assert.match(fake.lastNotification()!.message, /已删除/);
     const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
     assert.equal(last.tasks.length, 0);
@@ -549,7 +582,7 @@ describe("命令管理", () => {
     await fake.fire("session_start");
     await fake.runCommand("5m 甲");
     await fake.runCommand("10m 乙");
-    await fake.runCommand("clear");
+    await fake.runNamed("loop:clear", "");
     assert.match(fake.lastNotification()!.message, /全部 2 个任务/);
     const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
     assert.equal(last.tasks.length, 0);
@@ -564,12 +597,12 @@ describe("命令管理", () => {
     loopFactory(fake as never);
     await fake.fire("session_start");
 
-    await fake.runCommand("pause abc");
+    await fake.runNamed("loop:pause", "abc");
     let note = fake.lastNotification();
     assert.equal(note!.level, "warning");
     assert.match(note!.message, /多个任务/);
 
-    await fake.runCommand("pause zzzz");
+    await fake.runNamed("loop:pause", "zzzz");
     note = fake.lastNotification();
     assert.equal(note!.level, "warning");
     assert.match(note!.message, /未找到/);
@@ -596,7 +629,7 @@ describe("widget", () => {
     await fake.fire("session_start");
     await fake.runCommand("5m 临时任务");
     assert.ok(fake._widgets.has("loop"));
-    await fake.runCommand("clear");
+    await fake.runNamed("loop:clear", "");
     assert.ok(!fake._widgets.has("loop"), "widget removed after clear");
   });
 
@@ -879,7 +912,7 @@ describe("后台模式（v1.3）— 创建", () => {
     ]);
     loopFactory(fake as never);
     await fake.fire("session_start");
-    await fake.runCommand("list");
+    await fake.runNamed("loop:list", "");
     const msg = fake.lastNotification()!.message;
     assert.match(msg, /\[后台\]/);
     assert.match(msg, /└ 上次后台：完成 · 会话 sess-7f2a · 一切 正常 很好/);
@@ -995,7 +1028,7 @@ describe("后台模式（v1.3）— 触发与完成", () => {
 
     fakeNow = BASE + 61_000;
     fireTick();
-    await fake.runCommand(`delete ${id.slice(0, 4)}`);
+    await fake.runNamed("loop:delete", id.slice(0, 4));
 
     bg.resolveNext({ ...bgDone, sessionId: "sess-gone" });
     await flush();
@@ -1067,7 +1100,7 @@ describe("后台模式（v1.3）— 生命周期", () => {
     ]);
     loopFactory(fake as never);
     await fake.fire("session_start");
-    await fake.runCommand("list");
+    await fake.runNamed("loop:list", "");
     assert.match(fake.lastNotification()!.message, /上次后台：中断/);
   });
 });
