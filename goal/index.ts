@@ -11,8 +11,9 @@
  * 用法:
  *   /goal <条件>            设置目标并立即开始第一轮
  *   /goal                   查看状态(目标/已评估轮数/时长/评估器最近判定)
- *   /goal clear|stop|off|reset|none|cancel   清除目标
- *   /goal resume            手动中断/评估器连续失败暂停后恢复
+ *   /goal:status            同上(冒号副本)
+ *   /goal:clear|:stop|:off|:reset|:none|:cancel   清除目标(别名共享同一动作)
+ *   /goal:resume            手动中断/评估器连续失败暂停后恢复
  *
  * 安装:复制本目录到 ~/.pi/agent/extensions/goal/ 或 <项目>/.pi/extensions/goal/,
  *       在 Pi 中执行 /reload。卸载即删除目录。
@@ -46,6 +47,33 @@ export const MAX_EVALUATOR_TOKENS = 512;
 export const MAX_EVALUATOR_FAILURES = 3;
 
 const CLEAR_ALIASES = ["clear", "stop", "off", "reset", "none", "cancel"] as const;
+
+/** 冒号子命令（v1.3.0）：独立静态注册命令名。 */
+export const GOAL_SUBCOMMANDS = {
+  status: "goal:status",
+  clear: "goal:clear",
+  stop: "goal:stop",
+  off: "goal:off",
+  reset: "goal:reset",
+  none: "goal:none",
+  cancel: "goal:cancel",
+  resume: "goal:resume",
+} as const;
+
+/**
+ * 旧空格子命令 → 新命令 + 用法。裸 `/goal` 命中时只提示改名、绝不执行
+ * （防止 `/goal clear` 被误设为目标文本）。`status` 不在表内：`/goal status`
+ * 仍是目标文本（裸命令从未有 status 子命令，既有语义不变）。
+ */
+export const RETIRED_GOAL_SUBCOMMANDS: Record<string, { command: string; usage: string }> = {
+  clear: { command: GOAL_SUBCOMMANDS.clear, usage: "/goal:clear" },
+  stop: { command: GOAL_SUBCOMMANDS.stop, usage: "/goal:stop" },
+  off: { command: GOAL_SUBCOMMANDS.off, usage: "/goal:off" },
+  reset: { command: GOAL_SUBCOMMANDS.reset, usage: "/goal:reset" },
+  none: { command: GOAL_SUBCOMMANDS.none, usage: "/goal:none" },
+  cancel: { command: GOAL_SUBCOMMANDS.cancel, usage: "/goal:cancel" },
+  resume: { command: GOAL_SUBCOMMANDS.resume, usage: "/goal:resume" },
+};
 /** opencode 系模型( provider id 或 baseUrl host )需注入 x-opencode-session 会话头(对齐宿主 provider-attribution) */
 const OPENCODE_HOST = "opencode.ai";
 
@@ -88,16 +116,12 @@ export interface GoalDeps {
 export type ParsedGoalArgs =
   | { action: "set"; goal: string }
   | { action: "status" }
-  | { action: "clear" }
-  | { action: "resume" }
   | { action: "invalid"; reason: string };
 
+/** 裸 `/goal` 解析：空参 = 状态，其余整体为目标文本（管理子命令已拆为冒号命令）。 */
 export function parseGoalArgs(args: string): ParsedGoalArgs {
   const trimmed = (args ?? "").trim();
   if (!trimmed) return { action: "status" };
-  const first = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
-  if ((CLEAR_ALIASES as readonly string[]).includes(first)) return { action: "clear" };
-  if (first === "resume") return { action: "resume" };
   if (trimmed.length > MAX_GOAL_LENGTH) {
     return { action: "invalid", reason: `目标过长(${trimmed.length} > ${MAX_GOAL_LENGTH} 字符)。` };
   }
@@ -381,14 +405,14 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
 
   function notifyStatus(ctx: ExtensionContext): void {
     if (state.phase === "idle") {
-      notify(ctx, "当前没有活跃的 goal。用法:/goal <完成条件>;停止:/goal clear。");
+      notify(ctx, "当前没有活跃的 goal。用法:/goal <完成条件>;清除:/goal:clear。");
       return;
     }
     const lines = [
       state.phase === "paused" ? `⏸ goal 已暂停:${state.goal}` : `◎ goal:${state.goal}`,
       `已评估轮数:${state.turns} · 已运行:${formatElapsed(Math.max(0, nowMs() - state.startedAtMs))}`,
       `评估器最近判定:${state.lastReason ?? "—"}`,
-      state.phase === "paused" ? "使用 /goal resume 恢复,或 /goal clear 清除。" : "停止:/goal clear。",
+      state.phase === "paused" ? "使用 /goal:resume 恢复,或 /goal:clear 清除。" : "清除:/goal:clear。",
     ];
     notify(ctx, lines.join("\n"));
   }
@@ -430,7 +454,7 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
           lastGoal = typeof data?.goal === "string" && data.goal ? data.goal : null;
         }
       }
-      // 对齐 /goal resume 语义:恢复目标但轮数与计时重置;已清除(null)不恢复
+      // 对齐 /goal:resume 语义:恢复目标但轮数与计时重置;已清除(null)不恢复
       if (typeof lastGoal === "string") {
         state = { phase: "active", goal: lastGoal, startedAtMs: nowMs(), turns: 0 };
       }
@@ -449,7 +473,7 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
       if (userInterrupted) {
         // 不原地改 snapshot.phase:它已被收窄为 "active",整体替换为 paused 态
         state = { ...snapshot, phase: "paused" };
-        notify(ctx, "goal 已暂停(检测到手动中断)。使用 /goal resume 继续。", "warning");
+        notify(ctx, "goal 已暂停(检测到手动中断)。使用 /goal:resume 继续。", "warning");
         updateStatus(ctx);
         return;
       }
@@ -462,7 +486,7 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
               if (evaluatorFailures >= MAX_EVALUATOR_FAILURES) {
                 const lastReason = `评估器连续 ${evaluatorFailures} 次失败:${result.message ?? result.code}`;
                 state = { ...snapshot, phase: "paused", lastReason };
-                notify(ctx, `goal 已暂停:${lastReason}。使用 /goal resume 重试。`, "error");
+                notify(ctx, `goal 已暂停:${lastReason}。使用 /goal:resume 重试。`, "error");
                 updateStatus(ctx);
                 return;
               }
@@ -495,62 +519,95 @@ export function createGoalExtension(pi: ExtensionAPI, deps: GoalDeps = {}): void
     }
   }
 
+  /** 清除 goal（clear 及全部别名共用）。 */
+  function clearGoal(ctx: ExtensionContext): void {
+    if (state.phase === "idle") {
+      notify(ctx, "当前没有活跃的 goal。");
+      return;
+    }
+    state = { phase: "idle" };
+    persistState(null);
+    notify(ctx, "goal 已清除。");
+    updateStatus(ctx);
+  }
+
+  /** `/goal:resume`：手动中断/评估器连续失败暂停后恢复并立即续跑。 */
+  function resumeGoal(ctx: ExtensionContext): void {
+    if (state.phase === "active") {
+      notify(ctx, "goal 正在运行,无需恢复。");
+      return;
+    }
+    if (state.phase === "idle") {
+      notify(ctx, "当前没有可恢复的 goal(仅在中断/暂停后可用)。");
+      return;
+    }
+    const resumed: RuntimeState = { ...state, phase: "active" };
+    state = resumed;
+    if (resumed.phase !== "active") return;
+    notify(ctx, "goal 已恢复,继续推进。");
+    updateStatus(ctx);
+    continueTurn(resumed.goal, resumed.lastReason ?? "继续推进目标。", resumed.turns);
+  }
+
+  /** 设置目标并立即开第一轮（`/goal <条件>`）。 */
+  async function setGoal(ctx: ExtensionContext, goal: string): Promise<void> {
+    await ctx.waitForIdle();
+    state = { phase: "active", goal, startedAtMs: nowMs(), turns: 0 };
+    evidenceTail = "";
+    userInterrupted = false;
+    evaluatorFailures = 0;
+    persistState(goal);
+    notify(ctx, "goal 已设置,开始第一轮推进。");
+    updateStatus(ctx);
+    // 对齐 /goal:以条件本身作为指令立即启动第一回合
+    pi.sendUserMessage(goal);
+  }
+
+  /**
+   * 裸 `/goal`（命令面冒号化 v1.3.0）：空参=状态；其余=目标文本；旧管理词
+   * （clear/stop/off/reset/none/cancel/resume）只提示改名、绝不执行；`/goal status`
+   * 仍视为目标文本（裸命令从未有 status 子命令）。
+   */
   pi.registerCommand(GOAL_COMMAND, {
-    description: "设置目标并自动循环推进直至评估器判定达成(/goal <条件>;无参数查看状态;/goal clear 停止)",
+    description: "设置目标并自动循环推进直至评估器判定达成（/goal <条件>；无参数查看状态；清除/恢复为独立冒号命令 /goal:clear、/goal:resume）",
     handler: async (args, ctx) => {
+      const head = (args ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+      const renamed = RETIRED_GOAL_SUBCOMMANDS[head];
+      if (renamed) {
+        notify(ctx, `「/goal ${head}」已改名为「/${renamed.command}」；用法：${renamed.usage}`, "warning");
+        return;
+      }
       const parsed = parseGoalArgs(args);
       switch (parsed.action) {
-        case "status": {
+        case "status":
           notifyStatus(ctx);
           return;
-        }
-        case "clear": {
-          if (state.phase === "idle") {
-            notify(ctx, "当前没有活跃的 goal。");
-            return;
-          }
-          state = { phase: "idle" };
-          persistState(null);
-          notify(ctx, "goal 已清除。");
-          updateStatus(ctx);
-          return;
-        }
-        case "resume": {
-          if (state.phase === "active") {
-            notify(ctx, "goal 正在运行,无需恢复。");
-            return;
-          }
-          if (state.phase === "idle") {
-            notify(ctx, "当前没有可恢复的 goal(仅在中断/暂停后可用)。");
-            return;
-          }
-          const resumed: RuntimeState = { ...state, phase: "active" };
-          state = resumed;
-          if (resumed.phase !== "active") return;
-          notify(ctx, "goal 已恢复,继续推进。");
-          updateStatus(ctx);
-          continueTurn(resumed.goal, resumed.lastReason ?? "继续推进目标。", resumed.turns);
-          return;
-        }
-        case "invalid": {
+        case "invalid":
           notify(ctx, parsed.reason, "warning");
           return;
-        }
-        case "set": {
-          await ctx.waitForIdle();
-          state = { phase: "active", goal: parsed.goal, startedAtMs: nowMs(), turns: 0 };
-          evidenceTail = "";
-          userInterrupted = false;
-          evaluatorFailures = 0;
-          persistState(parsed.goal);
-          notify(ctx, "goal 已设置,开始第一轮推进。");
-          updateStatus(ctx);
-          // 对齐 /goal:以条件本身作为指令立即启动第一回合
-          pi.sendUserMessage(parsed.goal);
+        case "set":
+          await setGoal(ctx, parsed.goal);
           return;
-        }
       }
     },
+  });
+
+  pi.registerCommand(GOAL_SUBCOMMANDS.status, {
+    description: "查看当前 goal 状态（目标 / 已评估轮数 / 时长 / 评估器最近判定）",
+    handler: async (_args, ctx) => notifyStatus(ctx),
+  });
+
+  // clear 及其 5 个别名：同一动作，各自独立静态注册。
+  for (const alias of CLEAR_ALIASES) {
+    pi.registerCommand(GOAL_SUBCOMMANDS[alias], {
+      description: alias === "clear" ? "清除 goal（停止自动推进）" : `清除 goal（/goal:clear 的别名）：/goal:${alias}`,
+      handler: async (_args, ctx) => clearGoal(ctx),
+    });
+  }
+
+  pi.registerCommand(GOAL_SUBCOMMANDS.resume, {
+    description: "恢复被手动中断/评估器连续失败暂停的 goal，并立即续跑",
+    handler: async (_args, ctx) => resumeGoal(ctx),
   });
 
   pi.on("session_start", async (_event, ctx) => {

@@ -94,13 +94,22 @@ function boot(options: FakeCtxOptions & { statePath: string; pid?: number } = { 
 
 // ===== 纯函数:命令解析 / 路径 =====
 
-test("parseSoloCommand：空参＝切换，on/off/status 显式，未知参数＝usage", () => {
+test("parseSoloCommand：空参＝切换，其余（含旧管理词）＝usage", () => {
   assert.equal(parseSoloCommand(""), "toggle");
   assert.equal(parseSoloCommand("   "), "toggle");
-  assert.equal(parseSoloCommand("ON"), "on");
-  assert.equal(parseSoloCommand("off"), "off");
-  assert.equal(parseSoloCommand(" status "), "status");
+  assert.equal(parseSoloCommand("ON"), "usage");
+  assert.equal(parseSoloCommand("off"), "usage");
+  assert.equal(parseSoloCommand(" status "), "usage");
   assert.equal(parseSoloCommand("bogus"), "usage");
+});
+
+test("命令注册：裸 /solo + 三个冒号子命令，均有描述", () => {
+  const { file } = makeTempStateFile();
+  const { commands } = boot({ statePath: file });
+  assert.deepEqual([...commands.keys()], ["solo", "solo:on", "solo:off", "solo:status"]);
+  for (const name of commands.keys()) {
+    assert.ok((commands.get(name)?.description ?? "").length > 0, `${name} has a description`);
+  }
 });
 
 test("resolveSoloStatePath：PI_SOLO_MODE_FILE 优先，空串回落默认路径", () => {
@@ -147,7 +156,7 @@ test("开启：确认通过 → 状态文件写入 + 状态条 + notify；关闭
   assert.ok(statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === SOLO_STATUS_TEXT), "状态条显示 ⚡ solo");
   assert.ok(notifications.some((n) => n.message.includes("已启用")), "notify 已启用");
 
-  await handler("off", ctx);
+  await commands.get("solo:off")!.handler("", ctx);
   assert.equal(fs.existsSync(file), false, "关闭删除状态文件");
   assert.ok(statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === undefined), "状态条清除");
   assert.ok(notifications.some((n) => n.message.includes("已关闭")), "notify 已关闭");
@@ -157,7 +166,7 @@ test("开启：确认取消 → 不写文件、保持关闭", async () => {
   const { file } = makeTempStateFile();
   const { commands, ctx, notifications, confirms } = boot({ statePath: file, confirm: async () => false });
 
-  await commands.get("solo")!.handler("on", ctx);
+  await commands.get("solo:on")!.handler("", ctx);
 
   assert.equal(confirms.length, 1, "开启弹一次确认");
   assert.equal(fs.existsSync(file), false, "取消不写状态文件");
@@ -168,7 +177,7 @@ test("无 UI 环境：拒绝开启（fail-closed），不弹确认、不写文�
   const { file } = makeTempStateFile();
   const { commands, ctx, notifications, confirms } = boot({ statePath: file, hasUI: false });
 
-  await commands.get("solo")!.handler("on", ctx);
+  await commands.get("solo:on")!.handler("", ctx);
 
   assert.equal(confirms.length, 0);
   assert.equal(fs.existsSync(file), false);
@@ -178,29 +187,41 @@ test("无 UI 环境：拒绝开启（fail-closed），不弹确认、不写文�
 test("status / usage：开与关两态输出，未知参数提示用法", async () => {
   const { file } = makeTempStateFile();
   const { commands, ctx, notifications } = boot({ statePath: file });
-  const handler = commands.get("solo")!.handler;
 
-  await handler("status", ctx);
+  await commands.get("solo:status")!.handler("", ctx);
   assert.ok(notifications.at(-1)!.message.includes("未启用"));
 
   writeSoloState(file, { pid: process.pid, activatedAt: "x" });
-  await handler("status", ctx);
+  await commands.get("solo:status")!.handler("", ctx);
   assert.ok(notifications.at(-1)!.message.includes("已启用"));
 
-  await handler("bogus", ctx);
+  await commands.get("solo")!.handler("bogus", ctx);
   assert.ok(notifications.at(-1)!.message.includes("用法"), "未知参数给用法");
 });
 
+test("裸 /solo 的旧管理词只提示改名，绝不执行切换/开关", async () => {
+  const { file } = makeTempStateFile();
+  const { commands, ctx, notifications, confirms } = boot({ statePath: file });
+  const before = notifications.length;
+  for (const head of ["on", "off", "status"]) {
+    await commands.get("solo")!.handler(head, ctx);
+    const note = notifications.at(-1)!;
+    assert.equal(note.type, "warning");
+    assert.match(note.message, new RegExp(`「/solo ${head}」已改名为「/solo:${head}」`));
+  }
+  assert.equal(notifications.length, before + 3, "每个旧词恰好一条提示");
+  assert.equal(confirms.length, 0, "改名提示不弹确认");
+  assert.equal(fs.existsSync(file), false, "改名提示不写状态文件");
+});
 test("写失败（状态路径为目录）：保持关闭 + error notify，不抛异常", async () => {
   const { dir } = makeTempStateFile();
   const { commands, ctx, notifications } = boot({ statePath: dir });
 
-  await commands.get("solo")!.handler("on", ctx);
+  await commands.get("solo:on")!.handler("", ctx);
 
   assert.ok(notifications.some((n) => n.type === "error" && n.message.includes("启用失败")), "error notify");
   assert.equal(isSoloActive({ env: { PI_SOLO_MODE_FILE: dir } }), false, "仍为关闭");
 });
-
 // ===== 生命周期 =====
 
 test("session_start：本进程残留复位（reload 提示），异 pid 文件不触碰", async () => {
