@@ -169,15 +169,16 @@ test("actors 新增/排序变化时选中按 actor id 保持", () => {
 test("切换成员时同时钉住 actor id", () => {
   const ids = ["_leader", "front", "backend"];
   const from = { ...initialViewerState(), actorIndex: 0, actor: "_leader" };
-  const right = handleViewerKey(from, "\x1b[C", { totalLines: 10, actorCount: 3, bodyHeight: 10, actorIds: ids });
-  assert.ok(right.type === "update");
-  assert.equal(right.state.actorIndex, 1);
-  assert.equal(right.state.actor, "front");
-  assert.equal(right.state.scroll, 0, "切换重置滚动");
-  assert.equal(right.state.follow, true);
+  // v1.8.0：成员切换键位对齐 fleet selectDown（↓/j），旧键 ←→/Tab 退役。
+  const down = handleViewerKey(from, "\x1b[B", { totalLines: 10, actorCount: 3, bodyHeight: 10, actorIds: ids });
+  assert.ok(down.type === "update");
+  assert.equal(down.state.actorIndex, 1);
+  assert.equal(down.state.actor, "front");
+  assert.equal(down.state.scroll, 0, "切换重置滚动");
+  assert.equal(down.state.follow, true);
 
   // 无 actorIds 的旧调用路径不引入 actor 键（兼容旧快照）。
-  const legacy = handleViewerKey(initialViewerState(), "\x1b[C", { totalLines: 10, actorCount: 2, bodyHeight: 10 });
+  const legacy = handleViewerKey(initialViewerState(), "\x1b[B", { totalLines: 10, actorCount: 2, bodyHeight: 10 });
   assert.ok(legacy.type === "update");
   assert.ok(!("actor" in legacy.state), "旧路径不新增字段");
 });

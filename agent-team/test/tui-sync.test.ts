@@ -44,14 +44,32 @@ test("VIEWER_OVERLAY_OPTIONS 五字段逐字对齐 fleet overlayOptions（fleet.
   });
 });
 
-test("stop/refresh 动作键位对齐 fleet DEFAULT_FLEET_KEYBINDINGS（fleet.ts:46/43）", () => {
-  // 规格表：stop: ["D"]、refresh: ["r", "R"]（v0.66.0）。键位漂移即与 fleet
-  // 交互脱节——两步确认停止与手动刷新的按键契约锁死在这里。
-  assert.deepEqual(VIEWER_ACTION_KEYS.stop, ["D"]);
-  assert.deepEqual(VIEWER_ACTION_KEYS.refresh, ["r", "R"]);
+test("viewer 动作键位全面对齐 fleet DEFAULT_FLEET_KEYBINDINGS（fleet.ts:33-48）", () => {
+  // 规格表 §4（v0.66.0）：与 fleet 同名动作键集逐字一致（大写滚动键经
+  // matchesKey 大写→shift+小写转换判定）；agent-team 无 steer/inspect 对应
+  // 语义，未列入。键位漂移即与 fleet 交互脱节。
+  assert.deepEqual(VIEWER_ACTION_KEYS, {
+    close: ["escape", "ctrl+c", "q"],
+    scrollUp: ["K"],
+    scrollDown: ["J"],
+    selectUp: ["up", "k"],
+    selectDown: ["down", "j"],
+    selectFirst: ["home"],
+    selectLast: ["end"],
+    pageUp: ["pageUp"],
+    pageDown: ["pageDown"],
+    refresh: ["r", "R"],
+    stop: ["D"],
+    toggleTools: ["x", "X", "ctrl+o"],
+  });
 });
 
-test("viewer 图例含 D 停止 · r 刷新（fleet 停止/刷新动作的 agent-team 对应物）", () => {
+test("viewer 图例为 fleet footer 风格（含成员/滚动/翻页/工具行与特有 m/D/r/q）", () => {
+  assert.match(VIEWER_LEGEND, /↑↓ 成员/);
+  assert.match(VIEWER_LEGEND, /J\/K 滚动/);
+  assert.match(VIEWER_LEGEND, /PgUp\/PgDn 翻页/);
+  assert.match(VIEWER_LEGEND, /x 工具行/);
+  assert.match(VIEWER_LEGEND, /m 发消息/);
   assert.match(VIEWER_LEGEND, /D 停止/);
   assert.match(VIEWER_LEGEND, /r 刷新/);
   assert.match(VIEWER_LEGEND, /q 关闭/);

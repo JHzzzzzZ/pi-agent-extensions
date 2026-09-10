@@ -6,8 +6,9 @@
  * interval, and makes the block selectable: bare ↓/← (only while the
  * editor is empty — aligned to fleet-status) and alt+down/up (ungated
  * second channel) activate a modal selection; ↑/↓/j/k move the row
- * cursor, enter opens the transcript viewer on the row's actor, esc (or
- * any other key) leaves selection and — except for esc — passes the key
+ * cursor (到顶再按 ↑/k 退出选中，fleet-status 同构), enter opens the
+ * transcript viewer on the row's actor, esc (or any other key) leaves
+ * selection and — except for esc — passes the key
  * through to the editor untouched. Repaints skip when the render string
  * is unchanged (aligned to fleet-status renderKey).
  *
@@ -112,7 +113,8 @@ function isActivate(data: string): boolean {
  * Pure key reducer. Not selected: the activation keys are consumed (bare
  * ↓/← only when `canActivate` — editor empty; alt+↓/↑ always); everything
  * else reaches the editor untouched. Selected: up/down/j/k/enter/esc are
- * consumed; any other key deselects and passes through so typing and
+ * consumed — up/k 在第 0 行再按退出选中（fleet-status 同构，后续键到达
+ * 编辑器）；any other key deselects and passes through so typing and
  * ctrl+c keep working in the editor.
  */
 export function handleWidgetKey(
@@ -135,7 +137,13 @@ export function handleWidgetKey(
     return { type: "none" };
   }
 
-  if (matchesKey(data, "up") || matchesKey(data, "k")) return { type: "update", state: { selected: true, cursor: clamp(state.cursor - 1) } };
+  if (matchesKey(data, "up") || matchesKey(data, "k")) {
+    // 到顶退出（fleet-status.ts:620-625 同构）：选中第 0 行再按 up/k → 退出
+    // 选中放行编辑器（本次按键被消费，后续键到达编辑器）；退出时保持 cursor
+    // 供再次激活恢复。
+    if (state.cursor === 0) return { type: "update", state: { selected: false, cursor: state.cursor } };
+    return { type: "update", state: { selected: true, cursor: clamp(state.cursor - 1) } };
+  }
   if (matchesKey(data, "down") || matchesKey(data, "j")) return { type: "update", state: { selected: true, cursor: clamp(state.cursor + 1) } };
   if (matchesKey(data, "enter")) {
     return {

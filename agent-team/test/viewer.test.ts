@@ -217,7 +217,7 @@ test("renderViewerFrame renders the fleet split-frame structure", () => {
     assert.equal(visibleWidth(line), 80, "body rows are padded to the full width");
   }
   assert.match(frame[3 + bodyHeight], /^├─+┴─+┤$/, "lower separator");
-  assert.match(frame[3 + bodyHeight + 1], /↑↓ 滚动/, "legend row above the bottom border");
+  assert.match(frame[3 + bodyHeight + 1], /↑↓ 成员/, "legend row above the bottom border");
   assert.match(frame[3 + bodyHeight + 2], /^╰─+╯$/, "plain bottom border");
   for (const [index, line] of frame.entries()) {
     assert.equal(visibleWidth(line), 80, `line ${index} is exactly frame width`);
@@ -365,51 +365,87 @@ test("handleViewerKey 普通字符不关闭（ctrl+c 不被吞也不会误关）
   }
 });
 
-test("handleViewerKey scrolls, unfollows on up, and re-follows at the bottom", () => {
-  const up = handleViewerKey(initialViewerState(), "\x1b[A", keyCtx(50, 2, 10));
+test("handleViewerKey 滚动正文：Shift+K 上滚 unfollow、Shift+J 下滚到底 re-follow", () => {
+  // 滚动键对齐 fleet scrollUp: ["K"] / scrollDown: ["J"]（fleet.ts:35-36，
+  // 大写绑定→shift+小写经 matchesKey 判定）；小写 k/j 现在是成员切换键。
+  const up = handleViewerKey(initialViewerState(), "K", keyCtx(50, 2, 10));
   assert.ok(up.type === "update");
   assert.equal(up.state.follow, false);
   assert.equal(up.state.scroll, 39, "unfollow starts from the bottom minus one");
 
-  const down = handleViewerKey({ ...initialViewerState(), follow: false, scroll: 0 }, "\x1b[B", keyCtx(50, 2, 10));
+  const down = handleViewerKey({ ...initialViewerState(), follow: false, scroll: 0 }, "J", keyCtx(50, 2, 10));
   assert.ok(down.type === "update");
   assert.equal(down.state.scroll, 1);
   assert.equal(down.state.follow, false);
 
-  const toBottom = handleViewerKey({ ...initialViewerState(), follow: false, scroll: 39 }, "\x1b[B", keyCtx(50, 2, 10));
+  const toBottom = handleViewerKey({ ...initialViewerState(), follow: false, scroll: 39 }, "J", keyCtx(50, 2, 10));
   assert.ok(toBottom.type === "update");
   assert.equal(toBottom.state.follow, true, "reaching the bottom re-enables follow");
+});
 
+test("handleViewerKey PgUp/PgDn 翻页不变；g/G（旧滚动到顶/底）退役忽略", () => {
   const pageUp = handleViewerKey(initialViewerState(), "\x1b[5~", keyCtx(50, 2, 10));
   assert.ok(pageUp.type === "update");
   assert.equal(pageUp.state.scroll, 30, "page up from the bottom");
-  const home = handleViewerKey(initialViewerState(), "g", keyCtx(50));
-  assert.ok(home.type === "update");
-  assert.equal(home.state.follow, false);
-  assert.equal(home.state.scroll, 0);
+  assert.equal(pageUp.state.follow, false);
+
+  // 从底部再 PgDn：已在底，保持 follow；从 scroll 30 再 PgDn 一页到底 re-follow。
+  const pageDown = handleViewerKey(initialViewerState(), "\x1b[6~", keyCtx(50, 2, 10));
+  assert.ok(pageDown.type === "update");
+  assert.equal(pageDown.state.follow, true, "底部再 PgDn 保持 follow");
+  const pageDownHalf = handleViewerKey({ ...initialViewerState(), follow: false, scroll: 30 }, "\x1b[6~", keyCtx(50, 2, 10));
+  assert.ok(pageDownHalf.type === "update");
+  assert.equal(pageDownHalf.state.scroll, 40);
+  assert.equal(pageDownHalf.state.follow, true, "翻到底自动 re-follow");
+
+  for (const key of ["g", "G"]) {
+    const r = handleViewerKey(initialViewerState(), key, keyCtx(50, 2, 10));
+    assert.ok(r.type === "update");
+    assert.deepEqual(r.state, initialViewerState(), `退役键 ${JSON.stringify(key)} 不改状态`);
+  }
 });
 
-test("handleViewerKey switches actors with arrows, hjl, tab and number jumps", () => {
-  const right = handleViewerKey(initialViewerState(), "\x1b[C", keyCtx(10));
-  assert.ok(right.type === "update");
-  assert.equal(right.state.actorIndex, 1);
-  assert.equal(right.state.follow, true, "actor switch resets to follow");
+test("handleViewerKey ↑↓/j/k 切换成员（重置滚动 follow、首末钳位）", () => {
+  const down = handleViewerKey(initialViewerState(), "\x1b[B", keyCtx(10));
+  assert.ok(down.type === "update");
+  assert.equal(down.state.actorIndex, 1);
+  assert.equal(down.state.follow, true, "actor switch resets to follow");
+  assert.equal(down.state.scroll, 0, "actor switch resets scroll");
 
-  const leftFromZero = handleViewerKey(initialViewerState(), "\x1b[D", keyCtx(10));
-  assert.ok(leftFromZero.type === "update");
-  assert.equal(leftFromZero.state.actorIndex, 0, "clamped at the first actor");
+  const j = handleViewerKey(initialViewerState(), "j", keyCtx(10));
+  assert.ok(j.type === "update");
+  assert.equal(j.state.actorIndex, 1);
 
-  const jump = handleViewerKey(initialViewerState(), "2", keyCtx(10));
-  assert.ok(jump.type === "update");
-  assert.equal(jump.state.actorIndex, 1);
+  const upClamp = handleViewerKey(initialViewerState(), "\x1b[A", keyCtx(10));
+  assert.ok(upClamp.type === "update");
+  assert.equal(upClamp.state.actorIndex, 0, "clamped at the first actor");
+  assert.deepEqual(upClamp.state, initialViewerState(), "首行再按 ↑：状态不变");
 
-  const outOfRange = handleViewerKey(initialViewerState(), "9", keyCtx(10, 2, 10));
-  assert.ok(outOfRange.type === "update");
-  assert.equal(outOfRange.state.actorIndex, 0, "out-of-range jumps are ignored");
+  const k = handleViewerKey(initialViewerState(), "k", keyCtx(10));
+  assert.ok(k.type === "update");
+  assert.equal(k.state.actorIndex, 0);
 
-  const tab = handleViewerKey(initialViewerState(), "\t", keyCtx(10));
-  assert.ok(tab.type === "update");
-  assert.equal(tab.state.actorIndex, 1);
+  const endClamp = handleViewerKey({ ...initialViewerState(), actorIndex: 1 }, "\x1b[B", keyCtx(10));
+  assert.ok(endClamp.type === "update");
+  assert.equal(endClamp.state.actorIndex, 1, "clamped at the last actor");
+});
+
+test("handleViewerKey Home/End 跳首/末成员（fleet moveSelection(±items.length) 同构）", () => {
+  const home = handleViewerKey({ ...initialViewerState(), actorIndex: 1 }, "\x1b[H", keyCtx(10));
+  assert.ok(home.type === "update");
+  assert.equal(home.state.actorIndex, 0, "Home → first member");
+
+  const end = handleViewerKey(initialViewerState(), "\x1b[F", keyCtx(10, 3, 10));
+  assert.ok(end.type === "update");
+  assert.equal(end.state.actorIndex, 2, "End → last member");
+});
+
+test("handleViewerKey 旧成员/滚动键退役：←→/h/l/Tab/1-9 忽略不改状态", () => {
+  for (const key of ["\x1b[D", "\x1b[C", "h", "l", "\t", "1", "5", "9"]) {
+    const r = handleViewerKey(initialViewerState(), key, keyCtx(10));
+    assert.ok(r.type === "update", `键 ${JSON.stringify(key)} 应 update 不关闭`);
+    assert.deepEqual(r.state, initialViewerState(), `退役键 ${JSON.stringify(key)} 不改状态`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -524,13 +560,16 @@ test("图例行独立于底边框：含 D 停止/r 刷新/q 关闭与成员位�
   assert.match(frame[frame.length - 1], /^╰─+╯$/, "底边框纯边框，无内嵌文案");
 });
 
-test("handleViewerKey toggles tool rows and ignores unknown keys", () => {
-  const toggled = handleViewerKey(initialViewerState(), "x", keyCtx(10));
-  assert.ok(toggled.type === "update");
-  assert.equal(toggled.state.showTools, false);
-  const again = handleViewerKey(toggled.state as ViewerState, "x", keyCtx(10));
-  assert.ok(again.type === "update");
-  assert.equal(again.state.showTools, true);
+test("handleViewerKey toggles tool rows with x/X/ctrl+o（fleet toggleTools 键集）", () => {
+  // fleet toggleTools: ["x", "X", "ctrl+o"]（fleet.ts:48，规格表 §4）。
+  for (const key of ["x", "X", "\x0f"]) {
+    const toggled = handleViewerKey(initialViewerState(), key, keyCtx(10));
+    assert.ok(toggled.type === "update");
+    assert.equal(toggled.state.showTools, false, `键 ${JSON.stringify(key)} 应关闭工具行`);
+    const again = handleViewerKey(toggled.state as ViewerState, key, keyCtx(10));
+    assert.ok(again.type === "update");
+    assert.equal(again.state.showTools, true, `再按 ${JSON.stringify(key)} 应恢复`);
+  }
 
   const ignored = handleViewerKey(initialViewerState(), "Z", keyCtx(10));
   assert.ok(ignored.type === "update");
