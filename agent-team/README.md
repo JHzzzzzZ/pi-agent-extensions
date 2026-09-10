@@ -92,21 +92,20 @@ members:
 agent-team dev-team · ↓/← 查看详情
 ```
 
-按 `↓`/`←`（焦点在主编辑器且编辑器为空）或 `alt+↓`/`alt+↑` 展开为 **team/成员树**（单 run 单 team；`main` = 主 agent 根节点，leader 挂成员，末行任务）：
+按 `↓`/`←`（焦点在主编辑器且编辑器为空）或 `alt+↓`/`alt+↑` 展开为 **team/成员树**（单 run 单 team；`main` = 主 agent 根节点，leader 行内嵌任务摘要，成员挂在其下；**末行恒为成员行**）：
 
 ```text
 main
-leader dev-team ▶ running · 3m12s · 2/3 并行
+leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3 并行
   |- frontend ● running · 正在改 login.tsx
   |- backend ✓ done
   |- reviewer · queued
-任务: 重构登录模块并补齐单测
 ↑↓ 选择 · enter 查看 · esc 退出
 ```
 
-- leader 行：`leader <团队> ▶ running · 耗时 · N/M 并行`（配了费用上限且未超限时附 ` · 剩 $X.XX`）。
+- leader 行：`leader <团队> · <任务摘要> ▶ running · 耗时 · N/M 并行`（配了费用上限且未超限时附 ` · 剩 $X.XX`）；任务摘要 44 字符截断，多行文本先压平。
 - 成员行：`|- <成员名> <图标> <状态>[ · <尾注>]`；图标 `·` queued / `●` running / `✓` done / `✗` failed / `⊘` aborted；尾注取 note，否则取最新活动，压平换行后 ≤30 字符。
-- 任务行：`任务: <44 字符截断>`（多行文本先压平成单行）。
+- 任务摘要不占独立行（v1.13.1，用户真机反馈）：否则末行是任务行、`enter` 却打开 leader，像“选不中成员”的陷阱；现在 `↓`/`j` 到底就是最后一个成员，`enter` 直达该成员。
 - `esc` 或第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中，在 leader/成员行打开查看器并定位到对应 actor。
 
 ```text
@@ -132,7 +131,7 @@ agent-team count-duet · ↓/← 查看详情
 | `esc` | 退出选中并收回折叠 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget(key, string[], { placement: "belowEditor" })`——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由快照决定（`running` ⇒ string[] 帧；落定 ⇒ `setWidget(key, undefined)` 卸载）；**刷新双触发**：coordinator `onProgress` 状态变化点事件即时重绘 + 1s aligned ticker（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`）兜底，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey；折叠行不含时间 → 未展开时不逐秒 churn）；宿主自行包装渲染是跨宿主构建最稳的路径（组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行，`docs/tui-sync.md` §3.1）；行投影 `buildWidgetView` 产出「折叠单行 + 展开树」（`main`/`leader`/成员/任务行），`renderWidgetView` 按 `selected` 选分支；任务/成员尾注文本先 `\s+` 压平再截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
+实现：`setWidget(key, string[], { placement: "belowEditor" })`——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由快照决定（`running` ⇒ string[] 帧；落定 ⇒ `setWidget(key, undefined)` 卸载）；**刷新双触发**：coordinator `onProgress` 状态变化点事件即时重绘 + 1s aligned ticker（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`）兜底，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey；折叠行不含时间 → 未展开时不逐秒 churn）；宿主自行包装渲染是跨宿主构建最稳的路径（组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行，`docs/tui-sync.md` §3.1）；行投影 `buildWidgetView` 产出「折叠单行 + 展开树」（`main`/`leader`（含任务摘要）/成员行），`renderWidgetView` 按 `selected` 选分支；任务摘要/成员尾注文本先 `\s+` 压平再截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
@@ -171,7 +170,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_status`（查运行状态，含 runId 与预算）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
 - 命令：裸 `/team`（无参=列团队；带参=用法）+ 独立冒号命令 `/team:list`/`:run`/`:status`/`:stop`/`:view`（内含 `m` 发消息直接对话）/`:clear`/`:doctor`；派单统一 `/team:run <团队名> <任务>`（团队名可与子命令同名，v1.12.0 保留词概念退役）
-- Widget：输入栏下方可选中亮块（数据驱动：有活跃 run 才挂帧、落定自动卸载；默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开为 `main → leader → 成员 → 任务` 树）——`main` 行 `enter` 只收起选中，leader/成员行 `enter` 直达查看器对应 actor（仅 TUI 模式，详见 §4）
+- Widget：输入栏下方可选中亮块（数据驱动：有活跃 run 才挂帧、落定自动卸载；默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员` 树，末行恒为成员行）——`main` 行 `enter` 只收起选中，leader/成员行 `enter` 直达查看器对应 actor（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏分栏会话记录查看器——左栏成员 roster、右栏成员对话/工具调用/错误实时可读（仅交互式 TUI）
 
 ## 开发与测试
@@ -179,7 +178,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（322 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（323 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

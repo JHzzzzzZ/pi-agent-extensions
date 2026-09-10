@@ -73,23 +73,23 @@ function doneSnapshot(): RunStatusSnapshot {
   };
 }
 
-/** Main/leader/member/task tree rows for liveSnapshot at 1m5s. */
+/** Main/leader/members tree rows for liveSnapshot at 1m5s（任务摘要并入 leader 行，无独立任务行）。 */
 const LIVE_ROWS: WidgetRowSpec[] = [
   { text: "main", actor: "_leader", kind: "root" },
-  { text: "leader dev-team ▶ running · 1m5s · 1/2 并行", actor: "_leader", kind: "leader" },
+  { text: "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行", actor: "_leader", kind: "leader" },
   { text: "|- frontend ● running · turn 1", actor: "frontend", kind: "member" },
   { text: "|- backend ✓ done", actor: "backend", kind: "member" },
-  { text: "任务: 修复登录 bug", actor: "_leader", kind: "leader" },
 ];
 
 // ---------------------------------------------------------------------------
 // Tree projection (pure)
 // ---------------------------------------------------------------------------
 
-test("buildWidgetView live: collapsed one-liner + main→leader→成员→任务 tree (rows/kind/actor)", () => {
+test("buildWidgetView live: collapsed one-liner + main→leader→成员 tree（任务摘要进 leader 行，无独立任务行）", () => {
   const view = buildWidgetView(liveSnapshot(), 65000);
   assert.equal(view.collapsed, "agent-team dev-team · ↓/← 查看详情", "running 折叠行：团队 + 激活提示");
-  assert.deepEqual(view.rows, LIVE_ROWS, "树行序：main → leader → 成员 → 任务");
+  assert.deepEqual(view.rows, LIVE_ROWS, "树行序：main → leader（含任务摘要）→ 成员");
+  assert.equal(view.rows.at(-1)?.kind, "member", "末行是成员行（无任务行陷阱：光标到底即成员）");
 });
 
 test("buildWidgetView member rows: 五种状态图标 queued · / running ● / done ✓ / failed ✗ / aborted ⊘", () => {
@@ -132,7 +132,7 @@ test("buildWidgetView member tail: note 优先、否则 latest；压平换行且
   for (const row of rows) assert.doesNotMatch(row.text, /\n/, "任何 row 文本不得含换行（宿主要把残行渲染成额外行）");
 });
 
-test("buildWidgetView leader row: team + elapsed + running/total；配了费用上限且未超限才显示 剩 $X.XX", () => {
+test("buildWidgetView leader row: 团队 + 任务摘要 + elapsed + running/total；配了费用上限且未超限才显示 剩 $X.XX", () => {
   const base = liveSnapshot();
   const budget = {
     maxDispatchCalls: 12,
@@ -145,7 +145,10 @@ test("buildWidgetView leader row: team + elapsed + running/total；配了费用�
     memberRuns: 2,
   };
   base.progress!.budget = budget;
-  assert.equal(buildWidgetView(base, 65000).rows[1].text, "leader dev-team ▶ running · 1m5s · 1/2 并行 · 剩 $4.58");
+  assert.equal(
+    buildWidgetView(base, 65000).rows[1].text,
+    "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行 · 剩 $4.58",
+  );
 
   // No cap → no hint.
   const uncapped = liveSnapshot();
@@ -156,6 +159,11 @@ test("buildWidgetView leader row: team + elapsed + running/total；配了费用�
   const breached = liveSnapshot();
   breached.progress!.budget = { ...budget, spentCost: 5.2 };
   assert.doesNotMatch(buildWidgetView(breached, 65000).rows[1].text, /剩 \$/);
+
+  // 空任务：任务摘要段整体省略（不留双分隔符/悬空空格）。
+  const noTask = liveSnapshot();
+  noTask.progress!.task = "   ";
+  assert.equal(buildWidgetView(noTask, 65000).rows[1].text, "leader dev-team ▶ running · 1m5s · 1/2 并行");
 });
 
 test("buildWidgetView 终态（running=false）：空投影（终态亮块自动卸载，行数据不进 widget）", () => {
@@ -173,16 +181,17 @@ test("buildWidgetView running 但 progress 为空：防御性空投影", () => {
   });
 });
 
-test("buildWidgetView 任务行：压平换行 + 44 字符截断 + 折叠行压平（截图实读回归）", () => {
+test("buildWidgetView leader 行任务摘要：压平换行 + 44 字符截断 + 折叠行压平（截图实读回归）", () => {
   const snapshot = liveSnapshot();
   snapshot.progress!.task = "目标: 输出小写单词 hello。\n特别注意：这是对 count-duet 的一次复用任务";
   const view = buildWidgetView(snapshot, 65000);
-  assert.match(view.rows[4].text, /^任务: 目标: 输出小写单词 hello。 特别注意：/);
+  assert.equal(view.rows[1].text, "leader dev-team · 目标: 输出小写单词 hello。 特别注意：这是对 count-duet 的一次复用任… ▶ running · 1m5s · 1/2 并行");
 
   const long = liveSnapshot();
   long.progress!.task = `${"a".repeat(30)}\n${"b".repeat(30)}   ${"c".repeat(10)}`;
-  const task = buildWidgetView(long, 65000).rows[4].text.replace(/^任务: /, "");
-  assert.ok(task.length <= 45, `bounded task text, got ${task.length}`);
+  const leader = buildWidgetView(long, 65000).rows[1].text;
+  const task = leader.slice("leader dev-team · ".length, leader.indexOf(" ▶ running"));
+  assert.ok(task.length <= 45, `bounded task summary, got ${task.length}`);
   assert.match(task, /…$/);
   assert.doesNotMatch(task, /\s$/);
 
@@ -273,9 +282,10 @@ test("key reducer selected: arrows move and clamp；enter 返回命中行（含 
   const root = handleWidgetKey({ selected: true, cursor: 0 }, KEY_ENTER, rows);
   assert.ok(root.type === "confirm" && root.row.kind === "root" && root.row.text === "main");
 
-  // 底部钳位保留；到顶（cursor 0）再按 up 退出选中（fleet-status 同构，见下）。
-  const bottom = handleWidgetKey({ selected: true, cursor: 4 }, KEY_DOWN, rows);
-  assert.ok(bottom.type === "update" && bottom.state.cursor === 4 && bottom.state.selected);
+  // 底部钳位保留（末行 = 成员行；无任务行陷阱）；到顶（cursor 0）再按 up 退出选中（fleet-status 同构，见下）。
+  const last = rows.length - 1;
+  const bottom = handleWidgetKey({ selected: true, cursor: last }, KEY_DOWN, rows);
+  assert.ok(bottom.type === "update" && bottom.state.cursor === last && bottom.state.selected);
 });
 
 test("key reducer selected: cursor 0 再按 up/k 退出选中放行编辑器（fleet-status 同构）", () => {
@@ -326,15 +336,14 @@ test("renderWidgetView collapsed: exactly one line with the activation hint and 
   assert.doesNotMatch(lines[0], /任务:/);
 });
 
-test("renderWidgetView expanded: main/leader/成员/任务 rows + bottom hint, gutter on the cursor row", () => {
+test("renderWidgetView expanded: main/leader（含任务摘要）/成员 rows + bottom hint, gutter on the cursor row", () => {
   const view = buildWidgetView(liveSnapshot(), 65000);
   const lines = renderWidgetView(view, { selected: true, cursor: 1 }, 80, plainStyles());
   assert.equal(lines.length, view.rows.length + 1, "展开 = rows + 底部提示行");
   assert.match(lines[0], /^ {2}main$/);
-  assert.match(lines[1], /^▸ leader dev-team/);
+  assert.match(lines[1], /^▸ leader dev-team · 修复登录 bug ▶ running/);
   assert.match(lines[2], /^ {2}\|- frontend ● running/);
   assert.match(lines[3], /^ {2}\|- backend ✓ done$/);
-  assert.match(lines[4], /^ {2}任务: /);
   assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
 });
 
