@@ -307,13 +307,14 @@ test("链式派单间隙不闪卸载：refreshWidget 在 chat.onRunFinalized 之
     assert.notEqual(started.isError, true);
     const first = await waitForChild(host.spawn, 0);
 
-    // viewer 中排队一条消息（run 运行中 → 入队，不派新 run）。
+    // viewer 中选定成员并排队一条消息（成员无 steer 通道 → run 运行中入队）。
     const view = host.pi.commands.get("team:view");
     assert.ok(view);
     const closable = closableViewCtx();
     void view.handler("", closable.ctx as never);
     await sleep(30);
     const viewer = closable.component();
+    viewer.handleInput("j");
     viewer.handleInput("m");
     viewer.handleInput("你");
     viewer.handleInput("好");
@@ -333,7 +334,11 @@ test("链式派单间隙不闪卸载：refreshWidget 在 chat.onRunFinalized 之
       host.capture.frames.slice(mark).every((frame) => Array.isArray(frame)),
       `链式派单间隙不得出现卸载帧，实得 ${JSON.stringify(host.capture.frames.slice(mark))}`,
     );
-    assert.match(host.spawn.records[1]!.args.join(" "), /你好/, "排队的消息经链式派单送达第二个 run");
+    assert.match(
+      String(JSON.parse(host.spawn.children[1]?.writes[0] ?? "{}").message ?? ""),
+      /你好/,
+      "排队的消息经链式派单送达第二个 run",
+    );
   } finally {
     await host.cleanup();
   }

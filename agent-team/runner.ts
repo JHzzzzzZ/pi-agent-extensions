@@ -49,7 +49,7 @@ export function defaultSpawn(): PiSpawn {
       cwd: opts.cwd,
       env: opts.env,
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
     const adapter: PiChildProcess = {
       pid: child.pid,
@@ -61,6 +61,22 @@ export function defaultSpawn(): PiSpawn {
       stderr: {
         on(event, cb) {
           if (event === "data") child.stderr?.on("data", (chunk: Buffer) => cb(chunk));
+        },
+      },
+      stdin: {
+        write(data) {
+          try {
+            child.stdin?.write(data);
+          } catch {
+            /* child already gone — the caller's run settles via close */
+          }
+        },
+        end() {
+          try {
+            child.stdin?.end();
+          } catch {
+            /* child already gone */
+          }
         },
       },
       on(event, cb) {
@@ -91,6 +107,16 @@ export interface RunChildOptions {
   onEvent?: (event: ChildEvent) => void;
   /** Called once right after a successful spawn with the child's OS pid. */
   onSpawn?: (pid: number | undefined) => void;
+  /**
+   * Called once right after a successful spawn with the child handle — the
+   * leader RPC channel uses this to write its prompt command.
+   */
+  onChild?: (child: PiChildProcess) => void;
+  /**
+   * Every parsed JSON object on stdout, before event mapping (RPC responses
+   * and `agent_settled` are only visible here). Observer failures are ignored.
+   */
+  onWire?: (message: Record<string, unknown>) => void;
   /** Test seam: SIGTERM→SIGKILL grace period (default 5000ms). */
   killGraceMs?: number;
 }
@@ -159,7 +185,7 @@ export function textTail(text: string, max = 160): string {
  * the child (SIGTERM, then SIGKILL after `killGraceMs`).
  */
 export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome> {
-  const { command, args, cwd, env, spawn: spawnFn, signal, onEvent, onSpawn } = options;
+  const { command, args, cwd, env, spawn: spawnFn, signal, onEvent, onSpawn, onChild } = options;
   const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
   const outcome: ChildOutcome = {
     exitCode: 0,
@@ -209,6 +235,11 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
     } catch {
       /* observer failures never break the run */
     }
+    try {
+      onChild?.(spawned);
+    } catch {
+      /* observer failures never break the run */
+    }
 
     let buffer = "";
     let spawnErrorMessage = "";
@@ -221,6 +252,11 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
     const processLine = (line: string) => {
       const event = parseLine(line);
       if (!event) return;
+      try {
+        options.onWire?.(event as Record<string, unknown>);
+      } catch {
+        /* observer failures never break the run */
+      }
       const msg = event.message;
       if (event.type === "message_end" && msg) {
         const role = msg.role ?? "unknown";

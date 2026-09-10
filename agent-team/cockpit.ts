@@ -27,6 +27,8 @@ import {
   resolveRunBudget,
   type ChildEvent,
   type MemberProgress,
+  type PiChildProcess,
+  type PiChildStdin,
   type PiSpawn,
   type RunProgress,
   type RunStatus,
@@ -195,6 +197,10 @@ export class TeamRunCoordinator {
   private pending: Promise<StartRunResult> | null = null;
   private currentProgress: RunProgress | null = null;
   private lastRecord: TeamRunRecord | null = null;
+  /** Leader RPC stdin (prompt/steer commands) — live only while a run is active. */
+  private leaderStdin: PiChildStdin | undefined;
+  /** Set when pi rejects the initial prompt (no agent run, so no settle event). */
+  private promptError: string | undefined;
 
   constructor(deps: CoordinatorDeps) {
     this.deps = deps;
@@ -222,6 +228,34 @@ export class TeamRunCoordinator {
     if (!this.active) return false;
     this.active.abort();
     return true;
+  }
+
+  /**
+   * Injects a user message into the running leader (RPC `steer`): pi hands
+   * it to the agent at the next turn boundary — the current task is not
+   * interrupted. Returns false when no leader stdin channel is live (no
+   * active run / spawn pending / write failure) so callers fall back to
+   * queue semantics instead.
+   */
+  steerLeader(message: string): boolean {
+    if (!this.active || !this.leaderStdin) return false;
+    try {
+      this.leaderStdin.write(`${JSON.stringify({ type: "steer", message })}\n`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Ends the leader's stdin — RPC mode exits its process when stdin ends. */
+  private closeLeaderStdin(): void {
+    const stdin = this.leaderStdin;
+    this.leaderStdin = undefined;
+    try {
+      stdin?.end();
+    } catch {
+      /* the run settles via the child's close event regardless */
+    }
   }
 
   /**
@@ -322,6 +356,10 @@ export class TeamRunCoordinator {
     // (this.pending), and team_run can read the runId right after start().
     const controller = new AbortController();
     this.active = controller;
+    // Fresh RPC channel state for this run (stale handles from the previous
+    // run must never swallow a steer or a settle).
+    this.leaderStdin = undefined;
+    this.promptError = undefined;
     const progress: RunProgress = {
       runId,
       team: team.name,
@@ -542,12 +580,15 @@ export class TeamRunCoordinator {
       };
 
       const leaderPrompt = buildLeaderSystemPrompt(team, sharedWorktree);
-      const args: string[] = ["--mode", "json", "-p", "--no-session"];
+      // RPC mode (not `json -p`): the leader keeps its stdin open while it
+      // runs, which is the channel steering (viewer mid-run messages) and
+      // clean shutdown use. The task travels as the initial `prompt` command
+      // (not argv) and the run ends when `agent_settled` closes stdin.
+      const args: string[] = ["--mode", "rpc", "--no-session"];
       if (team.leader.model) args.push("--model", team.leader.model);
       if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
       if (this.deps.extensionEntryPath) args.push("-e", this.deps.extensionEntryPath);
       args.push("--append-system-prompt", `team-tmp://${leaderPrompt}`);
-      args.push(`Task: ${task}`);
 
       const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
       const leaderCwd = sharedWorktree?.path ?? baseCwd;
@@ -576,10 +617,34 @@ export class TeamRunCoordinator {
           leaderPid = pid;
           this.persistRunStatus({ runId, team: team.name, task, startedAt: now(), status: "running", leaderPid: pid, now });
         },
+        // RPC channel: send the task once the child exists …
+        onChild: (child) => {
+          this.leaderStdin = child.stdin;
+          try {
+            child.stdin?.write(`${JSON.stringify({ type: "prompt", id: "task", message: `Task: ${task}` })}\n`);
+          } catch {
+            /* the spawn/exit path settles this run */
+          }
+        },
+        // … and close stdin at settle (or prompt rejection) so the RPC
+        // process exits — it only ever returns on stdin end.
+        onWire: (message) => {
+          if (message.type === "agent_settled") {
+            this.closeLeaderStdin();
+            return;
+          }
+          if (message.command === "prompt" && message.success === false) {
+            this.promptError =
+              typeof message.error === "string" ? message.error : "pi rejected the leader prompt";
+            this.closeLeaderStdin();
+          }
+        },
       });
 
       const aborted = controller.signal.aborted;
-      const failed = !aborted && (outcome.exitCode !== 0 || outcome.stopReason === "error" || !!outcome.errorMessage);
+      const failed =
+        !aborted &&
+        (outcome.exitCode !== 0 || outcome.stopReason === "error" || !!outcome.errorMessage || !!this.promptError);
 
       // Fold per-member results from every team_dispatch tool_execution_end.
       const dispatchResults = outcome.events.flatMap((event) =>
@@ -624,7 +689,10 @@ export class TeamRunCoordinator {
         ...(failed
           ? {
               error: truncateUtf8(
-                outcome.errorMessage || outcome.stderr || `pi exited with code ${outcome.exitCode}`,
+                outcome.errorMessage ||
+                  this.promptError ||
+                  outcome.stderr ||
+                  `pi exited with code ${outcome.exitCode}`,
                 2000,
               ),
             }
@@ -650,6 +718,8 @@ export class TeamRunCoordinator {
       writeTerminal("failed", `failed to start leader process: ${message}`);
       return { ok: false, code: "CHILD_FAILED", message: `failed to start leader process: ${message}` };
     } finally {
+      this.closeLeaderStdin();
+      this.promptError = undefined;
       this.active = null;
       this.pending = null;
       this.currentProgress = null;

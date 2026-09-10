@@ -166,30 +166,42 @@ async function openViewer(host: HostFixture): Promise<ViewerComponentLike> {
   }
 }
 
-test("链式派出：run 运行中提交 → 排队 notice；run 落定后自动派出含用户消息的新 run", async () => {
+test("链式派出：成员目标排队 → 落定后链发；leader 目标运行中 → steer 插话", async () => {
   const host = await setupHost();
   try {
     await startBackgroundRun(host);
     const viewer = await openViewer(host);
 
-    // leader 选中态直接发消息：run 运行中 → 排队。
+    // leader 目标 + run 运行中 → RPC steer 插话（写入 leader stdin，不排队不派单）。
+    viewer.handleInput("m");
+    viewer.handleInput("插");
+    viewer.handleInput("话");
+    viewer.handleInput("\r");
+    assert.match(viewer.render(100).join("\n"), /已插话给 leader（steer）/, "运行中 leader 消息 → 插话");
+    const first = host.spawn.children[0];
+    assert.ok(first);
+    const steered = JSON.parse(first.writes[1] ?? "{}");
+    assert.equal(steered.type, "steer");
+    assert.match(steered.message ?? "", /插话/);
+    assert.equal(host.spawn.children.length, 1, "插话不派新 run");
+
+    // 成员目标（成员无 steer 通道）→ run 运行中仍排队。
+    viewer.handleInput("j");
     viewer.handleInput("m");
     viewer.handleInput("你");
     viewer.handleInput("好");
     viewer.handleInput("\r");
-    const queuedFrame = viewer.render(100).join("\n");
-    assert.match(queuedFrame, /消息已排队/, "运行中提交 → 排队 notice");
+    assert.match(viewer.render(100).join("\n"), /消息已排队/, "成员目标运行中提交 → 排队 notice");
     assert.equal(host.spawn.children.length, 1, "排队期间不派新 run");
 
-    // 首个 run 落定（completed）→ 链式派出新 run，task 含用户消息 + 上文尾部。
-    const first = host.spawn.children[0];
-    assert.ok(first);
+    // 首个 run 落定（completed）→ 链式派出新 run，task 含用户消息（经 stdin prompt）。
     first.emitClose(0);
     await waitFor(() => host.spawn.records.length >= 2, "链式派出第二个 leader");
-    const secondArgs = host.spawn.records[1]?.args.join(" ") ?? "";
-    assert.match(secondArgs, /【用户消息】/, "新 run 的 task 携带用户消息模板");
-    assert.match(secondArgs, /你好/, "新 run 的 task 携带消息原文");
-    assert.match(secondArgs, /最近会话尾部/, "新 run 的 task 携带上一 run transcript 尾部");
+    const second = host.spawn.children[1];
+    assert.ok(second);
+    const secondPrompt = String(JSON.parse(second.writes[0] ?? "{}").message ?? "");
+    assert.match(secondPrompt, /【用户消息·请转派】/, "新 run 的 task 携带转派模板");
+    assert.match(secondPrompt, /你好/, "新 run 的 task 携带消息原文");
     viewer.dispose();
   } finally {
     await host.cleanup();
@@ -202,6 +214,7 @@ test("viewer D 停止：排队消息一并丢弃，无链式派出", async () =>
     await startBackgroundRun(host);
     const viewer = await openViewer(host);
 
+    viewer.handleInput("j"); // 成员目标（leader 无队列可丢弃）
     viewer.handleInput("m");
     viewer.handleInput("被");
     viewer.handleInput("停");
@@ -266,7 +279,9 @@ test("已完成 run 上发消息：立即派单（不排队）", async () => {
     const frame = viewer.render(100).join("\n");
     assert.match(frame, /已发送给 leader/, "已结束的 run 上直接派新 run");
     await waitFor(() => host.spawn.records.length >= 2, "立即派第二个 leader");
-    assert.match(host.spawn.records[1]?.args.join(" ") ?? "", /新/);
+    const second = host.spawn.children[1];
+    assert.ok(second);
+    assert.match(String(JSON.parse(second.writes[0] ?? "{}").message ?? ""), /新/);
     viewer.dispose();
   } finally {
     await host.cleanup();

@@ -1,11 +1,13 @@
 /**
  * agent-team — viewer 直接对话（派单语义）
  *
- * 架构约束：成员子进程由 leader 进程派生、leader 由 cockpit 派生——cockpit
- * 没有任何通道向运行中的子进程注入消息。因此"viewer 里和成员/leader 对话"
- * 的唯一可行语义是派单：每条消息编成一个新 run 的 task（附带目标 actor 的
- * transcript 尾部作上文），复用 startBackgroundRun（含 model 预检）派出；
- * 当前 run 在跑则消息排队，run 落定（completed）后自动链式派出。
+ * 架构约束：成员子进程由 leader 进程派生，cockpit 没有通道向成员注入消息；
+ * 但 leader 以 `--mode rpc` 拉起，cockpit 持有其 stdin——因此：(a) 目标是
+ * leader 且 run 运行中时用 RPC `steer` 插话（当前回合边界送达，不打断任务）；
+ * (b) 其余情况（目标是成员 / steer 不可用 / run 已落定）走派单语义：每条
+ * 消息编成一个新 run 的 task（附带目标 actor 的 transcript 尾部作上文），
+ * 复用 startBackgroundRun（含 model 预检）派出；当前 run 在跑则消息排队，
+ * run 落定（completed）后自动链式派出。
  *
  * 本模块是纯逻辑层：task 模板、上文尾部截断、FIFO 队列与链式门控全部依赖
  * 注入（resolveTeam/startRun/contextTail/notify），不触进程与文件系统。
@@ -43,6 +45,7 @@ export interface ChatSession {
 export type ChatSubmitOutcome =
   | { kind: "started"; runId: string }
   | { kind: "queued"; pending: number }
+  | { kind: "steered" }
   | { kind: "rejected"; message: string };
 
 export interface ChatCoordinatorDeps {
@@ -56,6 +59,11 @@ export interface ChatCoordinatorDeps {
   ) => { ok: true; runId: string } | { ok: false; code: string; message: string };
   /** 目标 actor 的 transcript 尾部（宿主实现按当前/最近 runId 现读）。 */
   contextTail: (actor: string) => string;
+  /**
+   * 向运行中的 leader 插话（RPC steer：当前回合边界送达，不打断任务）。
+   * 不可用时返回 false，提交回退到队列语义。
+   */
+  steerLeader?: (message: string) => boolean;
 }
 
 /**
@@ -90,6 +98,14 @@ export function transcriptContextTail(entries: TranscriptEntry[], maxBytes: numb
 }
 
 /**
+ * 插话文本（steer 通道）：带 ``【用户消息·插话】`` 标记，让 leader 能区分
+ * 这是会话查看器里的即时插话，不是新任务派单。
+ */
+export function buildSteerMessage(message: string): string {
+  return `【用户消息·插话】用户在会话查看器里插话，请在不中断当前任务的前提下尽快回应：\n${message}`;
+}
+
+/**
  * viewer 对话队列 + 链式派出门控。队列驻留在 cockpit 扩展状态，不落盘——
  * 会话重启丢队列可接受（run 元数据已有落盘，对话队列属易失交互态）。
  */
@@ -108,11 +124,15 @@ export class ChatCoordinator {
   }
 
   /**
-   * 提交一条消息：run 运行中入队；否则立即派单。先入队再判定，run 恰在
-   * 提交间隙落定时走本路径立即派出，不会滞留。
+   * 提交一条消息：目标是 leader 且 run 运行中、steer 通道可用 → 直接插话
+   * （RPC steer，不打断任务、不排队）；否则 run 运行中入队；run 空闲则立即
+   * 派单。先入队再判定，run 恰在提交间隙落定时走本路径立即派出，不滞留。
    */
   submit(session: ChatSession, target: ChatTarget, message: string): ChatSubmitOutcome {
     this.session = session;
+    if (target.isLeader && this.deps.isRunning() && this.deps.steerLeader?.(buildSteerMessage(message))) {
+      return { kind: "steered" };
+    }
     this.queue.push({ targetLabel: target.label, message });
     if (this.deps.isRunning()) return { kind: "queued", pending: this.queue.length };
     return this.dispatchNext(session);
@@ -194,6 +214,11 @@ export function chatSubmitNotice(
       return {
         text: `run 进行中，消息已排队（第 ${outcome.pending} 条），run 落定后自动发送`,
         kind: "warning",
+      };
+    case "steered":
+      return {
+        text: `已插话给 ${label}（steer）：不打断当前任务，leader 会在当前回合结束后尽快回应`,
+        kind: "success",
       };
     case "rejected":
       return { text: `发送失败：${outcome.message}`, kind: "error" };

@@ -13,6 +13,7 @@ import {
   CHAT_CONTEXT_TAIL_BYTES,
   ChatCoordinator,
   buildChatTask,
+  buildSteerMessage,
   chatSubmitNotice,
   transcriptContextTail,
   type ChatMessage,
@@ -102,24 +103,31 @@ function fakeDeps(overrides: {
   team?: { ok: true; value: ReturnType<typeof fixtureTeam> } | { ok: false; message: string };
   startError?: string;
   tail?: string;
+  steer?: (message: string) => boolean;
 } = {}) {
   const starts: FakeStartRecord[] = [];
   const notes: Array<{ text: string; level: string }> = [];
-  return {
-    deps: {
-      resolveTeam: (name: string) =>
-        overrides.team ?? { ok: true as const, value: fixtureTeam({ name }) },
-      isRunning: () => overrides.running ?? false,
-      startRun: (_ctx: unknown, team: { name: string }, task: string) => {
-        if (overrides.startError) return { ok: false as const, code: "X", message: overrides.startError };
-        starts.push({ teamName: team.name, task });
-        return { ok: true as const, runId: `run-${starts.length}` };
-      },
-      contextTail: (_actor: string) => overrides.tail ?? "[assistant] 旧上下文",
+  const steers: string[] = [];
+  const deps = {
+    resolveTeam: (name: string) =>
+      overrides.team ?? { ok: true as const, value: fixtureTeam({ name }) },
+    isRunning: () => overrides.running ?? false,
+    startRun: (_ctx: unknown, team: { name: string }, task: string) => {
+      if (overrides.startError) return { ok: false as const, code: "X", message: overrides.startError };
+      starts.push({ teamName: team.name, task });
+      return { ok: true as const, runId: `run-${starts.length}` };
     },
-    starts,
-    notes,
+    contextTail: (_actor: string) => overrides.tail ?? "[assistant] 旧上下文",
+    ...(overrides.steer
+      ? {
+          steerLeader: (message: string) => {
+            steers.push(message);
+            return overrides.steer!(message);
+          },
+        }
+      : {}),
   };
+  return { deps, starts, notes, steers };
 }
 
 const leaderTarget = { actor: LEADER_ACTOR, label: "leader", isLeader: true };
@@ -224,6 +232,44 @@ test("chatSubmitNotice：三种结果映射为 notice 文案", () => {
   assert.match(chatSubmitNotice({ kind: "queued", pending: 2 }, "frontend").text, /2/);
   assert.equal(chatSubmitNotice({ kind: "rejected", message: "boom" }, "frontend").kind, "error");
   assert.match(chatSubmitNotice({ kind: "rejected", message: "boom" }, "frontend").text, /boom/);
+  const steered = chatSubmitNotice({ kind: "steered" }, "leader");
+  assert.equal(steered.kind, "success");
+  assert.match(steered.text, /已插话/);
+  assert.match(steered.text, /不打断/);
+});
+
+test("submit：run 运行中 + leader 目标 + steer 可用 → 插话（不排队、不派单）", () => {
+  const fake = fakeDeps({ running: true, steer: () => true });
+  const chat = new ChatCoordinator(fake.deps);
+  const outcome = chat.submit(session(fake), leaderTarget, "数数途中打个招呼");
+  assert.deepEqual(outcome, { kind: "steered" });
+  assert.equal(fake.starts.length, 0, "不派新 run");
+  assert.equal(chat.size, 0, "不进队列");
+  assert.equal(fake.steers.length, 1);
+  assert.deepEqual(fake.steers[0], buildSteerMessage("数数途中打个招呼"));
+  assert.match(fake.steers[0] ?? "", /【用户消息·插话】/);
+});
+
+test("submit：steer 失败回退队列；成员目标不尝试 steer（无通道）", () => {
+  const fake = fakeDeps({ running: true, steer: () => false });
+  const chat = new ChatCoordinator(fake.deps);
+  assert.deepEqual(chat.submit(session(fake), leaderTarget, "leader 消息"), { kind: "queued", pending: 1 });
+  assert.equal(fake.steers.length, 1, "尝试过 steer 才回退");
+
+  const memberFake = fakeDeps({ running: true, steer: () => true });
+  const memberChat = new ChatCoordinator(memberFake.deps);
+  assert.deepEqual(
+    memberChat.submit(session(memberFake), { actor: "frontend", label: "frontend", isLeader: false }, "成员消息"),
+    { kind: "queued", pending: 1 },
+  );
+  assert.equal(memberFake.steers.length, 0, "成员子进程无 steer 通道，走队列");
+});
+
+test("submit：run 未运行时不走 steer，直接派单", () => {
+  const fake = fakeDeps({ running: false, steer: () => true });
+  const chat = new ChatCoordinator(fake.deps);
+  assert.equal(chat.submit(session(fake), leaderTarget, "hello").kind, "started");
+  assert.equal(fake.steers.length, 0, "空闲时无插话通道");
 });
 
 test("submit：成员目标 — task 指示 leader 转派给该成员", () => {

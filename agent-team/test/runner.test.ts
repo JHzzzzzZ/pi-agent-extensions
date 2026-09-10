@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { getPiInvocation, runChildPi } from "../runner.ts";
+import { defaultSpawn, getPiInvocation, runChildPi } from "../runner.ts";
 import { makeFakeSpawn, messageEndLine, sleep, waitForChild } from "./helpers.ts";
 
 function tmpDir(): string {
@@ -173,4 +173,51 @@ test("getPiInvocation falls back to `pi` under a generic node runtime", () => {
   const invocation = getPiInvocation(["--mode", "json"]);
   assert.ok(invocation.command.length > 0);
   assert.ok(invocation.args.includes("--mode"));
+});
+
+test("runChildPi hands the child handle to onChild and every raw wire line to onWire (RPC channel)", async () => {
+  const spawn = makeFakeSpawn();
+  const wire: string[] = [];
+  let childRef: unknown;
+  const promise = runChildPi({
+    command: "pi",
+    args: ["--mode", "rpc", "--no-session"],
+    spawn: spawn.spawn,
+    onWire: (message) => wire.push(String(message.type)),
+    onChild: (child) => {
+      childRef = child;
+      child.stdin?.write("hello\n");
+    },
+  });
+  const child = await waitForChild(spawn);
+  assert.ok(childRef, "onChild fired with the child handle");
+  assert.deepEqual(child.writes, ["hello\n"]);
+  child.emitLine(JSON.stringify({ type: "response", id: "task", command: "prompt", success: true }));
+  child.emitLine(JSON.stringify({ type: "agent_settled" }));
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "ok" }] }));
+  child.emitClose(0);
+  const outcome = await promise;
+  // RPC 专有行（response / agent_settled）不经 ChildEvent 映射，只在 onWire 可见
+  assert.deepEqual(wire, ["response", "agent_settled", "message_end"]);
+  assert.equal(outcome.finalText, "ok");
+});
+
+test("defaultSpawn opens a real stdin pipe: write reaches the child, end makes it exit", async () => {
+  const spawnFn = defaultSpawn();
+  const child = spawnFn(
+    process.execPath,
+    ["-e", "process.stdin.pipe(process.stdout);process.stdin.on('end',()=>process.exit(0))"],
+    {},
+  );
+  let out = "";
+  child.stdout.on("data", (chunk) => {
+    out += String(chunk);
+  });
+  const closed = new Promise<number>((resolve) => child.on("close", (code) => resolve(code ?? 0)));
+  assert.ok(child.stdin, "stdin pipe exposed");
+  child.stdin!.write("ping\n");
+  child.stdin!.end();
+  const code = await closed;
+  assert.equal(code, 0);
+  assert.match(out, /ping/);
 });

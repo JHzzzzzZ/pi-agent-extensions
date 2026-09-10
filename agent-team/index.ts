@@ -338,6 +338,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       if (!runId) return "";
       return transcriptContextTail(readTranscript(transcriptRoot(), runId, actor));
     },
+    // run 运行中且目标是 leader：RPC steer 插话（不打断任务）；失败或
+    // 目标是成员时回退到队列/派单语义（chat.ts）。
+    steerLeader: (message) => state.coordinator.steerLeader(message),
   });
 
   /**
