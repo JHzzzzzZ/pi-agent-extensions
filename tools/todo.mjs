@@ -17,17 +17,19 @@
  *   node tools/todo.mjs summary [--json]
  *   node tools/todo.mjs list [--status open|processing|done] [--file general]
  *   node tools/todo.mjs add --file general "需求描述"        # 跨全部文件查重
- *   node tools/todo.mjs claim --file general --match "需求描述"
+ *   node tools/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
  *   node tools/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
  *   node tools/todo.mjs lint
+ *   node tools/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
  *
  * 纯函数（parseTodoFile / summarize / findDuplicates / appendEntry / setProcessing /
- * completeEntry / resolveTodoPath / normalizeText）导出给 `test/todo-cli.test.ts` 单测；
- * `main` 同时供测试在临时目录上闭环演练。
+ * completeEntry / resolveTodoPath / normalizeText / parseWorktrees / parseMergedBranches /
+ * triageRepo）导出给 `test/todo-cli.test.ts` 单测；`main` 同时供测试在临时目录上闭环演练。
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -144,15 +146,16 @@ function locateEntry(content, match) {
   return { entry: hits[0], lines, eol };
 }
 
-/** 领取：给唯一条目标注 `（processing）`；已标注时幂等。 */
-export function setProcessing(content, match) {
+/** 领取：给唯一条目标注 `（processing [@ feat/branch]）`；已标注时幂等。 */
+export function setProcessing(content, match, ref) {
   const located = locateEntry(content, match);
   if (!located.entry) {
     return { ok: false, code: located.code, message: located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围" };
   }
   const { entry, lines, eol } = located;
   if (entry.processing) return { ok: true, content, changed: false };
-  lines[entry.line - 1] = `${lines[entry.line - 1]}（processing）`;
+  const marker = ref ? `（processing @ ${String(ref).replace(/[）)]/g, " ")}）` : "（processing）";
+  lines[entry.line - 1] = `${lines[entry.line - 1]}${marker}`;
   return { ok: true, content: lines.join(eol), changed: true };
 }
 
@@ -207,6 +210,123 @@ export function lintTodos(repoRoot = REPO_ROOT) {
 }
 
 // ---------------------------------------------------------------------------
+// triage：git worktree 事实 × todos 条目（只读）
+// ---------------------------------------------------------------------------
+
+/** 解析 `git worktree list --porcelain`：块间空行分隔，branch 去掉 refs/heads/ 前缀。 */
+export function parseWorktrees(porcelain) {
+  const out = [];
+  let cur = null;
+  for (const raw of String(porcelain).split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") {
+      if (cur) out.push(cur);
+      cur = null;
+      continue;
+    }
+    if (!cur) cur = { path: "", head: "", branch: null, detached: false, bare: false, locked: false, prunable: false };
+    if (line.startsWith("worktree ")) cur.path = line.slice(9);
+    else if (line.startsWith("HEAD ")) cur.head = line.slice(5);
+    else if (line.startsWith("branch ")) cur.branch = line.slice(7).replace(/^refs\/heads\//, "");
+    else if (line === "detached") cur.detached = true;
+    else if (line === "bare") cur.bare = true;
+    else if (line.startsWith("locked")) cur.locked = true;
+    else if (line.startsWith("prunable")) cur.prunable = true;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** 解析 `git branch --merged <主干>`：剥掉 `* `/`+ `/缩进，忽略 remotes/ 与 detached 行。 */
+export function parseMergedBranches(stdout) {
+  return String(stdout)
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line).replace(/^[*+]?\s*/, "").trim())
+    .filter((b) => b !== "" && !b.startsWith("remotes/") && !b.startsWith("("));
+}
+
+const PROCESSING_REF_RE = /@\s*([^\s：:，,）)]+)/;
+
+function normalizePath(p) {
+  return String(p).replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+}
+
+/**
+ * 只读 triage：把 worktree 事实与 todos 条目互相映射。
+ * facts：{ worktrees, mergedBranches, docs, exists(path), dirty(path), orphanDirs }
+ * 判定优先级：missing > merged-dirty > cleanup > orphan > active；条目关联靠
+ * “‘条目文本包含该分支名”匹配（processing 注记里的 `@ feat/<plugin>-<事项>` 是现有纪律）。
+ */
+export function triageRepo(facts = {}) {
+  const worktrees = facts.worktrees ?? [];
+  const mergedSet = new Set(facts.mergedBranches ?? []);
+  const dirExists = facts.exists ?? (() => true);
+  const dirtyCount = facts.dirty ?? (() => 0);
+  const main = worktrees.find((w) => !w.bare) ?? null;
+  const mainPath = main ? normalizePath(main.path) : null;
+  const entries = (facts.docs ?? []).flatMap((doc) => parseTodoFile(doc.content).map((e) => ({ ...e, name: doc.name })));
+  const pending = entries.filter((e) => !e.checked);
+
+  const listed = worktrees
+    .filter((w) => !mainPath || normalizePath(w.path) !== mainPath)
+    .map((w) => {
+      const linked = w.branch ? pending.filter((e) => e.text.includes(w.branch)) : [];
+      const exists = dirExists(w.path);
+      const dirty = exists ? dirtyCount(w.path) : 0;
+      const merged = Boolean(w.branch && mergedSet.has(w.branch));
+      const flags = [];
+      if (!w.branch) flags.push(w.detached ? "detached" : "no-branch");
+      if (!exists) flags.push("missing-dir");
+      if (merged) flags.push("merged");
+      if (dirty > 0) flags.push("dirty");
+      if (w.branch && linked.length === 0) flags.push("no-todo");
+      const state = !exists
+        ? "missing"
+        : merged && dirty > 0
+          ? "merged-dirty"
+          : merged
+            ? "cleanup"
+            : linked.length === 0
+              ? "orphan"
+              : "active";
+      return {
+        path: w.path,
+        head: w.head,
+        branch: w.branch,
+        detached: w.detached,
+        exists,
+        merged,
+        dirty,
+        state,
+        flags,
+        entries: linked.map((e) => ({ name: e.name, line: e.line, text: e.text })),
+      };
+    });
+
+  const liveBranches = new Set(listed.filter((w) => w.branch && w.exists).map((w) => w.branch));
+  const processing = pending
+    .filter((e) => e.processing)
+    .map((e) => {
+      const match = PROCESSING_REF_RE.exec(e.text);
+      const ref = match ? match[1] : null;
+      const kind = ref && ref.includes("/") ? (liveBranches.has(ref) ? "active" : "stale") : "no-ref";
+      return { name: e.name, line: e.line, text: e.text, ref, kind };
+    });
+
+  return {
+    main: main ? { path: main.path, head: main.head, branch: main.branch } : null,
+    worktrees: listed,
+    processing: {
+      total: processing.length,
+      active: processing.filter((p) => p.kind === "active"),
+      stale: processing.filter((p) => p.kind === "stale"),
+      noRef: processing.filter((p) => p.kind === "no-ref"),
+    },
+    orphanDirs: facts.orphanDirs ?? [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -232,9 +352,10 @@ const USAGE = `用法：
   node tools/todo.mjs summary [--json]
   node tools/todo.mjs list [--status open|processing|done] [--file <name>]
   node tools/todo.mjs add --file <name> "需求描述"
-  node tools/todo.mjs claim --file <name> --match "子串"
+  node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
   node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]
-  node tools/todo.mjs lint`;
+  node tools/todo.mjs lint
+  node tools/todo.mjs triage [--json]`;
 
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
@@ -327,13 +448,71 @@ export function main(argv, deps = {}) {
       return 1;
     }
     const content = fs.readFileSync(file, "utf8");
-    const result = command === "claim" ? setProcessing(content, match) : completeEntry(content, match, opts.note);
+    const result = command === "claim" ? setProcessing(content, match, opts.branch) : completeEntry(content, match, opts.note);
     if (!result.ok) {
       log(`${result.code}：${result.message}`);
       return 1;
     }
     if (result.changed) writeFile(file, result.content);
     log(`${command === "claim" ? "已领取" : "已完成"}（${result.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+    return 0;
+  }
+
+  if (command === "triage") {
+    const execGit = deps.execGit ?? ((args, cwd) => execFileSync("git", ["-C", cwd ?? repoRoot, ...args], { encoding: "utf8" }));
+    const worktrees = parseWorktrees(execGit(["worktree", "list", "--porcelain"]));
+    const main = worktrees.find((w) => !w.bare) ?? null;
+    const mergedBranches = main?.branch ? parseMergedBranches(execGit(["branch", "--merged", main.branch])) : [];
+    const registered = new Set(worktrees.map((w) => normalizePath(w.path)));
+    const wtDir = path.join(repoRoot, ".worktrees");
+    const orphanDirs = !fs.existsSync(wtDir)
+      ? []
+      : fs
+          .readdirSync(wtDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => `.worktrees/${d.name}`)
+          .filter((rel) => !registered.has(normalizePath(path.join(repoRoot, rel))));
+    const report = triageRepo({
+      worktrees,
+      mergedBranches,
+      docs: loadTodos(repoRoot),
+      exists: (p) => fs.existsSync(p),
+      dirty: (p) => {
+        try {
+          return execGit(["status", "--porcelain"], p)
+            .split("\n")
+            .filter((l) => l.trim() !== "" && !l.startsWith("??")).length;
+        } catch {
+          return 0;
+        }
+      },
+      orphanDirs,
+    });
+    if (opts.json) {
+      log(JSON.stringify(report, null, 2));
+      return 0;
+    }
+    const STATE_LABEL = {
+      active: "活跃",
+      cleanup: "已并入主干·干净（清理候选）",
+      "merged-dirty": "已并入主干·有未提交改动",
+      orphan: "无关联条目",
+      missing: "目录已不存在",
+    };
+    log(`# triage（只读：worktree 事实 × todos 条目关联）`);
+    log(`主干：${report.main?.branch ?? "<未知>"} @ ${(report.main?.head ?? "?").slice(0, 7)}  ${report.main?.path ?? ""}`.trimEnd());
+    if (report.worktrees.length === 0) log("worktree（主工作区除外）：无");
+    else {
+      log(`worktree（主工作区除外）：${report.worktrees.length} 个`);
+      for (const w of report.worktrees) {
+        log(`  [${w.state}·${STATE_LABEL[w.state]}] ${w.branch ?? "(detached)"} @ ${w.head.slice(0, 7)} · 关联条目 ${w.entries.length} · 未提交 ${w.dirty} · ${w.path}`);
+      }
+    }
+    const p = report.processing;
+    log(`processing 条目：${p.total}（有工作台 ${p.active.length} · 引用分支已消失 ${p.stale.length} · 无分支引用 ${p.noRef.length}）`);
+    for (const item of p.stale) log(`  ⚠ ${item.name}:${item.line} 引用 ${item.ref}，已无对应 worktree`);
+    for (const item of p.noRef) log(`  · ${item.name}:${item.line} 无分支引用（人工确认状态）`);
+    log(report.orphanDirs.length === 0 ? "孤儿目录：无" : `孤儿目录：${report.orphanDirs.join("、")}`);
     return 0;
   }
 
