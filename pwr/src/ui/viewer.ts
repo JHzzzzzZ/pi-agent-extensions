@@ -14,7 +14,7 @@
  * host component and openRunViewer the thin host opener.
  */
 
-import type { Component } from "@earendil-works/pi-tui";
+import { matchesKey, type Component } from "@earendil-works/pi-tui";
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { AgentView, RunDetail, StageView } from "./types.ts";
 import { RUN_STATUS_GLYPH, formatCost, formatDuration, formatStatus, formatTokens } from "./views.ts";
@@ -404,15 +404,6 @@ export interface ViewerKeyContext {
 
 export type ViewerKeyResult = { type: "update"; state: ViewerState } | { type: "close" };
 
-const KEY_UP = "\x1b[A";
-const KEY_DOWN = "\x1b[B";
-const KEY_LEFT = "\x1b[D";
-const KEY_RIGHT = "\x1b[C";
-const KEY_PGUP = "\x1b[5~";
-const KEY_PGDN = "\x1b[6~";
-const KEY_HOME = "\x1b[H";
-const KEY_END = "\x1b[F";
-
 /**
  * Pure key reducer. Unrecognized keys leave the state unchanged (still an
  * update) so the component ignores them; `q`/Esc request close.
@@ -432,63 +423,42 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
 		next.follow = true;
 	};
 
-	switch (data) {
-		case "q":
-		case "\x1b":
-			return { type: "close" };
-		case KEY_UP:
-		case "k":
-			next.follow = false;
-			next.scroll = Math.max(0, (state.follow ? bottom : state.scroll) - 1);
-			break;
-		case KEY_DOWN:
-		case "j": {
-			const base = state.follow ? bottom : state.scroll;
-			next.scroll = base + 1;
-			if (next.scroll >= bottom) next.follow = true;
-			break;
-		}
-		case KEY_PGUP:
-			next.follow = false;
-			next.scroll = Math.max(0, (state.follow ? bottom : state.scroll) - ctx.bodyHeight);
-			break;
-		case KEY_PGDN: {
-			const base = state.follow ? bottom : state.scroll;
-			next.scroll = base + ctx.bodyHeight;
-			if (next.scroll >= bottom) next.follow = true;
-			break;
-		}
-		case "g":
-		case KEY_HOME:
-			next.follow = false;
-			next.scroll = 0;
-			break;
-		case "G":
-		case KEY_END:
-			next.follow = true;
-			break;
-		case KEY_LEFT:
-		case "h":
-			switchPage(state.pageIndex - 1);
-			break;
-		case KEY_RIGHT:
-		case "l":
-		case "\t":
-			switchPage(state.pageIndex + 1);
-			break;
-		case "[":
-			switchRun(state.runIndex - 1);
-			break;
-		case "]":
-			switchRun(state.runIndex + 1);
-			break;
-		default: {
-			if (/^[1-9]$/.test(data)) {
-				const index = Number(data) - 1;
-				if (index < ctx.pageCount) switchPage(index);
-			}
-			break;
-		}
+	if (data === "q" || matchesKey(data, "escape")) {
+		return { type: "close" };
+	}
+	// 命名键走 pi-tui matchesKey（兼容 legacy/kitty 键盘协议/modifyOtherKeys 三种
+	// 编码，tui-sync 矩阵 A1）；可打印字符与 tab 在 kitty 协议下不被重编码，
+	// 保留裸比较（注意 parseKeyId 会 lowercase，大写 "G" 必须裸比较）。
+	if (matchesKey(data, "up") || data === "k") {
+		next.follow = false;
+		next.scroll = Math.max(0, (state.follow ? bottom : state.scroll) - 1);
+	} else if (matchesKey(data, "down") || data === "j") {
+		const base = state.follow ? bottom : state.scroll;
+		next.scroll = base + 1;
+		if (next.scroll >= bottom) next.follow = true;
+	} else if (matchesKey(data, "pageUp")) {
+		next.follow = false;
+		next.scroll = Math.max(0, (state.follow ? bottom : state.scroll) - ctx.bodyHeight);
+	} else if (matchesKey(data, "pageDown")) {
+		const base = state.follow ? bottom : state.scroll;
+		next.scroll = base + ctx.bodyHeight;
+		if (next.scroll >= bottom) next.follow = true;
+	} else if (data === "g" || matchesKey(data, "home")) {
+		next.follow = false;
+		next.scroll = 0;
+	} else if (data === "G" || matchesKey(data, "end")) {
+		next.follow = true;
+	} else if (matchesKey(data, "left") || data === "h") {
+		switchPage(state.pageIndex - 1);
+	} else if (matchesKey(data, "right") || data === "l" || data === "\t") {
+		switchPage(state.pageIndex + 1);
+	} else if (data === "[") {
+		switchRun(state.runIndex - 1);
+	} else if (data === "]") {
+		switchRun(state.runIndex + 1);
+	} else if (/^[1-9]$/.test(data)) {
+		const index = Number(data) - 1;
+		if (index < ctx.pageCount) switchPage(index);
 	}
 	return { type: "update", state: next };
 }

@@ -17,14 +17,14 @@
 | `src/ui/keybindings.ts` — 快捷键注册表（`ctrl+alt+z/x/r`，命令孪生） | `pi.registerShortcut(KeyId, { description, handler })` | 已对齐（注册契约一致）；自建注册表是特性：单点改键 + 测试锁定 + 帮助文本同源 |
 | `src/tools.ts` / `src/ui/index.ts` — 审批卡与动作选择 | `ctx.ui.select(title, options)` 宿主原语 | 已对齐（不用自绘选择列表） |
 | `src/ui/text.ts` — `charWidth/visibleWidth/wrapText/truncateVisible/padLine/stripAnsi`（自写 CJK 宽度工具） | pi-tui `truncateToWidth`、`wrapTextWithAnsi`（agent-team viewer 即用这两个） | **重复实现** → 候选替换（§3-A2） |
-| `src/ui/viewer.ts:435` — `handleViewerKey` 裸 `switch (data)`（`"\x1b"`/`"\x1b[A"`/`"\x1b[B"` 字面量） | pi-tui `matchesKey(data, "escape"/"up"/"down"/…)` + `parseKey`/`Key`（agent-team viewer.ts:683-731 即用 matchesKey） | **裸字节比较** → 候选替换（§3-A1，有正确性风险） |
+| `src/ui/viewer.ts:435` — `handleViewerKey`：命名键（Esc/方向/home/end/pageUp/pageDown）走 pi-tui `matchesKey`（兼容 legacy/kitty/modifyOtherKeys 三种编码），可打印字符与 tab 保留裸比较（kitty 不重编码它们；parseKeyId 会 lowercase，大写 "G" 必须裸比较） | pi-tui `matchesKey`/`parseKey`/`Key`（agent-team viewer.ts:683-731 即用 matchesKey） | 已对齐（A1 完成 @ feat/pwr-a1-matcheskey；tests/ui-viewer.test.ts 锁 kitty 序列 \x1b[27u 关闭、\x1b[1;1A 上滚） |
 
 ## 2. 对齐维度表
 
 | 维度 | 宿主侧字面量 | pwr 现状 | 处置 |
 |---|---|---|---|
 | overlay 几何 | `OverlayOptions` 支持 `{ anchor, width, minWidth, maxHeight, margin }`；fleet/agent-team 参照 `{ anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 }`（agent-team/viewer.ts:1123-1129） | `{ anchor: "center", width: "96%" }`，高度组件内自算 `computeFrameHeight(rows) - VIEWER_CHROME_ROWS`（≈82% 终端高） | 行为近似；可评估改用 `maxHeight + margin` 让宿主约束高度（删自算逻辑） |
-| 按键匹配 | `matchesKey(data, "escape")` 等（pi-tui keys.ts，含 kitty 协议解码） | 裸 `data === "\x1b"`、`"\x1b[A"`、`"\x1b[B"` 与单字符比较 | **A1 建议替换**：kitty 协议启用时 Esc/方向键序列不同，裸比较会失效；matchesKey 是宿主唯一权威路径 |
+| 按键匹配 | `matchesKey(data, "escape")` 等（pi-tui keys.ts，含 kitty 协议解码） | 已换 matchesKey（命名键）；可打印字符保留裸比较 | **A1 已完成**：运行时行为不变（legacy 序列全兼容），kitty/modifyOtherKeys 序列新增命中；KeyId 类型用驼峰 `pageUp`/`pageDown`（运行时 lowercase，但类型面是权威拼写） |
 | 文本宽度/截断 | `truncateToWidth` / `wrapTextWithAnsi`（pi-tui，agent-team 在用） | `src/ui/text.ts` 自写全套（含 CJK 宽度） | **A2 建议替换**：删自有实现、测试改锁行为；两套宽度算法在组合字符/宽 emoji 上可能结果不一致 |
 | 刷新节流 | fleet/agent-team viewer `REFRESH_MS = 750` | `RunViewer` 默认 800ms（viewer.ts:537）+ `unref` | A3 微差，可对齐 750；`timer.unref()` 已对齐（不阻塞退出） |
 | 富文本渲染 | pi-tui `Markdown` 组件（agent-team viewer 的回复气泡在用） | viewer 全纯文本行（含结果页） | A4 低优先级评估：结果页换 Markdown；当前纯文本与"entry 只持久化元数据"的保守取向一致，无正确性问题 |
@@ -37,7 +37,7 @@
 
 ## 3. 行动项（对齐建议，按风险排序）
 
-- **A1 按键匹配换 `matchesKey`**（正确性）：`handleViewerKey` 的裸字节字面量在 kitty 键盘协议下会漏键。改法：`switch` 分支改 `matchesKey(data, "escape"/"up"/"down"/"enter")` + 保留 `q/j/k` 单字符快速路径；纯函数测试（`tests/ui-viewer.test.ts`）期望值同步。
+- ~~**A1 按键匹配换 `matchesKey`**~~（✅ 完成 @ feat/pwr-a1-matcheskey，2026-09-10）：`handleViewerKey` 命名键改 `matchesKey`，kitty 序列（Esc `\x1b[27u`、up `\x1b[1;1A`）有测试锁定；可打印字符保留裸比较；legacy `KEY_*` 常量删除。改法注：`KeyId` 类型为驼峰 `pageUp`/`pageDown`。
 - **A2 `text.ts` 换 pi-tui 文本工具**（删码）：`truncateVisible` → `truncateToWidth`、`wrapText` → `wrapTextWithAnsi`；`charWidth/visibleWidth/padLine/stripAnsi` 若宿主无对应物则保留。测试改锁行为（输入→输出），不锁实现。
 - **A3 刷新 800 → 750**（体验对齐 fleet）。
 - **A4 overlay 高度**改 `maxHeight: "85%", margin: 1` 评估（与 fleet/agent-team 几何一致，删自算）。

@@ -190,6 +190,20 @@ test("按键：翻页键换页并复位滚动；1-9 直达", () => {
 	assert.equal(handleViewerKey(initialViewerState(), "q", KEY_CTX).type, "close");
 	assert.equal(handleViewerKey(initialViewerState(), "\x1b", KEY_CTX).type, "close");
 
+	// A1（tui-sync 矩阵）：命名键必须走 pi-tui matchesKey——kitty 键盘协议 /
+	// modifyOtherKeys 模式下 Esc/方向键不再发送 legacy 字节序列，裸比较会漏键。
+	// 期望值取自真实 matchesKey（node -e 实测）：kitty Esc = \x1b[27u、
+	// kitty up = \x1b[1;1A、kitty enter = \x1b[13u；legacy 序列继续命中（向后兼容，上方两行锁住）。
+	assert.equal(handleViewerKey(initialViewerState(), "\x1b[27u", KEY_CTX).type, "close", "kitty 编码 Esc 必须关闭查看器");
+	const kittyUp = handleViewerKey({ ...initialViewerState(), scroll: 7, follow: false }, "\x1b[1;1A", KEY_CTX);
+	assert.equal(kittyUp.type, "update", "kitty 编码 up 应更新");
+	if (kittyUp.type === "update") assert.equal(kittyUp.state.scroll, 6, "kitty 编码 up 等价 legacy 上滚");
+	assert.equal(
+		handleViewerKey(initialViewerState(), "\x1b[13u", KEY_CTX).type,
+		"update",
+		"kitty enter 不属于查看器键集，应忽略",
+	);
+
 	const scrolled = { ...initialViewerState(), scroll: 7, follow: false };
 	const paged = key(scrolled, "l");
 	assert.equal(paged.pageIndex, 1);
