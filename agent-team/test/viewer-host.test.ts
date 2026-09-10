@@ -416,7 +416,9 @@ test("TranscriptViewer 关闭路径：先停 timer 再调 done（close 后 load 
     refreshMs: 5, // 短 tick：几个微秒内 load 应多次，便于断言 timer 已停
   });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // 套件并发负载下 5ms tick 会被事件循环饥饿拖慢（实Tick 30ms 内仅 2 次），
+    // 固定 sleep 断言会间歇红——改为有界轮询：等到 load 增长满 3 次即可。
+    for (let i = 0; i < 400 && loadCount < 3; i++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.ok(loadCount >= 3, `5ms tick 下 load 应持续增长，实得 ${loadCount}`);
     assert.deepEqual(events, [], "未关闭前 done 不应被调");
 
