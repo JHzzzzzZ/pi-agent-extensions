@@ -17,10 +17,13 @@ import {
   completeEntry,
   findDuplicates,
   main,
+  parseMergedBranches,
   parseTodoFile,
+  parseWorktrees,
   resolveTodoPath,
   setProcessing,
   summarize,
+  triageRepo,
 } from "../tools/todo.mjs";
 
 const FIXTURE = [
@@ -82,6 +85,9 @@ test("setProcessing：唯一定位后加标注，重复标注幂等，缺失/歧
   assert.equal(ok.ok, true);
   assert.match(ok.content, /- \[ \] 未领取的条目：做点事情（processing）/);
 
+  const withRef = setProcessing(FIXTURE, "未领取的条目", "feat/branch-x");
+  assert.match(withRef.content, /（processing @ feat\/branch-x）/, "claim 记录分支引用，triage 才能互映射");
+
   const again = setProcessing(ok.content, "未领取的条目");
   assert.equal(again.ok, true);
   assert.equal(again.content, ok.content);
@@ -140,12 +146,149 @@ test("main：add/list/claim/complete 在临时仓库上闭环，写操作不外�
   assert.equal(dup, 1);
   assert.match(out.join("\n"), /重复/);
 
-  assert.equal(main(["claim", "--file", "general", "--match", "第一条需求"], { repoRoot: root, log: (l) => out.push(l) }), 0);
-  assert.match(fs.readFileSync(path.join(root, "todos", "general-todo.md"), "utf8"), /（processing）/);
+  assert.equal(main(["claim", "--file", "general", "--match", "第一条需求", "--branch", "feat/first"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.match(fs.readFileSync(path.join(root, "todos", "general-todo.md"), "utf8"), /（processing @ feat\/first）/);
 
   assert.equal(main(["complete", "--file", "general", "--match", "第一条需求", "--note", "测试"], { repoRoot: root, log: (l) => out.push(l) }), 0);
   assert.match(fs.readFileSync(path.join(root, "todos", "general-todo.md"), "utf8"), /- \[x\] 第一条需求（完成 测试）/);
 
   assert.equal(main(["list", "--status", "done"], { repoRoot: root, log: (l) => out.push(l) }), 0);
   assert.match(out.join("\n"), /第一条需求/);
+});
+
+// ---------------------------------------------------------------------------
+// triage：git worktree 事实 × todos 条目（只读，不写任何文件）
+// ---------------------------------------------------------------------------
+
+const PORCELAIN = [
+  "worktree C:/repo",
+  "HEAD aaaa1111",
+  "branch refs/heads/dev-laptop",
+  "",
+  "worktree C:/repo/.worktrees/live",
+  "HEAD bbbb2222",
+  "branch refs/heads/feat/live-thing",
+  "",
+  "worktree C:/repo/.worktrees/merged",
+  "HEAD cccc3333",
+  "branch refs/heads/feat/merged-thing",
+  "",
+  "worktree C:/repo/.worktrees/dirty",
+  "HEAD dddd4444",
+  "branch refs/heads/feat/dirty-thing",
+  "",
+  "worktree C:/repo/.worktrees/no-todo",
+  "HEAD eeee5555",
+  "branch refs/heads/feat/no-todo",
+  "",
+  "worktree C:/repo/.worktrees/gone",
+  "HEAD ffff6666",
+  "detached",
+  "",
+].join("\n");
+
+test("parseWorktrees：解析 porcelain 的 path/head/branch/detached", () => {
+  const wts = parseWorktrees(PORCELAIN);
+  assert.equal(wts.length, 6);
+  assert.deepEqual(wts[1], {
+    path: "C:/repo/.worktrees/live",
+    head: "bbbb2222",
+    branch: "feat/live-thing",
+    detached: false,
+    bare: false,
+    locked: false,
+    prunable: false,
+  });
+  assert.equal(wts[5].detached, true);
+  assert.equal(wts[5].branch, null);
+  assert.equal(parseWorktrees("").length, 0);
+});
+
+test("parseMergedBranches：剥离 * / + 标记与缩进，忽略 remotes/", () => {
+  const merged = parseMergedBranches("* dev-laptop\n+ feat/old\n  feat/new\n  remotes/origin/dev-laptop\n\n");
+  assert.deepEqual(merged, ["dev-laptop", "feat/old", "feat/new"]);
+});
+
+test("triageRepo：worktree 状态判定 + processing 关联分类 + 孤儿目录透传", () => {
+  const docs = [
+    {
+      name: "a-todo",
+      content: [
+        "- [ ] 在做的需求（processing 2026-09-11 @ feat/live-thing：在做）",
+        "- [x] 已完成（完成 2026-09-11 @ feat/merged-thing）",
+        "- [ ] 无分支引用的进行中（processing）",
+        "- [ ] 引用已消失的（processing 2026-09-10 @ feat/vanished：等）",
+        "",
+      ].join("\n"),
+    },
+  ];
+  const report = triageRepo({
+    worktrees: parseWorktrees(PORCELAIN),
+    mergedBranches: ["dev-laptop", "feat/merged-thing", "feat/dirty-thing"],
+    docs,
+    exists: (p) => !p.endsWith(".worktrees/gone"),
+    dirty: (p) => (p.endsWith(".worktrees/dirty") ? 2 : 0),
+    orphanDirs: [".worktrees/orphan"],
+  });
+
+  assert.equal(report.main.branch, "dev-laptop");
+  assert.deepEqual(
+    report.worktrees.map((w) => [w.branch, w.state]),
+    [
+      ["feat/live-thing", "active"],
+      ["feat/merged-thing", "cleanup"],
+      ["feat/dirty-thing", "merged-dirty"],
+      ["feat/no-todo", "orphan"],
+      [null, "missing"],
+    ],
+  );
+  assert.deepEqual(report.worktrees[0].entries.map((e) => [e.name, e.line]), [["a-todo", 1]]);
+  assert.ok(report.worktrees[1].flags.includes("merged"));
+  assert.ok(report.worktrees[2].flags.includes("dirty"));
+  assert.ok(report.worktrees[4].flags.includes("missing-dir"));
+
+  assert.equal(report.processing.total, 3);
+  assert.deepEqual(report.processing.active.map((p) => p.ref), ["feat/live-thing"]);
+  assert.deepEqual(report.processing.stale.map((p) => [p.line, p.ref]), [[4, "feat/vanished"]]);
+  assert.deepEqual(report.processing.noRef.map((p) => p.line), [3]);
+  assert.deepEqual(report.orphanDirs, [".worktrees/orphan"]);
+});
+
+test("main triage：fake git 事实驱动只读报告，只读不写、--json 可解析", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-triage-"));
+  fs.mkdirSync(path.join(root, "todos"));
+  fs.writeFileSync(path.join(root, "todos", "a-todo.md"), "- [ ] 需求（processing 2026-09-11 @ feat/live：在做）\n");
+  fs.mkdirSync(path.join(root, ".worktrees", "live"), { recursive: true });
+  const before = fs.readFileSync(path.join(root, "todos", "a-todo.md"), "utf8");
+  const porcelain = [
+    `worktree ${root}`,
+    "HEAD aaaa1111",
+    "branch refs/heads/dev-laptop",
+    "",
+    `worktree ${path.join(root, ".worktrees", "live")}`,
+    "HEAD bbbb2222",
+    "branch refs/heads/feat/live",
+    "",
+  ].join("\n");
+  const calls = [];
+  const execGit = (args) => {
+    calls.push(args[0]);
+    if (args[0] === "worktree") return porcelain;
+    if (args[0] === "branch") return "* dev-laptop\n";
+    if (args[0] === "status") return "";
+    throw new Error(`unexpected git: ${args.join(" ")}`);
+  };
+  const out = [];
+  const code = main(["triage", "--json"], { repoRoot: root, execGit, log: (l) => out.push(l) });
+  assert.equal(code, 0);
+  const report = JSON.parse(out.join("\n"));
+  assert.deepEqual(report.worktrees.map((w) => [w.branch, w.state]), [["feat/live", "active"]]);
+  assert.equal(report.processing.active[0].ref, "feat/live");
+  assert.equal(fs.readFileSync(path.join(root, "todos", "a-todo.md"), "utf8"), before, "triage 不得写 todos/");
+  assert.ok(calls.includes("worktree") && calls.includes("branch"));
+
+  const text = [];
+  assert.equal(main(["triage"], { repoRoot: root, execGit, log: (l) => text.push(l) }), 0);
+  assert.match(text.join("\n"), /feat\/live/);
+  assert.match(text.join("\n"), /active/);
 });
