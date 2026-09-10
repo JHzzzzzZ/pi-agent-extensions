@@ -166,9 +166,9 @@ function countDuet(elapsedSec, extraDispatch) {
     runStatus: "running",
     elapsed: `${elapsedSec}s`,
     actors: [
-      { actor: "_leader", label: "leader", status: "running" },
-      { actor: "front", label: "front", status: "done" },
-      { actor: "back", label: "back", status: "running" },
+      { actor: "_leader", label: "leader", status: "running", model: "opencode-go/deepseek-v4-flash" },
+      { actor: "front", label: "front", status: "done", model: "chatanywhere/gpt-5.6" },
+      { actor: "back", label: "back", status: "running", model: "anthropic/claude-sonnet-4-5" },
     ],
     entries: new Map([
       ["_leader", leader],
@@ -236,7 +236,7 @@ export function captureViewerScene({ cols = 150, rows = 40 } = {}) {
 /** 帧自检：锚点缺失说明真实渲染路径变了，截图不可信——工具必须响亮地失败。 */
 export function assertFrame(lines) {
   const text = lines.join("\n");
-  const anchors = ["agent-team viewer", "count-duet", "· _leader", "· front", "· back"];
+  const anchors = ["agent-team viewer", "count-duet", "· _leader", "· front", "· back", "模型:"];
   const missing = anchors.filter((a) => !text.includes(a));
   if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
   const titles = lines.filter((l) => l.includes("agent-team viewer")).length;

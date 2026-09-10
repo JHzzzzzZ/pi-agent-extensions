@@ -104,6 +104,12 @@ export interface ViewerActor {
   label: string;
   /** Latest known run status (queued/running/done/failed/aborted/…). */
   status?: string;
+  /**
+   * Backend model for this actor: the leader's live/reported model, or a
+   * member's declared `provider/id` from the team file. Absent = the child
+   * pi process runs its own default (rendered as `（默认）`).
+   */
+  model?: string;
 }
 
 /** Everything the viewer needs to render one frame (reloaded on refresh). */
@@ -492,19 +498,23 @@ function rosterLines(data: ViewerData, state: ViewerState, width: number, bodyHe
 
 /**
  * Fixed detail-pane meta header (the agent-team counterpart of fleet's
- * `structuredHeader`, minimal three lines per the spec): Run / State /
- * 成员. Key names bold like fleet's `^(Run|State|…):` rule; the header
- * never scrolls with the transcript.
+ * `structuredHeader`): Run / State / 成员 / 模型. Key names bold like
+ * fleet's `^(Run|State|…):` rule; the header never scrolls with the
+ * transcript. 模型 shows the selected actor's backend (leader = actual
+ * model reported by the child, member = declared team model; `（默认）`
+ * when the child runs pi's default).
  */
 function detailHeaderLines(data: ViewerData, state: ViewerState, styles: Styles): string[] {
   const selected = selectedActor(data, state);
   const member = selected
     ? `${selected.actor.label}（${selected.actor.status ?? "unknown"}）· ${selected.index + 1}/${data.actors.length}`
     : "（无成员）";
+  const model = selected ? (selected.actor.model ?? "（默认）") : "（无成员）";
   return [
     `${styles.bold("Run:")} ${data.runId || "(no run)"}`,
     `${styles.bold("State:")} ${data.runStatus}`,
     `${styles.bold("成员:")} ${member}`,
+    `${styles.bold("模型:")} ${model}`,
   ];
 }
 

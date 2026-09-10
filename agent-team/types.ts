@@ -361,6 +361,8 @@ export interface MemberProgress {
   note?: string;
   /** Latest assistant activity tail (what the member is doing right now). */
   latest?: string;
+  /** Declared backend model from the team file (child pi default when unset). */
+  model?: string;
 }
 
 export interface RunProgress {

@@ -277,17 +277,33 @@ test("renderViewerFrame styles the roster with the port: selected marker, bold l
   assert.ok(!frame[1].includes("\x1b[1m"), "title row never bolds (roster-only styling)");
 });
 
-test("renderViewerFrame pins a fixed three-line meta header atop the detail pane", () => {
+test("renderViewerFrame pins a fixed four-line meta header atop the detail pane", () => {
   const styled: Styles = { ...styles, bold: ansi("1") };
-  const frame = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles: styled, bodyHeight: 10 });
+  const data = viewerData({
+    actors: [
+      { actor: "_leader", label: "leader", status: "running", model: "anthropic/claude-opus-4-5" },
+      { actor: "frontend", label: "frontend", status: "done" },
+    ],
+  });
+  const frame = renderViewerFrame(data, { ...initialViewerState(), follow: false, scroll: 0 }, 80, { styles: styled, bodyHeight: 10 });
   assert.match(paneColumns(frame[3]).detail, /^\x1b\[1mRun:\x1b\[0m run-42/, "Run line first");
   assert.match(paneColumns(frame[4]).detail, /^\x1b\[1mState:\x1b\[0m running/, "State line second");
   assert.match(paneColumns(frame[5]).detail, /^\x1b\[1m成员:\x1b\[0m leader（running）· 1\/2/, "member line third");
-  assert.match(paneColumns(frame[6]).detail, /让我先拆解任务/, "transcript body starts below the header");
+  assert.match(
+    paneColumns(frame[6]).detail,
+    /^\x1b\[1m模型:\x1b\[0m anthropic\/claude-opus-4-5/,
+    "model line fourth (selected actor's backend model)",
+  );
+  assert.match(frame.slice(7).join("\n"), /让我先拆解任务/, "transcript body starts below the header");
   assert.doesNotMatch(paneColumns(frame[3]).detail, /❯/, "header does not scroll with the body");
 
+  // 未声明模型的 actor（子进程走 pi 默认）：显式降级文案，不猜模型名。
+  const second = { ...initialViewerState(), actorIndex: 1 };
+  const frame2 = renderViewerFrame(data, second, 80, { styles: styled, bodyHeight: 10 });
+  assert.match(paneColumns(frame2[6]).detail, /^\x1b\[1m模型:\x1b\[0m （默认）/, "unspecified model → child default label");
+
   // 头部行数上限 bodyHeight-1（fleet.ts:1335）：bodyHeight=3 时成员行让位给正文。
-  const tight = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles: styled, bodyHeight: 3 });
+  const tight = renderViewerFrame(data, initialViewerState(), 80, { styles: styled, bodyHeight: 3 });
   assert.equal(tight.length, 3 + VIEWER_CHROME_ROWS);
   assert.match(paneColumns(tight[3]).detail, /\x1b\[1mRun:/);
   assert.match(paneColumns(tight[4]).detail, /\x1b\[1mState:/);
@@ -604,18 +620,18 @@ test("renderViewerFrame：action 行占右栏正文窗口顶部（头部之下�
   const armed = { ...initialViewerState(), follow: false, scroll: 0, stopConfirming: true };
   const frame = renderViewerFrame(viewerData(), armed, 80, { styles, bodyHeight });
   assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS, "帧总行数恒定");
-  // detail 列布局：头部三行（3-5）→ 横幅按 detail 宽换行（6-8）→ 正文（9 起）。
-  assert.match(paneColumns(frame[6]).detail, /确认停止 run run-42/, "横幅第一行在头部之下");
-  assert.match(paneColumns(frame[7]).detail, /Enter\/Y 确认/, "横幅第二行（换行后首段）");
-  assert.match(paneColumns(frame[8]).detail, /· N 取消 · Esc 取消/, "横幅换行尾段");
-  assert.match(paneColumns(frame[9]).detail, /❯ 修复登录 bug/, "正文第一行被横幅下推");
+  // detail 列布局：头部四行（3-6）→ 横幅按 detail 宽换行（7-9）→ 正文（10 起）。
+  assert.match(paneColumns(frame[7]).detail, /确认停止 run run-42/, "横幅第一行在头部之下");
+  assert.match(paneColumns(frame[8]).detail, /Enter\/Y 确认/, "横幅第二行（换行后首段）");
+  assert.match(paneColumns(frame[9]).detail, /· N 取消 · Esc 取消/, "横幅换行尾段");
+  assert.match(paneColumns(frame[10]).detail, /❯ 修复登录 bug/, "正文第一行被横幅下推");
   for (const [index, line] of frame.entries()) {
     assert.equal(visibleWidth(line), 80, `line ${index} fitLine 后行宽恒定`);
   }
 
   const noticeFrame = renderViewerFrame(viewerData(), { ...initialViewerState(), notice: { text: "run 已结束（done），无需停止", kind: "error" } }, 80, { styles, bodyHeight });
   assert.equal(noticeFrame.length, bodyHeight + VIEWER_CHROME_ROWS);
-  assert.match(paneColumns(noticeFrame[6]).detail, /run 已结束（done），无需停止/);
+  assert.match(paneColumns(noticeFrame[7]).detail, /run 已结束（done），无需停止/);
 });
 
 test("图例行独立于底边框：含 D 停止/r 刷新/q 关闭与成员位置", () => {
