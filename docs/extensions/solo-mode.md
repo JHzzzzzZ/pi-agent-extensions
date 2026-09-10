@@ -1,6 +1,6 @@
 # solo-mode — 免审批模式（审批门自动批准）
 
-> last verified @ 8bee163
+> last verified @ e68095d
 
 ## 职责与边界
 

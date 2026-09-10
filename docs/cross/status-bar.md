@@ -1,6 +1,6 @@
 # 跨扩展横切契约：状态条刷新节拍与排序（footer + 编辑器上下 widget）
 
-> last verified @ 8bee163
+> last verified @ e68095d
 >
 > 适用范围：所有往 footer（`ctx.ui.setStatus`）或输入栏上下 widget（`ctx.ui.setWidget`）写「随时间变化」内容的扩展。目标：同一屏多个状态源**同一帧一起刷新**、相对顺序**契约化**，不再靠各自的 `setInterval` 相位碰运气。
 

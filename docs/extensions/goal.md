@@ -1,6 +1,6 @@
 # goal — 会话目标自动循环推进
 
-> last verified @ 8bee163
+> last verified @ e68095d
 
 ## 职责与边界
 
