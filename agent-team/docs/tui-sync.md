@@ -54,6 +54,7 @@
 | 3.9 | 停止粒度 = 整个 run（`viewerStopAction` → `stopAndSettle()`） | **特有语义保留** | fleet 按选中的单个 async run 停；agent-team 的成员子进程归 leader 进程管，cockpit 只能停整个 run（与 team_stop 工具同一路径）。 |
 | 3.10 | 亮块 running **展开**头行可选余额提示（`· 剩 $X.XX`） | **特有语义新增** | fleet 无预算概念；仅当团队 frontmatter 配了 `budget.maxCostUsd` 且未超限时显示（超限即自动中止，不再显示）；无费用上限时头行与 fleet 对齐不变。余额提示只出现在展开态头行，折叠单行不含。 |
 | 3.11 | 展开态：`main → leader（含任务摘要）→ 成员…` 树（v1.13.0；任务行 v1.13.1 并入 leader 行）+ 底部提示行 | **特有语义保留** | fleet 无 main 树/任务摘要；agent-team 展开块 = 树行（`main` / `leader <团队> · <任务摘要> ▶ running · 耗时 · N/M 并行[ · 剩 $X.XX]` / `|- <成员> <图标> <状态>[ · 尾部]`）+ 底部 `↑↓ 选择 · enter 查看 · esc 退出`（无空行、无缩进，`renderWidgetView`）。**末行恒为成员行**（不设独立任务行：避免用户把末行任务当成员、enter 却打开 leader 的假成员陷阱，用户 2026-09-15 真机反馈）；`main` 行 enter 只收起选中（fleet main 同构），leader/成员行 enter 进查看器（按 actor 钉选）。折叠默认形态对齐 fleet 折叠单行（§2）。历史截图（多行常显/折叠）存 `agent-team/docs/assets/widget-before-collapse.png`；任务行陷阱截图存 `agent-team/docs/assets/widget-tree-feedback.png`。 |
+| 3.12 | viewer 帧行单行不变量：多行 tool 条目（`team_dispatch 派发 →\n  - 成员: 任务`）按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 兜底折叠残余 CR/LF | **特有语义（fleet 无此数据形状）** | `cockpit.ts:499` 的派发条目是多行文本；fleet 的工具输出路径本就按行拆分或 `\s+` 压平（`fleet-transcript.ts:441/500`）。agent-team 旧实现把整条当单行 → 帧行携带 `\n`，宿主按物理行写屏时尾巴落到下一行同列，overlay 左缘残行 + 帧几何漂移且 diff 无法清理（真机 2026-09-15 实锤，`docs/incidents.md`）。见 `viewer.ts` `blockLines`（tools 分支）/ `fitLine`。 |
 
 ## 4. 规格字面量表（测试期望值唯一来源）
 
@@ -84,6 +85,7 @@
 | widget 成员尾注 | 取 `note`，否则 `latest`；`\s+` 压平后 ≤30 字符（超出 29 字 + `…`）；空白尾注省略 ` · ` 段 | agent-team 特有（v1.13.0）；`widget.ts` `truncateMemberTail` |
 | widget 挂载不变量 | `snapshot.running && snapshot.progress` ⇒ string[] 帧；否则 `setWidget(key, undefined)`（终态自动卸载；`running` 但无 progress 同样隐藏） | agent-team 特有接线（v1.13.0，触发形式对齐 fleet 活跃表面） |
 | 按键 release 过滤 | `isKeyRelease(data)`（Kitty flag 2 的 `:3u`/`:3~`/`:3A`/`:3B`/`:3C`/`:3D`/`:3H`/`:3F` 编码）在 key reducer 顶部短路；repeat `:2` 不禁（长按连移） | `fleet-status.ts:699`；agent-team widget（`handleWidgetKey`）+ viewer（`handleViewerKey`）双侧同款（v1.13.2） |
+| 帧行单行不变量 | 每个帧行不得含 CR/LF：多行 tool 条目拆物理行（首段 `· ` + 内容，续段 `  ` + trim 后内容，均截断到 `width-2`）；`fitLine` 兜底把残余 CR/LF 折成空格后再定宽 | agent-team 特有（v1.13.3）；真机事故见 `docs/incidents.md` |
 | widget 刷新触发 | 事件即时（coordinator `onProgress`）+ 1s aligned ticker 兜底 + 渲染串指纹跳过 | fleet 500ms + renderKey（`fleet-status.ts:585-591`）；差异表 §3.4 |
 | widget 展开提示行 | `↑↓ 选择 · enter 查看 · esc 退出`（底部、无缩进） | agent-team 特有（见差异表 §3.11） |
 | widget 文本截断 | 先压平（`\s+` → 单空格 + trim），再 44 字符 + `…`，截断后 `trimEnd()` | fleet 无同款截断；换行残行修复（截图回归），任务摘要/成员尾注共用 |
@@ -117,6 +119,7 @@
 | agent-team 1.13.0 | 2026-09-14 | widget 触发形式对齐 fleet-status（数据驱动活跃表面）：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由 `snapshot.running` 决定——running ⇒ string[] 帧、落定 ⇒ `setWidget(undefined)` 自动卸载（终态不再常驻）；刷新双触发 = coordinator `onProgress` 事件即时 + 1s aligned ticker 兜底 + renderKey 指纹；展开态改 `main → leader → 成员… → 任务` 树（`|- ` 连接符、成员状态图标 queued `·`/running `●`/done `✓`/failed `✗`/aborted `⊘`、尾注 ≤30 字、leader 行余额提示保留）；`main` 行 enter 只收起选中（fleet main 语义）；`/team:clear` 收窄为清排队对话（不再手动卸亮块，无内容时提示「亮块随 run 结束自动隐藏」）。§2 新增挂载/刷新行并改写折叠行、§3.1/§3.4/§3.11 改写、§4 新增树行/尾注/挂载/刷新字面量；widget-lifecycle 宿主测试锁定派单出帧/落定卸载/事件同步刷新/链式派单不闪卸载 | `feat/agent-team-widget-tree` |
 | agent-team 1.13.1 | 2026-09-15 | widget 真机反馈修复：任务摘要并入 leader 行（`leader <团队> · <任务摘要> ▶ running · …`，44 字截断），删除独立 `任务: …` 行——**末行恒为成员行**，消除“末行任务像成员、enter 却打开 leader”的假成员陷阱；宿主回归测试锁“成员行 enter → 查看器 roster 定位该成员”；§3.11/§4 改写，截图存档 `docs/assets/widget-tree-feedback.png` | `feat/agent-team-widget-leader-summary` |
 | agent-team 1.13.2 | 2026-09-15 | 按键 release 过滤（修复“一次按键生效两次”真机问题，也是“选不中成员”的真凶）：Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码），release 同样能被 matchesKey 命中——widget `handleWidgetKey` 与 viewer `handleViewerKey` 顶部统一 `isKeyRelease(data)` 短路（`fleet-status.ts:699` 同款）；repeat（`:2`）保留（长按连续移动）；§2/§4 新增行，widget/viewer 测试锁定（press+release 序列只生效一次）；参考截图存档 `docs/assets/widget-fleet-status-reference.png` | `fix/agent-team-widget-key-release` |
+| agent-team 1.13.3 | 2026-09-15 | viewer 帧行单行不变量（“重复行第四轮”根因）：多行 tool 条目（`team_dispatch 派发 →\n  - 成员: 任务`）按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 兜底折叠残余 CR/LF——旧实现帧行携带原始 `\n`，宿主按物理行写屏时尾巴落到下一行同列，overlay 左缘残行 + 帧几何漂移且 diff 渲染器无法清理（computer-use 全分辨率真机实锤）。差异条目 §3.12 + §4 新增行；viewer（拆行/帧不变量）、viewer-host（真实宿主多行派发条目）、widget（同类护栏）测试锁定 | `fix/agent-team-viewer-newline` |
 
 ## 6. 范围外（明确不做）
 
