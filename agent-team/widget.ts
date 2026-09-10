@@ -1,18 +1,27 @@
 /**
  * agent-team — below-editor live run widget (selectable bright block)
  *
- * Renders the coordinator's run snapshot BELOW the editor (placement
- * "belowEditor") as plain `setWidget(key, string[], …)` refreshed on a 1s
- * interval. Default (unselected) state is a single collapsed line
+ * Data-driven surface (aligned to pi-subagents fleet-status trigger form):
+ * the controller is mounted once per session; the host widget is REGISTERED
+ * only while a run is live (`snapshot.running`) — every settled run pushes
+ * `setWidget(key, undefined)` and the block disappears. Repaints are
+ * event-driven (coordinator `onProgress`) plus a 1s aligned-ticker fallback;
+ * identical render strings skip `setWidget` (fleet-status renderKey).
+ *
+ * Rendering stays `setWidget(key, string[], …)` (placement "belowEditor"):
+ * a per-tick component-factory repaint once left appended-line trails on a
+ * bundled host build (see docs/tui-sync.md §3.1) — only the trigger form is
+ * borrowed from fleet-status, not the component path.
+ *
+ * Default (unselected) state is a single collapsed line
  * (`agent-team <团队> · ↓/← 查看详情`); bare ↓/← (only while the editor is
  * empty AND focused — aligned to fleet-status) and alt+down/up (ungated
- * second channel) expand it into the rows + hint block. ↑/↓/j/k move the
- * row cursor (到顶再按 ↑/k 退出选中并收回折叠，fleet-status 同构), enter opens
- * the transcript viewer on the row's actor, esc (or any other key) leaves
- * selection and — except for esc — passes the key through to the editor
- * untouched. Repaints skip when the render string is unchanged (aligned to
- * fleet-status renderKey; the collapsed line carries no per-second text,
- * so running runs no longer churn the host).
+ * second channel) expand it into the `main → leader → 成员` tree + task +
+ * hint rows. ↑/↓/j/k move the row cursor (到顶再按 ↑/k 退出选中并收回折叠，
+ * fleet-status 同构), enter opens the transcript viewer on the row's actor —
+ * except the `main` root row, whose enter only leaves selection (fleet main
+ * semantics) — esc (or any other key) leaves selection and — except for esc —
+ * passes the key through to the editor untouched.
  *
  * While a host selector/dialog owns the keyboard (`probeEditorFocus` →
  * false) the widget is fully inert: no activation key is consumed and an
@@ -25,24 +34,31 @@
 import { matchesKey } from "@earendil-works/pi-tui";
 import { startAlignedTicker } from "./aligned-ticker.ts";
 import { elapsedLabel, type RunStatusSnapshot } from "./cockpit.ts";
-import { LEADER_ACTOR } from "./transcript.ts";
+import { LEADER_ACTOR, sanitizeActorName } from "./transcript.ts";
 import { truncateVisible, type Styles } from "./viewer.ts";
-import { WIDGET_TICK_MS } from "./types.ts";
+import { WIDGET_TICK_MS, type MemberProgress, type RunProgress } from "./types.ts";
+
+/** Row role in the `main → leader → member` tree (viewer-open semantics). */
+export type WidgetRowKind = "root" | "leader" | "member";
 
 /** One widget row plus the transcript actor its enter opens in the viewer. */
 export interface WidgetRowSpec {
   text: string;
   actor: string;
+  kind: WidgetRowKind;
 }
 
-function recordIcon(status: string): string {
-  return status === "completed" || status === "done"
-    ? "✓"
-    : status === "failed"
-      ? "✗"
-      : status === "aborted"
-        ? "⊘"
-        : "·";
+/** 成员行状态图标：queued · / running ● / done ✓ / failed ✗ / aborted ⊘。 */
+function memberIcon(status: string): string {
+  return status === "running"
+    ? "●"
+    : status === "done" || status === "completed"
+      ? "✓"
+      : status === "failed"
+        ? "✗"
+        : status === "aborted"
+          ? "⊘"
+          : "·";
 }
 
 /** 连续空白（含换行）压成单空格并 trim——宿主把残余换行渲染成额外行。 */
@@ -50,60 +66,65 @@ function flatten(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/** 任务行：压平后 44 字符 + `…`（截断后 trimEnd，避免 "…" 前留空格）。 */
 function truncateTask(text: string): string {
   const flat = flatten(text);
-  // 截断后再 trimEnd，避免在 "…" 前留下空格。
   const clipped = flat.length > 44 ? `${flat.slice(0, 44)}…` : flat;
   return clipped.trimEnd();
 }
 
-/**
- * 折叠行（未选中时唯一一行）+ 展开 rows（选中态）：折叠行只报团队名与激活
- * 提示，不含状态/耗时/并行数/余额——running 时逐秒 elapsed 不再进入渲染串，
- * setWidget 指纹门控自然跳过（少 churn，对齐 fleet-status renderKey 语义）。
- */
-export interface WidgetView {
-  /** 未选中态的单行文案；无 run 时为空串（widget 整体隐藏）。 */
-  collapsed: string;
-  /** 选中态的行（状态行 + 任务行 + 可选错误行），行构建语义与旧版一致。 */
-  rows: WidgetRowSpec[];
+/** 成员尾注：压平后 ≤30 字符（超出取 29 字 + `…`，总长不超上限）。 */
+function truncateMemberTail(text: string): string {
+  const flat = flatten(text);
+  return flat.length > 30 ? `${flat.slice(0, 29)}…` : flat;
+}
+
+/** Leader 行：`leader <团队> ▶ running · <耗时> · <N>/<M> 并行[ · 剩 $X.XX]`。 */
+function leaderRowText(progress: RunProgress, nowMs: number): string {
+  const running = progress.members.filter((member) => member.status === "running").length;
+  const counts = progress.members.length > 0 ? ` · ${running}/${progress.members.length} 并行` : "";
+  // Only a remaining-balance hint when a cost cap is set and not yet
+  // breached (a breach aborts the run anyway).
+  let budgetHint = "";
+  const budget = progress.budget;
+  if (budget?.maxCostUsd !== null && budget?.maxCostUsd !== undefined && budget.spentCost < budget.maxCostUsd) {
+    budgetHint = ` · 剩 $${(budget.maxCostUsd - budget.spentCost).toFixed(2)}`;
+  }
+  return `leader ${flatten(progress.team)} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`;
+}
+
+/** 成员行：`|- <成员名> <图标> <状态>[ · <尾部>]`（尾部 note 优先，否则 latest）。 */
+function memberRowText(member: MemberProgress): string {
+  const tail = member.note ?? member.latest;
+  const suffix = tail !== undefined && flatten(tail).length > 0 ? ` · ${truncateMemberTail(tail)}` : "";
+  return `|- ${flatten(member.name)} ${memberIcon(member.status)} ${member.status}${suffix}`;
 }
 
 /**
- * Compact widget view for a run snapshot: a collapsed one-liner (default,
- * unselected) plus the expanded rows — a header line (team, status,
- * elapsed, live parallel-member count) and the bounded task line (member
- * detail lives in the transcript viewer, not here). A failed/aborted run
- * keeps one bounded error row. Empty when there is nothing to show.
+ * Widget view for the live run: collapsed one-liner (default, unselected)
+ * plus the expanded `main → leader → 成员… → 任务` tree. Settled runs (and
+ * snapshots without live progress) project to an EMPTY view — the block is
+ * unmounted, terminal rows live in /team:status and /team:view instead.
  */
+export interface WidgetView {
+  /** 未选中态的单行文案；无活跃 run 时为空串（widget 整体隐藏）。 */
+  collapsed: string;
+  /** 选中态的行（main + leader + 成员… + 任务行）。 */
+  rows: WidgetRowSpec[];
+}
+
 export function buildWidgetView(snapshot: RunStatusSnapshot, nowMs: number): WidgetView {
-  const rows: WidgetRowSpec[] = [];
-  if (snapshot.running && snapshot.progress) {
-    const progress = snapshot.progress;
-    const running = progress.members.filter((member) => member.status === "running").length;
-    const counts = progress.members.length > 0 ? ` · ${running}/${progress.members.length} 并行` : "";
-    // Single-line lean: only a remaining-balance hint when a cost cap is set
-    // and not yet breached (a breach aborts the run anyway). 仅展开态可见。
-    let budgetHint = "";
-    const budget = progress.budget;
-    if (budget?.maxCostUsd !== null && budget?.maxCostUsd !== undefined && budget.spentCost < budget.maxCostUsd) {
-      budgetHint = ` · 剩 $${(budget.maxCostUsd - budget.spentCost).toFixed(2)}`;
-    }
-    rows.push({
-      text: `agent-team ${progress.team} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`,
-      actor: LEADER_ACTOR,
-    });
-    rows.push({ text: `任务: ${truncateTask(progress.task)}`, actor: LEADER_ACTOR });
-    return { collapsed: `agent-team ${flatten(progress.team)} · ↓/← 查看详情`, rows };
+  if (!snapshot.running || !snapshot.progress) return { collapsed: "", rows: [] };
+  const progress = snapshot.progress;
+  const rows: WidgetRowSpec[] = [
+    { text: "main", actor: LEADER_ACTOR, kind: "root" },
+    { text: leaderRowText(progress, nowMs), actor: LEADER_ACTOR, kind: "leader" },
+  ];
+  for (const member of progress.members) {
+    rows.push({ text: memberRowText(member), actor: sanitizeActorName(member.name), kind: "member" });
   }
-  const record = snapshot.lastRecord;
-  if (!record) return { collapsed: "", rows: [] };
-  const secs = record.durationMs !== undefined ? ` · ${Math.round(record.durationMs / 100) / 10}s` : "";
-  const cost = record.totalCost > 0 ? ` · $${record.totalCost.toFixed(4)}` : "";
-  rows.push({ text: `agent-team ${record.team} ${recordIcon(record.status)} ${record.status}${secs}${cost}`, actor: LEADER_ACTOR });
-  rows.push({ text: `任务: ${truncateTask(record.task)}`, actor: LEADER_ACTOR });
-  if (record.error) rows.push({ text: `✗ ${truncateTask(record.error)}`, actor: LEADER_ACTOR });
-  return { collapsed: `agent-team ${flatten(record.team)} · ↓/← 查看详情`, rows };
+  rows.push({ text: `任务: ${truncateTask(progress.task)}`, actor: LEADER_ACTOR, kind: "leader" });
+  return { collapsed: `agent-team ${flatten(progress.team)} · ↓/← 查看详情`, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +144,7 @@ export function initialWidgetKeyState(): WidgetKeyState {
 export type WidgetKeyResult =
   | { type: "none" }
   | { type: "update"; state: WidgetKeyState }
-  | { type: "confirm"; actor: string; state: WidgetKeyState }
+  | { type: "confirm"; row: WidgetRowSpec; state: WidgetKeyState }
   | { type: "passthrough"; state: WidgetKeyState };
 
 // matchesKey understands the modified-arrow CSI encoding ("\x1b[1;3B");
@@ -143,23 +164,23 @@ function isActivate(data: string): boolean {
  * else reaches the editor untouched. Selected: up/down/j/k/enter/esc are
  * consumed — up/k 在第 0 行再按退出选中（fleet-status 同构，后续键到达
  * 编辑器）；any other key deselects and passes through so typing and
- * ctrl+c keep working in the editor.
+ * ctrl+c keep working in the editor. Enter confirms the row under the
+ * cursor (caller maps the `main` root row to a plain deselect).
  */
 export function handleWidgetKey(
   state: WidgetKeyState,
   data: string,
-  rowCount: number,
-  rowActors: string[],
+  rows: readonly WidgetRowSpec[],
   canActivate = false,
 ): WidgetKeyResult {
-  const clamp = (n: number): number => Math.min(Math.max(0, n), Math.max(0, rowCount - 1));
+  const clamp = (n: number): number => Math.min(Math.max(0, n), Math.max(0, rows.length - 1));
 
   if (!state.selected) {
     // 激活门控对齐 fleet-status（v0.66.0 fleet-status.ts:606-607，规格表
     // §4）：bare ↓/← 只在编辑器为空（canActivate=true）时激活；alt+↓/↑ 为
     // 不受门控的第二通道（差异表 §3.3）。
     const gatedActivate = canActivate && (matchesKey(data, "down") || matchesKey(data, "left"));
-    if (rowCount > 0 && (isActivate(data) || gatedActivate)) {
+    if (rows.length > 0 && (isActivate(data) || gatedActivate)) {
       return { type: "update", state: { selected: true, cursor: clamp(state.cursor) } };
     }
     return { type: "none" };
@@ -174,11 +195,11 @@ export function handleWidgetKey(
   }
   if (matchesKey(data, "down") || matchesKey(data, "j")) return { type: "update", state: { selected: true, cursor: clamp(state.cursor + 1) } };
   if (matchesKey(data, "enter")) {
-    return {
-      type: "confirm",
-      actor: rowActors[clamp(state.cursor)] ?? LEADER_ACTOR,
-      state: { selected: false, cursor: state.cursor },
-    };
+    const row = rows[clamp(state.cursor)];
+    // Rows can vanish between frames (run settles while selected): nothing
+    // to confirm — leave selection and let the key reach the editor.
+    if (!row) return { type: "passthrough", state: { selected: false, cursor: state.cursor } };
+    return { type: "confirm", row, state: { selected: false, cursor: state.cursor } };
   }
   if (matchesKey(data, "escape")) {
     return { type: "update", state: { selected: false, cursor: state.cursor } };
@@ -309,13 +330,17 @@ export interface RunWidgetControllerOptions {
 
 /**
  * Owns the below-editor widget WITHOUT a pi-tui component: display is plain
- * `setWidget(key, string[], { placement: "belowEditor" })` on a 1s interval —
- * the host wraps and renders string widgets itself, the rendering path
- * proven stable across host builds (a per-tick component-factory repaint
- * turned into appended-line trails on one bundled host build). Selection
- * hooks the terminal input through a host callback (`ctx.ui.onTerminalInput`
- * where available); keys are consumed before the editor only while the
- * modal selection is active, so unsupported hosts just lose the shortcut.
+ * `setWidget(key, string[], { placement: "belowEditor" })` pushed while a
+ * run is live — the host wraps and renders string widgets itself, the
+ * rendering path proven stable across host builds (a per-tick
+ * component-factory repaint turned into appended-line trails on one
+ * bundled host build). The controller itself is mounted once per session
+ * (idempotent `start()`); whether the host widget is registered is DATA
+ * driven: `snapshot.running === true` ⇒ string[] frame, otherwise
+ * `setWidget(key, undefined)` (auto-unmount on settle). Selection hooks the
+ * terminal input through a host callback (`ctx.ui.onTerminalInput` where
+ * available); keys are consumed before the editor only while the modal
+ * selection is active, so unsupported hosts just lose the shortcut.
  */
 export class RunWidgetController {
   private state = initialWidgetKeyState();
@@ -326,6 +351,8 @@ export class RunWidgetController {
   /** True once start() has run (pause/resume never starts a fresh loop). */
   private started = false;
   private removeInput: (() => void) | undefined;
+  /** True while a string[] frame is registered on the host (data-driven). */
+  private registered = false;
   /** Render-string fingerprint of the last setWidget (skip identical repaints). */
   private lastRender: string | null = null;
   private readonly opts: RunWidgetControllerOptions;
@@ -372,11 +399,7 @@ export class RunWidgetController {
         this.stopTicker();
         this.stopTicker = null;
       }
-      try {
-        this.setWidget(undefined);
-      } catch {
-        /* widget failures never break the session */
-      }
+      this.hide();
       return;
     }
     if (this.started && this.stopTicker === null) {
@@ -388,25 +411,48 @@ export class RunWidgetController {
     this.refresh();
   }
 
+  /** 卸载亮块（若已注册）：清指纹 + 复位选择态（数据驱动卸载/暂停隐藏共用）。 */
+  private hide(): void {
+    this.lastRender = null;
+    this.state = initialWidgetKeyState();
+    if (!this.registered) return;
+    this.registered = false;
+    try {
+      this.setWidget(undefined);
+    } catch {
+      /* widget failures never break the session */
+    }
+  }
+
   /**
-   * Rebuilds the view and pushes it to the host. Skips setWidget when the
-   * render string is unchanged (aligned to fleet-status renderKey semantics,
-   * v0.66.0 fleet-status.ts:585-591) — the collapsed default line carries no
-   * per-second text, so a running run no longer churns the host; the expanded
-   * header's elapsed label changes every second while selected, and a
-   * selection toggle changes the gutter/hint lines and rebuilds too.
+   * Rebuilds the view and syncs the host registration: a live run renders
+   * the collapsed/expanded frame, a settled run (or a snapshot without
+   * progress) unmounts the widget. Skips setWidget when the render string
+   * is unchanged (aligned to fleet-status renderKey semantics, v0.66.0
+   * fleet-status.ts:585-591) — the collapsed default line carries no
+   * per-second text, so a running run does not churn the host while
+   * unselected; the expanded leader row's elapsed label changes every
+   * second while selected, and a selection toggle changes the gutter/hint
+   * lines and rebuilds too. Called on state-change events and on the 1s
+   * aligned ticker.
    */
   refresh(): void {
     if (this.paused) return;
     try {
       const snapshot = this.opts.load();
       this.view = buildWidgetView(snapshot, this.opts.nowMs?.() ?? Date.now());
+      if (this.view.rows.length === 0) {
+        // 数据驱动卸载：run 落定 → 亮块消失；选择态随 run 结束复位。
+        this.hide();
+        return;
+      }
       if (this.state.cursor > this.view.rows.length - 1) this.state.cursor = Math.max(0, this.view.rows.length - 1);
       const width = this.opts.width?.() ?? process.stdout.columns ?? 80;
       const lines = renderWidgetView(this.view, this.state, width, this.opts.styles);
       const renderKey = lines.join("\n");
-      if (renderKey === this.lastRender) return;
+      if (this.registered && renderKey === this.lastRender) return;
       this.lastRender = renderKey;
+      this.registered = true;
       this.setWidget(lines);
     } catch {
       /* widget failures never break the session */
@@ -431,19 +477,15 @@ export class RunWidgetController {
       // 编辑器为空才允许 bare ↓/← 激活（对齐 fleet-status getEditorText===""）；
       // 宿主无 editorState 端口时降级为仅 alt 通道（canActivate=false）。
       const canActivate = this.opts.editorState ? this.opts.editorState().text === "" : false;
-      const result = handleWidgetKey(
-        this.state,
-        data,
-        this.view.rows.length,
-        this.view.rows.map((row) => row.actor),
-        canActivate,
-      );
+      const result = handleWidgetKey(this.state, data, this.view.rows, canActivate);
       if (result.type === "none") return undefined;
       this.state = result.state;
       if (result.type === "confirm") {
         this.refresh();
+        // main 根行：enter 只退出选中（fleet main 语义），不进 viewer。
+        if (result.row.kind === "root") return { consume: true };
         try {
-          this.opts.onConfirm(result.actor);
+          this.opts.onConfirm(result.row.actor);
         } catch {
           /* opening the viewer never breaks the session */
         }
