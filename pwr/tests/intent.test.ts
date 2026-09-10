@@ -33,7 +33,7 @@ test("non-workflow input passes through", () => {
 	assert.equal(matchWorkflowPrefix("my workflow: is broken"), null);
 });
 
-// ---------- /workflow 冒号子命令（v2.8.0） ----------
+// ---------- 统一冒号子命令表（v2.9.0：单一 /workflow:* 命名空间） ----------
 
 test("/workflow:run args split the saved name from the raw args", () => {
 	assert.deepEqual(parseWorkflowRunArgs("audit files=a.js depth=2"), { name: "audit", rawArgs: "files=a.js depth=2" });
@@ -49,16 +49,21 @@ test("firstToken returns the first whitespace-delimited token (or empty)", () =>
 	assert.equal(firstToken(""), "");
 });
 
-test("retired space-separated words map to the colon sub-commands", () => {
-	const expected: Record<string, string> = {
-		run: WORKFLOW_SUBCOMMANDS.run,
-		delete: WORKFLOW_SUBCOMMANDS.delete,
-		model: WORKFLOW_SUBCOMMANDS.model,
-	};
-	for (const [head, target] of Object.entries(expected)) {
-		assert.equal(RETIRED_WORKFLOW_SUBCOMMANDS[head]?.command, target, `retired word ${head}`);
+test("unified subcommand table: 15 keys, each mapping to /workflow:<key>", () => {
+	const expected = ["run", "delete", "model", "list", "view", "open", "pause", "resume", "stop", "restart", "save", "saved", "script", "approve", "help"];
+	assert.deepEqual(Object.keys(WORKFLOW_SUBCOMMANDS).sort(), [...expected].sort());
+	for (const [word, command] of Object.entries(WORKFLOW_SUBCOMMANDS)) {
+		assert.equal(command, `workflow:${word}`, `subcommand ${word}`);
 	}
-	assert.equal(WORKFLOW_SUBCOMMANDS.run, "workflow:run");
-	assert.equal(WORKFLOW_SUBCOMMANDS.delete, "workflow:delete");
-	assert.equal(WORKFLOW_SUBCOMMANDS.model, "workflow:model");
+});
+
+test("retired words: exactly the 14 non-help subcommands, help stays bare", () => {
+	const words = Object.keys(RETIRED_WORKFLOW_SUBCOMMANDS).sort();
+	assert.equal(words.length, 14, "14 retired words (help excluded)");
+	assert.equal(RETIRED_WORKFLOW_SUBCOMMANDS.help, undefined, "bare 'help' shows help, not a rename hint");
+	for (const word of words) {
+		const entry = RETIRED_WORKFLOW_SUBCOMMANDS[word]!;
+		assert.equal(entry.command, `workflow:${word}`, `retired word ${word}`);
+		assert.ok(entry.usage.startsWith(`/workflow:${word}`), `usage for ${word} uses the new command`);
+	}
 });

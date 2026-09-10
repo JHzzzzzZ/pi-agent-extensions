@@ -1,5 +1,5 @@
 /**
- * JHL-18 - /workflows:view viewer tests: split-pane frame geometry, item
+ * JHL-18 - /workflow:view viewer tests: split-pane frame geometry, item
  * roster, page bodies, key reducer, stop state machine, refresh gating.
  *
  * All pure — no pi-tui component instantiation. `visibleWidth`/`stripAnsi`

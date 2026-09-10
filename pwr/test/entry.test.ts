@@ -93,50 +93,71 @@ test("merged entry registers the colon command surface, shortcuts and the run-en
 		"workflow:run",
 		"workflow:delete",
 		"workflow:model",
-		"workflows",
-		"workflows:list",
-		"workflows:view",
-		"workflows:open",
-		"workflows:pause",
-		"workflows:resume",
-		"workflows:stop",
-		"workflows:restart",
-		"workflows:save",
-		"workflows:saved",
-		"workflows:script",
-		"workflows:approve",
-		"workflows:help",
+		"workflow:list",
+		"workflow:view",
+		"workflow:open",
+		"workflow:pause",
+		"workflow:resume",
+		"workflow:stop",
+		"workflow:restart",
+		"workflow:save",
+		"workflow:saved",
+		"workflow:script",
+		"workflow:approve",
+		"workflow:help",
 	]);
+	assert.equal(commands.length, 16, "命令面精确等于 16 条（裸 /workflow + 15 冒号子命令）");
+	// 硬切守卫（v2.9.0）：/workflows 根与旧子命令一律不再注册，无墓碑、无改名提示。
+	assert.ok(commands.every((c) => !c.startsWith("workflows")), "no /workflows* command may be registered");
 	assert.ok(!commands.includes("workflow-delete"), "hyphen command retired (now /workflow:delete)");
 	assert.ok(!commands.includes("pwr-model"), "hyphen command retired (now /workflow:model)");
 	assert.equal(shortcuts.length, 3, "pause/stop/restart shortcuts registered (JHL-15)");
 	assert.deepEqual(renderers, [PWR_RUN_ENTRY], "run entry renderer registered (JHL-15)");
 });
 
-test("bare /workflow keeps generation；旧子命令词只提示改名不生成", async () => {
+test("bare /workflow matrix：空参/help=帮助；14 旧词只提示改名；其余文本生成", async () => {
 	const { commandHandlers, sentMessages } = register();
 	const notifyCalls: Array<{ text: string; type: string }> = [];
 	const ctx = { ui: { notify: (text: string, type: string) => notifyCalls.push({ text, type }) } } as never;
 	const handler = commandHandlers.get("workflow");
 	assert.ok(handler, "/workflow 命令 handler 可调用");
 
-	for (const head of ["run", "delete", "model"]) {
+	// 空参 / help 词：完整帮助（不是生成、不是改名提示）。
+	for (const args of ["", "   ", "help", "--help", "-h"]) {
+		notifyCalls.length = 0;
+		await handler!(args, ctx);
+		assert.equal(sentMessages.length, 0, `/${args} 不得触发生成回合`);
+		assert.equal(notifyCalls.at(-1)?.type, "info", `/${args} 显示 info`);
+		assert.match(notifyCalls.at(-1)?.text ?? "", /colon command surface/);
+	}
+
+	// 14 个旧子命令词：改名 warning，零生成。
+	const retired = ["run", "delete", "model", "list", "view", "open", "pause", "resume", "stop", "restart", "save", "saved", "script", "approve"];
+	assert.equal(retired.length, 14);
+	for (const head of retired) {
+		notifyCalls.length = 0;
 		await handler!(head, ctx);
-		assert.equal(sentMessages.length, 0, `/${head} 不得触发生成回合`);
+		assert.equal(sentMessages.length, 0, `/workflow ${head} 不得触发生成回合`);
+		assert.equal(notifyCalls.at(-1)?.type, "warning", `/workflow ${head} 提示为 warning`);
 		assert.match(notifyCalls.at(-1)?.text ?? "", new RegExp(`已改名为「/workflow:${head}」`));
 	}
 
-	await handler!("", ctx);
-	assert.equal(sentMessages.length, 0, "空参 = 用法提示，不生成");
-	assert.match(notifyCalls.at(-1)?.text ?? "", /Usage: \/workflow <task description>/);
+	// 旧词带参数同样只提示改名（防 `/workflow list …` 被误当生成任务）。
+	notifyCalls.length = 0;
+	await handler!("list running", ctx);
+	assert.equal(sentMessages.length, 0, "旧词带参数不得生成");
+	assert.equal(notifyCalls.at(-1)?.type, "warning");
 
 	await handler!("audit the routes", ctx);
 	assert.equal(sentMessages.length, 1, "普通任务文本仍走生成回合");
 	assert.equal(sentMessages[0]!.message.customType, PWR_GENERATION_CUSTOM_TYPE);
 });
 
-test("bare /workflows：旧子命令词只提示改名；自由形态（help/空参=列表）保留", async () => {
-	const { commandHandlers } = register();
+test("hard cut：/workflows 根与子命令不再注册；/workflow:list 非法状态 warning 不列空表", async () => {
+	const { commands, commandHandlers } = register();
+	assert.ok(!commands.includes("workflows"), "/workflows 根不再注册");
+	assert.ok(!commands.some((c) => c.startsWith("workflows:")), "/workflows:* 子命令不再注册");
+
 	const notifyCalls: Array<{ text: string; type: string }> = [];
 	const ctx = {
 		hasUI: true,
@@ -148,28 +169,17 @@ test("bare /workflows：旧子命令词只提示改名；自由形态（help/空
 		},
 		sessionManager: { getEntries: () => [] },
 	} as never;
-	const handler = commandHandlers.get("workflows");
-	assert.ok(handler, "/workflows 命令 handler 可调用");
+	const listHandler = commandHandlers.get("workflow:list");
+	assert.ok(listHandler, "workflow:list handler 可调用");
 
-	for (const head of ["list", "view", "pause", "approve"]) {
-		notifyCalls.length = 0;
-		await handler!(head, ctx);
-		assert.equal(notifyCalls.at(-1)?.type, "warning", `/${head} 提示为 warning`);
-		assert.match(notifyCalls.at(-1)?.text ?? "", new RegExp(`已改名为「/workflows:${head}」`));
-	}
+	await listHandler!("bogus", ctx);
+	assert.equal(notifyCalls.at(-1)?.type, "warning", "非法状态给出 warning");
+	assert.match(notifyCalls.at(-1)?.text ?? "", /valid/i);
+	assert.ok(!(notifyCalls.at(-1)?.text ?? "").includes("PWR runs"), "不得静默返回空列表");
 
-	notifyCalls.length = 0;
-	await handler!("help", ctx);
-	assert.match(notifyCalls.at(-1)?.text ?? "", /colon command surface/, "裸词 help 仍显示帮助");
-
-	notifyCalls.length = 0;
-	await handler!("", ctx);
-	assert.ok(!(notifyCalls.at(-1)?.text ?? "").includes("已改名"), "空参=列表，不是改名提示");
-
-	const listHandler = commandHandlers.get("workflows:list");
-	assert.ok(listHandler, "冒号 list 命令可调用");
 	notifyCalls.length = 0;
 	await listHandler!("", ctx);
+	assert.ok((notifyCalls.at(-1)?.text ?? "").includes("PWR runs"), "合法/空参仍列运行");
 	assert.ok((notifyCalls.at(-1)?.text ?? "").length > 0, "冒号 list handler 有输出");
 });
 

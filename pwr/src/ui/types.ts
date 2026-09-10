@@ -1,7 +1,7 @@
 /**
  * PWR UI - shared view models and event feed contract (JHL-15)
  *
- * The `/workflows` observation/control UI consumes a *run store* that is fed
+ * The `/workflow` observation/control UI consumes a *run store* that is fed
  * by two sources:
  *
  *  1. `RunRegistry` (src/flow.ts, JHL-16) - run metadata created by
@@ -70,7 +70,7 @@ export interface WorkflowEventsSource {
 
 /**
  * Optional richer snapshot surface the runtime can serve for the live
- * /workflows:view viewer (JHL-18): full stage/task detail computed at read
+ * /workflow:view viewer (JHL-18): full stage/task detail computed at read
  * time. The concrete WorkflowRuntime satisfies this structurally; when the
  * port is absent (or the run is unknown — post-restart) the viewer degrades
  * to the store-only snapshot.
@@ -82,7 +82,7 @@ export interface RuntimeViewSource {
 
 export type UiRuntimeAdapter = RuntimeAdapter & Partial<WorkflowEventsSource & RuntimeViewSource>;
 
-/** One row of the `/workflows` run list (PRD 4.3). */
+/** One row of the `/workflow` run list (PRD 4.3). */
 export interface RunListEntry {
 	runId: string;
 	scriptName: string;

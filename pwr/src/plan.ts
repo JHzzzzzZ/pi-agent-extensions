@@ -220,7 +220,7 @@ export function extractPlan(source: string): WorkflowPlan {
 }
 
 /**
- * Builds the structure tree for the /workflows:view diagram (JHL-18):
+ * Builds the structure tree for the /workflow:view diagram (JHL-18):
  * a call's parent is the smallest pipeline/parallel whose source span
  * strictly contains it; roots are the top-level calls in source order.
  *

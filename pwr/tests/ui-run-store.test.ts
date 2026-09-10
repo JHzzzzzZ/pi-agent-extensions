@@ -270,7 +270,7 @@ test("hydrateRegistryInto seeds every registry run", () => {
 });
 
 // ------------------------------------------------------------------
-// applyRuntimeView: full snapshot merge for the /workflows:view viewer (JHL-18)
+// applyRuntimeView: full snapshot merge for the /workflow:view viewer (JHL-18)
 // ------------------------------------------------------------------
 
 function runtimeViewFixture(runId: string, opts: { cacheHitSecond?: boolean } = {}) {

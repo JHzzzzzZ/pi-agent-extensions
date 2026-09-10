@@ -161,7 +161,7 @@ export interface ApprovalCardInfo {
 	scriptSource: string;
 }
 
-/** Max bytes of script source shown by "View raw script" (full source via /workflows:script). */
+/** Max bytes of script source shown by "View raw script" (full source via /workflow:script). */
 export const MAX_SCRIPT_PREVIEW_BYTES = 8 * 1024;
 
 /** Byte-safe script preview: pass-through under the cap, truncated with a pointer otherwise. */
@@ -214,7 +214,7 @@ export async function confirmApprovalCard(
 			// Read-only preview, then loop back to the same approval card.
 			const body = truncateScriptPreview(info.scriptSource);
 			ctx.ui.notify(
-				`[PWR] Workflow script "${info.scriptName}" (read-only)\n\n${body}\n完整源码: /workflows:script ${info.runId.slice(0, 8)}`,
+				`[PWR] Workflow script "${info.scriptName}" (read-only)\n\n${body}\n完整源码: /workflow:script ${info.runId.slice(0, 8)}`,
 				"info",
 			);
 			continue;

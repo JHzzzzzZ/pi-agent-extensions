@@ -1,5 +1,5 @@
 /**
- * PWR UI - pi wiring for /workflows (JHL-15)
+ * PWR UI - pi wiring for /workflow (JHL-15)
  *
  * Registers commands, shortcuts, entry renderer, widget and status line,
  * and feeds the MemoryRunStore from the registry / runtime / persisted
@@ -12,18 +12,16 @@ import type { ToolDeps } from "../tools.ts";
 import type { RunStatus, WorkflowPlan, WorkflowScript, WorkflowRun } from "../types.ts";
 import { PWR_RUN_ENTRY } from "../types.ts";
 import {
-	WORKFLOWS_COMMAND,
-	WORKFLOWS_SUBCOMMANDS,
-	RETIRED_WORKFLOWS_SUBCOMMANDS,
+	isRunStatus,
 	latestRunId,
 	parseControlArgs,
 	parseRunRefArgs,
-	parseWorkflowsArgs,
 	resolveRunId,
 	runApproveAction,
 	runControlAction,
-	workflowsHelpText,
+	workflowHelpText,
 } from "./commands.ts";
+import { WORKFLOW_SUBCOMMANDS } from "../intent.ts";
 import { runSaveFlow, type SaveFlowActions } from "./save-flow.ts";
 import { MemoryRunStore } from "./run-store.ts";
 import { createRunEntryRenderer, refreshUiStatus, runCardSummaryLine } from "./renderer.ts";
@@ -106,7 +104,7 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 			await openRunViewer(ctx.ui, {
 				load: viewerLoad,
 				initialRunId: runId,
-				// D 两步确认后的停止：复用 /workflows:stop 的控制路径（store 同步刷新）。
+				// D 两步确认后的停止：复用 /workflow:stop 的控制路径（store 同步刷新）。
 				onStop: async (stoppingRunId) => {
 					const outcome = await runControlAction(deps, store, "stop", stoppingRunId);
 					return { ok: outcome.ok, text: outcome.text };
@@ -266,48 +264,33 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 	}
 
 	/**
-	 * `/workflows` 裸命令（命令面冒号化 v2.8.0）：无参=列表；`<runId>`=详情；
-	 * `--filter <状态>`；`help|--help|-h`=帮助。旧空格子命令只提示改名、绝不执行；
-	 * 子命令是独立静态命令（WORKFLOWS_SUBCOMMANDS），各有独立 handler。
+	 * 统一冒号命令面（v2.9.0）：裸 `/workflow`（生成/帮助）在 index.ts 注册；
+	 * 本文件注册全部 15 条 `/workflow:*` 子命令，每条独立 handler。`:list` 对
+	 * 非法状态 warning 后终止（不静默返回空列表）。
 	 */
-	pi.registerCommand(WORKFLOWS_COMMAND, {
-		description:
-			"PWR 工作流：无参=运行列表；/workflows <runId> 详情；/workflows --filter <状态>；子命令为独立冒号命令（/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help）",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.list, {
+		description: "运行列表：/workflow:list [draft|awaiting_approval|queued|running|paused|completed|failed|cancelled]",
 		handler: async (args, ctx) => {
-			const trimmed = (args ?? "").trim();
-			const head = firstArg(trimmed) ?? "";
-			const renamed = RETIRED_WORKFLOWS_SUBCOMMANDS[head];
-			if (renamed) {
-				notify(ctx, `「/workflows ${head}」已改名为「/${renamed.command}」；用法：${renamed.usage}`, "warning");
+			const status = firstArg(args ?? "");
+			if (status && !isRunStatus(status)) {
+				notify(
+					ctx,
+					`Unknown status "${status}" — valid: draft|awaiting_approval|queued|running|paused|completed|failed|cancelled.`,
+					"warning",
+				);
 				return;
 			}
-			const route = parseWorkflowsArgs(trimmed);
-			switch (route.kind) {
-				case "help":
-					notify(ctx, workflowsHelpText(), "info");
-					return;
-				case "list":
-					showList(ctx, route.status);
-					return;
-				case "detail":
-					await showDetail(ctx, route.runId);
-					return;
-			}
+			showList(ctx, status);
 		},
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.list, {
-		description: "运行列表：/workflows:list [draft|awaiting_approval|queued|running|paused|completed|failed|cancelled]",
-		handler: async (args, ctx) => showList(ctx, firstArg(args ?? "")),
-	});
-
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.view, {
-		description: "全屏实时查看器：/workflows:view [runId]（无参=最近 run；左 roster / 右 detail）",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.view, {
+		description: "全屏实时查看器：/workflow:view [runId]（无参=最近 run；左 roster / 右 detail）",
 		handler: async (args, ctx) => openViewer(ctx, firstArg(args ?? "") ?? ""),
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.open, {
-		description: "运行详情：/workflows:open <runId>（完整 id 或 8 位前缀）",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.open, {
+		description: "运行详情：/workflow:open <runId>（完整 id 或 8 位前缀）",
 		handler: async (args, ctx) => {
 			const parsed = parseRunRefArgs("open", args ?? "");
 			if (!parsed.ok) {
@@ -318,28 +301,28 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		},
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.pause, {
-		description: "暂停 run：/workflows:pause <runId>",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.pause, {
+		description: "暂停 run：/workflow:pause <runId>",
 		handler: async (args, ctx) => dispatchControlArgs(ctx, "pause", args ?? ""),
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.resume, {
-		description: "恢复 run：/workflows:resume <runId>",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.resume, {
+		description: "恢复 run：/workflow:resume <runId>",
 		handler: async (args, ctx) => dispatchControlArgs(ctx, "resume", args ?? ""),
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.stop, {
-		description: "停止 run（或单个 agent）：/workflows:stop <runId> [taskId]",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.stop, {
+		description: "停止 run（或单个 agent）：/workflow:stop <runId> [taskId]",
 		handler: async (args, ctx) => dispatchControlArgs(ctx, "stop", args ?? ""),
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.restart, {
-		description: "重跑单个 agent：/workflows:restart <runId> <taskId>（已完成缓存不变）",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.restart, {
+		description: "重跑单个 agent：/workflow:restart <runId> <taskId>（已完成缓存不变）",
 		handler: async (args, ctx) => dispatchControlArgs(ctx, "restart_agent", args ?? ""),
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.save, {
-		description: "把 run 保存为命令：/workflows:save <runId>",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.save, {
+		description: "把 run 保存为命令：/workflow:save <runId>",
 		handler: async (args, ctx) => {
 			const parsed = parseRunRefArgs("save", args ?? "");
 			if (!parsed.ok) {
@@ -350,13 +333,13 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		},
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.saved, {
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.saved, {
 		description: "列出已保存工作流（scope/描述/参数提示）",
 		handler: async (_args, ctx) => notify(ctx, formatSavedWorkflows(describeSavedWorkflows(deps)), "info"),
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.script, {
-		description: "查看 run 的原始脚本（只读）：/workflows:script <runId>",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.script, {
+		description: "查看 run 的原始脚本（只读）：/workflow:script <runId>",
 		handler: async (args, ctx) => {
 			const parsed = parseRunRefArgs("script", args ?? "");
 			if (!parsed.ok) {
@@ -373,8 +356,8 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		},
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.approve, {
-		description: "批准等待审批的 run：/workflows:approve <runId>",
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.approve, {
+		description: "批准等待审批的 run：/workflow:approve <runId>",
 		handler: async (args, ctx) => {
 			const parsed = parseRunRefArgs("approve", args ?? "");
 			if (!parsed.ok) {
@@ -387,9 +370,9 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		},
 	});
 
-	pi.registerCommand(WORKFLOWS_SUBCOMMANDS.help, {
+	pi.registerCommand(WORKFLOW_SUBCOMMANDS.help, {
 		description: "显示 PWR 冒号命令面帮助",
-		handler: async (_args, ctx) => notify(ctx, workflowsHelpText(), "info"),
+		handler: async (_args, ctx) => notify(ctx, workflowHelpText(), "info"),
 	});
 
 	// ----- shortcuts (operate on the last viewed run; keys from keybindings.ts) -----
@@ -397,7 +380,7 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		description: PWR_SHORTCUTS.pause.description,
 		handler: async (ctx) => {
 			if (!lastViewedRunId) {
-				ctx.ui.notify("No PWR run viewed yet — open one with /workflows:open <runId> first.", "warning");
+				ctx.ui.notify("No PWR run viewed yet — open one with /workflow:open <runId> first.", "warning");
 				return;
 			}
 			await dispatchControl(ctx as ExtensionCommandContext, "pause", lastViewedRunId);
@@ -408,7 +391,7 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		description: PWR_SHORTCUTS.stop.description,
 		handler: async (ctx) => {
 			if (!lastViewedRunId) {
-				ctx.ui.notify("No PWR run viewed yet — open one with /workflows:open <runId> first.", "warning");
+				ctx.ui.notify("No PWR run viewed yet — open one with /workflow:open <runId> first.", "warning");
 				return;
 			}
 			await dispatchControl(ctx as ExtensionCommandContext, "stop", lastViewedRunId);
@@ -419,7 +402,7 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 		description: PWR_SHORTCUTS.restart.description,
 		handler: async (ctx) => {
 			if (!lastViewedRunId) {
-				ctx.ui.notify("No PWR run viewed yet — open one with /workflows:open <runId> first.", "warning");
+				ctx.ui.notify("No PWR run viewed yet — open one with /workflow:open <runId> first.", "warning");
 				return;
 			}
 			const agentId = await pickAgent(ctx as ExtensionCommandContext, lastViewedRunId, "Choose an agent to restart");
