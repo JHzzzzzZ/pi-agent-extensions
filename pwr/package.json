@@ -1,9 +1,9 @@
 {
 	"name": "pwr",
-	"version": "2.7.0",
+	"version": "2.8.0",
 	"private": true,
 	"type": "module",
-	"description": "PWR (Pi Workflow Runtime) — v2.7.0：/workflows view 分栏查看器（roster + detail，fleet 几何/键位/750ms 指纹门控，D 两步停止）与 TUI 文本工具对齐（删自写 text.ts，改宿主 truncateToWidth/wrapTextWithAnsi）、footer 状态键排序带（30:pwr，跨插件契约 docs/cross/status-bar.md）｜v2.6.0：命令面统一为子命令式（/workflows 列表/查看/控制子命令 + /workflow run|delete|model；动态 /workflow:<name> 退役，saved 调用现读盘）｜v2.5.0：solo 审批门（/solo 下批准卡按 once 自动批准）｜v2.4.0：实时 trace + saved 列表 + key=value 参数｜v2.3.0：/workflows view 全屏运行查看器与脚本结构图 (JHL-18)",
+	"description": "PWR (Pi Workflow Runtime) — v2.8.0：命令面冒号化（/workflow:run|:delete|:model 与 /workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help 独立静态命令；裸 /workflows 保留列表/详情/--filter/help，裸 /workflow 保留生成）｜v2.7.0：/workflows:view 分栏查看器（roster + detail，fleet 几何/键位/750ms 指纹门控，D 两步停止）与 TUI 文本工具对齐（删自写 text.ts，改宿主 truncateToWidth/wrapTextWithAnsi）、footer 状态键排序带（30:pwr，跨插件契约 docs/cross/status-bar.md）｜v2.6.0：命令面统一为子命令式（/workflows 列表/查看/控制子命令 + /workflow run|delete|model；动态 /workflow:<name> 退役，saved 调用现读盘）｜v2.5.0：solo 审批门（/solo 下批准卡按 once 自动批准）｜v2.4.0：实时 trace + saved 列表 + key=value 参数｜v2.3.0：/workflows view 全屏运行查看器与脚本结构图 (JHL-18)",
 	"engines": {
 		"node": ">=22.18"
 	},
