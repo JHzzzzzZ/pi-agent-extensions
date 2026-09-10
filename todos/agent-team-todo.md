@@ -49,7 +49,7 @@
 - [x] login 时上下键冲突：Pi 的 login（登录/鉴权选择）界面中，team widget 的上下键选中激活与界面的选项上下选择冲突，导致无法选择选项。（v1.9.1，feat/agent-team-widget-focus → 7b56797）根因：v1.8.0 抄 fleet-status 门控只抄了「编辑器为空」半条，漏掉 `editorHasFocus()` 短路——宿主 `/login` 经 showSelector 把主编辑器替换为选择器并 setFocus（非 overlay），而 pi-tui 扩展 onTerminalInput 监听器**先于**聚焦组件，widget consume 即抢键。交付：`probeEditorFocus`（`getFocusedComponent()` 优先/`focusedComponent` 字段回退/未知→undefined 降级）+ `editorFocus` 端口，index 经 factory 形态 setWidget 一次性捕获宿主 TUI；焦点确定非编辑器时 widget 完全不介入（含 alt 通道）、选中态退出让行。测试 279→290（本分支新增 11：widget 7 + widget-focus-host 3 真宿主 + viewer-mutex 接线 1）；两条 README/docs 卡/tui-sync/incidents/AGENTS 同步；agent-team 1.9.1 / 根 2.17.1。真机验收待用户：有亮块时 /login、/model 选择器方向键不再被抢。
 - [x] 命令风格统一（跨插件）：冒号命名空间式 `/team:run|stop|status|view|clear|doctor` 与 loop 的子命令式 `/loop list|pause|resume|delete|clear` 用法不一致，需统一（倾向于哪种、是否连带 provider-quota `/quota`、如何向后兼容旧写法待定）。跨插件需求，已在 loop-todo.md 同步登记。（完成 2026-09-10 @ merge a03e525：已定子命令式，范围=全部命令面，直接替换不留别名。agent-team v1.9.0 合并为单 `/team` 命令 + 子命令路由 `run|status|stop|view|clear|doctor`；动态 `/team:<name>` 退役为 `/team <name> <任务>` 参数路由，撞保留词提示显式 `/team run`。连带 pwr v2.6.0 `/workflows` 子命令合并与 `/workflow run|delete|model`、opencode-bridge v1.6.0 `sync|restore`；loop/goal/deep-init/quota 不动，仅文档口径同步。agent-team 279 测试 + typecheck 绿）
 - [x] 状态条时钟统一与排序（跨插件）：widget 与 cockpit 进度 ticker 改走 `aligned-ticker.ts` 对齐墙钟秒节拍；契约 `docs/cross/status-bar.md`（完成 2026-09-10 @ feat/status-clock b9d397e，agent-team 288 测试 + typecheck 绿）。
-- [ ] 状态条对齐 pi-subagents fleet-status：触发形式（数据驱动活跃表面 + 事件/定时刷新）+ 组件式渲染（未领取）
+- [ ] 状态条对齐 pi-subagents fleet-status：触发形式（数据驱动活跃表面 + 事件/定时刷新）+ 组件式渲染（processing 2026-09-14 @ widget-tree；触发形式本条交付，组件式渲染保留为文档化偏差）
   - 需求原话：参考 pi-subagent 的状态栏实现方式。
   - 参考实现（本地 `~/.pi/agent/npm/node_modules/pi-subagents/src/tui/fleet-status.ts`）：`ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, (tui, theme) => ({ render(width), invalidate(), dispose() }), { placement })` 的**组件工厂式**注册——`render(width)` 每帧按当前宽度渲染（身份色 hash、agent 名、model/thinking、状态、elapsed；≤6 行 owner/子 agent 树），`invalidate()` 重置渲染键，`dispose()` 撤订阅；500ms tick + renderKey 相同跳过，running 时 `tui.requestRender()` 驱动墙钟 spinner；`onTerminalInput` 接 `handleKey`（editorHasFocus + 空编辑器激活、down/j up/k 导航、enter 进 inspector）；inspector 打开时 clearWidget、关闭重挂。另有 slash 运行期 footer 临时状态（`src/slash/slash-commands.ts:608` 起 `setStatus("subagent-slash", …)`）可作参照。
   - 现状差距（`agent-team/widget.ts`）：`setWidget(key, string[])` 两行概要（头行 + 任务行），tick 1000ms，无逐 agent 行 / spinner / 身份色 / 组件内渲染；状态投影与渲染已分离（`buildWidgetRows` / `renderWidgetView` 纯函数 + `RunWidgetController` 字符串推送）。
@@ -82,7 +82,7 @@
   - 现状差距：`TeamRunCoordinator` 单 active（`this.active`/`this.pending` 各一个句柄），第二个 `/team:run` 直接返回 `RUN_IN_PROGRESS`；只保留 `lastRecord` 一条终态；`getStatus()` 返回单个 `RunStatusSnapshot`；widget 取单快照。`team_stop`/`stopAndSettle` 虽按 runId 对外暴露，但内部只有这一个句柄。
   - 改动要点（实现时定）：多 run registry（Map<runId, controller/pending/progress/record>）；按 runId 的 status/stop/settle/预算独立；runstore 已按 runId 落盘，`session_start` reconcile 需处理多条残留；跨 run 的总并发上限与子进程资源（成员 4 并发是单 dispatch 协议上限，需另定）；报告 followUp 交错；`/team:status`、`team_status`、viewer 选中 run 的定位；`RUN_IN_PROGRESS` 契约去留（保留为并发上限？改为可配？）；`team_stop` 省略 runId 的行为待重定。
   - 依赖/关系：与「widget 展开态改 team + 成员树」配套（多 team 行才有真实数据源）；`/team:clear`、终态常驻与水合语义需随之重定。
-- [ ] widget 展开态改 team + 成员树（未领取）
+- [ ] widget 展开态改 team + 成员树（processing 2026-09-14 @ widget-tree）
   - 需求（用户 2026-09-10）：展开不再只是「状态行 + 任务行」，显示 team 与 teammate 的行；多 team 时用树形层级。
   - 树形格式（用户给定；`main` = 主 agent 对话框，即根节点；每个 team 一个 leader 节点，`|-` 下为其成员）：
     ```text
