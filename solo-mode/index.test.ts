@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+  SOLO_FLAG_NAME,
   SOLO_STATUS_KEY,
   SOLO_STATUS_TEXT,
   STATUS_SEPARATOR,
@@ -19,6 +20,7 @@ import {
   parseSoloCommand,
   readSoloState,
   resolveSoloStatePath,
+  soloFlagEnabled,
   writeSoloState,
 } from "./index.ts";
 import { writeBand } from "./status-band.ts";
@@ -38,6 +40,7 @@ interface StatusCall {
 function makeFakePi() {
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
   const commands = new Map<string, { description?: string; handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const flags = new Map<string, { description?: string; type: string; default?: unknown }>();
   const pi = {
     on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
       handlers.set(event, handler);
@@ -45,8 +48,11 @@ function makeFakePi() {
     registerCommand: (name: string, options: { description?: string; handler: (args: string, ctx: unknown) => Promise<void> }) => {
       commands.set(name, options);
     },
+    registerFlag: (name: string, options: { description?: string; type: string; default?: unknown }) => {
+      flags.set(name, options);
+    },
   };
-  return { pi, handlers, commands };
+  return { pi, handlers, commands, flags };
 }
 
 interface FakeCtxOptions {
@@ -81,13 +87,16 @@ function makeTempStateFile(): { dir: string; file: string } {
   return { dir, file: path.join(dir, "solo-mode.json") };
 }
 
-function boot(options: FakeCtxOptions & { statePath: string; pid?: number } = { statePath: "" }) {
+function boot(
+  options: FakeCtxOptions & { statePath: string; pid?: number; readFlag?: () => boolean | string | undefined } = { statePath: "" },
+) {
   const fake = makeFakePi();
   const env = { PI_SOLO_MODE_FILE: options.statePath };
   const pid = options.pid ?? process.pid;
   createSoloModeExtension(fake.pi as unknown as ExtensionAPI, {
     env,
     pid,
+    readFlag: options.readFlag ?? (() => false),
     nowIso: () => "2026-08-05T12:00:00.000Z",
   });
   const ctx = makeFakeCtx(options);
@@ -103,6 +112,24 @@ test("parseSoloCommand：空参＝切换，其余（含旧管理词）＝usage",
   assert.equal(parseSoloCommand("off"), "usage");
   assert.equal(parseSoloCommand(" status "), "usage");
   assert.equal(parseSoloCommand("bogus"), "usage");
+});
+
+test("soloFlagEnabled：boolean flag 归一（true/\"true\"/\"1\" 开，其余关）", () => {
+  assert.equal(soloFlagEnabled(true), true);
+  assert.equal(soloFlagEnabled("true"), true);
+  assert.equal(soloFlagEnabled("1"), true);
+  assert.equal(soloFlagEnabled(false), false);
+  assert.equal(soloFlagEnabled("false"), false);
+  assert.equal(soloFlagEnabled(""), false);
+  assert.equal(soloFlagEnabled(undefined), false);
+});
+
+test("注册宿主 CLI flag `solo`（boolean，默认 false）——`pi --solo` 的入口", () => {
+  const { flags } = boot({ statePath: path.join(os.tmpdir(), "never-written.json") });
+  const flag = flags.get(SOLO_FLAG_NAME);
+  assert.ok(flag, `已注册 flag ${SOLO_FLAG_NAME}`);
+  assert.equal(flag.type, "boolean");
+  assert.equal(flag.default, false);
 });
 
 test("命令注册：裸 /solo + 三个冒号子命令，均有描述", () => {
@@ -240,6 +267,62 @@ test("session_start：本进程残留复位（reload 提示），异 pid 文件�
   await (boot2.handlers.get("session_start")! as (e: unknown, c: unknown) => unknown)({ reason: "startup" }, boot2.ctx);
   assert.equal(fs.existsSync(file), true, "异 pid 文件保留");
   assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).pid, process.pid + 1);
+});
+
+test("session_start + `--solo` flag：跳过确认直接启用（写状态文件 + 状态条 + 来源提示）", async () => {
+  const { file } = makeTempStateFile();
+  const b = boot({ statePath: file, readFlag: () => true });
+
+  await (b.handlers.get("session_start")! as (e: unknown, c: unknown) => unknown)({ reason: "startup" }, b.ctx);
+
+  assert.equal(fs.existsSync(file), true, "状态文件已写入");
+  assert.ok(readSoloState({ env: b.env, pid: process.pid }), "本进程视为激活");
+  assert.equal(b.confirms.length, 0, "CLI 参数是显式意图：不弹误触确认");
+  assert.ok(b.statuses.some((s) => s.key === SOLO_STATUS_KEY && s.text === SOLO_STATUS_TEXT), "状态条写入");
+  assert.ok(b.notifications.some((n) => n.message.includes("--solo")), "提示标注来源");
+
+  await (b.handlers.get("session_shutdown")! as (e: unknown, c: unknown) => unknown)({}, b.ctx);
+  assert.equal(fs.existsSync(file), false, "shutdown 仍清理");
+});
+
+test("session_start 无 `--solo` flag：不写状态文件、无来源提示", async () => {
+  const { file } = makeTempStateFile();
+  const b = boot({ statePath: file, readFlag: () => false });
+
+  await (b.handlers.get("session_start")! as (e: unknown, c: unknown) => unknown)({ reason: "startup" }, b.ctx);
+
+  assert.equal(fs.existsSync(file), false);
+  assert.equal(b.notifications.some((n) => n.message.includes("--solo")), false);
+});
+
+test("session_start + `--solo` flag 且无 UI（-p / json 模式）：仍激活（写状态文件，无 UI 调用不报错）", async () => {
+  const { file } = makeTempStateFile();
+  const b = boot({ statePath: file, readFlag: () => true, hasUI: false });
+
+  await (b.handlers.get("session_start")! as (e: unknown, c: unknown) => unknown)({ reason: "startup" }, b.ctx);
+
+  assert.ok(isSoloActive({ env: b.env, pid: process.pid }), "无 UI 仍激活（状态文件为准）");
+  assert.equal(b.statuses.length, 0, "无 UI 不写状态条");
+});
+
+test("session_start + `--solo` flag 且写失败：保持关闭 + error notify（fail-closed）", async () => {
+  const { dir } = makeTempStateFile();
+  const b = boot({ statePath: dir, readFlag: () => true });
+
+  await (b.handlers.get("session_start")! as (e: unknown, c: unknown) => unknown)({ reason: "startup" }, b.ctx);
+
+  assert.equal(isSoloActive({ env: b.env, pid: process.pid }), false, "仍为关闭");
+  assert.ok(b.notifications.some((n) => n.type === "error"), "error notify");
+});
+
+test("session_start + `--solo` flag：reload 复位后按启动 flag 重新启用", async () => {
+  const { file } = makeTempStateFile();
+  const b = boot({ statePath: file, readFlag: () => true });
+  writeSoloState(file, { pid: process.pid, activatedAt: "x" });
+
+  await (b.handlers.get("session_start")! as (e: unknown, c: unknown) => unknown)({ reason: "reload" }, b.ctx);
+
+  assert.ok(isSoloActive({ env: b.env, pid: process.pid }), "reload 后按 --solo 重新启用");
 });
 
 test("session_shutdown：清除本进程状态文件与状态条", async () => {
