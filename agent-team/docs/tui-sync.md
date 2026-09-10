@@ -32,17 +32,20 @@
 | viewer 停止动作 | `stop: ["D"]` 两步确认（`stopConfirming`；确认态 Enter/Y 确认、Esc/ctrl+c/N/backspace 取消，取消不关闭；其余键忽略，`fleet.ts:46/1134-1150`） | `D` 运行中进确认态，确认后经 `viewerStopAction` → `stopAndSettle()`（与 team_stop 同语义）；已结束仅 error notice 不进确认态 | 已对齐（agent-team 特有：横幅占正文窗口顶部、窗口收缩、帧总高不变，见差异表 §3.8） |
 | viewer 刷新动作 | `refresh: ["r", "R"]`（`fleet.ts:43`） | `r`/`R` 绕过 750ms 指纹门控强制重载重绘 | 已对齐 |
 
+| viewer 成员切换/滚动键位 | `selectUp: ["up", "k"]`、`selectDown: ["down", "j"]`、`selectFirst: ["home"]`、`selectLast: ["end"]`、`scrollUp: ["K"]`、`scrollDown: ["J"]`、`pageUp: ["pageUp"]`、`pageDown: ["pageDown"]`、`toggleTools: ["x", "X", "ctrl+o"]`（`fleet.ts:33-48`） | v1.7.0 及以前：`↑↓/j/k/PgUp/PgDn/g/G` 滚右栏、`←→/h/l/Tab/1-9` 切成员 | v1.8.0 起**全面对齐**（差异表 §3.2）；旧键退役按下忽略 |
+
+
 ## 3. 差异条目表
 
 | # | 差异 | 处置 | 原因 / 注释位置 |
 |---|---|---|---|
 | 3.1 | widget 渲染用 `setWidget(key, string[], …)` 而非 fleet-status 的组件工厂式 `setWidget(key, (tui, theme) => Component, …)` | **避坑保留** | 组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加残影行；string[] 由宿主包装渲染，是跨构建最稳路径。见 `widget.ts` 头注 + `index.ts ensureRunWidget` 注释。 |
-| 3.2 | viewer roster+detail 左右双栏（v1.6.0 起对齐 fleet 布局），键位保留 agent-team 特有语义：`←→/h/l/tab/1-9` 切换左栏成员（fleet 的 p/Enter/H/s 键位无对应）、`↑↓/j/k/PgUp/PgDn/g/G` 滚右栏正文、`x` 工具行 | **布局已对齐 + 特有键位保留** | 布局与几何公式对照 `fleet.ts:1319-1381` 抄改（§4 规格表）；fleet 的 prompt audit/steer/herdr 控制面 agent-team 无对应语义，成员切换键位 = agent-team 特有。见 `viewer.ts` `renderViewerFrame`/`rosterLines` + `README.md §5` 按键表。 |
+| 3.2 | viewer roster+detail 左右双栏 + 键位（v1.8.0 起全面对齐 fleet）：`↑↓/k/j` 切换左栏成员、`Shift+K/J` 滚右栏正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行；旧键 `←→/h/l/Tab/1-9/g/G` 退役按下忽略。特有语义仅剩 `m` 发消息（fleet 无对应；fleet 的 p/Enter/H/s steer/inspect/prompt audit 控制面无对应语义，未列入） | **布局 + 键位已对齐** | 布局与几何公式对照 `fleet.ts:1319-1381` 抄改（§4 规格表）；键位逐字对齐 `DEFAULT_FLEET_KEYBINDINGS`（`fleet.ts:33-48`，大写滚动键经 fleet 同款大写→`shift+小写` matchesKey 判定，`fleet.ts:59-61` 同构）。见 `viewer.ts` `VIEWER_ACTION_KEYS`/`handleViewerKey` + `README.md §5` 按键表。 |
 | 3.3 | `alt+↓/↑` 为不受门控的第二激活通道 | **特有语义保留** | fleet-status 只有 ↓/← 激活；alt 通道是 agent-team 历史行为（模态选中风格，与 pi 主编辑器语义并行）。非空编辑器仍可经 alt 通道进 widget。见 `widget.ts` `isActivate`。 |
 | 3.4 | widget tick 1000ms（vs fleet 750ms） | **避坑保留** | 下方亮块是宿主渲染的纯字符串表面（无 overlay 重影风险），1s 节奏够用且省 churn。见 `types.ts` `WIDGET_TICK_MS`。 |
 | 3.5 | 行图标/文案映射 | **已对齐** | fleet ●/◦/■ 与 agent-team ✓/✗/⊘/·/▶ 的映射关系：fleet 运行中 ▶ spinner 语义 ≈ agent-team `running → ▶`；完成 ✓、失败 ✗、中止 ⊘、队列 ·。见 `viewer.ts statusDisplay` + `widget.ts recordIcon`。 |
 | 3.6 | 状态行文本（`formatStatusSnapshot`） | **已对齐** | 仅样式/文案参照 fleet-status 状态行，无行为差异。 |
-| 3.7 | 选中态 up 到顶再按 | **未采纳（agent-team 钳位）** | fleet-status `up` 在选中第 0 行时退出选中；agent-team 保持钳位（首行再按 up 不动），与现有交互一致，无重影风险。见 `widget.ts` `handleWidgetKey`。 |
+| 3.7 | 选中态 up 到顶再按 | **已采纳（v1.8.0，退出选中）** | fleet-status `up` 在选中第 0 行时退出选中（`fleet-status.ts:620-625`）；agent-team v1.8.0 起同构（cursor 0 再按 `↑`/`k` 退出选中放行编辑器，保持 cursor 供再次激活恢复；底部仍钳位），废弃旧钳位行为。见 `widget.ts` `handleWidgetKey`。 |
 | 3.8 | 停止确认横幅/notice 占**正文窗口顶部**，窗口收缩、帧总高不变 | **特有语义保留** | fleet 的 `withActionLines` 是把 action 行插在 detail 正文之前（总高可变）；agent-team 帧是定高（ghost-host 稳定性约束，`fitLine` 逐行定宽），故改为横幅占窗口顶部 + 窗口 slice 少取对应行数，帧总行数恒为 `bodyHeight + VIEWER_CHROME_ROWS`。优先级 busy > 确认 > notice（对齐 fleet `actionLines` 顺序）。见 `viewer.ts` `actionLines` + `renderViewerFrame`。 |
 | 3.9 | 停止粒度 = 整个 run（`viewerStopAction` → `stopAndSettle()`） | **特有语义保留** | fleet 按选中的单个 async run 停；agent-team 的成员子进程归 leader 进程管，cockpit 只能停整个 run（与 team_stop 工具同一路径）。 |
 | 3.10 | 亮块 running 头行可选余额提示（`· 剩 $X.XX`） | **特有语义新增** | fleet 无预算概念；仅当团队 frontmatter 配了 `budget.maxCostUsd` 且未超限时显示（超限即自动中止，不再显示）；无费用上限时头行与 fleet 对齐不变。 |
@@ -62,10 +65,16 @@
 | close 键集 | `escape`、`ctrl+c`、`q`（编码：`\x1b`、`\x03`、`"q"`） | `fleet.ts:34` |
 | 激活键集 | `down`（`\x1b[B`）、`left`（`\x1b[D`） | `fleet-status.ts:606` |
 | 激活条件 | 编辑器文本为空（`getEditorText() === ""`） | `fleet-status.ts:607` |
-| 选中导航键集 | `down`/`j` 下移、`up`/`k` 上移（均钳位；fleet 的“up 到顶再按退出选中”未采纳，见差异表 §3.7） | `fleet.ts:36-37`、`fleet-status.ts:616-625` |
+| 选中导航键集 | `selectUp: ["up", "k"]`、`selectDown: ["down", "j"]`（fleet 首末钳位；fleet-status 的“up 到顶再按退出选中”v1.8.0 已采纳，见差异表 §3.7） | `fleet.ts:37-38`、`fleet-status.ts:616-625` |
+| 成员首末跳转 | `selectFirst: ["home"]`、`selectLast: ["end"]`（fleet `moveSelection(±items.length)` 同构） | `fleet.ts:39-40`、`fleet.ts:1159-1160` |
+| 正文滚动键 | `scrollUp: ["K"]`、`scrollDown: ["J"]`（大写绑定→`shift+小写` 经 matchesKey 判定，`fleet.ts:59-61`）；`scrollDetail` 骤到 [0, maxScroll]，到底/在底再滚 = re-follow（`fleet.ts:1013-1018`） | `fleet.ts:35-36`、`fleet.ts:1155-1156` |
+| 翻页键 | `pageUp: ["pageUp"]`、`pageDown: ["pageDown"]`（视口高 = 右栏实际可见行数） | `fleet.ts:41-42`、`fleet.ts:1161-1162` |
+| 工具行开关 | `toggleTools: ["x", "X", "ctrl+o"]` | `fleet.ts:48`、`fleet.ts:1205-1207` |
 | 无变化跳过 | 渲染串指纹相同且无 running 强制 → 跳过 | `fleet-status.ts:585-591` |
 | stop 键位 | `["D"]`（确认态按键：Enter/Y 确认；Esc/ctrl+c/N/backspace 取消） | `fleet.ts:46`、`fleet.ts:1134-1150` |
 | refresh 键位 | `["r", "R"]` | `fleet.ts:43` |
+| close 键位 | `["escape", "ctrl+c", "q"]` | `fleet.ts:34`、`fleet.ts:1150-1154` |
+| 退役键 | `←`/`→`/`h`/`l`/`Tab`/`1-9`/`g`/`G`（agent-team 旧键位；按下忽略不改状态，不关闭不报错） | fleet 无对应绑定（同为忽略路径）；agent-team v1.8.0 起 |
 | 发消息键位（特有） | `m` 进入单行输入模式；输入模式优先于一切现有按键：可打印字符（含 CJK）追加 buffer，backspace（`\x7f`）删最后一个码点，Enter 提交（返回 `chat-submit`），Esc/ctrl+c 只退出输入不关 viewer，其余控制序列忽略 | fleet 无对应语义（inspector 无对话输入）；agent-team 特有，`viewer.ts` `handleViewerKey` 输入分支 + `viewer-chat.test.ts` 锁定 |
 | 最小宽度门 | `width < 36` → 单行提示（agent-team 文案：`agent-team viewer 至少需要 36 列。Esc 关闭。`） | `fleet.ts:1321` |
 | innerWidth | `width - 2`（两侧 `│` 边框各占 1 列，无内边距空格） | `fleet.ts:1322` |
@@ -75,7 +84,6 @@
 | 帧行结构 | `│<roster>│<detail>│`，每行 `fit` 定宽（rosterWidth/detailWidth 分别钳制） | `fleet.ts:1352-1358` |
 | 帧结构 | 顶边框 → 标题行（左静态标题，右对齐 `<glyph> <label> · <status>`）→ `├─┬─┤` → bodyHeight 行正文 → `├─┴─┤` → 图例行 → 底边框；chrome 行数 = 6 | `fleet.ts:1343-1370` |
 | roster 行格式 | `<marker> <状态图标> <label> · <actorId 短 id>`，marker 选中 `›`（accent）/空格，选中 label 加粗，右对齐状态文本；无成员时 dim `（无成员）` | `fleet.ts:1217-1229` |
->>>>>>> feat/agent-team-viewer-split
 
 ## 5. 同步记录
 
@@ -87,6 +95,7 @@
 | agent-team 1.5.0 | 2026-09-09 | 亮块 running 头行新增可选余额提示（仅当团队配了 `budget.maxCostUsd` 且未超限：`· 剩 $X.XX`；fleet 无此概念，agent-team 特有语义）——差异条目 §3.10 登记；widget.test 锁定 | `feat/agent-team-reliability` |
 | agent-team 1.6.0 | 2026-09-14 | viewer 发消息（`m` 单行输入，特有语义；输入模式分支优先于一切按键、Esc 只退输入不关 viewer）；actionLines 优先级 busy > confirm > **input** > notice（输入行占右栏正文窗口、帧总高不变）；图例追加 `m 发消息`。差异条目 §4（发消息键位行）登记；chat/viewer-chat/viewer-chat-host 三文件测试锁定 | `feat/agent-team-view-chat` |
 | agent-team 1.7.0 | 2026-09-09 | viewer 改 roster+detail 左右双栏（对照 `fleet.ts:1319-1381` 抄改）：左栏成员 roster（选中标记+状态图标+右对齐状态，窗口化滚动），右栏 = 三行元信息头（Run/State/成员）+ 完整转录正文（滚动/follow/Markdown/x 工具行保留）；`VIEWER_CHROME_ROWS` 3→6、帧高公式换 `max(2, floor(rows*0.85) - 6)`、最小宽度门 36 列；键位不变，差异条目 §3.2 改写，§4 新增几何字面量（另修正 AGENTS 卡里 overlay 宽度的陈旧记载 96%→95%，常量从未变过） | `feat/agent-team-viewer-split` |
+| agent-team 1.8.0 | 2026-09-14 | viewer/widget 按键全面对齐 fleet：viewer 动作键位全集逐字对齐 `DEFAULT_FLEET_KEYBINDINGS`（`↑↓/k/j` 切成员+钉 actor id、`Shift+K/J` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行；旧键 `←→/h/l/Tab/1-9/g/G` 退役忽略，特有仅剩 `m`）；widget 选中态到顶（cursor 0）再按 `↑`/`k` 退出选中（§3.7 改已采纳）。§2 新增成员切换/滚动键位行、§3.2/§3.7 改写、§4 新增键位字面量（selectUp/Down/First/Last、scrollUp/Down、pageUp/Down、toggleTools、close、退役键）；另清理 §4 尾部残留合并冲突标记 | `feat/agent-team-viewer-keys` |
 
 ## 6. 范围外（明确不做）
 

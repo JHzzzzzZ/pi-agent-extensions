@@ -383,17 +383,39 @@ export function bodyLines(
 export const VIEWER_CHROME_ROWS = 6;
 
 /**
- * Action key sets aligned with pi-subagents' `DEFAULT_FLEET_KEYBINDINGS`
- * (v0.66.0 `fleet.ts:43/46`, spec table §4): `stop: ["D"]`, `refresh:
- * ["r", "R"]`. Locked by test/tui-sync.test.ts.
+ * 动作键位对齐 pi-subagents' `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0
+ * `fleet.ts:33-48`，规格表 §4），与 fleet 同名动作键集逐字一致；agent-team
+ * 无 steer/inspect 对应语义，未列入。大写滚动键（`K`/`J`）经
+ * `matchesViewerBinding` 的大写→`shift+小写` 转换用 matchesKey 判定
+ * （fleet.ts:59-61 同构）。Locked by test/tui-sync.test.ts.
  */
 export const VIEWER_ACTION_KEYS = {
-  stop: ["D"],
+  close: ["escape", "ctrl+c", "q"],
+  scrollUp: ["K"],
+  scrollDown: ["J"],
+  selectUp: ["up", "k"],
+  selectDown: ["down", "j"],
+  selectFirst: ["home"],
+  selectLast: ["end"],
+  pageUp: ["pageUp"],
+  pageDown: ["pageDown"],
   refresh: ["r", "R"],
+  stop: ["D"],
+  toggleTools: ["x", "X", "ctrl+o"],
 } as const;
 
-/** Key legend for the bottom border (kept in sync with VIEWER_ACTION_KEYS). */
-export const VIEWER_LEGEND = "↑↓ 滚动 · ←→/1-9 成员 · g/G 首末 · x 工具行 · m 发消息 · D 停止 · r 刷新 · q 关闭";
+/** fleet 的 `matchesFleetBinding`（fleet.ts:59-61）：大写绑定 → shift+小写。 */
+function matchesViewerBinding(data: string, binding: string): boolean {
+  const key = /^[A-Z]$/.test(binding) ? `shift+${binding.toLowerCase()}` : binding;
+  return matchesKey(data, key as Parameters<typeof matchesKey>[1]);
+}
+
+function matchesViewerAction(data: string, action: keyof typeof VIEWER_ACTION_KEYS): boolean {
+  return VIEWER_ACTION_KEYS[action].some((binding) => matchesViewerBinding(data, binding));
+}
+
+/** Key legend for the bottom border（fleet footer 风格，与键位实现同步维护）。 */
+export const VIEWER_LEGEND = "↑↓ 成员 · J/K 滚动 · PgUp/PgDn 翻页 · x 工具行 · m 发消息 · D 停止 · r 刷新 · q 关闭";
 
 /**
  * Frame body height for a terminal with `rows` rows: fleet's formula
@@ -648,15 +670,6 @@ export type ViewerKeyResult =
   | { type: "stop-confirm" }
   | { type: "chat-submit"; text: string; state: ViewerState };
 
-const KEY_UP = "\x1b[A";
-const KEY_DOWN = "\x1b[B";
-const KEY_LEFT = "\x1b[D";
-const KEY_RIGHT = "\x1b[C";
-const KEY_PGUP = "\x1b[5~";
-const KEY_PGDN = "\x1b[6~";
-const KEY_HOME = "\x1b[H";
-const KEY_END = "\x1b[F";
-
 /** 可打印输入判定：非转义序列、无控制字符（含 CJK 多字节字符与粘贴串）。 */
 function isPrintableInput(data: string): boolean {
   if (data.length === 0 || data.startsWith("\x1b")) return false;
@@ -669,12 +682,18 @@ function isPrintableInput(data: string): boolean {
 
 /**
  * Pure key reducer. Unrecognized keys leave the state unchanged (still an
- * update) so the component ignores them; `q`/Esc request close.
+ * update) so the component ignores them; close 键集请求 close。
  *
- * 停止/刷新动作键位对齐 fleet `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0，
- * `stop: ["D"]`、`refresh: ["r", "R"]`，规格表 §4）。确认态按键集对齐
- * fleet.ts:1134-1150：Enter/Y 确认、Esc/ctrl+c/N/backspace 取消（取消不关
- * 闭查看器）、其余键忽略。
+ * 键位全面对齐 fleet `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0
+ * `fleet.ts:33-48`，规格表 §4）：`↑↓/k/j` 切换成员（切换重置滚动/follow、
+ * 钉 actor id，首末钳位）、`Shift+K/J` 右栏正文逐行滚动（上滚 unfollow、
+ * 到底 re-follow）、`Home/End` 首末成员（fleet `moveSelection(±items.length)`
+ * 同构）、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行开关；旧键
+ * `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）。
+ *
+ * 停止/刷新/关闭键位同为 fleet 键集：`stop: ["D"]`、`refresh: ["r", "R"]`、
+ * `close: ["escape", "ctrl+c", "q"]`。确认态按键集对齐 fleet.ts:1134-1150：
+ * Enter/Y 确认、Esc/ctrl+c/N/backspace 取消（取消不关闭查看器）、其余键忽略。
  */
 export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKeyContext): ViewerKeyResult {
   // 输入模式分支在最前面：优先于一切现有按键——输入模式中 j/k/D/r/q 等都
@@ -724,83 +743,48 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
     next.scroll = 0;
     next.follow = true;
   };
+  // fleet 的 `scrollDetail`（fleet.ts:1013-1018）：clamp 到 [0, maxScroll]，
+  // 到底/在底再滚 = re-follow（detailAutoFollow 等价语义）。
+  const scrollDetail = (delta: number): void => {
+    const base = state.follow ? bottom : state.scroll;
+    next.scroll = Math.max(0, Math.min(bottom, base + delta));
+    next.follow = next.scroll >= bottom;
+  };
 
-  // close 键集对齐 fleet `close: ["escape", "ctrl+c", "q"]`（v0.66.0
-  // `DEFAULT_FLEET_KEYBINDINGS`，fleet.ts:33-34；规格表 §4）。用 matchesKey
-  // 判定（ctrl+c 编码契约 \x03），普通字符不受影响。
-  if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
+  // close 键集对齐 fleet `close: ["escape", "ctrl+c", "q"]`（fleet.ts:34）。
+  if (matchesViewerAction(data, "close")) {
     return { type: "close" };
   }
 
-  // 停止动作：运行中 → 两步确认；已结束/无 run → error notice（不进确认态，
-  // 停止回调不会被调）。
-  if (data === VIEWER_ACTION_KEYS.stop[0]) {
-    if (ctx.runRunning) return { type: "update", state: { ...next, stopConfirming: true } };
-    return {
-      type: "update",
-      state: { ...next, notice: { text: `run 已结束（${ctx.runStatus ?? "unknown"}），无需停止`, kind: "error" } },
-    };
-  }
-  if (data === VIEWER_ACTION_KEYS.refresh[0] || data === VIEWER_ACTION_KEYS.refresh[1]) {
+  // 键位全面对齐 fleet DEFAULT_FLEET_KEYBINDINGS（fleet.ts:1155-1210 顺序）。
+  if (matchesViewerAction(data, "scrollUp")) scrollDetail(-1);
+  else if (matchesViewerAction(data, "scrollDown")) scrollDetail(1);
+  else if (matchesViewerAction(data, "selectUp")) switchActor(state.actorIndex - 1);
+  else if (matchesViewerAction(data, "selectDown")) switchActor(state.actorIndex + 1);
+  else if (matchesViewerAction(data, "selectFirst")) switchActor(0);
+  else if (matchesViewerAction(data, "selectLast")) switchActor(Math.max(0, ctx.actorCount - 1));
+  else if (matchesViewerAction(data, "pageUp")) {
+    scrollDetail(-ctx.bodyHeight);
+  } else if (matchesViewerAction(data, "pageDown")) {
+    scrollDetail(ctx.bodyHeight);
+  } else if (matchesViewerAction(data, "refresh")) {
     return { type: "refresh" };
+  } else if (matchesViewerAction(data, "stop")) {
+    // 停止动作：运行中 → 两步确认；已结束/无 run → error notice（不进确认态，
+    // 停止回调不会被调）。
+    if (ctx.runRunning) {
+      next.stopConfirming = true;
+    } else {
+      next.notice = { text: `run 已结束（${ctx.runStatus ?? "unknown"}），无需停止`, kind: "error" };
+      return { type: "update", state: next };
+    }
+  } else if (matchesViewerAction(data, "toggleTools")) {
+    next.showTools = !state.showTools;
+  } else if (data === "m") {
+    next.inputMode = true;
+    next.inputBuffer = "";
   }
-
-  switch (data) {
-    case KEY_UP:
-    case "k":
-      next.follow = false;
-      next.scroll = Math.max(0, (state.follow ? bottom : state.scroll) - 1);
-      break;
-    case KEY_DOWN:
-    case "j": {
-      const base = state.follow ? bottom : state.scroll;
-      next.scroll = base + 1;
-      if (next.scroll >= bottom) next.follow = true;
-      break;
-    }
-    case KEY_PGUP:
-      next.follow = false;
-      next.scroll = Math.max(0, (state.follow ? bottom : state.scroll) - ctx.bodyHeight);
-      break;
-    case KEY_PGDN: {
-      const base = state.follow ? bottom : state.scroll;
-      next.scroll = base + ctx.bodyHeight;
-      if (next.scroll >= bottom) next.follow = true;
-      break;
-    }
-    case "g":
-    case KEY_HOME:
-      next.follow = false;
-      next.scroll = 0;
-      break;
-    case "G":
-    case KEY_END:
-      next.follow = true;
-      break;
-    case KEY_LEFT:
-    case "h":
-      switchActor(state.actorIndex - 1);
-      break;
-    case KEY_RIGHT:
-    case "l":
-    case "\t":
-      switchActor(state.actorIndex + 1);
-      break;
-    case "x":
-      next.showTools = !state.showTools;
-      break;
-    case "m":
-      next.inputMode = true;
-      next.inputBuffer = "";
-      break;
-    default: {
-      if (/^[1-9]$/.test(data)) {
-        const index = Number(data) - 1;
-        if (index < ctx.actorCount) switchActor(index);
-      }
-      break;
-    }
-  }
+  // 旧键（←→/h/l/Tab/1-9/g/G）与其余未识别键：忽略不改状态，仍返回 update。
   // 普通按键清除顶部 notice（下一次交互自然滚出）。
   delete next.notice;
   return { type: "update", state: next };

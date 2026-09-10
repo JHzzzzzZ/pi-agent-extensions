@@ -193,11 +193,20 @@ test("key reducer selected: arrows move and clamp, enter confirms the row's acto
   assert.ok(confirm.type === "confirm" && confirm.actor === "frontend");
   assert.ok(confirm.state.selected === false, "confirm leaves selection mode");
 
-  // Clamp at both ends.
-  const top = handleWidgetKey({ selected: true, cursor: 0 }, KEY_UP, 4, actors);
-  assert.ok(top.type === "update" && top.state.cursor === 0);
+  // 底部钳位保留；到顶（cursor 0）再按 up 退出选中（fleet-status 同构，见下）。
   const bottom = handleWidgetKey({ selected: true, cursor: 3 }, KEY_DOWN, 4, actors);
-  assert.ok(bottom.type === "update" && bottom.state.cursor === 3);
+  assert.ok(bottom.type === "update" && bottom.state.cursor === 3 && bottom.state.selected);
+});
+
+test("key reducer selected: cursor 0 再按 up/k 退出选中放行编辑器（fleet-status 同构）", () => {
+  // fleet-status.ts:620-625：选中第 0 行再按 up → deactivate（退出选中，
+  // 后续键到达编辑器）；退出时保持 cursor 供再次激活恢复。
+  const actors = ["_leader", "frontend"];
+  for (const key of [KEY_UP, "k"]) {
+    const exited = handleWidgetKey({ selected: true, cursor: 0 }, key, 2, actors);
+    assert.ok(exited.type === "update");
+    assert.ok(exited.type === "update" && exited.state.selected === false && exited.state.cursor === 0);
+  }
 });
 
 test("key reducer selected: esc deselects, other keys deselect and pass through", () => {
@@ -417,10 +426,13 @@ test("controller 选中态 k/j 移动行光标（▸ 前缀位置随之变化）
     assert.equal(cursorRow(lastLines(pushed)), 1, "j 应下移到第 1 行");
     handlers[0]!("k"); // 上移
     assert.equal(cursorRow(lastLines(pushed)), 0, "k 应回到第 0 行");
-    handlers[0]!("k"); // 顶部再按 k：钳位不越界
-    assert.equal(cursorRow(lastLines(pushed)), 0);
+    handlers[0]!("k"); // 顶部再按 k：退出选中放行编辑器（fleet-status 同构）
+    assert.equal(cursorRow(lastLines(pushed)), -1, "到顶再按 k 应退出选中（无行光标）");
+    assert.equal(handlers[0]!("j"), undefined, "退出选中后 j 放行编辑器");
+    handlers[0]!("\x1b[1;3B"); // alt+↓ 重新激活（cursor 保持）
+    assert.equal(cursorRow(lastLines(pushed)), 0, "再次激活回到原光标");
     handlers[0]!("j");
-    handlers[0]!("j"); // 底部再按 j：钳位不越界
+    handlers[0]!("j"); // 底部再按 j：钳位不越界（仍选中）
     assert.equal(cursorRow(lastLines(pushed)), 1);
   } finally {
     controller.stop();
