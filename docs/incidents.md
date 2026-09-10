@@ -79,3 +79,9 @@
 - 症状：`/team:view` 打开时，左栏（roster 列）下方每派发一条出现 `  - front: 请数出数字 N（计数序列的一部分）…` 残行；run 摘要文本出现在错误行、与相邻行重叠（用户截图：`统计: 8 次 team_dispatch…`、`行。` 片段）；帧边框/页脚位置漂移；残行跨刷新持久（computer-use 抓屏 pane1/pane2 相隔 3s 像素级相同）。
 - 根因：`cockpit.ts:499` 把每次派发写成多行 tool 条目（`team_dispatch 派发 →\n  - <member>: <task>`），`viewer.ts` 的 tools 渲染分支把它当单行输出——帧行字符串携带原始 `\n`（`fitLine` 按显示宽度算，换行符宽 0，照样通过宽度校验）。宿主按物理行写屏时，换行把尾巴挤到下一行同列（roster 列区域），且实际行数比声明多 1 → 帧几何错位；diff 渲染器不知道这些脏格，残行持久。最小复现：`bodyLines([{kind:'tool',text:'team_dispatch 派发 →\n  - front: …'}], true, 100, plainStyles())` 返回的行含原始 `\n`。
 - 教训：① overlay/帧渲染的边界契约是「每个帧行必为单物理行」——任何来自子进程/持久化文本的 `\n` 都必须在块渲染层拆行，`fitLine` 再兜底折叠，绝不依赖宿主替我们处理；② 同族路径（widget）早已 `\s+` 压平（`widget.ts:66`）所以无此 bug——对照实现时「哪些字段压平了」必须逐路径对齐；③ 纯函数单测绿 ≠ 真机对：本 bug 只在真实合成/写屏路径显现，`viewer-host.test.ts` 的 FakeScreen 的 `\n` 语义（row+1 同列）与真机一致，可稳定复现；④ 真机取证优先用 computer-use + PowerShell 全分辨率抓屏（跨 3s 两帧像素级对比），比低分辨率截图更能定位「哪一列/哪一行」在错位。
+
+## worktree 内的 Windows 目录联接（junction）会清空目标 node_modules（环境事故）
+
+- 症状：worktree 收尾后主工作区依赖消失——首次 `agent-team/node_modules` 只剩空骨架，第二次 `pwr/node_modules` 被清空；下一次跑测试/截图工具直接 `ERR_MODULE_NOT_FOUND`（本轮两次撞上，各花 ~1 分钟 npm install 恢复）。
+- 根因：为省一次 `npm install`，在 worktree 内用 `mklink /J` 把 `node_modules` 指向主工作区。NTFS 联接不是符号链接——递归删除（`git worktree remove --force`）会**穿透联接删除目标目录内容**，且联接本身一并消失，现场无痕迹；本次即使先 `cmd //c rmdir <junction>` 再删 worktree，`pwr` 侧仍被穿透。
+- 教训：① **worktree 内不要建 junction**（AGENTS.md 规则红线·worktree 实现）——要么 worktree 内真实 `npm install`，要么主工作区跑测试、worktree 只写代码；② 万不得已用了联接：删除顺序「先解除链接 → `dir /AL` 确认链接消失 → 再 `git worktree remove`」，删完立刻 `ls` 校验目标目录（本轮逐一校验仍被穿透，说明该做法不可靠）；③ 恢复便宜（`npm install`）但会打断无人值守轮次——把它当红线，不靠事后补救。
