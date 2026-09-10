@@ -104,3 +104,4 @@
   - 数据现状：终态 `TeamRunRecord.members[]` 已带 `model/status/summary/usage/worktree`（数据齐备，仅缺渲染）；运行中 `RunProgress.members[]`（`MemberProgress`）只有 name/status/note/latest，成员模型需按 name 从 team config join（`RunProgress.leaderModel` 已有 leader 模型）；`ViewerActor`/`buildViewerData`（`index.ts:349`）目前只投影 actor/label/status。
   - 落点建议：右栏 detail 头（`viewer.ts` `detailHeaderLines`）按选中成员加 `模型:` 行，或 roster 行尾注；样式以 pi-subagents fleet inspector 为对照（`agent-team/docs/tui-sync.md` 为 TUI 期望值唯一来源，改完登记矩阵）。
   - 验收：打开 `/team:view` 选中任一成员即可看到其模型（provider/id）；运行中与终态都有值；窄宽度下不超宽（fitLine/截断）；viewer 纯函数测试 + 真实宿主测试（`viewer-host`）锁定；README/AGENTS/docs 卡同步；全量测试 + typecheck 绿。
+- [ ] widget 真机反馈（用户 2026-09-15 截图，processing 2026-09-15 @ widget-leader-summary）：① 无法选中成员（待复现定位：截图光标停在 `任务:` 行，成员行 `|- greeter · queued` 按 enter 是否进查看器/是否定位该成员待诊断）；② 任务行从末尾并入 leader 行——`leader <团队> <任务摘要> ▶ running · 耗时 · N/M 并行`，去掉独立 `任务: …` 行（用户原话「任务可以放到 ▶ running 之前做简短摘要」）。截图存档 `agent-team/docs/assets/widget-tree-feedback.png`。
