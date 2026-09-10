@@ -1,6 +1,6 @@
 # pwr — Pi Workflow Runtime
 
-> last verified @ 134a3d6
+> last verified @ 8bee163
 
 ## 职责与边界
 
@@ -37,7 +37,7 @@
 - 工具交集：readonly = read/grep/find/ls/glob；write = +bash/write/edit。
 - pwr 无 `agent_settled` 处理器（settle 经 `onFinalResult` 按 runId 作用域）；会话生命周期已接线：`session_shutdown` → `runtime.shutdown()` 中止在途 run，`session_start` → `revive()` 复位闩锁（单例跨会话复用，不复位则 /new 后 start 永久抛 SESSION_SHUTDOWN）。
 - solo 审批门（`src/solo-gate.ts`）：只产生 once 批准，绝不写 remembered 记录；solo 关闭后既有 remembered 批准不受影响（契约见 `docs/cross/solo-approval-gate.md`）。
-- footer 状态键 `30:pwr` 带排序带前缀（宿主按 key localeCompare 逐行渲染；逐行 + 超宽续行依赖本地宿主补丁 `docs/pi-footer-status-patch.md`，不可改回 `pwr`）；状态刷新是推送式（store 事件驱动），不跑周期 ticker。
+- footer 状态键 `30:pwr` 带排序带前缀（宿主按 key localeCompare 拼接，不可改回 `pwr`）；状态刷新是推送式（store 事件驱动），不跑周期 ticker。
 
 ## 已知坑
 
