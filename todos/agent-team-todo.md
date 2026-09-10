@@ -34,9 +34,15 @@
   - [x] 新增 `/team:clear` 命令手动清除下方亮块（run 进行中提示先 stop 或等结束；只清亮块不清 lastRecord）。v1.3.0：run 进行中拒绝（warning）；无亮块 no-op（info）；否则停 controller + setWidget(undefined)；`clear` 进保留名单防团队名遮蔽。7 个新测试。
   - [x] session_start 水合仅在存在 running run 时自动挂载亮块；终态记录不再自动挂（/team:view、/team:status 回看不受影响；派新单经 ensureRunWidget 复挂）。viewer-mutex slice-6 改经真实派单挂 widget，entry 双加载命令数 5→6。144 测试 + typecheck 全绿。
   - ~~[ ] 终态行超时自动淡出~~（已取消：用户决定不做自动淡出，仅手动 /team:clear 清除；避免注入时钟与 FADE 常量的额外复杂度）
-- [ ] 按键未对齐：真机使用中 viewer/widget 按键行为与 pi-subagents fleet 不一致（processing）
+- [x] 按键未对齐：真机使用中 viewer/widget 按键行为与 pi-subagents fleet 不一致（v1.8.0，feat/agent-team-viewer-keys → da59366）
   - 现象：用户反馈按键未对齐（具体哪些键、什么场景待真机复现后补记）。
-  - 要求：对照 pi-subagents 源码（`C:\Users\12967\.pi\agent\npm\node_modules\pi-subagents`，先确认本地版本，基线矩阵在 `agent-team/docs/tui-sync.md`）逐键核对——激活门控（bare ↓/← vs alt+↓/↑）、j/k/↑/↓ 导航、enter 直达、esc/其它键退出放行、`m` 发消息、`D` 停止两步确认键集、`r`/`R` 刷新、q/Esc/ctrl+c 关闭——同步到代码层级，差异只保留 agent-team 特有语义，tui-sync 矩阵与测试同步更新。
+  - 方案（已确认）：viewer 键位全面对齐 fleet `DEFAULT_FLEET_KEYBINDINGS`——`↑↓/j/k` 切成员、`Shift+J/K` 正文滚动、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行；旧键 `←→/h/l/Tab/1-9/g/G` 退役（忽略）。widget 选中态 `↑/k` 到顶（cursor 0）再按 = 退出选中放行编辑器（fleet-status 同构），废弃钳位。保留特有语义：`m` 发消息、widget `alt+↓/↑` 第二通道。
+  - 交付：TDD 先红后绿；viewer/widget/tui-sync/ghost 测试重写锁定；全量 267 测试 + typecheck 绿；tui-sync 矩阵 §2/§3.2/§3.7/§4/§5 改写（另清理 §4 尾部残留冲突标记）、两份 README 按键表、AGENTS.md、docs 卡同步；agent-team 1.8.0 / 根 2.15.1。真机 smoke（切成员/JK 滚动/到顶退出）待用户验证。
 - [ ] viewer/widget 重复行第四轮：v1.7.0 分栏改版后真机仍有重复行出现（processing）
   - 现象：前三轮修复（指纹门控、overlay maxHeight/margin 对齐、fleet 壳照抄 + 单实例/互斥测试）后，用户真机仍观察到重复行（具体帧/截图待补记，历史见上三轮条目）。
   - 要求：先拿真机截图定位是哪类重复（标题堆叠？roster 正文重影？亮块与 viewer 并存？），再对照 pi-subagents fleet 真机已验证的渲染路径逐行比对差异；警惕"纯函数单测绿但真机红"——复用 viewer-host（真实 TuiMainScreen + scrollback 仿真器）扩大仿真覆盖，直到仿真复现真机现象再动手修。
+- [ ] 支持运行中的 run 中途插话（steer 语义）：viewer 发消息当前是派单语义（排队 → run 落定后链式派出），用户实测"数数途中打招呼，任务结束才收到回复"——期望不打断任务、让正在干活的 leader/成员尽快看到插话并回应。
+  - 架构前提：现 leader 是 cockpit 派生的一次性 `pi --no-session` 进程、成员由 leader 派生，cockpit/用户均无通道向运行中的子进程注入消息；中途插话需要 leader 常驻会话进程（保持会话、可接收新输入）+ steer/注入通道，并解决与现有"run 显式终态"可靠性的冲突（run 落盘/reconcile/预算中止/stopAndSettle 都建立在 run 有明确终点上；常驻后"run 何时算结束"需要重新定义——如空闲超时或显式结束命令）。
+  - 参考：pi 的 followUp/steer 语义（主 agent 接收排队消息的三种投递模式）；`chat.ts` 队列可复用为 steer 入口，只换"消息到达"的通道，提交/输入框 UI 不变。
+  - 范围外：成员子进程仍不可直达（归 leader 管），插话始终经 leader 转发。
+- [ ] 命令风格统一（跨插件）：冒号命名空间式 `/team:run|stop|status|view|clear|doctor` 与 loop 的子命令式 `/loop list|pause|resume|delete|clear` 用法不一致，需统一（倾向于哪种、是否连带 provider-quota `/quota`、如何向后兼容旧写法待定）。跨插件需求，已在 loop-todo.md 同步登记。

@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 2520450（v1.8.0 按键对齐随本变更更新，合并后以 merge commit 为准）
+> last verified @ da59366
 
 ## 职责与边界
 
