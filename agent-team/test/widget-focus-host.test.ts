@@ -128,7 +128,11 @@ test("真实宿主：焦点在主编辑器（CustomEditor）→ 裸 ↓ 被 widg
     dispatch(KEY_DOWN);
     const after = lastLines(pushed);
     assert.equal(cursorRow(after), 0, "编辑器焦点时裸 ↓ 照常激活");
-    assert.equal(after.length, 3, "真实 ↓ 分发后展开为 rows + 提示行");
+    // 树行：main + leader + 1 成员 + 任务 = 4 行，加底部提示行。
+    assert.equal(after.length, 5, "真实 ↓ 分发后展开为树行 + 提示行");
+    assert.equal(after[0], "▸ main");
+    assert.match(after[1], /^ {2}leader dev-team ▶ running/);
+    assert.match(after[2], /^ {2}\|- frontend ● running/);
     assert.match(after[after.length - 1]!, /↑↓ 选择/);
   } finally {
     controller.stop();

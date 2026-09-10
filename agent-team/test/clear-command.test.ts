@@ -1,15 +1,16 @@
 /**
- * /team:clear + hydration-gating tests against the real entry (fake
+ * /team:clear + widget lifecycle tests against the real entry (fake
  * ExtensionAPI / fake ctx with a TUI ui port + scripted leader child).
  *
- * Locks:
- * - /team:clear refuses while a run is in progress (warning, no widget side
- *   effects), no-ops with an info hint when no widget is mounted, and
- *   otherwise unmounts the below-editor block (controller stop + setWidget
- *   undefined) without touching lastRecord.
- * - A re-dispatch after a clear remounts the widget (ensureRunWidget path).
- * - session_start hydration only mounts the widget when a run is actually
- *   RUNNING; a terminal record hydrates status/view paths but no widget.
+ * Locks the data-driven widget lifecycle at the wiring layer:
+ * - session_start mounts the controller once per session even with no run;
+ *   the host widget is only registered while a run is live (a terminal
+ *   record never pushes a frame).
+ * - A background dispatch pushes a frame immediately; settle auto-unmounts
+ *   (setWidget undefined).
+ * - /team:clear refuses while a run is in progress; on a settled/idle
+ *   session it only drops queued viewer chat messages and never touches the
+ *   widget; lastRecord still powers /team:status.
  * - A team named "clear" cannot shadow /team:clear — the commands are
  *   separate static registrations.
  */
@@ -78,15 +79,34 @@ function fakePi() {
   };
 }
 
-function fakeTuiCtx(cwd: string, entries: Array<{ type?: string; customType?: string; data?: unknown }> = [], trusted = true) {
+interface FakeCtxState {
+  ctx: unknown;
+  widgetCalls: WidgetCall[];
+  notifications: Array<{ text: string; level?: string }>;
+  factoryCalls: () => number;
+}
+
+function fakeTuiCtx(cwd: string, entries: Array<{ type?: string; customType?: string; data?: unknown }> = [], trusted = true): FakeCtxState {
   const widgetCalls: WidgetCall[] = [];
   const notifications: Array<{ text: string; level?: string }> = [];
+  let factoryCalls = 0;
   const ui = {
     theme: { fg: (_c: string, t: string) => t, bg: (_c: string, t: string) => t },
     notify: (text: string, level?: string) => notifications.push({ text, level }),
-    setWidget: (id: string, lines: string[] | undefined, _options?: unknown) => {
-      widgetCalls.push({ id, lines });
+    getEditorText: () => "",
+    setWidget: (id: string, content: unknown, _options?: unknown) => {
+      // Factory form = host TUI capture (ensureRunWidget), string[]/undefined
+      // = actual frames; the factory is invoked with a fake TUI like the host.
+      if (typeof content === "function") {
+        factoryCalls += 1;
+        (content as (tui: unknown) => unknown)({
+          focusedComponent: { render: () => [], invalidate: () => {}, handleInput: () => {}, getText: () => "", setText: () => {} },
+        });
+        return;
+      }
+      widgetCalls.push({ id, lines: content as string[] | undefined });
     },
+    onTerminalInput: (_handler: (data: string) => { consume?: boolean } | undefined) => () => {},
   };
   const ctx = {
     cwd,
@@ -96,7 +116,7 @@ function fakeTuiCtx(cwd: string, entries: Array<{ type?: string; customType?: st
     ui,
     sessionManager: { getEntries: () => entries },
   };
-  return { ctx, widgetCalls, notifications };
+  return { ctx, widgetCalls, notifications, factoryCalls: () => factoryCalls };
 }
 
 type Tool = (params: Record<string, unknown>) => Promise<{
@@ -114,6 +134,7 @@ interface Setup {
   ctx: unknown;
   widgetCalls: WidgetCall[];
   notifications: Array<{ text: string; level?: string }>;
+  factoryCalls: () => number;
   cleanup: () => void;
 }
 
@@ -133,7 +154,7 @@ async function setup(opts: { entries?: Array<{ type?: string; customType?: strin
   const spawn = makeFakeSpawn();
   const pi = fakePi();
   agentTeamExtension(pi as never, { spawn: spawn.spawn });
-  const { ctx, widgetCalls, notifications } = fakeTuiCtx(projectDir, opts.entries ?? []);
+  const { ctx, widgetCalls, notifications, factoryCalls } = fakeTuiCtx(projectDir, opts.entries ?? []);
   await pi.fire("session_start", { reason: "startup" }, ctx);
   const tool = (name: string) =>
     pi.tools.get(name) as unknown as {
@@ -148,6 +169,7 @@ async function setup(opts: { entries?: Array<{ type?: string; customType?: strin
     ctx,
     widgetCalls,
     notifications,
+    factoryCalls,
     cleanup: () => fs.rmSync(projectDir, { recursive: true, force: true }),
   };
 }
@@ -182,14 +204,26 @@ function escapeRegExp(text: string): string {
   return text.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
+test("session_start 无 run：controller 已挂载（factory 一次）但不注册任何亮块", async () => {
+  const { factoryCalls, widgetCalls, cleanup } = await setup();
+  try {
+    assert.equal(factoryCalls(), 1, "会话启动即挂 controller（数据驱动挂载，不再等派单）");
+    // session_start 会先 clearWidget(undefined) 清理上一会话残留；除该清理帧外
+    // 无活跃 run 不得推任何帧。
+    assert.ok(widgetCalls.every((call) => call.lines === undefined && call.id === WIDGET_ID), "无活跃 run 不推任何亮块帧");
+  } finally {
+    cleanup();
+  }
+});
+
 test("/team:clear refuses while a run is in progress (warning, widget untouched)", async () => {
   const { spawn, run, clear, ctx, widgetCalls, notifications, cleanup } = await setup();
   try {
     const started = await run({ team: "proj-team", task: "长任务" });
     assert.notEqual(started.isError, true);
     const child = await waitForChild(spawn, 0);
-    // Widget mounted by the dispatch (initial refresh pushed lines).
-    assert.ok(widgetCalls.some((call) => Array.isArray(call.lines)), "widget lines pushed on mount");
+    // Widget registered by the dispatch (immediate frame, no tick wait).
+    assert.ok(widgetCalls.some((call) => Array.isArray(call.lines)), "widget lines pushed on dispatch");
     const callsBefore = widgetCalls.length;
 
     await clear(ctx);
@@ -206,7 +240,7 @@ test("/team:clear refuses while a run is in progress (warning, widget untouched)
   }
 });
 
-test("/team:clear on a terminal run unmounts the widget (setWidget undefined, lastRecord kept)", async () => {
+test("run 落定自动卸载亮块（setWidget undefined），/team:clear 不再触碰 widget 且 lastRecord 保留", async () => {
   const { pi, spawn, run, status, clear, ctx, widgetCalls, notifications, cleanup } = await setup();
   try {
     const started = await run({ team: "proj-team", task: "跑完" });
@@ -214,18 +248,18 @@ test("/team:clear on a terminal run unmounts the widget (setWidget undefined, la
     const child = await waitForChild(spawn, 0);
     child.autoRespond(leaderLines(), 0, 5);
     await waitFor(() => pi.sentMessages.length > 0);
-    assert.ok(widgetCalls.some((call) => Array.isArray(call.lines)), "terminal widget was mounted");
+
+    // 数据驱动卸载：落定帧为 undefined（无需 /team:clear）。
+    assert.equal(widgetCalls.at(-1)?.lines, undefined, "settle auto-unmounted the widget");
+    const callsAfterSettle = widgetCalls.length;
 
     await clear(ctx);
 
-    const lastWidget = widgetCalls.at(-1);
-    assert.ok(lastWidget, "a final setWidget call happened");
-    assert.equal(lastWidget.id, WIDGET_ID);
-    assert.equal(lastWidget.lines, undefined, "widget pushed as undefined on clear");
+    assert.equal(widgetCalls.length, callsAfterSettle, "clear 不再做任何 widget 操作");
     const last = notifications.at(-1);
     assert.ok(last, "clear notified");
     assert.equal(last.level, "info");
-    assert.match(last.text, /清除/);
+    assert.match(last.text, /自动隐藏/);
 
     // lastRecord survives: /team:status still shows the finished run.
     const statusText = (await status({})).content[0].text;
@@ -236,23 +270,22 @@ test("/team:clear on a terminal run unmounts the widget (setWidget undefined, la
   }
 });
 
-test("/team:clear with no mounted widget is a no-op info hint", async () => {
+test("/team:clear 空闲会话：只提示「无可清除内容」，无 widget 副作用", async () => {
   const { clear, ctx, widgetCalls, notifications, cleanup } = await setup();
   try {
+    const callsBefore = widgetCalls.length;
     await clear(ctx);
     const last = notifications.at(-1);
     assert.ok(last, "clear notified");
     assert.equal(last.level, "info");
-    assert.match(last.text, /亮块/);
-    // Only the session_start's initial clearWidget(…, undefined) may appear;
-    // no mount call (array lines) and no extra setWidget beyond that.
-    assert.ok(widgetCalls.every((call) => call.lines === undefined), "no mount setWidget side effects");
+    assert.equal(last.text, "亮块随 run 结束自动隐藏，没有可清除的内容。");
+    assert.equal(widgetCalls.length, callsBefore, "clear 不再做任何 widget 操作");
   } finally {
     cleanup();
   }
 });
 
-test("re-dispatch after /team:clear remounts the widget", async () => {
+test("re-dispatch after /team:clear pushes a fresh frame（controller 从未卸载）", async () => {
   const { pi, spawn, run, clear, ctx, widgetCalls, cleanup } = await setup();
   try {
     const first = await run({ team: "proj-team", task: "one" });
@@ -262,21 +295,20 @@ test("re-dispatch after /team:clear remounts the widget", async () => {
     await waitFor(() => pi.sentMessages.length > 0);
 
     await clear(ctx);
-    const clearedAt = widgetCalls.length - 1;
-    assert.equal(widgetCalls.at(-1)?.lines, undefined, "widget cleared");
+    const clearedAt = widgetCalls.length;
+    assert.equal(widgetCalls.at(-1)?.lines, undefined, "settled frame already unmounted");
 
     const second = await run({ team: "proj-team", task: "two" });
     assert.notEqual(second.isError, true);
-    const child2 = await waitForChild(spawn, 1);
-    child2.autoRespond(leaderLines(), 0, 5);
-    await waitFor(() => widgetCalls.slice(clearedAt + 1).some((call) => Array.isArray(call.lines)));
-    assert.ok(widgetCalls.slice(clearedAt + 1).some((call) => Array.isArray(call.lines)), "widget lines pushed again after clear");
+    await waitForChild(spawn, 1);
+    await waitFor(() => widgetCalls.slice(clearedAt).some((call) => Array.isArray(call.lines)));
+    assert.ok(widgetCalls.slice(clearedAt).some((call) => Array.isArray(call.lines)), "widget frame pushed again after clear");
   } finally {
     cleanup();
   }
 });
 
-test("session_start hydration: terminal record mounts no widget but keeps /team:status", async () => {
+test("session_start hydration: terminal record mounts the controller but pushes no frame; /team:status intact", async () => {
   const entries = [
     {
       type: "custom",
@@ -295,9 +327,10 @@ test("session_start hydration: terminal record mounts no widget but keeps /team:
       },
     },
   ];
-  const { status, widgetCalls, cleanup } = await setup({ entries });
+  const { status, widgetCalls, factoryCalls, cleanup } = await setup({ entries });
   try {
-    assert.ok(widgetCalls.every((call) => !Array.isArray(call.lines)), "no widget mounted for a terminal record");
+    assert.equal(factoryCalls(), 1, "controller mounted");
+    assert.ok(widgetCalls.every((call) => !Array.isArray(call.lines)), "no frame pushed for a terminal record");
     const statusText = (await status({})).content[0].text;
     assert.match(statusText, /completed/);
     assert.match(statusText, /run-42/);
@@ -306,19 +339,19 @@ test("session_start hydration: terminal record mounts no widget but keeps /team:
   }
 });
 
-test("session_start hydration: a running run still mounts the widget (reload mid-run)", async () => {
+test("session_start hydration: a running run re-pushes its frame after reload", async () => {
   const { pi, spawn, run, ctx, widgetCalls, cleanup } = await setup();
   try {
     const started = await run({ team: "proj-team", task: "长任务" });
     assert.notEqual(started.isError, true);
     const child = await waitForChild(spawn, 0);
-    assert.ok(widgetCalls.some((call) => Array.isArray(call.lines)), "widget mounted on dispatch");
+    assert.ok(widgetCalls.some((call) => Array.isArray(call.lines)), "widget frame pushed on dispatch");
 
     // Simulate /reload mid-run: session_start fires again while the run is live.
     const callsBefore = widgetCalls.length;
     await pi.fire("session_start", { reason: "reload" }, ctx);
     assert.ok(widgetCalls.length > callsBefore, "widget re-pushed after reload");
-    assert.ok(widgetCalls.slice(callsBefore).some((call) => Array.isArray(call.lines)), "running run mounts widget after hydration");
+    assert.ok(widgetCalls.slice(callsBefore).some((call) => Array.isArray(call.lines)), "running run pushes a frame after hydration");
     assert.equal(child.killed.length, 0, "reload does not kill the run");
   } finally {
     cleanup();
@@ -333,7 +366,7 @@ test("a team named clear cannot shadow /team:clear (separate static commands)", 
     await clear(ctx);
     const last = notifications.at(-1);
     assert.equal(last?.level, "info");
-    assert.match(last?.text ?? "", /亮块/, "the clear command — not a dispatch to the team — handled it");
+    assert.match(last?.text ?? "", /自动隐藏/, "the clear command — not a dispatch to the team — handled it");
   } finally {
     cleanup();
   }

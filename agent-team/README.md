@@ -82,30 +82,45 @@ members:
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
-其它命令（冒号命令面，v1.12.0）：`/team`（无参列团队；带参显示用法）与 `/team:list`；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、轮次、费用、worktree、预算消耗）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 清除输入栏下方的 run 亮块（见 §4）；`/team:doctor` **自检报告**（运行模式/团队发现/逐团队模型预检/运行目录残留/逐团队预算/worktree 可用性）。旧空格写法（`/team run` 等）只提示改名、不再执行。
+其它命令（冒号命令面，v1.12.0）：`/team`（无参列团队；带参显示用法）与 `/team:list`；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、轮次、费用、worktree、预算消耗）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏，见 §4）；`/team:doctor` **自检报告**（运行模式/团队发现/逐团队模型预检/运行目录残留/逐团队预算/worktree 可用性）。旧空格写法（`/team run` 等）只提示改名、不再执行。
 
 ### 4. 进度亮块（输入栏下方，可键盘选中）
 
-派单后进度块出现在**输入栏下方**（`placement: "belowEditor"`），默认保持 fleet-status 同款**折叠单行**（running 与终态同格式）：
+**派单后**进度块出现在**输入栏下方**（`placement: "belowEditor"`），默认保持 fleet-status 同款**折叠单行**；**run 落定后自动消失**（数据驱动挂载/卸载：有活跃 run 才挂帧，全部落定即 `setWidget(undefined)` 卸载，不再常驻终态行）：
 
 ```text
 agent-team dev-team · ↓/← 查看详情
 ```
 
-按 `↓`/`←`（焦点在主编辑器且编辑器为空）或 `alt+↓`/`alt+↑` 展开为完整块：头行 `agent-team <团队> ▶ running · 耗时 · N/M 并行`（配了费用上限且未超限时附 `· 剩 $X.XX`）+ 任务行（44 字符截断，多行文本先压平成单行）+ 底部按键提示行；`esc` 或第 0 行再按 `↑`/`k` 收回折叠。leader 活动与各成员明细**不进亮块**——想看细节 `enter` 进查看器。
+按 `↓`/`←`（焦点在主编辑器且编辑器为空）或 `alt+↓`/`alt+↑` 展开为 **team/成员树**（单 run 单 team；`main` = 主 agent 根节点，leader 挂成员，末行任务）：
 
 ```text
-改动前（常显多行；任务里的换行被宿主渲染成残行）：
+main
+leader dev-team ▶ running · 3m12s · 2/3 并行
+  |- frontend ● running · 正在改 login.tsx
+  |- backend ✓ done
+  |- reviewer · queued
+任务: 重构登录模块并补齐单测
+↑↓ 选择 · enter 查看 · esc 退出
+```
+
+- leader 行：`leader <团队> ▶ running · 耗时 · N/M 并行`（配了费用上限且未超限时附 ` · 剩 $X.XX`）。
+- 成员行：`|- <成员名> <图标> <状态>[ · <尾注>]`；图标 `·` queued / `●` running / `✓` done / `✗` failed / `⊘` aborted；尾注取 note，否则取最新活动，压平换行后 ≤30 字符。
+- 任务行：`任务: <44 字符截断>`（多行文本先压平成单行）。
+- `esc` 或第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中，在 leader/成员行打开查看器并定位到对应 actor。
+
+```text
+改动前（常显多行；任务里的换行被宿主渲染成残行、终态行常驻到手动清除）：
   agent-team count-duet ✓ completed · 26.8s · $0.0060
 ▸ 任务: 目标: 输出小写单词 hello。
 特别注意：这是对 count-duet 的一次复用任…
 ↑↓ 选择 · enter 查看 · esc 退出
 
-改动后（默认折叠单行；按 ↓/← 或 alt+↓ 展开）：
+改动后（默认折叠单行；按 ↓/← 或 alt+↓ 展开为 main→leader→成员树；落定自动消失）：
 agent-team count-duet · ↓/← 查看详情
 ```
 
-run 结束后展开行切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`），失败附一条截断错误行，不残留 "running" 字样。终态行会一直保留（可回看）；不需要时用 `/team:clear` 手动清除——run 进行中会拒绝（先 `/team:stop` 或等结束），只卸亮块不清运行记录（`/team:status`、`/team:view` 回看不受影响）；清除后再次派单会自动重挂。`/reload` 后水合仅在存在**进行中** run 时自动挂亮块，终态记录不再自动重挂。
+结束不需要手动清理：**run 落定（completed/failed/aborted）即自动卸载亮块**；`/team:status`、`/team:view`、runstore 记录不受影响。`/team:clear` 保留为清排队对话的入口：run 进行中拒绝（先 `/team:stop` 或等结束），否则丢弃排队中的 viewer 对话消息并提示（无排队时提示「亮块随 run 结束自动隐藏，没有可清除的内容」）。
 
 裸 `↑`/`↓` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的。对齐 pi-subagents fleet-status（v0.66.0）：**焦点在主编辑器且编辑器为空时** `↓`/`←` 才可进入选中；`alt+↓`/`alt+↑` 是不受门控的第二通道（编辑器有文本也能进）。**焦点不在编辑器时 widget 完全不介入**（对齐 fleet `editorHasFocus`，v1.9.1）：`/login`、`/model`、`/settings` 等选择器或 `ctx.ui.select`/overlay 对话框打开期间，方向键原样让给选择器（含 alt 通道），已进入的选中态自动退出。选中态导航补 `j`/`k`（对齐 fleet roster）：
 
@@ -113,11 +128,11 @@ run 结束后展开行切终态行（`✓/✗/⊘ <status> · 耗时 · 费用`�
 |---|---|
 | `↓`/`←`（焦点在主编辑器且编辑器为空）或 `alt+↓`/`alt+↑` | 从折叠单行**展开**亮块：出现行光标与按键提示行 |
 | `↑`/`↓`、`j`/`k` | 在行间移动光标（底部钳位）；第 0 行再按 `↑`/`k` **退出选中并收回折叠**（fleet-status 同构） |
-| `enter` | 打开 `/team:view` 查看器（定位 leader 页，查看器内 `↑↓/j/k` 切成员） |
+| `enter` | `main` 行只收起选中；leader/成员行打开 `/team:view` 查看器并定位到该 actor（查看器内 `↑↓/j/k` 切成员） |
 | `esc` | 退出选中并收回折叠 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget(key, string[], { placement: "belowEditor" })` 按对齐墙钟秒边界刷新（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`；宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；行投影 `buildWidgetView` 给出「折叠单行 + 展开 rows」两支，`renderWidgetView` 按 `selected` 选分支；折叠行不含时间 → running 时不再逐秒变化，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey，静止内容不空转宿主）；任务/错误文本先 `\s+` 压平再做 44 字符截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
+实现：`setWidget(key, string[], { placement: "belowEditor" })`——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由快照决定（`running` ⇒ string[] 帧；落定 ⇒ `setWidget(key, undefined)` 卸载）；**刷新双触发**：coordinator `onProgress` 状态变化点事件即时重绘 + 1s aligned ticker（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`）兜底，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey；折叠行不含时间 → 未展开时不逐秒 churn）；宿主自行包装渲染是跨宿主构建最稳的路径（组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行，`docs/tui-sync.md` §3.1）；行投影 `buildWidgetView` 产出「折叠单行 + 展开树」（`main`/`leader`/成员/任务行），`renderWidgetView` 按 `selected` 选分支；任务/成员尾注文本先 `\s+` 压平再截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
@@ -156,7 +171,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_status`（查运行状态，含 runId 与预算）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
 - 命令：裸 `/team`（无参=列团队；带参=用法）+ 独立冒号命令 `/team:list`/`:run`/`:status`/`:stop`/`:view`（内含 `m` 发消息直接对话）/`:clear`/`:doctor`；派单统一 `/team:run <团队名> <任务>`（团队名可与子命令同名，v1.12.0 保留词概念退役）
-- Widget：输入栏下方可选中亮块（默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开）——`enter` 直达查看器（仅 TUI 模式，详见 §4）
+- Widget：输入栏下方可选中亮块（数据驱动：有活跃 run 才挂帧、落定自动卸载；默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开为 `main → leader → 成员 → 任务` 树）——`main` 行 `enter` 只收起选中，leader/成员行 `enter` 直达查看器对应 actor（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏分栏会话记录查看器——左栏成员 roster、右栏成员对话/工具调用/错误实时可读（仅交互式 TUI）
 
 ## 开发与测试
@@ -164,7 +179,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（309 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（322 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

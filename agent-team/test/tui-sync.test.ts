@@ -23,12 +23,56 @@ import {
   type ViewerData,
 } from "../viewer.ts";
 import type { TranscriptEntry } from "../transcript.ts";
-import { VIEWER_TICK_MS } from "../types.ts";
+import { VIEWER_TICK_MS, WIDGET_TICK_MS } from "../types.ts";
+import type { RunStatusSnapshot } from "../cockpit.ts";
+import { buildWidgetView, renderWidgetView } from "../widget.ts";
 
 test("VIEWER_TICK_MS 对齐 fleet REFRESH_MS = 750（fleet.ts:25）", () => {
   // 规格表：REFRESH_MS = 750（fleet.ts:25）。当前实现若被改回 800 或其它
   // 值，说明与 pi-subagents 节流脱节——重影风险的第一个信号。
   assert.equal(VIEWER_TICK_MS, 750);
+});
+
+test("WIDGET_TICK_MS = 1000（差异表 §3.4：下方亮块有意偏离 fleet 750ms，对齐墙钟秒节拍）", () => {
+  assert.equal(WIDGET_TICK_MS, 1000);
+});
+
+// widget 树行/折叠行/底部提示字面量（§4 规格表）。期望值从规格表抄录，
+// 不从实现复制；任何文案漂移即与矩阵脱节。
+test("widget 折叠行 + main→leader→成员→任务 树字面量（§4）", () => {
+  const snapshot: RunStatusSnapshot = {
+    running: true,
+    progress: {
+      runId: "r",
+      team: "dev-team",
+      task: "修复登录 bug",
+      startedAtMs: 0,
+      members: [
+        { name: "frontend", status: "running", note: "turn 1" },
+        { name: "backend", status: "done" },
+      ],
+    },
+    lastRecord: null,
+  };
+  const view = buildWidgetView(snapshot, 65000);
+  assert.equal(view.collapsed, "agent-team dev-team · ↓/← 查看详情");
+  assert.deepEqual(
+    view.rows.map((row) => row.text),
+    [
+      "main",
+      "leader dev-team ▶ running · 1m5s · 1/2 并行",
+      "|- frontend ● running · turn 1",
+      "|- backend ✓ done",
+      "任务: 修复登录 bug",
+    ],
+  );
+  const expanded = renderWidgetView(view, { selected: true, cursor: 0 }, 120, plainStyles());
+  assert.equal(expanded[0], "▸ main");
+  assert.equal(expanded[1], "  leader dev-team ▶ running · 1m5s · 1/2 并行");
+  assert.equal(expanded[2], "  |- frontend ● running · turn 1");
+  assert.equal(expanded[3], "  |- backend ✓ done");
+  assert.equal(expanded[4], "  任务: 修复登录 bug");
+  assert.equal(expanded[5], "↑↓ 选择 · enter 查看 · esc 退出");
 });
 
 test("VIEWER_OVERLAY_OPTIONS 五字段逐字对齐 fleet overlayOptions（fleet.ts:1440）", () => {

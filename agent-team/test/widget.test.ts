@@ -1,8 +1,11 @@
 /**
- * Below-editor run widget tests: row building (live/terminal/empty), the
- * modal key reducer (activate/move/confirm/escape/passthrough), and the
- * legacy alt-arrow encoding. Pure functions only — the pi-tui host
- * component itself is never instantiated (repo convention).
+ * Below-editor run widget tests: data-driven registration (live run ⇒
+ * frame, settled ⇒ setWidget(undefined)), the `main → leader → 成员 → 任务`
+ * tree projection, the modal key reducer (activate/move/confirm/escape/
+ * passthrough), the focus probe, and the renderKey skip. Pure functions +
+ * a host-agnostic controller with fake ports; the pi-tui host component
+ * itself is never instantiated here (widget-focus-host.test.ts covers the
+ * real host path).
  */
 
 import * as assert from "node:assert/strict";
@@ -15,6 +18,7 @@ import {
   isEditorComponentLike,
   probeEditorFocus,
   renderWidgetView,
+  type WidgetRowSpec,
 } from "../widget.ts";
 import type { RunStatusSnapshot } from "../cockpit.ts";
 import { plainStyles, visibleWidth } from "../viewer.ts";
@@ -69,23 +73,66 @@ function doneSnapshot(): RunStatusSnapshot {
   };
 }
 
-test("buildWidgetView live: collapsed one-liner + expanded rows (status/elapsed/parallel count) + task, all leader rows", () => {
+/** Main/leader/member/task tree rows for liveSnapshot at 1m5s. */
+const LIVE_ROWS: WidgetRowSpec[] = [
+  { text: "main", actor: "_leader", kind: "root" },
+  { text: "leader dev-team ▶ running · 1m5s · 1/2 并行", actor: "_leader", kind: "leader" },
+  { text: "|- frontend ● running · turn 1", actor: "frontend", kind: "member" },
+  { text: "|- backend ✓ done", actor: "backend", kind: "member" },
+  { text: "任务: 修复登录 bug", actor: "_leader", kind: "leader" },
+];
+
+// ---------------------------------------------------------------------------
+// Tree projection (pure)
+// ---------------------------------------------------------------------------
+
+test("buildWidgetView live: collapsed one-liner + main→leader→成员→任务 tree (rows/kind/actor)", () => {
   const view = buildWidgetView(liveSnapshot(), 65000);
-  assert.equal(
-    view.collapsed,
-    "agent-team dev-team · ↓/← 查看详情",
-    "running 折叠行：团队 + 激活提示（不含状态/耗时/并行数）",
-  );
-  assert.equal(view.rows.length, 2, "compact: header + task only, no member detail");
-  assert.match(view.rows[0].text, /agent-team dev-team ▶ running · 1m5s · 1\/2 并行/);
-  assert.match(view.rows[1].text, /任务: 修复登录 bug/);
-  assert.deepEqual(
-    view.rows.map((row) => row.actor),
-    ["_leader", "_leader"],
-  );
+  assert.equal(view.collapsed, "agent-team dev-team · ↓/← 查看详情", "running 折叠行：团队 + 激活提示");
+  assert.deepEqual(view.rows, LIVE_ROWS, "树行序：main → leader → 成员 → 任务");
 });
 
-test("buildWidgetView adds a remaining-cost hint to the expanded header when a cost cap is set", () => {
+test("buildWidgetView member rows: 五种状态图标 queued · / running ● / done ✓ / failed ✗ / aborted ⊘", () => {
+  const snapshot = liveSnapshot();
+  snapshot.progress!.members = [
+    { name: "a", status: "queued" },
+    { name: "b", status: "running" },
+    { name: "c", status: "done" },
+    { name: "d", status: "failed" },
+    { name: "e", status: "aborted" },
+  ];
+  const view = buildWidgetView(snapshot, 0);
+  assert.deepEqual(
+    view.rows.slice(2, 7).map((row) => row.text),
+    ["|- a · queued", "|- b ● running", "|- c ✓ done", "|- d ✗ failed", "|- e ⊘ aborted"],
+  );
+  assert.deepEqual(
+    view.rows.slice(2, 7).map((row) => row.actor),
+    ["a", "b", "c", "d", "e"],
+    "成员行 actor = sanitizeActorName(成员名)",
+  );
+  assert.ok(view.rows.slice(2, 7).every((row) => row.kind === "member"));
+});
+
+test("buildWidgetView member tail: note 优先、否则 latest；压平换行且 ≤30 字符", () => {
+  const snapshot = liveSnapshot();
+  snapshot.progress!.members = [
+    { name: "frontend", status: "running", note: "turn 1", latest: "正在编辑 login.tsx" },
+    { name: "backend", status: "failed", latest: "第一行\n第二行   第三行" },
+    { name: "long", status: "running", latest: `${"x".repeat(40)}\n${"y".repeat(10)}` },
+    { name: "blank", status: "running", note: "   \n  " },
+  ];
+  const rows = buildWidgetView(snapshot, 0).rows;
+  assert.equal(rows[2].text, "|- frontend ● running · turn 1", "note 优先于 latest");
+  assert.equal(rows[3].text, "|- backend ✗ failed · 第一行 第二行 第三行", "换行压平");
+  const longTail = rows[4].text.replace(/^\|- long ● running · /, "");
+  assert.ok(longTail.length <= 30, `尾部 ≤30 字符，实得 ${longTail.length}`);
+  assert.match(longTail, /…$/, "超长尾部截断加省略号");
+  assert.equal(rows[5].text, "|- blank ● running", "空白尾注不加 · 段");
+  for (const row of rows) assert.doesNotMatch(row.text, /\n/, "任何 row 文本不得含换行（宿主要把残行渲染成额外行）");
+});
+
+test("buildWidgetView leader row: team + elapsed + running/total；配了费用上限且未超限才显示 剩 $X.XX", () => {
   const base = liveSnapshot();
   const budget = {
     maxDispatchCalls: 12,
@@ -98,53 +145,46 @@ test("buildWidgetView adds a remaining-cost hint to the expanded header when a c
     memberRuns: 2,
   };
   base.progress!.budget = budget;
-  assert.match(buildWidgetView(base, 65000).rows[0].text, /剩 \$4\.58/);
+  assert.equal(buildWidgetView(base, 65000).rows[1].text, "leader dev-team ▶ running · 1m5s · 1/2 并行 · 剩 $4.58");
 
   // No cap → no hint.
   const uncapped = liveSnapshot();
   uncapped.progress!.budget = { ...budget, maxCostUsd: null };
-  assert.doesNotMatch(buildWidgetView(uncapped, 65000).rows[0].text, /剩 \$/);
+  assert.doesNotMatch(buildWidgetView(uncapped, 65000).rows[1].text, /剩 \$/);
 
   // Cap already breached → no hint (the run aborts anyway).
   const breached = liveSnapshot();
   breached.progress!.budget = { ...budget, spentCost: 5.2 };
-  assert.doesNotMatch(buildWidgetView(breached, 65000).rows[0].text, /剩 \$/);
+  assert.doesNotMatch(buildWidgetView(breached, 65000).rows[1].text, /剩 \$/);
 });
 
-test("buildWidgetView terminal: same collapsed format, expanded status/duration/cost from the last record", () => {
-  const view = buildWidgetView(doneSnapshot(), 0);
-  assert.equal(view.collapsed, "agent-team dev-team · ↓/← 查看详情", "终态与 running 同折叠格式");
-  assert.equal(view.rows.length, 2);
-  assert.match(view.rows[0].text, /agent-team dev-team ✓ completed · 12s · \$0\.0500/);
-  assert.match(view.rows[1].text, /任务: 修复 bug/);
-  assert.deepEqual(view.rows.map((row) => row.actor), ["_leader", "_leader"]);
-});
-
-test("buildWidgetView terminal failed record keeps one bounded error row", () => {
-  const snapshot = doneSnapshot();
-  snapshot.lastRecord = { ...snapshot.lastRecord!, status: "failed", error: "模型超时，任务中断" };
-  const view = buildWidgetView(snapshot, 0);
-  assert.equal(view.rows.length, 3);
-  assert.match(view.rows[0].text, /agent-team dev-team ✗ failed · 12s/);
-  assert.match(view.rows[2].text, /✗ 模型超时，任务中断/);
-  assert.equal(view.rows[2].actor, "_leader");
-});
-
-test("buildWidgetView empty: no data → empty collapsed text and no rows (widget hidden)", () => {
+test("buildWidgetView 终态（running=false）：空投影（终态亮块自动卸载，行数据不进 widget）", () => {
+  assert.deepEqual(buildWidgetView(doneSnapshot(), 0), { collapsed: "", rows: [] });
   assert.deepEqual(buildWidgetView({ running: false, progress: null, lastRecord: null }, 0), {
     collapsed: "",
     rows: [],
   });
 });
 
-// 截图实读缺陷回归（用户 2026-09-10）：任务里的 \n 被宿主渲染成额外残行；折叠单行
-// 文案同样必须压平，否则一行会变多行。
-test("buildWidgetView flattens newlines/whitespace to single spaces in every row and in the collapsed text", () => {
+test("buildWidgetView running 但 progress 为空：防御性空投影", () => {
+  assert.deepEqual(buildWidgetView({ running: true, progress: null, lastRecord: null }, 0), {
+    collapsed: "",
+    rows: [],
+  });
+});
+
+test("buildWidgetView 任务行：压平换行 + 44 字符截断 + 折叠行压平（截图实读回归）", () => {
   const snapshot = liveSnapshot();
   snapshot.progress!.task = "目标: 输出小写单词 hello。\n特别注意：这是对 count-duet 的一次复用任务";
   const view = buildWidgetView(snapshot, 65000);
-  for (const row of view.rows) assert.doesNotMatch(row.text, /\n/, "任何 row 文本不得含换行（宿主要把残行渲染成额外行）");
-  assert.match(view.rows[1].text, /任务: 目标: 输出小写单词 hello。 特别注意：/);
+  assert.match(view.rows[4].text, /^任务: 目标: 输出小写单词 hello。 特别注意：/);
+
+  const long = liveSnapshot();
+  long.progress!.task = `${"a".repeat(30)}\n${"b".repeat(30)}   ${"c".repeat(10)}`;
+  const task = buildWidgetView(long, 65000).rows[4].text.replace(/^任务: /, "");
+  assert.ok(task.length <= 45, `bounded task text, got ${task.length}`);
+  assert.match(task, /…$/);
+  assert.doesNotMatch(task, /\s$/);
 
   // 折叠单行来自团队名，同样必须压平（多行团队名不把一行变多行）。
   const multilineTeam = liveSnapshot();
@@ -154,73 +194,58 @@ test("buildWidgetView flattens newlines/whitespace to single spaces in every row
   assert.doesNotMatch(collapsed, /\n/);
 });
 
-test("buildWidgetView truncation: flatten first, then 44 chars + … (bounded, never trailing whitespace)", () => {
-  const snapshot = liveSnapshot();
-  snapshot.progress!.task = `${"a".repeat(30)}\n${"b".repeat(30)}   ${"c".repeat(10)}`;
-  const task = buildWidgetView(snapshot, 65000).rows[1].text.replace(/^任务: /, "");
-  assert.ok(task.length <= 45, `bounded task text, got ${task.length}`);
-  assert.match(task, /…$/);
-  assert.doesNotMatch(task, /\s$/);
-});
+// ---------------------------------------------------------------------------
+// Key reducer (pure)
+// ---------------------------------------------------------------------------
 
-test("buildWidgetView flattens the failure error row too", () => {
-  const snapshot = doneSnapshot();
-  snapshot.lastRecord = { ...snapshot.lastRecord!, status: "failed", error: "模型超时\n 任务中断  请重试" };
-  const view = buildWidgetView(snapshot, 0);
-  assert.equal(view.rows[2].text, "✗ 模型超时 任务中断 请重试");
-  assert.doesNotMatch(view.rows[2].text, /\n/);
-});
+const rows = LIVE_ROWS;
 
 test("key reducer: activation consumes alt+down/up in both encodings; bare keys pass through", () => {
   const state = initialWidgetKeyState();
-  const actors = ["_leader", "frontend"];
 
   // 未选中 + 编辑器非空（canActivate=false）时，所有裸编辑器键原样放行。
-  assert.equal(handleWidgetKey(state, KEY_DOWN, 2, actors, false).type, "none");
-  assert.equal(handleWidgetKey(state, KEY_LEFT, 2, actors, false).type, "none");
-  assert.equal(handleWidgetKey(state, KEY_UP, 2, actors, false).type, "none");
-  assert.equal(handleWidgetKey(state, KEY_ENTER, 2, actors, false).type, "none");
-  assert.equal(handleWidgetKey(state, KEY_ESC, 2, actors, false).type, "none");
-  assert.equal(handleWidgetKey(state, "x", 2, actors, false).type, "none");
-  assert.equal(handleWidgetKey(state, "\x03", 2, actors, false).type, "none", "ctrl+c passes through");
+  assert.equal(handleWidgetKey(state, KEY_DOWN, rows, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_LEFT, rows, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_UP, rows, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_ENTER, rows, false).type, "none");
+  assert.equal(handleWidgetKey(state, KEY_ESC, rows, false).type, "none");
+  assert.equal(handleWidgetKey(state, "x", rows, false).type, "none");
+  assert.equal(handleWidgetKey(state, "\x03", rows, false).type, "none", "ctrl+c passes through");
 
   // No rows: nothing to select even when activation is allowed.
-  assert.equal(handleWidgetKey(state, ACTIVATE_CSI, 0, [], true).type, "none");
+  assert.equal(handleWidgetKey(state, ACTIVATE_CSI, [], true).type, "none");
 
   // Both encodings activate (consume) with the cursor kept where it was.
-  const csi = handleWidgetKey(state, ACTIVATE_CSI, 2, actors, false);
+  const csi = handleWidgetKey(state, ACTIVATE_CSI, rows, false);
   assert.ok(csi.type === "update" && csi.state.selected && csi.state.cursor === 0);
-  const legacy = handleWidgetKey(state, ACTIVATE_LEGACY, 2, actors, false);
+  const legacy = handleWidgetKey(state, ACTIVATE_LEGACY, rows, false);
   assert.ok(legacy.type === "update" && legacy.state.selected);
-  const altUp = handleWidgetKey(state, ACTIVATE_UP_CSI, 2, actors, false);
+  const altUp = handleWidgetKey(state, ACTIVATE_UP_CSI, rows, false);
   assert.ok(altUp.type === "update" && altUp.state.selected);
 });
 
 test("key reducer 激活门控：空编辑器（canActivate=true）才允许 ↓/← 激活（对齐 fleet-status getEditorText）", () => {
   // 规格表 §4：激活键 down/left，且编辑器文本为空才激活（fleet-status.ts:606-607）。
-  const actors = ["_leader", "frontend"];
-
   // 编辑器有文本（canActivate=false）：↓/← 不拦截，放行编辑器。
-  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, 2, actors, false).type, "none");
-  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_LEFT, 2, actors, false).type, "none");
+  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, rows, false).type, "none");
+  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_LEFT, rows, false).type, "none");
 
   // 编辑器为空（canActivate=true）：↓/← 进入选中。
-  const down = handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, 2, actors, true);
+  const down = handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, rows, true);
   assert.ok(down.type === "update" && down.state.selected && down.state.cursor === 0);
-  const left = handleWidgetKey(initialWidgetKeyState(), KEY_LEFT, 2, actors, true);
+  const left = handleWidgetKey(initialWidgetKeyState(), KEY_LEFT, rows, true);
   assert.ok(left.type === "update" && left.state.selected);
 
   // 无行时即便允许激活也不进入选中。
-  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, 0, [], true).type, "none");
+  assert.equal(handleWidgetKey(initialWidgetKeyState(), KEY_DOWN, [], true).type, "none");
 });
 
 test("key reducer 激活门控：alt+↓/↑ 为不受门控的第二通道", () => {
   // 差异表 §3.3：alt 通道是 agent-team 特有语义（模态选中风格），无论编辑器
   // 是否有文本都可进入选中。
-  const actors = ["_leader", "frontend"];
   for (const activate of [ACTIVATE_CSI, ACTIVATE_LEGACY, ACTIVATE_UP_CSI]) {
     for (const canActivate of [false, true]) {
-      const r = handleWidgetKey(initialWidgetKeyState(), activate, 2, actors, canActivate);
+      const r = handleWidgetKey(initialWidgetKeyState(), activate, rows, canActivate);
       assert.ok(
         r.type === "update" && r.state.selected,
         `alt 通道（${JSON.stringify(activate)}）在 canActivate=${canActivate} 下应激活`,
@@ -229,60 +254,71 @@ test("key reducer 激活门控：alt+↓/↑ 为不受门控的第二通道", ()
   }
 });
 
-test("key reducer selected: arrows move and clamp, enter confirms the row's actor", () => {
-  const actors = ["_leader", "_leader", "frontend", "backend"];
+test("key reducer selected: arrows move and clamp；enter 返回命中行（含 kind 与 actor）", () => {
   let state = { selected: true, cursor: 0 };
 
-  const moved = handleWidgetKey(state, KEY_DOWN, 4, actors);
+  const moved = handleWidgetKey(state, KEY_DOWN, rows);
   assert.ok(moved.type === "update" && moved.state.cursor === 1 && moved.state.selected);
   state = moved.type === "update" ? moved.state : state;
 
   state = { selected: true, cursor: 2 };
-  const confirm = handleWidgetKey(state, KEY_ENTER, 4, actors);
+  const confirm = handleWidgetKey(state, KEY_ENTER, rows);
   assert.ok(confirm.type === "confirm");
-  assert.ok(confirm.type === "confirm" && confirm.actor === "frontend");
+  assert.ok(confirm.type === "confirm" && confirm.row.text === "|- frontend ● running · turn 1");
+  assert.ok(confirm.type === "confirm" && confirm.row.actor === "frontend");
+  assert.ok(confirm.type === "confirm" && confirm.row.kind === "member");
   assert.ok(confirm.state.selected === false, "confirm leaves selection mode");
 
+  // 根部 main 行同样返回命中行（kind=root；宿主把它映射为仅收起选中）。
+  const root = handleWidgetKey({ selected: true, cursor: 0 }, KEY_ENTER, rows);
+  assert.ok(root.type === "confirm" && root.row.kind === "root" && root.row.text === "main");
+
   // 底部钳位保留；到顶（cursor 0）再按 up 退出选中（fleet-status 同构，见下）。
-  const bottom = handleWidgetKey({ selected: true, cursor: 3 }, KEY_DOWN, 4, actors);
-  assert.ok(bottom.type === "update" && bottom.state.cursor === 3 && bottom.state.selected);
+  const bottom = handleWidgetKey({ selected: true, cursor: 4 }, KEY_DOWN, rows);
+  assert.ok(bottom.type === "update" && bottom.state.cursor === 4 && bottom.state.selected);
 });
 
 test("key reducer selected: cursor 0 再按 up/k 退出选中放行编辑器（fleet-status 同构）", () => {
   // fleet-status.ts:620-625：选中第 0 行再按 up → deactivate（退出选中，
   // 后续键到达编辑器）；退出时保持 cursor 供再次激活恢复。
-  const actors = ["_leader", "frontend"];
   for (const key of [KEY_UP, "k"]) {
-    const exited = handleWidgetKey({ selected: true, cursor: 0 }, key, 2, actors);
+    const exited = handleWidgetKey({ selected: true, cursor: 0 }, key, rows);
     assert.ok(exited.type === "update");
     assert.ok(exited.type === "update" && exited.state.selected === false && exited.state.cursor === 0);
   }
 });
 
 test("key reducer selected: esc deselects, other keys deselect and pass through", () => {
-  const actors = ["_leader", "frontend"];
   const selected = { selected: true, cursor: 1 };
 
-  const esc = handleWidgetKey(selected, KEY_ESC, 2, actors);
+  const esc = handleWidgetKey(selected, KEY_ESC, rows);
   assert.ok(esc.type === "update" && esc.state.selected === false && esc.state.cursor === 1);
 
-  const other = handleWidgetKey(selected, "x", 2, actors);
+  const other = handleWidgetKey(selected, "x", rows);
   assert.ok(other.type === "passthrough" && other.state.selected === false);
 
-  const ctrlC = handleWidgetKey(selected, "\x03", 2, actors);
+  const ctrlC = handleWidgetKey(selected, "\x03", rows);
   assert.ok(ctrlC.type === "passthrough" && ctrlC.state.selected === false);
 });
 
 test("key reducer: re-activation keeps the previous cursor position", () => {
-  const actors = ["_leader", "frontend", "backend"];
-  const deselected = handleWidgetKey({ selected: true, cursor: 2 }, KEY_ESC, 3, actors);
+  const deselected = handleWidgetKey({ selected: true, cursor: 2 }, KEY_ESC, rows);
   assert.ok(deselected.type === "update");
   const state = deselected.type === "update" ? deselected.state : initialWidgetKeyState();
-  const reactivated = handleWidgetKey(state, ACTIVATE_CSI, 3, actors);
+  const reactivated = handleWidgetKey(state, ACTIVATE_CSI, rows);
   assert.ok(reactivated.type === "update" && reactivated.state.selected && reactivated.state.cursor === 2);
 });
 
-test("renderWidgetView collapsed: exactly one line with the activation hint and no task text", () => {
+test("key reducer: enter 而行为空（run 恰落定）→ 收起选中并放行该键", () => {
+  const result = handleWidgetKey({ selected: true, cursor: 0 }, KEY_ENTER, []);
+  assert.ok(result.type === "passthrough" && result.state.selected === false);
+});
+
+// ---------------------------------------------------------------------------
+// Rendering (pure)
+// ---------------------------------------------------------------------------
+
+test("renderWidgetView collapsed: exactly one line with the activation hint and no tree rows", () => {
   const view = buildWidgetView(liveSnapshot(), 65000);
   const lines = renderWidgetView(view, { selected: false, cursor: 0 }, 80, plainStyles());
   assert.equal(lines.length, 1, "折叠默认态恰好 1 行");
@@ -290,12 +326,15 @@ test("renderWidgetView collapsed: exactly one line with the activation hint and 
   assert.doesNotMatch(lines[0], /任务:/);
 });
 
-test("renderWidgetView expanded: all rows + bottom hint, gutter on the cursor row", () => {
+test("renderWidgetView expanded: main/leader/成员/任务 rows + bottom hint, gutter on the cursor row", () => {
   const view = buildWidgetView(liveSnapshot(), 65000);
   const lines = renderWidgetView(view, { selected: true, cursor: 1 }, 80, plainStyles());
   assert.equal(lines.length, view.rows.length + 1, "展开 = rows + 底部提示行");
-  assert.match(lines[0], /^ {2}agent-team dev-team/);
-  assert.match(lines[1], /^▸ 任务: /);
+  assert.match(lines[0], /^ {2}main$/);
+  assert.match(lines[1], /^▸ leader dev-team/);
+  assert.match(lines[2], /^ {2}\|- frontend ● running/);
+  assert.match(lines[3], /^ {2}\|- backend ✓ done$/);
+  assert.match(lines[4], /^ {2}任务: /);
   assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
 });
 
@@ -338,6 +377,159 @@ test("renderWidgetView truncates every line to terminal width (collapsed + expan
   assert.match(selected[selected.length - 1], /↑↓ 选择/);
 });
 
+// ---------------------------------------------------------------------------
+// Controller: data-driven registration (mount/unmount + fingerprint)
+// ---------------------------------------------------------------------------
+
+function registrationHarness(load: () => RunStatusSnapshot): {
+  controller: RunWidgetController;
+  pushed: Array<string[] | undefined>;
+} {
+  const pushed: Array<string[] | undefined> = [];
+  const controller = new RunWidgetController(
+    {
+      load,
+      styles: plainStyles(),
+      onConfirm: () => {},
+      width: () => 80,
+      nowMs: () => 65000,
+      tickMs: 60 * 60 * 1000, // 长 tick：只验证显式 refresh 语义
+    },
+    (lines) => {
+      pushed.push(lines);
+    },
+  );
+  controller.start();
+  return { controller, pushed };
+}
+
+test("controller 空闲（无 run）：start 不注册亮块（数据驱动挂载，不再动作驱动常驻）", () => {
+  const { controller, pushed } = registrationHarness(() => ({ running: false, progress: null, lastRecord: null }));
+  try {
+    assert.equal(pushed.length, 0, "无活跃 run 不得推送任何 setWidget");
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 终态记录：不注册亮块（终态行不进 widget）", () => {
+  const { controller, pushed } = registrationHarness(doneSnapshot);
+  try {
+    assert.equal(pushed.length, 0, "终态记录不得推送亮块");
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 活跃 run：start 推折叠单行；落定 refresh 推 undefined 卸载；再 refresh 不重复推送", () => {
+  let snapshot = liveSnapshot();
+  const { controller, pushed } = registrationHarness(() => snapshot);
+  try {
+    assert.equal(pushed.length, 1, "活跃 run 挂载恰好一帧");
+    assert.deepEqual(pushed[0], ["agent-team dev-team · ↓/← 查看详情"]);
+
+    snapshot = doneSnapshot(); // run 落定（coordinator 清空 progress）
+    controller.refresh();
+    assert.equal(pushed.length, 2, "落定后立即卸载一帧");
+    assert.equal(pushed[1], undefined, "卸载帧为 setWidget(undefined)");
+
+    controller.refresh();
+    controller.refresh();
+    assert.equal(pushed.length, 2, "已卸载后 refresh 不再 setWidget");
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 数据驱动挂载：空闲 → 新 run refresh 出帧（事件刷新不等 tick）；再次落定再卸载", () => {
+  let snapshot: RunStatusSnapshot = { running: false, progress: null, lastRecord: null };
+  const { controller, pushed } = registrationHarness(() => snapshot);
+  try {
+    assert.equal(pushed.length, 0);
+
+    snapshot = liveSnapshot();
+    controller.refresh(); // 派单事件即时刷新（不依赖 1s tick）
+    assert.equal(pushed.length, 1);
+    assert.deepEqual(pushed[0], ["agent-team dev-team · ↓/← 查看详情"]);
+
+    snapshot = doneSnapshot();
+    controller.refresh();
+    assert.deepEqual(pushed.at(-1), undefined);
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 活跃帧静态内容：连续 refresh 跳过 setWidget（renderKey 语义）", () => {
+  const { controller, pushed } = registrationHarness(liveSnapshot);
+  try {
+    const afterStart = pushed.length;
+    assert.equal(afterStart, 1);
+    controller.refresh();
+    controller.refresh();
+    assert.equal(pushed.length, afterStart, "折叠行未变应跳过 setWidget");
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 折叠行不含 elapsed：时间推进也跳过（少 churn）", () => {
+  let nowMs = 65000;
+  const pushed: Array<string[] | undefined> = [];
+  const controller = new RunWidgetController(
+    { load: liveSnapshot, styles: plainStyles(), onConfirm: () => {}, width: () => 80, nowMs: () => nowMs, tickMs: 60 * 60 * 1000 },
+    (lines) => {
+      pushed.push(lines);
+    },
+  );
+  controller.start();
+  try {
+    const afterStart = pushed.length;
+    nowMs = 66000; // elapsed 1m5s → 1m6s：折叠行不变
+    controller.refresh();
+    assert.equal(pushed.length, afterStart, "折叠行不含 elapsed → 时间推进也不重绘");
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 展开态：elapsed 变化触发重绘（时间信息只在展开行）", () => {
+  let nowMs = 65000;
+  const pushed: Array<string[] | undefined> = [];
+  const handlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
+  const controller = new RunWidgetController(
+    {
+      load: liveSnapshot,
+      styles: plainStyles(),
+      onConfirm: () => {},
+      width: () => 80,
+      nowMs: () => nowMs,
+      tickMs: 60 * 60 * 1000,
+      editorState: () => ({ text: "" }),
+    },
+    (lines) => {
+      pushed.push(lines);
+    },
+    (handler) => {
+      handlers.push(handler);
+      return () => {};
+    },
+  );
+  controller.start();
+  try {
+    handlers[0]!("\x1b[B"); // 展开
+    const expanded = pushed.length;
+    controller.refresh();
+    assert.equal(pushed.length, expanded, "同秒展开帧应跳过");
+
+    nowMs = 66000;
+    controller.refresh();
+    assert.equal(pushed.length, expanded + 1, "elapsed 变化 → 展开帧重建");
+  } finally {
+    controller.stop();
+  }
+});
+
 test("controller setPaused(true) 隐藏亮块并冻结重绘，恢复后立即刷出最新行", () => {
   const pushed: Array<string[] | undefined> = [];
   const controller = new RunWidgetController(
@@ -369,6 +561,29 @@ test("controller setPaused(true) 隐藏亮块并冻结重绘，恢复后立即�
     assert.ok(pushed.length > frozen, "恢复后立即刷出一帧");
     assert.equal(pushed[pushed.length - 1]?.length, 1, "恢复后亮块回来且为折叠单行");
     assert.match(pushed[pushed.length - 1]![0], /agent-team dev-team · ↓\/← 查看详情/);
+  } finally {
+    controller.stop();
+  }
+});
+
+test("controller 暂停期间 run 落定：恢复后不重挂（数据驱动卸载跨暂停成立）", () => {
+  let snapshot = liveSnapshot();
+  const pushed: Array<string[] | undefined> = [];
+  const controller = new RunWidgetController(
+    { load: () => snapshot, styles: plainStyles(), onConfirm: () => {}, width: () => 80, nowMs: () => 65000, tickMs: 60 * 60 * 1000 },
+    (lines) => {
+      pushed.push(lines);
+    },
+  );
+  try {
+    controller.start();
+    const mounted = pushed.length;
+    controller.setPaused(true);
+    assert.deepEqual(pushed.at(-1), undefined);
+    snapshot = doneSnapshot(); // 暂停期间 run 落定
+    controller.setPaused(false);
+    assert.equal(pushed.length, mounted + 1, "恢复时终态视图不重挂（无新 setWidget）");
+    assert.deepEqual(pushed.at(-1), undefined, "最后一帧仍是卸载帧");
   } finally {
     controller.stop();
   }
@@ -426,6 +641,7 @@ function controllerHarness(opts: {
   load: () => RunStatusSnapshot;
   editorState?: () => { text: string };
   editorFocus?: () => boolean | undefined;
+  onConfirm?: (actor: string) => void;
 }) {
   const pushed: Array<string[] | undefined> = [];
   const handlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
@@ -433,7 +649,7 @@ function controllerHarness(opts: {
     {
       load: opts.load,
       styles: plainStyles(),
-      onConfirm: () => {},
+      onConfirm: opts.onConfirm ?? (() => {}),
       width: () => 80,
       nowMs: () => 65000,
       tickMs: 60 * 60 * 1000, // 长 tick：本用例只验证键盘事件路径
@@ -455,7 +671,7 @@ function controllerHarness(opts: {
 const lastLines = (pushed: Array<string[] | undefined>): string[] => pushed[pushed.length - 1] ?? [];
 const cursorRow = (lines: string[]): number => lines.findIndex((line) => line.startsWith("▸ "));
 
-// 首帧即折叠单行：不存在 run 之外的常显多行概要。
+// 首帧即折叠单行：活跃 run 的默认态只有一行。
 test("controller 首帧：折叠单行（无行光标、含激活提示）", () => {
   const { controller, pushed } = controllerHarness({
     load: liveSnapshot,
@@ -472,7 +688,7 @@ test("controller 首帧：折叠单行（无行光标、含激活提示）", () 
 });
 
 // 编辑器为空：bare ↓ 进入选中并 consume（对齐 fleet-status getEditorText===""）。
-test("controller 空编辑器按 ↓ 激活 widget（consume、展开 rows + 提示行、出现行光标）", () => {
+test("controller 空编辑器按 ↓ 激活 widget（consume、展开树 + 提示行、出现行光标）", () => {
   const { controller, pushed, handlers } = controllerHarness({
     load: liveSnapshot,
     editorState: () => ({ text: "" }),
@@ -482,8 +698,8 @@ test("controller 空编辑器按 ↓ 激活 widget（consume、展开 rows + 提
     const r = handlers[0]!("\x1b[B");
     assert.equal(r?.consume, true, "空编辑器 ↓ 应被 widget 消费");
     const lines = lastLines(pushed);
-    assert.equal(cursorRow(lines), 0, "激活后行光标应在第 0 行");
-    assert.equal(lines.length, 3, "展开 = rows(2) + 底部提示行");
+    assert.equal(cursorRow(lines), 0, "激活后行光标应在第 0 行（main）");
+    assert.equal(lines.length, LIVE_ROWS.length + 1, "展开 = 树行 + 底部提示行");
     assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
   } finally {
     controller.stop();
@@ -532,9 +748,9 @@ test("controller 选中态 k/j 移动行光标（▸ 前缀位置随之变化）
     assert.equal(cursorRow(lastLines(pushed)), 0);
 
     handlers[0]!("j"); // 下移
-    assert.equal(cursorRow(lastLines(pushed)), 1, "j 应下移到第 1 行");
+    assert.equal(cursorRow(lastLines(pushed)), 1, "j 应下移到 leader 行");
     handlers[0]!("k"); // 上移
-    assert.equal(cursorRow(lastLines(pushed)), 0, "k 应回到第 0 行");
+    assert.equal(cursorRow(lastLines(pushed)), 0, "k 应回到 main 行");
     handlers[0]!("k"); // 顶部再按 k：退出选中放行编辑器（fleet-status 同构）
     assert.equal(cursorRow(lastLines(pushed)), -1, "到顶再按 k 应退出选中（无行光标）");
     assert.equal(lastLines(pushed).length, 1, "退出选中后收回折叠单行");
@@ -542,8 +758,40 @@ test("controller 选中态 k/j 移动行光标（▸ 前缀位置随之变化）
     handlers[0]!("\x1b[1;3B"); // alt+↓ 重新激活（cursor 保持）
     assert.equal(cursorRow(lastLines(pushed)), 0, "再次激活回到原光标");
     handlers[0]!("j");
-    handlers[0]!("j"); // 底部再按 j：钳位不越界（仍选中）
+    handlers[0]!("j");
+    handlers[0]!("j");
+    handlers[0]!("j"); // 底部（任务行）再按 j：钳位不越界（仍选中）
+    assert.equal(cursorRow(lastLines(pushed)), LIVE_ROWS.length - 1);
+  } finally {
+    controller.stop();
+  }
+});
+
+// enter 按行 kind 分派：root 仅收起选中；leader/成员行调 onConfirm(actor)。
+test("controller enter：main 行不进 viewer；leader/成员行 onConfirm 对应 actor", () => {
+  const confirmed: string[] = [];
+  const { controller, pushed, handlers } = controllerHarness({
+    load: liveSnapshot,
+    editorState: () => ({ text: "" }),
+    onConfirm: (actor) => confirmed.push(actor),
+  });
+  try {
+    handlers[0]!("\x1b[B"); // main 行（cursor 0）
+    assert.equal(handlers[0]!("\r")?.consume, true, "main 行 enter 被消费");
+    assert.deepEqual(confirmed, [], "main 行 enter 不进 viewer");
+    assert.equal(cursorRow(lastLines(pushed)), -1, "main 行 enter 只收起选中");
+
+    handlers[0]!("\x1b[1;3B"); // 重新激活（cursor 保持 0）
+    handlers[0]!("j"); // leader 行
     assert.equal(cursorRow(lastLines(pushed)), 1);
+    handlers[0]!("\r");
+    assert.deepEqual(confirmed, ["_leader"], "leader 行 enter 打开 leader 转录");
+
+    handlers[0]!("\x1b[1;3B"); // 重新激活（cursor 保持 1）
+    handlers[0]!("j"); // frontend 成员行
+    assert.equal(cursorRow(lastLines(pushed)), 2);
+    handlers[0]!("\r");
+    assert.deepEqual(confirmed, ["_leader", "frontend"], "成员行 enter 打开该成员转录");
   } finally {
     controller.stop();
   }
@@ -697,102 +945,12 @@ test("controller 无 editorFocus 端口 → 旧语义回归锁（空编辑器裸
 });
 
 // ---------------------------------------------------------------------------
-// Slice 5：无变化跳过 setWidget（seam D，对齐 fleet-status renderKey 语义）
+// 选中态 toggle 重绘（跳过逻辑不得压制选中态变化）
 // ---------------------------------------------------------------------------
 
-function skipHarness(opts: { load: () => RunStatusSnapshot; nowMs?: () => number }) {
-  const pushed: Array<string[] | undefined> = [];
-  const controller = new RunWidgetController(
-    {
-      load: opts.load,
-      styles: plainStyles(),
-      onConfirm: () => {},
-      width: () => 80,
-      nowMs: opts.nowMs ?? (() => 0),
-      tickMs: 60 * 60 * 1000, // 长 tick：只验证显式 refresh 的跳过语义
-    },
-    (lines) => {
-      pushed.push(lines);
-    },
-  );
-  controller.start();
-  return { controller, pushed };
-}
-
-// 终态快照渲染串静止：连续 refresh 只应 setWidget 一次（第二次起跳过）。
-test("controller 终态静态行连续 refresh → setWidget 只调一次（无变化跳过）", () => {
-  const { controller, pushed } = skipHarness({ load: doneSnapshot, nowMs: () => 0 });
-  try {
-    const afterStart = pushed.length;
-    assert.ok(afterStart >= 1, "start 后应至少刷出一帧");
-    controller.refresh();
-    controller.refresh();
-    assert.equal(pushed.length, afterStart, "静态终态行连续 refresh 应跳过 setWidget");
-  } finally {
-    controller.stop();
-  }
-});
-
-// 折叠行不含 elapsed：running 时时间推进也不再逐秒重绘（少 churn，fleet-status
-// renderKey 语义）；时间只在展开态出现。
-test("controller running 折叠态：elapsed 变化也跳过（折叠行不含时间）", () => {
-  let nowMs = 65000;
-  const { controller, pushed } = skipHarness({ load: liveSnapshot, nowMs: () => nowMs });
-  try {
-    const afterStart = pushed.length;
-    controller.refresh();
-    assert.equal(pushed.length, afterStart, "折叠行未变应跳过");
-
-    nowMs = 66000; // elapsed 1m5s → 1m6s：折叠行不变
-    controller.refresh();
-    assert.equal(pushed.length, afterStart, "折叠行不含 elapsed → 时间推进也不重绘");
-  } finally {
-    controller.stop();
-  }
-});
-
-// 展开态才含 elapsed：同秒跳过、跨秒重绘。
-test("controller 展开态：elapsed 变化触发重绘（时间信息只在展开行）", () => {
-  let nowMs = 65000;
-  const pushed: Array<string[] | undefined> = [];
-  const handlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
-  const controller = new RunWidgetController(
-    {
-      load: liveSnapshot,
-      styles: plainStyles(),
-      onConfirm: () => {},
-      width: () => 80,
-      nowMs: () => nowMs,
-      tickMs: 60 * 60 * 1000,
-      editorState: () => ({ text: "" }),
-    },
-    (lines) => {
-      pushed.push(lines);
-    },
-    (handler) => {
-      handlers.push(handler);
-      return () => {};
-    },
-  );
-  controller.start();
-  try {
-    handlers[0]!("\x1b[B"); // 展开
-    const expanded = pushed.length;
-    controller.refresh();
-    assert.equal(pushed.length, expanded, "同秒展开帧应跳过");
-
-    nowMs = 66000;
-    controller.refresh();
-    assert.equal(pushed.length, expanded + 1, "elapsed 变化 → 展开帧重建");
-  } finally {
-    controller.stop();
-  }
-});
-
-// 选中态 toggle 必须触发重绘（跳过逻辑不得压制选中态变化）。
 test("controller 选中态 toggle 触发重绘（不被跳过逻辑压制）", () => {
   const { controller, pushed, handlers } = controllerHarness({
-    load: doneSnapshot,
+    load: liveSnapshot,
     editorState: () => ({ text: "" }),
   });
   try {
@@ -800,7 +958,7 @@ test("controller 选中态 toggle 触发重绘（不被跳过逻辑压制）", (
     handlers[0]!("\x1b[B"); // 进入选中：渲染串出现 ▸ + 提示行 → 必须重绘
     assert.equal(pushed.length, before + 1, "进入选中应触发一次重绘");
     assert.equal(cursorRow(lastLines(pushed)), 0, "选中后行光标在第 0 行");
-    assert.equal(lastLines(pushed).length, 3, "展开 = rows + 提示行");
+    assert.equal(lastLines(pushed).length, LIVE_ROWS.length + 1, "展开 = 树行 + 提示行");
 
     handlers[0]!("\x1b"); // esc 退出选中：渲染串回到折叠单行 → 必须重绘
     assert.equal(pushed.length, before + 2, "退出选中应再触发一次重绘");

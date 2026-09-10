@@ -120,7 +120,7 @@ export const TEAM_USAGE = [
   "  /team:status             查看当前/最近 run 状态",
   "  /team:stop               中止当前 run",
   "  /team:view               打开全屏会话记录查看器",
-  "  /team:clear              清除输入栏下方亮块",
+  "  /team:clear              丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏）",
   "  /team:doctor             自检报告",
 ].join("\n");
 
@@ -448,13 +448,15 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   const viewerStopAndClearChat = async (): Promise<ViewerStopResult> => {
     const result = await viewerStopAction(state.coordinator);
     if (result.kind === "error") return result;
+    refreshWidget();
     const dropped = chat.clear();
     return dropped > 0 ? { ...result, text: `${result.text}；已丢弃排队的 ${dropped} 条对话消息` } : result;
   };
 
   /**
-   * Mounts the below-editor run widget (idempotent per session): a 1s
-   * string[] setWidget loop plus (when the host exposes it) a
+   * Mounts the below-editor run widget controller (idempotent per session):
+   * a data-driven string[] setWidget surface (registered while a run is
+   * live, unmounted on settle) plus (when the host exposes it) a
    * `ctx.ui.onTerminalInput` hook for the modal selection.
    * PI_AGENT_TEAM_WIDGET=0 disables it entirely (rendering diagnostics).
    */
@@ -532,6 +534,21 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   };
 
   /**
+   * Event-driven repaint of the below-editor widget: the coordinator's
+   * `onProgress` observer calls this on every state change (leader events,
+   * dispatch start/end), and the run's terminal paths call it after the
+   * coordinator has cleared its progress — the widget then unmounts itself
+   * (data-driven registration). The 1s aligned ticker remains the fallback.
+   */
+  const refreshWidget = (): void => {
+    try {
+      state.widget?.refresh();
+    } catch {
+      /* widget failures never break the session */
+    }
+  };
+
+  /**
    * Model preflight before any spawn: unresolvable provider/id references
    * fail typed (MODEL_NOT_FOUND, nothing spawns); resolvable models without
    * configured auth pass with a ui warning. Without a host registry
@@ -603,25 +620,39 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     }
     // start() claims the run synchronously, so the runId is readable right
     // after the call — the handle team_stop needs.
-    const runPromise = state.coordinator.start({ team, task, ui });
+    const runPromise = state.coordinator.start({
+      team,
+      task,
+      ui,
+      // 状态变化点事件即时重绘（不必等 1s tick）：首个事件通常要等 leader
+      // 子进程启动，故下一行再补一帧，派单后亮块立即出现。
+      onProgress: () => refreshWidget(),
+    });
     const runId = state.coordinator.activeRunId() ?? "";
+    refreshWidget();
     ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
     // Completion still persists the record and wakes the session with the
     // report (followUp turn), then drives the viewer chat queue: completed
     // → chain-dispatch the next queued message; failed/aborted → drop it.
+    // refreshWidget AFTER onRunFinalized: a chained dispatch claims the next
+    // run synchronously, so the widget re-registers in the same frame
+    // instead of flickering unmounted between runs.
     void runPromise
       .then((result) => {
         if (!result.ok) {
           ui.notify(result.message, "error");
           chat.onRunFinalized("failed");
+          refreshWidget();
           return;
         }
         finalizeRun(result.value, ui, "followUp");
         chat.onRunFinalized(result.value.status);
+        refreshWidget();
       })
       .catch((e: unknown) => {
         ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
         chat.onRunFinalized("failed");
+        refreshWidget();
       });
     return { ok: true, team: team.name, members: team.members.length, runId };
   };
@@ -707,6 +738,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         ui,
         signal,
         onProgress: (progress) => {
+          // 状态变化点事件即时重绘（下方亮块与工具进度共用同一观察点）。
+          refreshWidget();
           if (!onUpdate) return;
           try {
             const active = progress.members.filter((m) => m.status === "running").length;
@@ -724,6 +757,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           }
         },
       });
+      refreshWidget();
       if (!result.ok) {
         return {
           content: [{ type: "text" as const, text: result.message }],
@@ -821,6 +855,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       const activeRunId = snapshot.progress?.runId ?? null;
       if (activeRunId === runId) {
         const outcome = await state.coordinator.stopAndSettle();
+        refreshWidget();
         const dropped = chat.clear();
         const droppedNote = dropped > 0 ? `已丢弃排队的 ${dropped} 条 viewer 对话消息。` : "";
         if (outcome.settled) {
@@ -932,6 +967,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   const stopRun = (ctx: ExtensionContext): void => {
     const ui = uiPortFrom(ctx);
     if (state.coordinator.stop()) {
+      refreshWidget();
       const dropped = chat.clear();
       ui.notify(dropped > 0 ? `已发送中止信号（SIGTERM → SIGKILL）；已丢弃排队的 ${dropped} 条 viewer 对话消息` : "已发送中止信号（SIGTERM → SIGKILL）", "warning");
     } else {
@@ -958,27 +994,20 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     }
   };
 
-  /** `/team:clear`：清除输入栏下方的 team run 亮块。 */
+  /** `/team:clear`：丢弃排队的 viewer 对话（亮块随 run 落定自动隐藏，不再手动卸载）。 */
   const clearRunBlock = (ctx: ExtensionContext): void => {
     const ui = uiPortFrom(ctx);
     if (state.coordinator.isRunning()) {
       ui.notify("team run 进行中；先 /team:stop 或等它结束再清除。", "warning");
       return;
     }
-    if (!state.widgetMounted) {
-      ui.notify("下方没有 team run 亮块。", "info");
-      return;
-    }
-    try {
-      state.widget?.stop();
-    } catch {
-      /* widget failures never break the session */
-    }
-    state.widget = undefined;
-    state.widgetMounted = false;
-    clearWidget(ctx);
     const dropped = chat.clear();
-    ui.notify(dropped > 0 ? `已清除下方亮块与排队的 ${dropped} 条对话消息；/team:status、/team:view 仍可回看。` : "已清除下方亮块；/team:status、/team:view 仍可回看。", "info");
+    ui.notify(
+      dropped > 0
+        ? `已丢弃排队的 ${dropped} 条对话消息；亮块随 run 结束自动隐藏。`
+        : "亮块随 run 结束自动隐藏，没有可清除的内容。",
+      "info",
+    );
   };
 
   /** `/team:doctor`：自检报告。 */
@@ -1066,7 +1095,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   });
 
   pi.registerCommand(TEAM_COMMAND_NAMES.clear, {
-    description: "清除输入栏下方的 team run 亮块（运行中拒绝；只卸亮块不清记录）",
+    description: "丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏；运行中拒绝）",
     handler: async (_args, ctx) => clearRunBlock(ctx),
   });
 
@@ -1139,13 +1168,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       /* reconcile is best-effort */
     }
 
-    // Below-editor run widget: only mount right away when hydration found a
-    // STILL-RUNNING run. A terminal record hydrates /team:status and
-    // /team:view paths but must not re-mount the below-editor block on every
-    // /reload — the user cleared it with /team:clear for a reason. The next
-    // dispatch remounts it (startBackgroundRun → ensureRunWidget).
-    const snapshot = state.coordinator.getStatus();
-    if (snapshot.running) ensureRunWidget(ctx);
+    // Below-editor run widget: mount the (idempotent) controller every
+    // session — registration is DATA driven (`snapshot.running` ⇒ frame,
+    // settle ⇒ setWidget undefined), so the widget appears/disappears with
+    // the run without an action-driven remount, and a hydrated terminal
+    // record never re-mounts the block on /reload.
+    ensureRunWidget(ctx);
 
     // Best-effort retention: drop transcript artifact dirs older than a week.
     try {
