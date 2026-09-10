@@ -343,7 +343,19 @@ export function blockLines(
       return [label, ...body];
     }
     case "tools":
-      return block.lines.map((line) => styles.dim(`· ${truncateVisible(line, width - 2)}`));
+      // 多行条目拆成物理帧行：cockpit 写入的 `team_dispatch 派发 →\n  - 成员: 任务`
+      // 整体进入一个帧行时，宿主按物理行写屏会把换行当行分隔——尾巴落在下一行
+      // 同列（真机：overlay 左缘残行 + 帧几何漂移）。首段 `· `、续段两空格缩进
+      // （保留写入者 `  - <member>: <task>` 结构，对齐 fleet 的续行缩进）。
+      return block.lines.flatMap((line) => {
+        const segments = line
+          .split(/\r?\n/)
+          .map((segment) => segment.trim())
+          .filter((segment) => segment.length > 0);
+        return segments.map((segment, index) =>
+          styles.dim(index === 0 ? `· ${truncateVisible(segment, width - 2)}` : `  ${truncateVisible(segment, width - 2)}`),
+        );
+      });
     case "error":
       return wrapText(`✗ ${block.text}`, width).map((line) => styles.error(line));
     case "system":
@@ -517,13 +529,19 @@ function legendRow(data: ViewerData, state: ViewerState, styles: Styles): string
 }
 
 /**
- * ANSI/CJK-aware clamp to an exact display width: truncate (ellipsis) then
- * pad with spaces. Mirrors pi-subagents' fleet inspector `fit()` — every
- * frame line is exactly `width` columns, so nothing bleeds past the border
- * and the diff renderer sees stable line widths.
+ * ANSI/CJK-aware clamp to an exact display width: fold residual CR/LF to a
+ * space, truncate (ellipsis) then pad with spaces. Mirrors pi-subagents'
+ * fleet inspector `fit()` — every frame line is exactly `width` columns, so
+ * nothing bleeds past the border and the diff renderer sees stable line
+ * widths. The CR/LF fold is the frame's single-physical-row contract: a raw
+ * newline used to reach the host（真机事故：tool 条目里的 `\n` 被当行分隔，
+ * 尾巴落到下一行同列，overlay 左缘残行且 diff 无法清理）. Block rendering
+ * already splits `\n`; this is the last-resort choke point for any future
+ * writer（team 名/标签/工具行等）。
  */
 export function fitLine(line: string, width: number): string {
-  const clipped = truncateToWidth(line, width, "…");
+  const single = line.replace(/[\r\n]+/g, " ");
+  const clipped = truncateToWidth(single, width, "…");
   return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 }
 

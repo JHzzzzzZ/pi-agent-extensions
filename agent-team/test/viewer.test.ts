@@ -19,6 +19,7 @@ import {
   clampViewerState,
   computeFrameHeight,
   computeViewerLayout,
+  fitLine,
   formatTranscriptText,
   handleViewerKey,
   initialViewerState,
@@ -178,6 +179,49 @@ test("bodyLines separates blocks with exactly one blank line", () => {
   assert.deepEqual(lines, [padLine("❯ 任务", 40), "", "▸ assistant · 12:34:56", "回复", "", "· read x"]);
   const withoutTools = bodyLines(entries, false, 40, styles);
   assert.deepEqual(withoutTools, [padLine("❯ 任务", 40), "", "▸ assistant · 12:34:56", "回复"]);
+});
+
+// 真机事故（重复行第四轮）：cockpit.ts:499 把每次派发写成多行 tool 条目
+// （`team_dispatch 派发 →\n  - 成员: 任务`）。旧渲染把它当单行输出，帧行携带
+// 原始 \n——宿主按物理行写屏时换行把尾巴挤到下一行的同列，overlay 左缘出现
+// 残行、帧几何漂移且 diff 渲染器无法清理（真机 pane1/pane2 相隔 3s 像素相同）。
+test("blockLines splits multi-line tool entries into physical rows (no raw newline survives)", () => {
+  const dispatch = "team_dispatch 派发 →\n  - front: 请数出数字 2（计数序列的一部分）。只输出数字 2，不要任何额外文字。";
+  const lines = blockLines({ kind: "tools", lines: [dispatch] }, 60, styles);
+  assert.equal(lines.length, 2, "多行条目拆成两帧行");
+  for (const line of lines) {
+    assert.doesNotMatch(line, /[\r\n]/, "帧行不得残留原始换行");
+    assert.ok(visibleWidth(line) <= 60, `帧行不得超宽：${JSON.stringify(line)}`);
+  }
+  assert.match(lines[0], /^· team_dispatch 派发 →/);
+  assert.match(lines[1], /^ {2}- front: 请数出数字 2/, "续行保留写入者的缩进结构");
+
+  const viaBody = bodyLines([entry("tool", dispatch)], true, 60, styles);
+  assert.equal(viaBody.length, 2, "buildBlocks → blockLines 全路径同样拆行");
+  assert.ok(viaBody.every((line) => !/[\r\n]/.test(line)));
+});
+
+test("renderViewerFrame never emits raw CR/LF and keeps the frame height exact", () => {
+  const dispatch = "team_dispatch 派发 →\n  - front: 请数出数字 2（计数序列的一部分）。";
+  const data = viewerData({
+    entries: new Map<string, TranscriptEntry[]>([
+      ["_leader", [entry("task", "数数"), entry("tool", dispatch), entry("assistant", "第一段\n\n第二段")]],
+    ]),
+  });
+  const bodyHeight = 12;
+  const frame = renderViewerFrame(data, initialViewerState(), 90, { styles, bodyHeight });
+  assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS, "帧高恒定");
+  for (const line of frame) {
+    assert.doesNotMatch(line, /[\r\n]/, `帧行不得含原始换行：${JSON.stringify(line)}`);
+  }
+});
+
+test("fitLine folds raw CR/LF before measuring so rows stay single physical lines", () => {
+  const line = fitLine("a\nb", 6);
+  assert.doesNotMatch(line, /[\r\n]/);
+  assert.equal(visibleWidth(line), 6);
+  assert.equal(line, "a b   ", "换行折成空格后按宽度补齐");
+  assert.equal(fitLine("x\r\ny", 4), "x y ", "CRLF 同样折叠且不双计宽度");
 });
 
 // ---------------------------------------------------------------------------
