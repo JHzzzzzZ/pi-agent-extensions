@@ -19,6 +19,8 @@
  *       将要做的事，经 ctx.ui.confirm 人工确认后才落盘；写入前把原文件原文
  *       备份到 settings.json.bak-opencode-bridge-<时间戳>；仅增/删 httpProxy
  *       字段，其余配置原样保留；写入在下次 Pi 启动才生效。
+ *       solo 模式例外（跨扩展契约 docs/cross/solo-approval-gate.md）：/solo 开启时
+ *       上述确认框自动按批准通过（restore 还会自动选最新备份）。
  *
  * 命令：/opencode-bridge — 查看状态（必要时尝试启动），显示监听地址、上游
  *       SOCKS5 地址、端口来源、settings.json 的 httpProxy 当前状态。
@@ -67,6 +69,7 @@ import {
   readBridgePortConfig,
   resolveEffectivePort,
 } from "./bridge.ts";
+import { isSoloActive } from "./solo-gate.ts";
 
 // ===== 常量 =====
 
@@ -413,15 +416,18 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
             return;
           }
           const backupPath = makeBackupPath(settingsPath, now());
-          let confirmed = false;
-          try {
-            confirmed = await ctx.ui.confirm(
-              "opencode-bridge：切换桥端口？",
-              formatPortChangeConfirmMessage(oldPort, desiredPort, configPath, configNeedsWrite, predicted.plan, settingsPath, backupPath),
-            );
-          } catch (err) {
-            notify(ctx, `opencode-bridge-sync 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
-            return;
+          let confirmed = isSoloActive({ env });
+          if (confirmed) notify(ctx, "solo：已自动确认切换桥端口（settings.json 将按计划修改）", "info");
+          else {
+            try {
+              confirmed = await ctx.ui.confirm(
+                "opencode-bridge：切换桥端口？",
+                formatPortChangeConfirmMessage(oldPort, desiredPort, configPath, configNeedsWrite, predicted.plan, settingsPath, backupPath),
+              );
+            } catch (err) {
+              notify(ctx, `opencode-bridge-sync 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+              return;
+            }
           }
           if (!confirmed) {
             notify(ctx, "已取消，settings.json 未改动", "info");
@@ -492,12 +498,15 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
         }
 
         const backupPath = makeBackupPath(settingsPath, now());
-        let confirmed = false;
-        try {
-          confirmed = await ctx.ui.confirm("opencode-bridge：修改 settings.json？", formatSyncConfirmMessage(plan, settingsPath, backupPath));
-        } catch (err) {
-          notify(ctx, `opencode-bridge-sync 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
-          return;
+        let confirmed = isSoloActive({ env });
+        if (confirmed) notify(ctx, "solo：已自动确认修改 settings.json", "info");
+        else {
+          try {
+            confirmed = await ctx.ui.confirm("opencode-bridge：修改 settings.json？", formatSyncConfirmMessage(plan, settingsPath, backupPath));
+          } catch (err) {
+            notify(ctx, `opencode-bridge-sync 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+            return;
+          }
         }
         if (!confirmed) {
           notify(ctx, "已取消，settings.json 未改动", "info");
@@ -528,14 +537,20 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
         }
 
         let selected: string | undefined;
-        try {
-          selected = await ctx.ui.select(
-            "选择要恢复的备份（最新在前）：",
-            backups.map((p) => path.basename(p)),
-          );
-        } catch (err) {
-          notify(ctx, `opencode-bridge-restore 选择框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
-          return;
+        if (isSoloActive({ env })) {
+          // 备份列表“最新在前”：solo 自动选最新备份
+          selected = path.basename(backups[0]!);
+          notify(ctx, "solo：已自动选择最新备份", "info");
+        } else {
+          try {
+            selected = await ctx.ui.select(
+              "选择要恢复的备份（最新在前）：",
+              backups.map((p) => path.basename(p)),
+            );
+          } catch (err) {
+            notify(ctx, `opencode-bridge-restore 选择框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+            return;
+          }
         }
         if (!selected) {
           notify(ctx, "已取消，settings.json 未改动", "info");
@@ -544,15 +559,18 @@ export function createOpencodeBridgeExtension(pi: ExtensionAPI, deps: BridgeExte
         const backupPath = path.join(path.dirname(settingsPath), selected);
 
         const currentBackupPath = makeBackupPath(settingsPath, now());
-        let confirmed = false;
-        try {
-          confirmed = await ctx.ui.confirm(
-            "opencode-bridge：恢复 settings.json？",
-            formatRestoreConfirmMessage(backupPath, settingsPath, currentBackupPath),
-          );
-        } catch (err) {
-          notify(ctx, `opencode-bridge-restore 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
-          return;
+        let confirmed = isSoloActive({ env });
+        if (confirmed) notify(ctx, "solo：已自动确认恢复 settings.json", "info");
+        else {
+          try {
+            confirmed = await ctx.ui.confirm(
+              "opencode-bridge：恢复 settings.json？",
+              formatRestoreConfirmMessage(backupPath, settingsPath, currentBackupPath),
+            );
+          } catch (err) {
+            notify(ctx, `opencode-bridge-restore 确认框异常已忽略：${err instanceof Error ? err.message : String(err)}`, "warning");
+            return;
+          }
         }
         if (!confirmed) {
           notify(ctx, "已取消，settings.json 未改动", "info");

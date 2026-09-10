@@ -5,6 +5,9 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { COMMAND_NAME, RESTORE_COMMAND_NAME, SYNC_COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatPortChangeConfirmMessage, formatRestoreConfirmMessage, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
 import { BRIDGE_HOST, DEFAULT_BRIDGE_PORT, DEFAULT_SOCKS_HOST, DEFAULT_SOCKS_PORT, ProxySyncActions, bridgeConfigPath, type BridgeDeps, type ProxySyncDeps, type ShutdownBridgeResult } from "./bridge.ts";
@@ -864,4 +867,117 @@ test("sync 配置文件端口生效：无环境变量时状态与同步都走配
   assert.deepEqual(shutdownCalls, []);
   const cfgPath = bridgeConfigPath(SETTINGS_PATH);
   assert.ok(cfgPath.endsWith("opencode-bridge.json"));
+});
+
+// ===== solo 审批门（docs/cross/solo-approval-gate.md） =====
+
+/** 本进程 pid 的 solo 状态文件 + 注入给扩展的环境表（不碰真实 ~/.pi/agent） */
+function makeSoloEnv(): { env: Record<string, string | undefined>; cleanup: () => void } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-solo-"));
+  const file = path.join(dir, "solo-mode.json");
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, activatedAt: "2026-08-05T12:00:00Z" }), "utf8");
+  return {
+    env: { PI_SOLO_MODE_FILE: file },
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+test("solo：sync 不弹确认直接写入并备份", async () => {
+  const { env, cleanup } = makeSoloEnv();
+  try {
+    const { pi, notifications, commands, makeCtx } = makeFakePi();
+    const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+    const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+    createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, env, now: () => new Date(2026, 7, 5, 12, 0, 0) });
+    const ctx = makeCtx();
+    let confirmCalled = 0;
+    setUi(ctx, {
+      input: async () => "",
+      confirm: async () => {
+        confirmCalled += 1;
+        return true;
+      },
+    });
+
+    await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+
+    assert.equal(confirmCalled, 0, "solo 下不弹确认框");
+    const saved = JSON.parse(files.get(SETTINGS_PATH)!);
+    assert.equal(saved.httpProxy, `http://${BRIDGE_HOST}:${DEFAULT_BRIDGE_PORT}`);
+    assert.equal(saved.theme, "dark");
+    assert.ok(notifications.some((n) => n.message.includes("solo") && n.type === "info"), "notify 明示 solo 自动批准");
+    assert.match(notifications[0]?.message ?? "", /solo：已自动确认修改 settings\.json/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("solo：端口切换路径不弹确认，迁移+写配置+httpProxy 联动照常", async () => {
+  const { env, cleanup } = makeSoloEnv();
+  try {
+    const { pi, commands, makeCtx } = makeFakePi();
+    const { deps, shutdownCalls, spawnCalls } = makePortBridgeFake({ existingPaths: [HELPER_PATH] });
+    const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+    createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, env, now: () => new Date(2026, 7, 5, 12, 0, 0) });
+    const ctx = makeCtx();
+    let confirmCalled = 0;
+    setUi(ctx, {
+      input: async () => {
+        throw new Error("带参不应询问端口");
+      },
+      confirm: async () => {
+        confirmCalled += 1;
+        return true;
+      },
+    });
+
+    await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+
+    assert.equal(confirmCalled, 0, "solo 下端口切换不弹确认框");
+    assert.deepEqual(shutdownCalls, [{ host: BRIDGE_HOST, port: OLD_PORT }]);
+    assert.equal(spawnCalls.length, 1);
+    assert.equal(JSON.parse(files.get(CONFIG_PATH)!).bridgePort, NEW_PORT);
+    assert.equal(JSON.parse(files.get(SETTINGS_PATH)!).httpProxy, NEW_PROXY);
+  } finally {
+    cleanup();
+  }
+});
+
+test("solo：restore 自动选最新备份并跳过选择/确认", async () => {
+  const { env, cleanup } = makeSoloEnv();
+  try {
+    const { pi, notifications, commands, makeCtx } = makeFakePi();
+    const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+    const { deps: sync, files } = makeFakeProxySyncDeps('{"theme":"dark"}');
+    putBackup(files, "20260805-120001", '{"theme":"light"}');
+    putBackup(files, "20260805-120002", '{"theme":"solarized"}');
+    createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, env, now: () => new Date(2026, 7, 5, 13, 0, 0) });
+    const ctx = makeCtx();
+    let selectCalled = 0;
+    let confirmCalled = 0;
+    setUi(ctx, {
+      select: async () => {
+        selectCalled += 1;
+        return undefined;
+      },
+      confirm: async () => {
+        confirmCalled += 1;
+        return true;
+      },
+    });
+
+    await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+
+    assert.equal(selectCalled, 0, "solo 下不弹选择框");
+    assert.equal(confirmCalled, 0, "solo 下不弹确认框");
+    // 备份列表“最新在前”：自动选 20260805-120002
+    assert.equal(files.get(SETTINGS_PATH), '{"theme":"solarized"}');
+    assert.match(files.get(`${SETTINGS_PATH}.bak-opencode-bridge-20260805-130000`) ?? "", /theme/);
+    assert.match(notifications[0]?.message ?? "", /solo：已自动选择最新备份/);
+    assert.ok(notifications.some((n) => n.message.includes("solo：已自动确认恢复 settings.json")), "notify 明示自动确认恢复");
+    const restored = notifications.find((n) => n.message.includes("已从"));
+    assert.match(restored?.message ?? "", /20260805-120002/);
+  } finally {
+    cleanup();
+  }
 });

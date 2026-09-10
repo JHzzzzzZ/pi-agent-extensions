@@ -22,6 +22,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { isSoloActive } from "./solo-gate.ts";
 
 // ===== 常量 =====
 
@@ -276,10 +277,14 @@ export function planDispatch(
   parsed: DeepInitOptions,
   existing: string[],
   meta: PromptMeta,
+  options: { soloActive?: boolean } = {},
 ): DispatchDecision {
   if (parsed.showHelp) return { kind: "help", message: USAGE };
   const gate = resolveCreateGate(existing, parsed.mode, parsed.confirmed);
-  if (!gate.ok) return { kind: "blocked", message: gate.message };
+  // solo 审批门（docs/cross/solo-approval-gate.md）：免二次确认放行
+  // --create-new 的 confirm-required；其它门控失败仍拦截。
+  const soloConfirmed = !gate.ok && gate.code === "confirm-required" && options.soloActive === true;
+  if (!gate.ok && !soloConfirmed) return { kind: "blocked", message: gate.message };
   const prompt = buildDeepInitPrompt({
     mode: parsed.mode,
     maxDepth: parsed.maxDepth,
@@ -288,10 +293,11 @@ export function planDispatch(
     meta,
   });
   const modeText = parsed.mode === "create-new" ? "全量重建" : "增量更新";
+  const confirmNote = soloConfirmed ? "；solo 已自动确认 --create-new" : "";
   return {
     kind: "dispatch",
     prompt,
-    notice: `deep-init 已启动（${modeText}，深度 ${parsed.maxDepth}，目标 ${parsed.target}）。按四阶段执行，完成后照发报告。`,
+    notice: `deep-init 已启动（${modeText}，深度 ${parsed.maxDepth}，目标 ${parsed.target}${confirmNote}）。按四阶段执行，完成后照发报告。`,
   };
 }
 
@@ -358,7 +364,7 @@ export function createDeepInitExtension(pi: ExtensionAPI, deps: DeepInitDeps = {
     const decision = planDispatch(parsed.value, existing, {
       generatedAt: nowIso(),
       ...gitInfo(root),
-    });
+    }, { soloActive: isSoloActive() });
     switch (decision.kind) {
       case "help": {
         notify(ctx, decision.message);

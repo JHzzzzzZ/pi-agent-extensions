@@ -9,6 +9,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import pwrExtension from "../index.ts";
 import { ErrorCode } from "../src/errors.ts";
 import { PWR_RESULT_CUSTOM_TYPE, PWR_RUN_ENTRY } from "../src/types.ts";
@@ -25,9 +28,10 @@ interface FakeTool {
 	) => Promise<{ content: Array<{ type: string; text: string }>; details?: unknown; isError?: boolean }>;
 }
 
-function register() {
+function register(options: { cwd?: string } = {}) {
 	const tools: FakeTool[] = [];
 	const commands: string[] = [];
+	const commandHandlers = new Map<string, (args: string, ctx: unknown) => Promise<void>>();
 	const shortcuts: string[] = [];
 	const renderers: string[] = [];
 	const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
@@ -37,8 +41,9 @@ function register() {
 		registerTool(def: FakeTool) {
 			tools.push(def);
 		},
-		registerCommand(name: string) {
+		registerCommand(name: string, opts?: { handler?: (args: string, ctx: unknown) => Promise<void> }) {
 			commands.push(name);
+			if (opts?.handler) commandHandlers.set(name, opts.handler);
 		},
 		registerShortcut(key: string) {
 			shortcuts.push(key);
@@ -54,15 +59,15 @@ function register() {
 		sendMessage(message: unknown, options: unknown) {
 			sentMessages.push({ message: message as { customType?: string; content?: string }, options });
 		},
-		getFlag() {
-			return undefined;
+		getFlag(name?: string) {
+			return name === "cwd" ? options.cwd : undefined;
 		},
 		appendEntry(type: string, data: unknown) {
 			entries.push({ type, data });
 		},
 	};
 	pwrExtension(pi as never);
-	return { tools, commands, shortcuts, renderers, handlers, entries, sentMessages };
+	return { tools, commands, commandHandlers, shortcuts, renderers, handlers, entries, sentMessages };
 }
 
 test("merged entry registers the full tool set with PRD §6.2 contracts", () => {
@@ -279,4 +284,110 @@ test("运行时失败经磁盘桥写入富条目", async () => {
 	assert.ok(wake.message.content?.includes("failed"), "message reports the failure");
 	assert.ok(wake.message.content?.includes("boom"), "message carries the error detail");
 	assert.deepEqual(wake.options, { triggerTurn: true, deliverAs: "followUp" });
+});
+
+// ===== solo 审批门（docs/cross/solo-approval-gate.md） =====
+
+/** 写一个本进程 pid 的 solo 状态文件并注入 PI_SOLO_MODE_FILE，返回清理函数 */
+function enableSolo(): () => void {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pwr-solo-entry-"));
+	const file = path.join(dir, "solo-mode.json");
+	fs.writeFileSync(file, JSON.stringify({ pid: process.pid, activatedAt: "2026-08-05T12:00:00Z" }), "utf8");
+	const previous = process.env.PI_SOLO_MODE_FILE;
+	process.env.PI_SOLO_MODE_FILE = file;
+	return () => {
+		if (previous === undefined) delete process.env.PI_SOLO_MODE_FILE;
+		else process.env.PI_SOLO_MODE_FILE = previous;
+		fs.rmSync(dir, { recursive: true, force: true });
+	};
+}
+
+function makeUiCtx(selects: Array<{ title: string; options: string[] }>, notifyCalls: Array<{ text: string; type: string }>, overrides: Record<string, unknown> = {}) {
+	return {
+		sessionManager: { getEntries: () => [] },
+		isProjectTrusted: () => false,
+		model: undefined,
+		hasUI: true,
+		ui: {
+			select: async (title: string, options: string[]) => {
+				selects.push({ title, options });
+				return undefined; // dismiss the card
+			},
+			notify(text: string, type: string) {
+				notifyCalls.push({ text, type });
+			},
+			setStatus() {},
+			setWidget() {},
+		},
+		...overrides,
+	};
+}
+
+test("solo 审批门：workflow_validate 不弹批准卡（按 once 自动批准），workflow_start 直接放行", async () => {
+	const cleanup = enableSolo();
+	try {
+		const { tools, handlers } = register();
+		const selects: Array<{ title: string; options: string[] }> = [];
+		const notifyCalls: Array<{ text: string; type: string }> = [];
+		const fakeCtx = makeUiCtx(selects, notifyCalls);
+		await (handlers.get("session_start")![0] as (e: unknown, c: unknown) => unknown)({}, fakeCtx);
+
+		const validate = tools.find((t) => t.name === "workflow_validate")!;
+		const outcome = await validate.execute("t1", { source: `export const meta = { name: 'a' }\nawait agent('x')` });
+		const runId = (outcome.details as { runId?: string }).runId;
+		assert.ok(runId, "validation returns a runId");
+
+		await (handlers.get("tool_result")![0] as (e: unknown, c: unknown) => unknown)(
+			{ toolName: "workflow_validate", isError: false, details: { runId }, content: [] },
+			fakeCtx,
+		);
+		assert.equal(selects.length, 0, "solo 下不弹批准卡");
+		assert.ok(notifyCalls.some((n) => n.text.includes("solo") && n.text.includes("自动批准")), "notify 明示自动批准");
+
+		// workflow_start：once 已记录 + solo 分支双保险，handler 不得返回 block。
+		const blocked = await (handlers.get("tool_call")![0] as (e: unknown, c: unknown) => unknown)(
+			{ toolName: "workflow_start", input: { runId, approval: "once" } },
+			fakeCtx,
+		);
+		assert.equal(blocked, undefined, "solo 下 workflow_start 直接放行");
+		assert.equal(selects.length, 0, "仍无卡片");
+	} finally {
+		cleanup();
+	}
+});
+
+test("solo 审批门：已保存命令 /workflow:<name> 不弹批准卡，直接按 once 启动", async () => {
+	const cleanup = enableSolo();
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pwr-solo-cwd-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".pi", "workflows"), { recursive: true });
+		fs.writeFileSync(
+			path.join(cwd, ".pi", "workflows", "solo-saved.js"),
+			`export const meta = { name: 'solo-saved' }\nawait agent('x')`,
+			"utf8",
+		);
+		const { commands, commandHandlers, handlers } = register({ cwd });
+		const selects: Array<{ title: string; options: string[] }> = [];
+		const notifyCalls: Array<{ text: string; type: string }> = [];
+		const fakeCtx = makeUiCtx(selects, notifyCalls, { isProjectTrusted: () => true });
+		await (handlers.get("session_start")![0] as (e: unknown, c: unknown) => unknown)({}, fakeCtx);
+
+		const command = commands.includes("workflow:solo-saved");
+		assert.ok(command, "project-scope 已保存命令被注册");
+		const handler = commandHandlers.get("workflow:solo-saved");
+		assert.ok(handler, "命令 handler 可调用");
+
+		// 不派真子进程：假 runner 挂起，run 停在 running。
+		rt.setRunner({ run: () => new Promise(() => {}) });
+		await handler!("", fakeCtx);
+
+		assert.equal(selects.length, 0, "solo 下已保存命令不弹批准卡");
+		assert.ok(notifyCalls.some((n) => n.text.includes("started")), "命令按 once 启动");
+		assert.ok(notifyCalls.some((n) => n.text.includes("solo") && n.text.includes("自动批准")), "notify 明示自动批准");
+
+		await (handlers.get("session_shutdown")![0] as (e: unknown, c: unknown) => unknown)({}, fakeCtx);
+	} finally {
+		cleanup();
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
 });

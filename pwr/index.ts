@@ -20,6 +20,7 @@ import { ApprovalStore } from "./src/approval.ts";
 import { canonicalProjectPath } from "./src/approval.ts";
 import { buildGenerationRequest } from "./src/constraints.ts";
 import { getValidationEngine } from "./src/engine.ts";
+import { isSoloActive } from "./src/solo-gate.ts";
 import { AUTO_MODEL, PwrModelConfig } from "./src/model-config.ts";
 import { PWR_APPROVAL_ENTRY, PWR_GENERATION_CUSTOM_TYPE, PWR_RUN_ENTRY } from "./src/types.ts";
 import { matchWorkflowPrefix, parseWorkflowCommandArgs, WORKFLOW_COMMAND, type GenerationRequest } from "./src/intent.ts";
@@ -175,6 +176,18 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		info: { runId: string; scriptName: string; digest: string; planText: string; scriptSource: string },
 	): Promise<ApprovalDecision> {
 		const c = ctx as { hasUI?: boolean; ui?: { select?: unknown; notify?: unknown } } | null | undefined;
+		// solo 审批门：免确认直接按 once 批准（绝不写 remembered 记录）。
+		if (isSoloActive()) {
+			try {
+				(c?.ui?.notify as ((message: string, type: string) => void) | undefined)?.(
+					"[PWR] solo：已自动批准已保存工作流（once）",
+					"info",
+				);
+			} catch {
+				/* 通知失败不影响批准口径 */
+			}
+			return Promise.resolve("once");
+		}
 		if (!c?.ui?.select || c.hasUI === false) return Promise.resolve(null);
 		const cardInfo: ApprovalCardInfo = {
 			runId: info.runId,
@@ -474,6 +487,14 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 		// Skip the card when approval is already satisfied (this also covers
 		// decisions recorded by the workflow_validate card below).
 		if (approvals.get(projectPath, script.digest)) return;
+		// solo 审批门：在 remembered/once 检查之前强制降级为 once，避免
+		// solo 下写出任何持久批准；validate 卡片路径已被跳过（见下方）。
+		if (isSoloActive()) {
+			registry.markOnceApproved(params.runId);
+			event.input = { ...params, approval: "once" };
+			ctx.ui.notify("[PWR] solo：已自动批准工作流运行（once）", "info");
+			return;
+		}
 		if (params.approval === "remember" || registry.isOnceApproved(params.runId)) return;
 
 		// The validate-time card is still pending (user has not decided yet):
@@ -536,6 +557,12 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 
 		const projectPath = deps.getProjectPath();
 		if (approvals.get(projectPath, script.digest)) return; // remembered approval covers it
+		// solo 审批门：不弹批准卡，按 once 自动批准（docs/cross/solo-approval-gate.md）。
+		if (isSoloActive()) {
+			registry.markOnceApproved(runId);
+			ctx.ui.notify(`[PWR] solo：已自动批准工作流 "${script.meta.name ?? "untitled"}"（once）`, "info");
+			return;
+		}
 		if (approvalCards.has(runId)) return; // card already showing
 
 		const card = confirmApprovalCard(ctx, {
