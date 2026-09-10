@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 340 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 343 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -239,7 +239,9 @@ npm run demo       # 模拟 /workflow UI（无宿主）
 
 ![agent-team 查看器（/team:view）](docs/assets/agent-team-viewer.svg)
 
-> 上图由 `agent-team/tools/capture-screens.mjs` **无头重放真实渲染路径**生成（真实 `TuiMainScreen` + 真实 `TranscriptViewer`，终端只换成记录字节流的仿真屏），可重复生成、可 diff：场景数据为示例 run、助手正文按纯文本渲染（未接宿主 Markdown 主题），其余布局/边框/页签/状态色均来自组件本身。同一工具同时生成上方 pwr 查看器截图。
+![agent-team 亮块（编辑器下方 widget，按 ↓ 展开态）](docs/assets/agent-team-widget.svg)
+
+> 上两图由 `agent-team/tools/capture-screens.mjs` **无头重放真实渲染路径**生成（真实 `TuiMainScreen` + 真实 `TranscriptViewer`，终端只换成记录字节流的仿真屏），可重复生成、可 diff：场景数据为示例 run、助手正文按纯文本渲染（未接宿主 Markdown 主题），其余布局/边框/页签/状态色均来自组件本身。亮块的文字来自真实 `buildWidgetView`/`renderWidgetView`（即运行时经 `setWidget` 推送的同一份 string[]），屏上包装照抄宿主 `setExtensionWidget` 对 string[] 的代码路径（`Container` + `Text(line, 1, 0)`），空编辑器是 `↓` 激活门控的真实状态。同一工具同时生成上方 pwr 查看器截图。
 
 效果示意（运行期间亮块，实测格式）：
 
@@ -265,8 +267,8 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd agent-team
-npm install && npm test        # 340 个测试（含真实 git worktree 用例）
-node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team,pwr}-viewer.svg（无头真实渲染）
+npm install && npm test        # 343 个测试（含真实 git worktree 用例）
+node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
 ```
 
