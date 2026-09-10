@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { COMMAND_NAME, RESTORE_COMMAND_NAME, SYNC_COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatPortChangeConfirmMessage, formatRestoreConfirmMessage, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
+import { COMMAND_NAME, type BridgeExtensionDeps, createOpencodeBridgeExtension, formatPortChangeConfirmMessage, formatRestoreConfirmMessage, formatStatusLines, formatSyncConfirmMessage } from "./index.ts";
 import { BRIDGE_HOST, DEFAULT_BRIDGE_PORT, DEFAULT_SOCKS_HOST, DEFAULT_SOCKS_PORT, ProxySyncActions, bridgeConfigPath, type BridgeDeps, type ProxySyncDeps, type ShutdownBridgeResult } from "./bridge.ts";
 
 // ===== fake:pi 宿主（对齐 goal/index.test.ts 的手写 fake 风格） =====
@@ -86,7 +86,7 @@ const BASE_DEPS: BridgeExtensionDeps = {
 
 // ===== formatStatusLines（纯函数） =====
 
-test("formatStatusLines 输出状态/监听/上游/引导四行，指向 /opencode-bridge-sync", () => {
+test("formatStatusLines 输出状态/监听/上游/引导四行，指向 /opencode-bridge sync", () => {
   const lines = formatStatusLines(
     {
       bridgeHost: "127.0.0.1",
@@ -102,7 +102,7 @@ test("formatStatusLines 输出状态/监听/上游/引导四行，指向 /openco
   assert.match(lines[0], /运行中/);
   assert.match(lines[1]!, /http:\/\/127\.0\.0\.1:10899/);
   assert.match(lines[2]!, /socks5:\/\/127\.0\.0\.1:10808/);
-  assert.match(lines[3]!, /opencode-bridge-sync/);
+  assert.match(lines[3]!, /opencode-bridge sync/);
   assert.match(lines[3]!, /人工确认/);
   assert.match(lines[3]!, /备份/);
 });
@@ -115,6 +115,23 @@ test("createOpencodeBridgeExtension 注册 session_start 与 /opencode-bridge �
   assert.ok(handlers.has("session_start"));
   assert.ok(commands.has(COMMAND_NAME));
   assert.match(commands.get(COMMAND_NAME)?.description ?? "", /代理桥/);
+});
+
+// ===== 命令面统一：单命令 + 子命令路由（命令风格统一） =====
+
+test("命令面统一：单 /opencode-bridge 命令（无参=状态，sync/restore 子命令，旧长命令不再注册）", async () => {
+  const { pi, commands, notifications, makeCtx } = makeFakePi();
+  const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
+  createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps });
+  assert.deepEqual([...commands.keys()], [COMMAND_NAME], "only the unified command is registered");
+
+  await commands.get(COMMAND_NAME)!.handler("", makeCtx());
+  assert.match(notifications.at(-1)!.message, /状态: 运行中/);
+
+  notifications.length = 0;
+  await commands.get(COMMAND_NAME)!.handler("bogus", makeCtx());
+  assert.match(notifications.at(-1)!.message, /未知子命令/);
+  assert.match(notifications.at(-1)!.message, /\/opencode-bridge sync \[port\]/);
 });
 
 // ===== session_start =====
@@ -198,7 +215,7 @@ test("命令：桥已运行时展示状态，不 spawn", async () => {
   assert.equal(spawnCalls.length, 0);
   assert.equal(notifications.length, 1);
   assert.match(notifications[0]?.message ?? "", /状态: 运行中/);
-  assert.match(notifications[0]?.message ?? "", /opencode-bridge-sync/);
+  assert.match(notifications[0]?.message ?? "", /opencode-bridge sync/);
   assert.equal(notifications[0]?.type, "info");
 });
 
@@ -243,7 +260,7 @@ test("命令：配置非法时提示变量名，不 spawn", async () => {
   assert.match(notifications[0]?.message ?? "", /PI_BRIDGE_SOCKS_PORT/);
 });
 
-// ===== /opencode-bridge-sync：手动触发 + 人工确认 + 备份（v1.2.0） =====
+// ===== /opencode-bridge sync：手动触发 + 人工确认 + 备份（v1.2.0） =====
 
 function makeFakeProxySyncDeps(initial?: string) {
   const files = new Map<string, string>();
@@ -267,13 +284,12 @@ function makeFakeProxySyncDeps(initial?: string) {
   return { deps, files };
 }
 
-test("注册 /opencode-bridge-sync 命令，/opencode-bridge 不再自动改 settings", () => {
+test("单命令注册：sync/restore 为 /opencode-bridge 子命令，不再注册旧长命令", () => {
   const { pi, handlers, commands } = makeFakePi();
   const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, now: () => new Date(0) });
   assert.ok(handlers.has("session_start"));
-  assert.ok(commands.has(COMMAND_NAME));
-  assert.ok(commands.has(SYNC_COMMAND_NAME));
+  assert.deepEqual([...commands.keys()], [COMMAND_NAME]);
 });
 
 test("session_start 桥已运行：不写任何文件、不读 settings.json（只读端口配置文件）", async () => {
@@ -316,7 +332,7 @@ test("sync：桥活着且无 httpProxy → 弹确认；确认后写入并备份"
     return true;
   };
 
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.equal(confirmCalled, 1);
   assert.match(confirmCaptured?.title ?? "", /修改 settings\.json/);
   assert.match(confirmCaptured?.message ?? "", /httpProxy: http:\/\/127\.0\.0\.1:10899/);
@@ -339,7 +355,7 @@ test("sync：用户取消 → settings 不变", async () => {
   const ctx = makeCtx();
   (ctx as unknown as { ui: Record<string, unknown> }).ui.input = async () => "";
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => false;
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.equal(files.get(SETTINGS_PATH), '{"theme":"dark"}');
   assert.match(notifications[0]?.message ?? "", /已取消/);
 });
@@ -354,7 +370,7 @@ test("sync：已有其它代理地址 → 不弹确认，提示不碰", async ()
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
     throw new Error("不应弹确认框");
   };
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.match(files.get(SETTINGS_PATH)!, /7890/);
   assert.equal(notifications[0]?.type, "warning");
   assert.match(notifications[0]?.message ?? "", /未改动/);
@@ -368,7 +384,7 @@ test("sync：桥死了且原值指向本桥 → 弹确认提议移除；确认�
   const ctx = makeCtx();
   (ctx as unknown as { ui: Record<string, unknown> }).ui.input = async () => "";
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => true;
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   const saved = JSON.parse(files.get(SETTINGS_PATH)!);
   assert.equal(saved.httpProxy, undefined);
   assert.equal(saved.theme, "dark");
@@ -381,7 +397,7 @@ test("sync：无 UI（-p / JSON 模式）→ 静默不改文件（notify 本身�
   const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
   const { deps: sync, files } = makeFakeProxySyncDeps("{}");
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", makeCtx({ hasUI: false }));
+  await commands.get(COMMAND_NAME)!.handler("sync", makeCtx({ hasUI: false }));
   assert.equal(files.get(SETTINGS_PATH), "{}");
   assert.equal(notifications.length, 0);
 });
@@ -396,7 +412,7 @@ test("sync：settings.json 解析失败 → error 提示，不弹框不改文件
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
     throw new Error("不应弹确认框");
   };
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.equal(files.get(SETTINGS_PATH), "{ not json");
   assert.equal(notifications[0]?.type, "error");
   assert.match(notifications[0]?.message ?? "", /解析失败/);
@@ -415,20 +431,20 @@ test("formatSyncConfirmMessage：四行文案含动作/仅改字段/备份路径
   assert.match(lines[3]!, /重启 Pi 后生效/);
 });
 
-// ===== /opencode-bridge-restore：选择备份 + 确认 + 恢复前再备份（v1.3.0） =====
+// ===== /opencode-bridge restore：选择备份 + 确认 + 恢复前再备份（v1.3.0） =====
 
 /** 往 fake fs 里放一个备份文件（供 listDir 枚举） */
 function putBackup(files: Map<string, string>, stamp: string, content: string): void {
   files.set(`${SETTINGS_PATH}.bak-opencode-bridge-${stamp}`, content);
 }
 
-test("注册 /opencode-bridge-restore 命令", () => {
+test("注册 /opencode-bridge restore 子命令（并入口令描述）", () => {
   const { pi, commands } = makeFakePi();
   const { deps } = makeFakeBridgeDeps({ probeSequence: [true] });
   const { deps: sync } = makeFakeProxySyncDeps("{}");
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
-  assert.ok(commands.has(RESTORE_COMMAND_NAME));
-  assert.match(commands.get(RESTORE_COMMAND_NAME)?.description ?? "", /恢复/);
+  assert.deepEqual([...commands.keys()], [COMMAND_NAME]);
+  assert.match(commands.get(COMMAND_NAME)?.description ?? "", /restore/);
 });
 
 test("restore：无备份 → warning 提示，不弹任何框", async () => {
@@ -443,7 +459,7 @@ test("restore：无备份 → warning 提示，不弹任何框", async () => {
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
     throw new Error("不应弹确认框");
   };
-  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("restore", ctx);
   assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
   assert.equal(notifications[0]?.type, "warning");
   assert.match(notifications[0]?.message ?? "", /没有可用的备份/);
@@ -463,7 +479,7 @@ test("restore：选择备份并确认 → settings 恢复为备份内容，当�
     return options[1]!; // 选第二个（更早的备份）
   };
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => true;
-  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("restore", ctx);
   // 选项按最新在前
   assert.match(selectedOptions[0] ?? "", /120002/);
   assert.match(selectedOptions[1] ?? "", /120001/);
@@ -487,7 +503,7 @@ test("restore：选择框取消 → 不弹确认，settings 不变", async () =>
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => {
     throw new Error("不应弹确认框");
   };
-  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("restore", ctx);
   assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
   assert.match(notifications[0]?.message ?? "", /已取消/);
 });
@@ -501,7 +517,7 @@ test("restore：确认框取消 → settings 不变", async () => {
   const ctx = makeCtx();
   (ctx as unknown as { ui: Record<string, unknown> }).ui.select = async (_t: string, o: string[]) => o[0]!;
   (ctx as unknown as { ui: Record<string, unknown> }).ui.confirm = async () => false;
-  await commands.get(RESTORE_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("restore", ctx);
   assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
   assert.match(notifications[0]?.message ?? "", /已取消/);
 });
@@ -512,7 +528,7 @@ test("restore：无 UI → 静默不改文件", async () => {
   const { deps: sync, files } = makeFakeProxySyncDeps('{"a":1}');
   putBackup(files, "20260805-120001", "{}");
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
-  await commands.get(RESTORE_COMMAND_NAME)!.handler("", makeCtx({ hasUI: false }));
+  await commands.get(COMMAND_NAME)!.handler("restore", makeCtx({ hasUI: false }));
   assert.equal(files.get(SETTINGS_PATH), '{"a":1}');
   assert.equal(notifications.length, 0);
 });
@@ -629,7 +645,7 @@ test("sync 带参新端口：一次确认后迁移+写配置+httpProxy 指向新
       return true;
     },
   });
-  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  await commands.get(COMMAND_NAME)!.handler(`sync ${NEW_PORT}`, ctx);
   assert.match(confirmMsg, /写配置文件/);
   assert.match(confirmMsg, /停旧桥/);
   assert.match(confirmMsg, /起新桥/);
@@ -662,7 +678,7 @@ test("sync 带参非法端口直接警告退出，零落盘（不 shutdown、不
       },
     });
     const before = new Map(files);
-    await commands.get(SYNC_COMMAND_NAME)!.handler(bad, ctx);
+    await commands.get(COMMAND_NAME)!.handler(`sync ${bad}`, ctx);
     assert.match(notifications[0]?.message ?? "", /端口无效/);
     assert.equal(notifications[0]?.type, "warning");
     assert.deepEqual(shutdownCalls, []);
@@ -680,7 +696,7 @@ test("sync 参数过多直接警告退出，零落盘", async () => {
   setUi(ctx, { confirm: async () => {
     throw new Error("不应确认");
   } });
-  await commands.get(SYNC_COMMAND_NAME)!.handler("20900 20901", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync 20900 20901", ctx);
   assert.match(notifications[0]?.message ?? "", /参数过多/);
   assert.deepEqual(shutdownCalls, []);
   assert.equal(files.get(SETTINGS_PATH), "{}");
@@ -700,7 +716,7 @@ test("sync 无参 TUI 输入新端口：询问后迁移（placeholder 为当前�
     },
     confirm: async () => true,
   });
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.equal(inputArgs?.placeholder, String(OLD_PORT));
   assert.match(inputArgs?.title ?? "", /桥端口/);
   assert.deepEqual(shutdownCalls, [{ host: BRIDGE_HOST, port: OLD_PORT }]);
@@ -715,7 +731,7 @@ test("sync 无参 TUI 回车保持：不迁移，走原 httpProxy 确认（不�
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   const ctx = makeCtx();
   setUi(ctx, { input: async () => "", confirm: async () => true });
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.deepEqual(shutdownCalls, []);
   assert.equal(files.get(CONFIG_PATH), undefined);
   assert.equal(JSON.parse(files.get(SETTINGS_PATH)!).httpProxy, `http://${BRIDGE_HOST}:${OLD_PORT}`);
@@ -735,7 +751,7 @@ test("sync 输入框取消：全 abort，零落盘", async () => {
     },
   });
   const before = new Map(files);
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.match(notifications[0]?.message ?? "", /已取消/);
   assert.deepEqual(shutdownCalls, []);
   assert.deepEqual(spawnCalls, []);
@@ -754,7 +770,7 @@ test("sync 输入非法端口：警告退出，零落盘", async () => {
       throw new Error("不应确认");
     },
   });
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", ctx);
+  await commands.get(COMMAND_NAME)!.handler("sync", ctx);
   assert.match(notifications[0]?.message ?? "", /端口无效/);
   assert.deepEqual(shutdownCalls, []);
   assert.equal(files.get(SETTINGS_PATH), "{}");
@@ -771,7 +787,7 @@ test("sync 指纹不符拒绝迁移并零落盘（不写配置/备份/settings�
   const ctx = makeCtx();
   setUi(ctx, { confirm: async () => true });
   const before = new Map(files);
-  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  await commands.get(COMMAND_NAME)!.handler(`sync ${NEW_PORT}`, ctx);
   assert.deepEqual(shutdownCalls, [{ host: BRIDGE_HOST, port: OLD_PORT }]);
   assert.deepEqual(spawnCalls, []);
   assert.deepEqual(files, before);
@@ -787,7 +803,7 @@ test("sync 旧桥不释放超时 abort，零落盘", async () => {
   const ctx = makeCtx();
   setUi(ctx, { confirm: async () => true });
   const before = new Map(files);
-  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  await commands.get(COMMAND_NAME)!.handler(`sync ${NEW_PORT}`, ctx);
   assert.deepEqual(spawnCalls, []);
   assert.deepEqual(files, before);
   assert.equal(notifications[0]?.type, "error");
@@ -802,7 +818,7 @@ test("sync 确认拒绝零落盘（不 shutdown、不写文件）", async () => 
   const ctx = makeCtx();
   setUi(ctx, { confirm: async () => false });
   const before = new Map(files);
-  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  await commands.get(COMMAND_NAME)!.handler(`sync ${NEW_PORT}`, ctx);
   assert.deepEqual(shutdownCalls, []);
   assert.deepEqual(spawnCalls, []);
   assert.deepEqual(files, before);
@@ -816,7 +832,7 @@ test("sync 迁移时已有外部代理：桥照切+配置照写，settings 不�
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync, now: () => new Date(0) });
   const ctx = makeCtx();
   setUi(ctx, { confirm: async () => true });
-  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), ctx);
+  await commands.get(COMMAND_NAME)!.handler(`sync ${NEW_PORT}`, ctx);
   assert.equal(JSON.parse(files.get(CONFIG_PATH)!).bridgePort, NEW_PORT);
   assert.match(files.get(SETTINGS_PATH)!, /7890/);
   assert.equal(notifications[0]?.type, "warning");
@@ -829,7 +845,7 @@ test("sync 非 TUI 带参新端口：提示去 TUI，零落盘", async () => {
   const { deps: sync, files } = makeFakeProxySyncDeps("{}");
   createOpencodeBridgeExtension(pi as never, { ...BASE_DEPS, bridge: deps, proxySync: sync });
   const before = new Map(files);
-  await commands.get(SYNC_COMMAND_NAME)!.handler(String(NEW_PORT), makeCtx({ hasUI: false }));
+  await commands.get(COMMAND_NAME)!.handler(`sync ${NEW_PORT}`, makeCtx({ hasUI: false }));
   assert.deepEqual(shutdownCalls, []);
   assert.deepEqual(files, before);
   assert.equal(notifications.length, 0);
@@ -848,7 +864,7 @@ test("sync 配置文件坏值忽略回退：状态行提示一句，不阻断正
   assert.match(notifications[0]?.message ?? "", /配置提示/);
   const syncCtx = makeCtx();
   setUi(syncCtx, { input: async () => "", confirm: async () => true });
-  await commands.get(SYNC_COMMAND_NAME)!.handler("", syncCtx);
+  await commands.get(COMMAND_NAME)!.handler("sync", syncCtx);
   assert.equal(JSON.parse(files.get(SETTINGS_PATH)!).httpProxy, `http://${BRIDGE_HOST}:${OLD_PORT}`);
 });
 
