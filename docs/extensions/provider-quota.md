@@ -1,6 +1,6 @@
 # provider-quota — 余额/额度状态行 + /quota 手动刷新
 
-> last verified @ 0142e14
+> last verified @ b9d397e
 
 ## 职责与边界
 
@@ -9,13 +9,13 @@ footer 状态行显示当前 provider 的余额/额度：session 启动即查、
 ## 文件地图
 
 - `index.ts` — 全部实现（单文件约 600 行，无 package.json）。`QUOTA_ENDPOINTS` 是加新 provider 的唯一入口（url / method / auth / parse 四件套）。
-- `index.test.ts` — 15 个测试；纯解析函数 `parseZhipuQuotaLimit` / `parseOpencodeGoUsage` 显式导出且 now 由参数注入——固定时钟测试的关键设计。
+- `index.test.ts` — 25 个测试；纯解析函数 `parseZhipuQuotaLimit` / `parseOpencodeGoUsage` 显式导出且 now 由参数注入——固定时钟测试的关键设计。`STATUS_ID` 也导出供键带断言。
 - provider id 经 `PROVIDER_ALIASES` 归一（glm/zai/bigmodel→zhipu，zen/opencode→opencode-go），key 读取带 `AUTH_ID_FALLBACK` 回退链。
 
 ## 核心数据流
 
 1. `session_start` 新建 session 级 AbortController → refresh + 5 分钟 setInterval；`model_select` 与 `/quota` 各触发一次 refresh。
-2. refresh：provider id 归一 → 查 adapter → 读 auth.json key（按 id，含回退链）→ fetch（10s 超时）→ adapter.parse → `theme.fg("dim", …)` 写入状态键 `provider-quota`。
+2. refresh：provider id 归一 → 查 adapter → 读 auth.json key（按 id，含回退链）→ fetch（10s 超时）→ adapter.parse → `theme.fg("dim", …)` 写入状态键 `20:provider-quota`（排序带，见 `docs/cross/status-bar.md`）。
 3. 同一 provider 的并发刷新经 in-flight Map 去重复用；解析失败/HTTP 错显示 `<provider>: <label>`，parse 返回 null 显示 `<provider>: -`。
 
 ## 不变量
@@ -24,7 +24,8 @@ footer 状态行显示当前 provider 的余额/额度：session 启动即查、
 - fail-closed 白名单：zhipu 自定义基址必须 https + 无显式端口 + `ZHIPU_ALLOWED_HOSTS`（open.bigmodel.cn / dev.bigmodel.cn / api.z.ai），非法或未设置一律回退默认地址，绝不发往其它主机（index.ts `resolveZhipuBase`）。
 - zhipu 鉴权 Authorization 是原始 token，**不加 Bearer 前缀**；quota-limit 请求不附时间窗 query 参数（参考实现契约）。
 - `session_shutdown` 后未完成请求不得回写 footer：每次 setStatus 前检查 `sessionSignal.aborted`，shutdown 后保留已中止的 controller 引用让残留链路立即短路（index.ts `write` 与 `session_shutdown`）。
-- 节奏常量：5 分钟轮询、10s 超时、重试 3 次、500ms 基础指数退避（`REFRESH_MS`/`FETCH_TIMEOUT_MS`/`MAX_RETRIES`/`BASE_BACKOFF_MS`）。
+- 节奏常量：5 分钟轮询、10s 超时、重试 3 次、500ms 基础指数退避（`REFRESH_MS`/`FETCH_TIMEOUT_MS`/`MAX_RETRIES`/`BASE_BACKOFF_MS`）。低频刷新**不接对齐秒节拍**（非时间显示类，跨插件状态条契约只约束时间类状态）。
+- 状态键 `20:provider-quota` 带排序带前缀，不可改回 `provider-quota`（宿主按 key localeCompare 拼接 footer）。
 - 可重试分类：5xx / timeout / net err 可重试，parse err 不可（`FetchResult.retryable`）。
 
 ## 已知坑
@@ -38,7 +39,7 @@ footer 状态行显示当前 provider 的余额/额度：session 启动即查、
 
 ## 改动清单
 
-- 必跑：node --experimental-strip-types --test provider-quota/index.test.ts（15 个测试；此目录无 package.json，npm test 跑不了）。
+- 必跑：node --experimental-strip-types --test provider-quota/index.test.ts（25 个测试；此目录无 package.json，npm test 跑不了）。
 - 必看测试：index.test.ts 头注释——时钟约定全部用本地时间 Date 构造固定 now，断言不依赖运行机器时区，新增时间相关用例必须沿用。
 - fake 模式：按 docs/cross/deps-ports.md 规则 3——纯逻辑不 fake，直接测导出的解析函数、now 参数注入；fetch 链路在测试里未覆盖，网络行为只能真机 /quota 验证。
 - 加新 provider：只动 `QUOTA_ENDPOINTS`（必要时补 `PROVIDER_ALIASES`/`AUTH_ID_FALLBACK`）+ index.test.ts 补 parse 用例，勿散落到别处。

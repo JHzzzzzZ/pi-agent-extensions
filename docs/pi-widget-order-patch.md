@@ -1,5 +1,7 @@
 # pi 宿主补丁：extension widget 保序更新（修复输入栏上方 widget 抖动）
 
+> 跨扩展状态条契约（对齐秒节拍 / footer 排序带 / widget 栈顺序）见 `docs/cross/status-bar.md`；本补丁是 widget 刷新保序的最后一道防线，扩展侧的节拍统一不依赖它。
+
 ## 症状
 
 agent-team 运行时，输入栏上方的灰色 widget 区域持续"抽搐"：run-timer 的计时行

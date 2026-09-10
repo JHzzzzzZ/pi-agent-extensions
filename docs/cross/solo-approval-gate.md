@@ -44,7 +44,7 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 
 ## 测试锚点
 
-- solo-mode：`solo-mode/index.test.ts`（11 个）——写读/生命周期/fail-closed/写失败。
+- solo-mode：`solo-mode/index.test.ts`（12 个）——写读/生命周期/fail-closed/写失败。
 - pwr：`pwr/tests/solo-gate.test.ts` + `pwr/test/entry.test.ts` 的 solo 集成（弹卡点、workflow_start、已保存命令）。
 - opencode-bridge：`solo-gate.test.ts` + `index.test.ts` 的 sync/端口切换/restore 三条 solo 路径。
 - deep-init：`solo-gate.test.ts` + `index.test.ts` 的 `planDispatch` 与命令接线。

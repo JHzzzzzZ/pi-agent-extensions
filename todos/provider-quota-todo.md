@@ -1,2 +1,3 @@
 - [x] 根 README 为每个插件增加效果示意图
 - [x] 增加 opencode go（Muse Spark 等模型）的额度显示适配器（实测端点 /zen/go/v1/usage；限额窗口重置时间跟随命中限额的窗口）
+- [x] 状态条时钟统一与排序（跨插件）：footer 状态键 → `20:provider-quota`（5 分钟轮询节奏不变）；契约 `docs/cross/status-bar.md`（完成 2026-09-10 @ feat/status-clock b9d397e，provider-quota 25 测试绿）。

@@ -98,7 +98,7 @@ members:
 | `esc` | 退出选中 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget(key, string[], { placement: "belowEditor" })` 每秒刷新（宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；渲染串指纹无变化时跳过 `setWidget`（对齐 fleet-status renderKey，静止内容不空转宿主）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
+实现：`setWidget(key, string[], { placement: "belowEditor" })` 按对齐墙钟秒边界刷新（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`；宿主自行包装渲染，是跨宿主构建最稳的路径；组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理；渲染串指纹无变化时跳过 `setWidget`（对齐 fleet-status renderKey，静止内容不空转宿主）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
 
 ### 5. 会话记录查看器（/team view）与成员 transcript
 
@@ -145,7 +145,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（267 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（288 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

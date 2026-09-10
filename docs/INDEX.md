@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ a03e525
+> last verified @ b9d397e
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -15,6 +15,7 @@
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |
 | solo 免审批模式的跨扩展契约（状态文件 / 采纳方 / fail-closed） | `cross/solo-approval-gate.md` |
+| 状态条刷新节拍 / footer 排序带 / widget 栈顺序契约 | `cross/status-bar.md` |
 | 历史事故与教训（渲染堆叠、误杀进程、编码坑） | `incidents.md` |
 | PWR DSL 白名单 / 上限 / 脚本版本权威定义 | `pwr/engine/spec.ts`（代码即真相）+ `extensions/pwr.md` |
 | PWR 完整架构 / 安全不变量 / 版本历史 | `pwr/DELIVERY.md`（pwr 卡从薄，不重复它） |

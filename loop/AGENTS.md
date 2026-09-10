@@ -12,6 +12,7 @@
 | agent 工具 | `tools.ts`（`loop_create/list/delete`） |
 | 后台拉起 | `runner.ts`（前台 followUp 送达；`--bg` 拉子 `pi --mode json -p`，会话 id 可 `pi --session` 恢复） |
 | 命令入口 | `index.ts`（`pi.extensions: ["./index.ts"]` 清单） |
+| 状态条节拍 | `aligned-ticker.ts`（对齐墙钟秒边界；契约 `docs/cross/status-bar.md`） |
 
 ## CONVENTIONS
 - `setWidget` 传纯字符串，不碰 `ctx.ui.theme` —— `ExtensionUIContext` 无 theme 字段，访问即编译失败。
@@ -19,6 +20,7 @@
 - `--bg` 进程 detached + 会话落盘 —— 前台 `followUp` 与后台恢复二选一，不双送。
 - 时间计算经 `nowMs` 注入 —— 直调 `Date.now()` 则测试时钟固定 `2026-08-05T12:00:00Z` 失效。
 - 新调度形式先加 `parse.ts` 用例 —— 无用例即无文档，`test/parse.test.ts` 为准。
+- 时间类刷新走 `aligned-ticker.ts`（勿用裸 `setInterval`）—— 相位漂移会让多个 widget 逐秒换位；widget 文本指纹未变时跳过 `setWidget`。
 
 ## ANTI-PATTERNS
 - 给 widget 套样式 —— 实证：`index.ts` 注释明示 RPC 下 ANSI 泄漏，只传纯文本。
@@ -27,5 +29,5 @@
 
 ## COMMANDS
 ```bash
-cd loop && npm install && npm test   # 169 测试；另有 npm run typecheck
+cd loop && npm install && npm test   # 192 测试；另有 npm run typecheck
 ```

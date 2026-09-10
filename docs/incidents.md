@@ -1,6 +1,6 @@
 # 事故与教训（纯增量，防重复踩坑）
 
-> last verified @ 0142e14
+> last verified @ b9d397e
 >
 > 记录格式：症状 → 根因 → 教训。新事故追加在表后；修完必须留档。
 
@@ -61,3 +61,9 @@
 - 症状：给 loop 加 `--model` 解析时，`parseLoopCommand("5m x")` 在 `rest[0]` 处抛 `Cannot read properties of undefined`，而插桩显示 `mdl` 值完全正确；中间还被 TDZ 错误（`Cannot access 'mdl' before initialization`）与大面积测试回归轮番误导。
 - 根因（三层叠加）：① 真正的 bug 是一字符错——返回形状从扁平 `bg.rest` 换成 result-union 嵌套后，`let rest = mdl.rest;` 忘改成 `mdl.value.rest`（静默 undefined，症状离根因十万八千里）；② 用自写 node 脚本做跨行字符串替换，LF 串匹配 CRLF 文件 8 处改 5 处 MISS，造成"部分改完"的假象；③ 排查中两次 `git checkout -- parse.ts` 把未提交的实现整个回退掉（其中一次还误删了当时唯一的实现副本）。
 - 教训：① 改动返回形状（扁平 → `{ ok, value }`）时，逐个过一遍所有字段访问路径，嵌套层级变了路径必须跟着变；② CRLF 仓库的跨行编辑用 edit 工具（透明处理行尾），绝不用自写 LF 匹配脚本——MISS 是静默的；③ 永远不要对未提交工作跑 `git checkout -- <file>`，回退前先 `cp` 备份；④ 插桩打印值时先核对打印点与崩溃点的相对位置，否则"值正确"的结论本身就是错觉。
+
+## 状态条各跑各的节拍 + 排序靠碰巧，导致逐秒换位与挤占（状态条统一会话）
+
+- 症状：run-timer 计时行与 loop 倒计时各自 `setInterval`，相位互不相关；同屏时 widget 相对顺序逐秒翻转（宿主 `setExtensionWidget` 每次 delete+set 移到底部）；footer 排序靠 key 字母序的巧合，随时加插件就变；倒计时粗粒度（>1h 只到分钟）时还每秒无意义重绘。
+- 根因：刷新节拍没有跨插件契约；widget 栈顺序依赖宿主按注册序派发但从未被锁定/断言；footer 顺序依赖字母序巧合；UI 写入无内容指纹去重。
+- 教训：跨插件「同屏时间类状态」必须显式契约化（`docs/cross/status-bar.md`）——统一对齐秒边界节拍（`aligned-ticker.ts`）+ 文本指纹跳过 + footer 两位排序带键 + 根契约测试锁定 `pi.extensions` 相对顺序与键带序；宿主 widget 保序仍需本地补丁兜底（`docs/pi-widget-order-patch.md`）。
