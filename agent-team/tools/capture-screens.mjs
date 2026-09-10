@@ -24,8 +24,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TuiMainScreen } from "@earendil-works/pi-tui";
+import { TuiMainScreen, Container, Editor, Spacer, Text } from "@earendil-works/pi-tui";
 import { VIEWER_OVERLAY_OPTIONS, TranscriptViewer } from "../viewer.ts";
+import { buildWidgetView, renderWidgetView } from "../widget.ts";
 import {
   VIEWER_OVERLAY_OPTIONS as PWR_VIEWER_OVERLAY_OPTIONS,
   RunViewer,
@@ -404,6 +405,81 @@ export function assertPwrFrame(lines) {
 }
 
 // ---------------------------------------------------------------------------
+// Scene: agent-team run widget (belowEditor block) over the real host stack
+// ---------------------------------------------------------------------------
+
+// 固定时钟：elapsed 标签确定，截图可 diff。
+const WIDGET_NOW_MS = Date.parse("2026-09-11T09:12:45.000Z");
+
+/** 示例 run：count-duet（与查看器场景同团队）——leader 行选中，front 完成、back 运行中。 */
+function widgetSnapshot(nowMs) {
+  return {
+    running: true,
+    lastRecord: null,
+    progress: {
+      runId: "run-1788938207941",
+      team: "count-duet",
+      task: "用 count-duet 团队从 1 数到 10；leader 数奇数，front 数偶数。",
+      startedAtMs: nowMs - 41_000,
+      leaderModel: "opencode-go/deepseek-v4-flash",
+      members: [
+        { name: "front", status: "done", note: "已数 2" },
+        { name: "back", status: "running", latest: "复核 front 的 2" },
+      ],
+    },
+  };
+}
+
+// 编辑器上方的主屏背景（同查看器场景的示意文本）。
+const WIDGET_BASE_LINES = [
+  `${BASE_PAD}${fgStyle(DARK.accent)("⏺")} back 确认无误，序列 1,2,3,4 连续。`,
+  "",
+  `${BASE_PAD}${fgStyle(DARK.dim)("leader turn 12 · 等待 back 复核结果…")}`,
+];
+
+/**
+ * 跑 widget 场景：widget 内容完全来自真实 `buildWidgetView` + `renderWidgetView`
+ * （即 controller 经 `setWidget` 推送的同一份 string[]，选中态/高亮/截断一致）；
+ * 真实 `Editor`（宿主 CustomEditor 的基类）在 widget 上方；widget 的屏上包装
+ * 照抄宿主 `setExtensionWidget` 对 string[] 的确切代码路径
+ * （Container + Text(line, 1, 0)，见 interactive-mode setExtensionWidget）。
+ * 空编辑器是真实语义：bare ↓/← 只在编辑器为空时激活 widget——截图即该状态。
+ */
+export function captureWidgetScene({ cols = 120, rows = 12 } = {}) {
+  const screen = new VtScreen(cols, rows);
+  const term = { columns: cols, rows, write: (data) => screen.feed(data), hideCursor: () => {}, showCursor: () => {} };
+  const tui = new TuiMainScreen(term);
+  const styles = ansiStyles();
+  const root = new Container();
+  for (const line of WIDGET_BASE_LINES) root.addChild(new Text(line, 0, 0));
+  root.addChild(new Spacer(1));
+  root.addChild(new Editor(tui, { borderColor: styles.border, selectList: {} }, {}));
+  const view = buildWidgetView(widgetSnapshot(WIDGET_NOW_MS), WIDGET_NOW_MS);
+  const lines = renderWidgetView(view, { selected: true, cursor: 1 }, cols, styles);
+  const widget = new Container();
+  for (const line of lines.slice(0, 10)) widget.addChild(new Text(line, 1, 0));
+  root.addChild(widget);
+  tui.addChild(root);
+  tui.renderNow();
+  try {
+    return { grid: screen.grid(), lines: screen.text(), cols, rows };
+  } finally {
+    tui.dispose?.();
+  }
+}
+
+/** widget 帧自检：展开态树（main/leader/成员）+ 提示行缺一即失败。 */
+export function assertWidgetFrame(lines) {
+  const text = lines.join("\n");
+  const anchors = ["main", "▸ leader count-duet", "|- front", "|- back", "↑↓ 选择 · enter 查看 · esc 退出"];
+  const missing = anchors.filter((a) => !text.includes(a));
+  if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
+  const selectedRows = lines.filter((l) => l.includes("▸ leader count-duet")).length;
+  if (selectedRows !== 1) throw new Error(`选中行应恰好 1 行，实得 ${selectedRows}`);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -422,9 +498,15 @@ function capturePwr() {
   return { name: "pwr-viewer.svg", svg: svgFromGrid(scene.grid) };
 }
 
+function captureWidget() {
+  const scene = captureWidgetScene();
+  assertWidgetFrame(scene.lines);
+  return { name: "agent-team-widget.svg", svg: svgFromGrid(scene.grid) };
+}
+
 /** 全部文档截图（同一管线；CLI 与测试共用）。 */
 export function captureAll() {
-  return [capture(), capturePwr()];
+  return [capture(), capturePwr(), captureWidget()];
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

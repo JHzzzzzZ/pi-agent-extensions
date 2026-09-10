@@ -28,7 +28,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 - `tools/` — 仓库级开发工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc` 进程，验证 12 个扩展在“手动复制”安装形态下全部加载，`node tools/install-smoke.mjs`；`--task` 追加真实模型工具调用任务）。
 - 卫星扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port/status-band + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota` + `status-band.ts`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器 + `status-band.ts`）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约 + `status-band.ts`）。
 
-pwr 与 agent-team 的目录地图、架构与数据流：见 `docs/extensions/pwr.md` + `pwr/DELIVERY.md`（权威架构/安全文档 + 版本历史）与 `docs/extensions/agent-team.md`。文档截图（无头真实渲染 → SVG，agent-team 与 pwr 两个查看器场景）由 `agent-team/tools/capture-screens.mjs` 生成到 `docs/assets/`，用法见 agent-team README。
+pwr 与 agent-team 的目录地图、架构与数据流：见 `docs/extensions/pwr.md` + `pwr/DELIVERY.md`（权威架构/安全文档 + 版本历史）与 `docs/extensions/agent-team.md`。文档截图（无头真实渲染 → SVG，三个场景：agent-team 查看器 / pwr 查看器 / agent-team 亮块）由 `agent-team/tools/capture-screens.mjs` 生成到 `docs/assets/`，用法见 agent-team README。
 
 ## 开发命令
 
@@ -54,7 +54,7 @@ node tools/install-smoke.mjs --task   # 追加真实模型任务（需鉴权 + �
 
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 45 个测试
-cd agent-team && npm install && npm test                                        # 340 个测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test                                        # 343 个测试（node --test test/*.test.ts）
 node --experimental-strip-types --test run-timer/run-timer.test.ts run-timer/aligned-ticker.test.ts   # 59 个测试，此目录无 package.json
 node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts                # 63 个测试，此目录无 package.json
 node --experimental-strip-types --test human-notify/index.test.ts                # 37 个测试，此目录无 package.json
@@ -122,6 +122,6 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 340；run-timer 59；loop 193；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 15；根契约 3 + 安装冒烟单测 14。
+- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 343；run-timer 59；loop 193；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 15；根契约 3 + 安装冒烟单测 14。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。

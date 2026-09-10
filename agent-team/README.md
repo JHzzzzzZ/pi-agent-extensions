@@ -178,7 +178,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（337 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（343 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
@@ -194,7 +194,7 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 
 `tools/capture-screens.mjs` 把真实 `TuiMainScreen` + 真实 `TranscriptViewer` 接到一个记录字节流的 headless 终端上，把渲染器写出的 ANSI 还原成字符网格并输出 SVG 到 `../docs/assets/`（根 README 内嵌）。不需要真机终端窗口、不需要人工抓屏，产物可重复生成、可 diff；`tools/vt-screen.mjs` 是带样式追踪的最小 VT 仿真屏（与 `test/viewer-host.test.ts` 的 FakeScreen 同源、互不依赖）。帧锚点自检失败时工具直接报错退出——渲染路径变了，截图就不许悄悄过期。
 
-同一工具也是**工作区级**截图管线：第二个场景导入 `../pwr/src/ui/viewer.ts` 的真实 `RunViewer`，输出 `../docs/assets/pwr-viewer.svg`（pwr 卡「改动清单」指向它）。为第二个插件复制一份 VT 仿真屏不值得——跨插件只发生在 dev 工具里，运行时仍互不 import。
+同一工具也是**工作区级**截图管线：第二个场景导入 `../pwr/src/ui/viewer.ts` 的真实 `RunViewer`，输出 `../docs/assets/pwr-viewer.svg`（pwr 卡「改动清单」指向它）；第三个场景是**亮块**（输入栏下方 widget）：文字取真实 `buildWidgetView` + `renderWidgetView`（运行时 `setWidget` 推送的同一份 string[]），上方放真实 pi-tui `Editor`（宿主 `CustomEditor` 的基类），widget 的屏上包装照抄宿主 `setExtensionWidget` 对 string[] 的确切代码路径（`Container` + `Text(line, 1, 0)`，每行 1 列缩进），输出 `../docs/assets/agent-team-widget.svg`。为第二个插件复制一份 VT 仿真屏不值得——跨插件只发生在 dev 工具里，运行时仍互不 import。
 
 ## 设计说明
 

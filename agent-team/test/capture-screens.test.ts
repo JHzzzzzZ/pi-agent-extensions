@@ -14,9 +14,11 @@ import {
   captureAll,
   captureViewerScene,
   capturePwrViewerScene,
+  captureWidgetScene,
   svgFromGrid,
   assertFrame,
   assertPwrFrame,
+  assertWidgetFrame,
 } from "../tools/capture-screens.mjs";
 import { VtScreen, ansi256, DEFAULT_BG } from "../tools/vt-screen.mjs";
 
@@ -86,7 +88,45 @@ test("pwr 产物：revision 稳定 + 与 agent-team 帧同管线产出", () => {
   const shots = captureAll();
   assert.deepEqual(
     shots.map((s) => s.name),
-    ["agent-team-viewer.svg", "pwr-viewer.svg"],
+    ["agent-team-viewer.svg", "pwr-viewer.svg", "agent-team-widget.svg"],
   );
-  for (const shot of shots) assert.ok(shot.svg.length > 12_000, `${shot.name} 过小：${shot.svg.length}`);
+  for (const shot of shots) {
+    const floor = shot.name === "agent-team-widget.svg" ? 1_000 : 12_000;
+    assert.ok(shot.svg.length > floor, `${shot.name} 过小：${shot.svg.length}`);
+  }
+});
+
+test("widget 场景：真实 buildWidgetView/renderWidgetView 帧含锚点", () => {
+  const scene = captureWidgetScene();
+  assert.equal(assertWidgetFrame(scene.lines), true);
+  assert.throws(() => assertWidgetFrame(["nothing here"]), /缺少锚点/);
+  const text = scene.lines.join("\n");
+  assert.ok(text.includes("▸ leader count-duet"), "展开态 leader 行必须有选中高亮");
+  assert.ok(text.includes("|- front"), "成员行在帧内");
+  assert.equal(scene.lines.filter((l) => l.includes("↑↓ 选择")).length, 1, "提示行恰一行");
+});
+
+test("widget 场景：宿主包装（Text(line,1,0)）与 editor 上下关系", () => {
+  const scene = captureWidgetScene();
+  // 宿主 setExtensionWidget 对 string[] 的包装 = Container + Text(line, 1, 0)：
+  // 非选中行在 widget 内是 "  " 前缀 → 屏上 "   main"（1 列宿主缩进 + 2 列 gutter）。
+  assert.ok(
+    scene.lines.some((l) => l.trimEnd() === "   main"),
+    `main 行缺宿主包装缩进: ${JSON.stringify(scene.lines.find((l) => l.includes("main")))}`,
+  );
+  const mainIdx = scene.lines.findIndex((l) => l.trimEnd() === "   main");
+  let borderIdx = -1;
+  scene.lines.forEach((l, i) => {
+    if (l.includes("─")) borderIdx = i;
+  });
+  assert.ok(borderIdx >= 0 && borderIdx < mainIdx, "widget 在 editor 下边框之下（belowEditor 位置）");
+});
+
+test("widget 产物：确定性 + 进 captureAll", () => {
+  const a = captureWidgetScene();
+  const b = captureWidgetScene();
+  assert.equal(a.lines.join("\n"), b.lines.join("\n"));
+  const shot = captureAll().find((s) => s.name === "agent-team-widget.svg");
+  assert.ok(shot, "captureAll 必须含 widget 截图");
+  assert.ok(shot.svg.includes("▸ leader count-duet"), "SVG 含展开态 leader 行");
 });
