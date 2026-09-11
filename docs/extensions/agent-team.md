@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 08987d9
+> last verified @ 3e87289
 
 ## 职责与边界
 
@@ -34,6 +34,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - 命令面：冒号命令面（v1.12.0）——裸 `/team` 无参=列团队（`/team:list` 同义）、带参=用法提示；`/team:run <团队名> <任务>` 唯一派单入口，`/team:status|:stop|:view|:clear|:doctor` 各自独立静态注册。旧空格子命令与 `/team <团队名> <任务>` 参数路由只提示改名、绝不执行；不再动态注册 `team:<name>`（v1.9.0）；团队名可与任意子命令同名（保留词概念退役）。
 - 自包含：不引 pwr、不依赖其它扩展目录，独立可复制加载。
 - 上限：每 dispatch 8 任务、4 并发、50KB 结果、8KB 摘要（协议级常量，不可配；`TeamErrorCodes` result union）。派发/成员运行预算可配（frontmatter `budget:`，默认 12/40；费用/token 默认无限），schema 级上限不进 budget。
+- **worktree 同 run 重派复用（v1.15.2）**：`createWorktree` 先读 `git worktree list --porcelain`——路径已注册且分支匹配 ⇒ 直接复用（返回 `{path, branch}`）；已注册但分支不匹配 ⇒ 提示 `git worktree remove --force "<path>"`；已注册但目录缺失（stale）⇒ 提示 `git worktree prune`；目录存在但未注册（被普通目录占用）⇒ 提示手工清理；`git worktree add <path> -b <branch>` 失败后分类：分支存在且被其它 worktree 检出 ⇒ 真 fatal + `git worktree list` 定位提示，分支存在但空闲 ⇒ attach 复用既有分支（`worktree add <path> <branch>`）。**设计决策：选复用而非新错误码**——同 run 二次派发对 leader 语义上应成功，可自动恢复的情况不推给人工（真机事故见 `docs/incidents.md`）。错误文案统一经导出的 `worktreeError()`：跳过 git 进度行（Preparing worktree / HEAD is now at / Updating files / Checking out files）取 fatal/error 行，无非进度行才回退首行；CRLF/连续空白压单行，仍 300 字上限。
 - `status.json` 只存元数据快照（runId/team/task/startedAt/status/leaderPid/updatedAt/error）——完整 `TeamRunRecord` 仍走 session entries；写入 best-effort，读取宽松解析，损坏文件隔离不抛错（doctor/reconcile 报告）。
 - **reconcile 只报告不杀**：孤儿 leader 的 PID 仅进诊断信息（PID 复用风险）；reconcile 排除 in-memory run（同实例 re-bind 场景）。
 - wait/后台两条路径共用 `finalizeRun`（appendRunRecord + 通知/交付单一实现）——改终态行为只改这一处。
@@ -72,7 +73,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（358 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（368 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。

@@ -193,7 +193,7 @@ test("team-level shared worktree: leader runs inside it and the record carries i
   const promise = coordinator.start({ team, task: "t", ui: fakeUi() });
   const child = await waitForChild(spawn, 0);
 
-  const add = gitCalls.find((c) => c.args[0] === "worktree");
+  const add = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "add");
   assert.ok(add, "shared worktree created");
   const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
   assert.deepEqual(add.args.slice(0, 3), ["worktree", "add", path.join("/tmp/worktrees", runId, "team")]);
