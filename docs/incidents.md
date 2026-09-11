@@ -105,3 +105,10 @@
 - 根因：v1.15.0（819553a，steer/RPC 改造）把 `runner.ts` `defaultSpawn` 的 stdio 从 `["ignore","pipe","pipe"]` 改成 `["pipe","pipe","pipe"]`（为 leader RPC 通道），但成员走的是**同一个共享 spawn**——成员 prompt 全在 argv（`dispatch.ts`），全仓没有任何地方 `end()` 成员 stdin；pi 0.85.1 在 `--mode json -p` 下**读 stdin 到 EOF 才推进** ⇒ leader 同步等子进程退出、子进程等 stdin EOF。
 - 定位手段（可复用）：① 进程树取证（`Get-CimInstance Win32_Process` 拿父子关系 + UserModeTime/KernelModeTime 两次采样）——CPU 冻结 + 零连接说明**不是**"连着 provider 等响应"；② 同一 CLI / 模型 / prompt 的最小对照实验，唯一变量 = stdin（`</dev/null` 11s 完成 vs 打开管道 75s 零输出 vs 打开 20s 后关闭 23s 完成）。
 - 教训：① **子进程 stdio 是契约不是细节**——谁需要 stdin 必须逐调用方声明（现为 `runChildPi`/`PiSpawn` 的 `stdin` 选项，默认 `ignore`，leader RPC 显式 `pipe`）；② 共享 spawn 工厂的默认值改动会波及所有调用方，改 stdio/信号/窗口这类共享面必须逐个调用点复验；③ **fake 子进程测不出进程边界语义**（`makeFakeSpawn`/`FakeChild` 的 stdin 是普通对象，不会等 EOF）——回归护栏落在真实子进程用例（`runner.test.ts`）；④ 排障先取证再下结论：本轮最初把"无进展"讲成"阻塞"（判断对了但证据不足），事后才用对照实验坐实。
+
+## worktree 重派失败：错误文案只剩 git 进度行（agent-team v1.15.1 真机事故）
+
+- 症状：真机 run-1789100633429/1789100834291 同 run 对同一 worktree 成员二次派发，成员直接失败 `WORKTREE_UNAVAILABLE`；报告里的错误文本只有 `Preparing worktree (new branch 'team/<runId>/<member>')`，看不到为什么失败（真因是 `fatal: a branch named '…' already exists`——第一次派发留下的分支/工作树还在）。
+- 根因：① `worktree.ts` `createWorktree` 无条件 `git worktree add <path> -b <branch>`，同 run 重派时分支与路径都已存在 ⇒ git 非零退出；② `worktreeError()` 取 stderr 首行，而 git 在 fatal 前先打印进度行 `Preparing worktree (…)`，真因在第二行被丢弃。
+- 处置（v1.15.2）：`createWorktree` 先读 `git worktree list --porcelain`——已注册且分支匹配的 worktree 直接复用、分支存在但空闲时 attach 复用、路径被普通目录占用/注册不匹配则给出可操作提示；`worktreeError` 跳过 git 进度行只取 fatal/error 行（无非进度行才回退首行），并导出供单测。
+- 教训：① **错误信息必须穿透进度噪声取真因**——"首行 stderr"这类廉价启发式在 git 这种混排进度的输出上就是把真因丢掉；② **创建已存在资源这类幂等场景应设计重入语义**，而不是靠提示词/报告禁止重试（leader 视角"再派一次"是合理动作，扩展应让它成功）；③ 真机 stderr 原文要当测试输入（新单测直接锁定 `Preparing worktree…` + `fatal: …` 两行样本）。
