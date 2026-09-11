@@ -233,8 +233,8 @@ test("worktree creation failure fails that member with a visible reason", async 
   assert.ok(updates.some((u) => u.text.includes("WORKTREE_UNAVAILABLE: ")));
 });
 
-test("concurrency is capped at 4 members", async () => {
-  const members = Array.from({ length: 6 }, (_, i) => ({
+test("concurrency is capped at 8 members", async () => {
+  const members = Array.from({ length: 10 }, (_, i) => ({
     name: `m${i}`,
     prompt: `p${i}`,
   }));
@@ -243,16 +243,16 @@ test("concurrency is capped at 4 members", async () => {
   const tasks = members.map((m) => ({ agent: m.name, task: "t" }));
   const promise = executor({ tasks }, undefined, undefined);
 
-  // Only 4 children may exist before any of them finishes.
-  await waitForChild(spawn, 3);
+  // Only 8 children may exist before any of them finishes.
+  await waitForChild(spawn, 7);
   await sleep(30);
-  assert.equal(spawn.records.length, 4, `expected 4 concurrent, got ${spawn.records.length}`);
-  for (let i = 0; i < 4; i++) spawn.children[i].autoRespond([assistantLine("ok")], 0, 5);
-  await waitForChild(spawn, 4);
-  await waitForChild(spawn, 5);
-  for (let i = 4; i < 6; i++) spawn.children[i].autoRespond([assistantLine("ok")], 0, 5);
+  assert.equal(spawn.records.length, 8, `expected 8 concurrent, got ${spawn.records.length}`);
+  for (let i = 0; i < 8; i++) spawn.children[i].autoRespond([assistantLine("ok")], 0, 5);
+  await waitForChild(spawn, 8);
+  await waitForChild(spawn, 9);
+  for (let i = 8; i < 10; i++) spawn.children[i].autoRespond([assistantLine("ok")], 0, 5);
   const outcome = await unwrap(promise);
-  assert.equal(outcome.results.length, 6);
+  assert.equal(outcome.results.length, 10);
   assert.ok(outcome.results.every((r) => r.ok));
 });
 
