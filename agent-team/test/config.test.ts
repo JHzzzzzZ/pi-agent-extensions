@@ -8,7 +8,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
+  buildTeamFromToolInput,
   createTeamFile,
   discoverTeams,
   findNearestProjectTeamsDir,
@@ -222,6 +224,116 @@ test("splitModelThinking 只在最后一段是有效思考级别时剥离模型�
   assert.deepEqual(splitModelThinking(""), {});
   // 剥完会得到空模型（裸后缀）不剥：`:high` 不是可解析的模型引用
   assert.deepEqual(splitModelThinking(":high"), { model: ":high" });
+});
+
+// ---------------------------------------------------------------------------
+// External CLI backends (v1: codex / claude members; leader syntax-only)
+// ---------------------------------------------------------------------------
+
+test("parseTeamFile 接受 codex/claude 成员 backend 并落位字段", () => {
+  const parsed = parseTeamFile(
+    "---\nname: ext\nleader:\n  prompt: p\nmembers:\n  - name: coder\n    backend: codex\n    model: gpt-5.1-codex\n    prompt: p\n  - name: writer\n    backend: claude\n    model: claude-haiku-4-5\n    prompt: p\n---\n",
+    { filePath: "/x/ext.md", source: "global" },
+  );
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.message);
+  assert.equal(parsed.value?.members[0].backend, "codex");
+  assert.equal(parsed.value?.members[0].model, "gpt-5.1-codex");
+  assert.equal(parsed.value?.members[1].backend, "claude");
+  // 未声明 backend 的成员保持 undefined（与 1.21.0 等价）
+  const plain = parseTeamFile(VALID_TEAM_MD, { filePath: "/x/dev-team.md", source: "global" });
+  assert.ok(plain.ok);
+  assert.equal(plain.value?.leader.backend, undefined);
+  assert.equal(plain.value?.members[0].backend, undefined);
+});
+
+test("backend 值域外的成员值 → INVALID_TEAM_FILE 且消息含合法值清单", () => {
+  const cases: Array<[string, string]> = [
+    ["unknown name", "backend: wan"],
+    ["number", "backend: 1"],
+    ["empty string", 'backend: ""'],
+    ["null", "backend:"],
+  ];
+  for (const [label, line] of cases) {
+    const parsed = parseTeamFile(
+      `---\nname: t\nleader:\n  prompt: p\nmembers:\n  - name: a\n    ${line}\n    prompt: p\n---\n`,
+      { filePath: "/x/bad.md", source: "global" },
+    );
+    assert.ok(!parsed.ok, `expected rejection: ${label}`);
+    assert.equal(parsed.code, TeamErrorCodes.INVALID_TEAM_FILE, label);
+    assert.match(parsed.message, /a\.backend/, label);
+    assert.match(parsed.message, /codex/, label);
+    assert.match(parsed.message, /claude/, label);
+  }
+});
+
+test("leader 的非法 backend 值同样 INVALID_TEAM_FILE", () => {
+  const parsed = parseTeamFile(
+    "---\nname: t\nleader:\n  backend: wan\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n",
+    { filePath: "/x/bad.md", source: "global" },
+  );
+  assert.ok(!parsed.ok);
+  assert.equal(parsed.code, TeamErrorCodes.INVALID_TEAM_FILE);
+  assert.match(parsed.message, /leader\.backend/);
+  assert.match(parsed.message, /codex/);
+  assert.match(parsed.message, /claude/);
+});
+
+test("leader 带 backend 在 config 层通过（run 预检才拒绝）", () => {
+  const parsed = parseTeamFile(
+    "---\nname: ext\nleader:\n  backend: codex\n  prompt: p\nmembers:\n  - name: a\n    prompt: p\n---\n",
+    { filePath: "/x/ext.md", source: "global" },
+  );
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.message);
+  assert.equal(parsed.value?.leader.backend, "codex");
+});
+
+test("serializeTeam 把 backend 输出在 model 之前且 round-trip 保持", () => {
+  const team = fixtureTeam({
+    leader: { backend: "claude", model: "claude-opus-4-5", prompt: "p" },
+    members: [{ name: "coder", backend: "codex", model: "gpt-5.1-codex", prompt: "p" }],
+  });
+  const serialized = serializeTeam(team);
+  assert.match(serialized, /^  backend: claude\n  model:/m);
+  assert.match(serialized, /^    backend: codex\n    model:/m);
+  const parsed = parseTeamFile(serialized, { filePath: team.filePath, source: team.source });
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.message);
+  assert.equal(parsed.value?.leader.backend, "claude");
+  assert.equal(parsed.value?.members[0].backend, "codex");
+  assert.equal(parsed.value?.members[0].model, "gpt-5.1-codex");
+});
+
+test("buildTeamFromToolInput 透传 leader/成员 backend", () => {
+  const built = buildTeamFromToolInput({
+    name: "ext",
+    leader: { backend: "claude", prompt: "p" },
+    members: [{ name: "c", backend: "codex", model: "gpt-5.1-codex", prompt: "p" }],
+    scope: "global",
+    filePath: "/x/ext.md",
+  });
+  assert.ok(built.ok, built.ok ? "" : built.message);
+  assert.equal(built.value?.leader.backend, "claude");
+  assert.equal(built.value?.members[0].backend, "codex");
+  const plain = buildTeamFromToolInput({
+    name: "plain",
+    leader: { prompt: "p" },
+    members: [{ name: "c", prompt: "p" }],
+    scope: "global",
+    filePath: "/x/plain.md",
+  });
+  assert.ok(plain.ok);
+  assert.equal(plain.value?.leader.backend, undefined);
+  assert.equal(plain.value?.members[0].backend, undefined);
+});
+
+test("examples/external-cli.example.md 可解析且同时覆盖 codex 与 claude 成员（防腐烂）", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const examplePath = path.join(here, "..", "examples", "external-cli.example.md");
+  const parsed = parseTeamFile(fs.readFileSync(examplePath, "utf-8"), { filePath: examplePath, source: "global" });
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.message);
+  const backends = parsed.value?.members.map((m) => m.backend) ?? [];
+  assert.ok(backends.includes("codex"), "example must contain at least one codex member");
+  assert.ok(backends.includes("claude"), "example must contain at least one claude member");
+  assert.ok(parsed.value?.leader.backend === undefined, "leader backend must stay unset in the example (v1 fail-closed)");
 });
 
 test("createTeamFile writes the file and refuses overwrites", () => {
