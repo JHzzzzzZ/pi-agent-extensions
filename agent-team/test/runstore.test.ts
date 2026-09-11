@@ -99,6 +99,54 @@ test("a non-numeric ownerPid is isolated as a corrupt file (lenient parse)", () 
   assert.equal(read.corrupt[0].file, path.join(root, "run-bad-owner", "status.json"));
 });
 
+test("resume lineage fields (parentRunId/leaderSessionFile/worktree) round-trip and survive reconcile", () => {
+  const root = tmpRoot();
+  writeRunStatus(
+    root,
+    sample({
+      runId: "run-resume",
+      status: "completed",
+      parentRunId: "run-parent",
+      leaderSessionFile: "/runs/run-parent/session/20260911_a.jsonl",
+      worktree: { path: "/tmp/worktrees/run-parent/team", branch: "team-run-run-parent" },
+    }),
+  );
+  const read = readRunStatuses(root);
+  assert.equal(read.entries.length, 1);
+  assert.equal(read.entries[0].parentRunId, "run-parent");
+  assert.equal(read.entries[0].leaderSessionFile, "/runs/run-parent/session/20260911_a.jsonl");
+  assert.deepEqual(read.entries[0].worktree, { path: "/tmp/worktrees/run-parent/team", branch: "team-run-run-parent" });
+
+  // Reconcile rewrites stale running entries: the lineage fields must survive
+  // the rewrite (otherwise a crashed parent loses its resume pointers).
+  writeRunStatus(root, sample({ runId: "run-stale", ownerPid: 4242, parentRunId: "run-parent", leaderSessionFile: "/x.jsonl" }));
+  const reconciled = reconcileStaleRuns({
+    root,
+    inMemoryRunIds: new Set(),
+    currentPid: OTHER_SESSION_PID,
+    isProcessAlive: ownerGone,
+    now: () => "2026-09-11T06:00:00Z",
+  });
+  assert.equal(reconciled.length, 1);
+  const stale = readRunStatuses(root).entries.find((e) => e.runId === "run-stale");
+  assert.equal(stale?.status, "failed");
+  assert.equal(stale?.parentRunId, "run-parent");
+  assert.equal(stale?.leaderSessionFile, "/x.jsonl");
+});
+
+test("a malformed worktree field is isolated as a corrupt file (lenient parse)", () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, "run-bad-wt"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "run-bad-wt", "status.json"),
+    JSON.stringify({ ...sample(), worktree: { path: "/x" } }),
+    "utf-8",
+  );
+  const read = readRunStatuses(root);
+  assert.equal(read.entries.length, 0);
+  assert.equal(read.corrupt.length, 1);
+});
+
 test("defaultIsProcessAlive reports the current process as alive", () => {
   assert.equal(defaultIsProcessAlive(process.pid), true);
 });

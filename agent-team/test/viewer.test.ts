@@ -302,6 +302,16 @@ test("renderViewerFrame renders the fleet split-frame structure", () => {
   }
 });
 
+// 续跑 lineage：viewer 右栏 Run: 行标注续跑来源，帧行数不变量（bodyHeight +
+// VIEWER_CHROME_ROWS）不变。
+test("viewer Run: line appends the resume lineage without changing the frame height", () => {
+  const styled: Styles = { ...styles, bold: ansi("1") };
+  const data = viewerData({ parentRunId: "run-old" });
+  const frame = renderViewerFrame(data, initialViewerState(), 80, { styles: styled, bodyHeight: 10 });
+  assert.equal(frame.length, 10 + VIEWER_CHROME_ROWS, "帧高恒定");
+  assert.match(paneColumns(frame[3]).detail, /^\x1b\[1mRun:\x1b\[0m run-42（续跑自 run-old）/);
+});
+
 test("renderViewerFrame styles the roster with the port: selected marker, bold label, status icons", () => {
   const styled: Styles = { ...styles, bold: ansi("1"), accent: ansi("36"), success: ansi("32") };
   const frame = renderViewerFrame(viewerData(), initialViewerState(), 80, { styles: styled, bodyHeight: 8 });

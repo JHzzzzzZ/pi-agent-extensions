@@ -133,6 +133,8 @@ export interface ViewerActor {
 export interface ViewerData {
   team: string;
   runId: string;
+  /** Parent run id when this run is a resume (`Run:` lineage). */
+  parentRunId?: string;
   runStatus: string;
   /** Elapsed label for running runs (e.g. "1m12s"); absent when finished. */
   elapsed?: string;
@@ -547,7 +549,7 @@ function detailHeaderLines(data: ViewerData, state: ViewerState, styles: Styles)
     : "（无成员）";
   const model = modelHeaderText(selected?.actor);
   return [
-    `${styles.bold("Run:")} ${data.runId || "(no run)"}`,
+    `${styles.bold("Run:")} ${data.runId || "(no run)"}${data.parentRunId ? `（续跑自 ${data.parentRunId}）` : ""}`,
     `${styles.bold("State:")} ${data.runStatus}`,
     `${styles.bold("成员:")} ${member}`,
     `${styles.bold("模型:")} ${model}`,

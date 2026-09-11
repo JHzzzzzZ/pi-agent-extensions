@@ -81,7 +81,7 @@ export const EXTENSION_EXPECTATIONS = {
     uiKeys: ["30:pwr", "pwr-runs"],
   },
   "agent-team": {
-    commands: ["team", "team:clear", "team:doctor", "team:list", "team:run", "team:status", "team:stop", "team:view"],
+    commands: ["team", "team:clear", "team:doctor", "team:list", "team:resume", "team:run", "team:status", "team:stop", "team:view"],
     uiKeys: ["agent-team"],
   },
   loop: {

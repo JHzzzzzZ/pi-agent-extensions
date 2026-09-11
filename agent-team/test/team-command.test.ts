@@ -30,6 +30,7 @@ import agentTeamExtension, {
   TEAM_COMMAND_NAMES,
   resetDoubleLoadGuardForTests,
 } from "../index.ts";
+import { readRunStatuses } from "../runstore.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { isolateRunsDir, makeFakeSpawn, messageEndLine, sleep, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
 
@@ -89,6 +90,8 @@ interface Setup {
   spawn: FakeSpawnHandle;
   ctx: unknown;
   notifications: Array<{ text: string; level?: string }>;
+  /** Isolated run-artifact root (status.json + session mirrors). */
+  runsDir: string;
   /** Invoke a registered command by its exact name. */
   cmd: (name: string, args: string, cmdCtx?: unknown) => Promise<void>;
   cleanup: () => void;
@@ -96,7 +99,7 @@ interface Setup {
 
 async function setup(opts: { extraTeams?: string[] } = {}): Promise<Setup> {
   resetDoubleLoadGuardForTests();
-  isolateRunsDir();
+  const runsDir = isolateRunsDir();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-cmd-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
   fs.writeFileSync(
@@ -119,6 +122,7 @@ async function setup(opts: { extraTeams?: string[] } = {}): Promise<Setup> {
     spawn,
     ctx,
     notifications,
+    runsDir,
     cmd: (name, args, cmdCtx) => {
       const command = pi.commands.get(name);
       assert.ok(command, `command ${name} must be registered`);
@@ -132,12 +136,19 @@ const EXPECTED_COMMANDS = [
   "team",
   TEAM_COMMAND_NAMES.list,
   TEAM_COMMAND_NAMES.run,
+  TEAM_COMMAND_NAMES.resume,
   TEAM_COMMAND_NAMES.status,
   TEAM_COMMAND_NAMES.stop,
   TEAM_COMMAND_NAMES.view,
   TEAM_COMMAND_NAMES.clear,
   TEAM_COMMAND_NAMES.doctor,
 ];
+
+/** Position of a flag's value in a spawn argv (index.ts tests get a runner prefix). */
+function argValue(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index >= 0 ? args[index + 1] : undefined;
+}
 
 test("session_start registers the bare root plus every colon sub-command", async () => {
   const { pi, cleanup } = await setup({ extraTeams: ["proj-team", "another-team"] });
@@ -322,6 +333,55 @@ test("sub-command words are valid team names again (reserved list retired)", asy
       assert.equal(spawn.records.length, before + 1, `team named ${name} dispatches via /team:run`);
     }
     assert.match(notifications.at(-2)?.text ?? notifications.at(-1)?.text ?? "", /已在后台启动/);
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /team:resume — resume a failed/aborted run (parent session + worktree)
+// ---------------------------------------------------------------------------
+
+test("/team:resume without a runId replies with a usage hint (no dispatch)", async () => {
+  const { spawn, cmd, notifications, cleanup } = await setup();
+  try {
+    await cmd(TEAM_COMMAND_NAMES.resume, "");
+    assert.equal(spawn.records.length, 0, "no dispatch");
+    const last = notifications.at(-1);
+    assert.equal(last?.level, "warning");
+    assert.match(last?.text ?? "", /用法：\/team:resume <runId>/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("/team:resume <runId> continues a failed run on its parent session", async () => {
+  const { pi, spawn, cmd, notifications, runsDir, cleanup } = await setup();
+  try {
+    await cmd(TEAM_COMMAND_NAMES.run, "proj-team 原始任务");
+    const child = await waitForChild(spawn, 0);
+    const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    child.autoRespond(
+      [messageEndLine("assistant", { content: [{ type: "text", text: "partial" }], errorMessage: "quota exhausted", stopReason: "error" })],
+      1,
+      5,
+    );
+    await waitFor(() => readRunStatuses(runsDir).entries.find((e) => e.runId === runId)?.status === "failed");
+
+    const sessionDir = path.join(runsDir, runId, "session");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const mirror = path.join(sessionDir, "20260911_000000_aaa.jsonl");
+    fs.writeFileSync(mirror, `${JSON.stringify({ type: "session", version: 3, id: "aaa", timestamp: "t", cwd: "/tmp" })}\n`);
+
+    await cmd(TEAM_COMMAND_NAMES.resume, `${runId} 换用有额度的模型继续`);
+    const resumeChild = await waitForChild(spawn, 1);
+    assert.equal(spawn.records.length, 2, "resume leader spawned");
+    assert.equal(argValue(spawn.records[1].args, "--session"), path.resolve(mirror));
+    assert.ok(!spawn.records[1].args.includes("--session-dir"), "resume never opens a session-dir");
+    assert.match(notifications.at(-1)?.text ?? "", /已续跑/);
+
+    resumeChild.autoRespond([messageEndLine("assistant", { content: [{ type: "text", text: "FINAL" }] })], 0, 5);
+    await waitFor(() => pi.sentMessages.length > 0);
   } finally {
     cleanup();
   }

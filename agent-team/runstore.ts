@@ -31,6 +31,12 @@ export interface RunStatusFile {
   task: string;
   startedAt: string;
   status: RunStatus;
+  /** Run this one resumed from (`team_resume`), when applicable. */
+  parentRunId?: string;
+  /** Leader session mirror this run opened/appended (resume entry point). */
+  leaderSessionFile?: string;
+  /** Team-level shared worktree of this run (reused verbatim by a resume). */
+  worktree?: { path: string; branch: string };
   /** Leader child PID (diagnostics for orphaned leaders; never auto-killed). */
   leaderPid?: number;
   /**
@@ -87,6 +93,14 @@ function parseStatusFile(raw: unknown): RunStatusFile | null {
   if (s.leaderPid !== undefined && typeof s.leaderPid !== "number") return null;
   if (s.ownerPid !== undefined && typeof s.ownerPid !== "number") return null;
   if (s.error !== undefined && typeof s.error !== "string") return null;
+  if (s.parentRunId !== undefined && typeof s.parentRunId !== "string") return null;
+  if (s.leaderSessionFile !== undefined && typeof s.leaderSessionFile !== "string") return null;
+  let worktree: { path: string; branch: string } | undefined;
+  if (s.worktree !== undefined) {
+    const raw = s.worktree as { path?: unknown; branch?: unknown } | null;
+    if (raw === null || typeof raw !== "object" || typeof raw.path !== "string" || typeof raw.branch !== "string") return null;
+    worktree = { path: raw.path, branch: raw.branch };
+  }
   return {
     version: RUN_STATUS_VERSION,
     runId: s.runId,
@@ -98,6 +112,9 @@ function parseStatusFile(raw: unknown): RunStatusFile | null {
     ...(typeof s.leaderPid === "number" ? { leaderPid: s.leaderPid } : {}),
     ...(typeof s.ownerPid === "number" ? { ownerPid: s.ownerPid } : {}),
     ...(typeof s.error === "string" ? { error: s.error } : {}),
+    ...(typeof s.parentRunId === "string" ? { parentRunId: s.parentRunId } : {}),
+    ...(typeof s.leaderSessionFile === "string" ? { leaderSessionFile: s.leaderSessionFile } : {}),
+    ...(worktree !== undefined ? { worktree } : {}),
   };
 }
 

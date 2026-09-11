@@ -20,6 +20,7 @@ const COCKPIT_COMMANDS = [
   "team",
   TEAM_COMMAND_NAMES.list,
   TEAM_COMMAND_NAMES.run,
+  TEAM_COMMAND_NAMES.resume,
   TEAM_COMMAND_NAMES.status,
   TEAM_COMMAND_NAMES.stop,
   TEAM_COMMAND_NAMES.view,
@@ -168,6 +169,7 @@ test("cockpit mode registers tools, commands and the entry renderer", async () =
     assert.ok(pi.tools.has("team_list"));
     assert.ok(pi.tools.has("team_models"));
     assert.ok(pi.tools.has("team_run"));
+    assert.ok(pi.tools.has("team_resume"));
     assert.ok(pi.tools.has("team_status"));
     assert.ok(pi.tools.has("team_transcript"));
     assert.ok(pi.tools.has("team_stop"));
