@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { PiChildProcess, PiSpawn } from "../types.ts";
+import type { ChildStdinMode, PiChildProcess, PiSpawn } from "../types.ts";
 
 /**
  * Redirects the extension's per-run artifact root (status.json + run
@@ -28,6 +28,8 @@ export interface SpawnRecord {
   args: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** stdin mode the caller asked for (members `ignore`, leader RPC `pipe`). */
+  stdin?: ChildStdinMode;
 }
 
 export class FakeChild implements PiChildProcess {
@@ -125,7 +127,7 @@ export function makeFakeSpawn(): FakeSpawnHandle {
       if (handle.spawnError) throw handle.spawnError;
       const child = new FakeChild();
       child.pid = handle.nextPid?.(handle.children.length);
-      handle.records.push({ command, args, cwd: opts.cwd, env: opts.env });
+      handle.records.push({ command, args, cwd: opts.cwd, env: opts.env, stdin: opts.stdin });
       handle.children.push(child);
       return child;
     },

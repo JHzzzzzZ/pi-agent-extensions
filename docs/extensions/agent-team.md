@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 819553a
+> last verified @ e42a45f
 
 ## 职责与边界
 
@@ -10,7 +10,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 - `types.ts` — 团队文件格式（frontmatter `leader` + `members[]`，块标量 prompt）、常量（entry / 消息类型 / 环境变量 / 上限）。**改团队文件格式必看这里。**
 - `config.ts` — 团队发现：`~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`，同名项目优先，每次使用重扫；frontmatter `budget:` 块解析（非法值 → `INVALID_TEAM_FILE`）。
-- `runner.ts` — 子 `pi` 进程契约：**leader 走 `--mode rpc`**（stdin 发 `prompt`/`steer` JSON 行，`agent_settled` 后关 stdin 使进程退出；RPC 只在 stdin 结束时退出）；member 走 `--mode json -p`（一次性）。`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn`）与 stdin（`onChild`）；`onWire` 转发每行解析后的原始 JSON（RPC 的 `response`/`agent_settled` 只在此层可见）。
+- `runner.ts` — 子 `pi` 进程契约：**leader 走 `--mode rpc`**（stdin 发 `prompt`/`steer` JSON 行，`agent_settled` 后关 stdin 使进程退出；RPC 只在 stdin 结束时退出）；member 走 `--mode json -p`（一次性，prompt 全在 argv ⇒ stdin 默认 `ignore`）。`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn`）与 stdin（`onChild`）；`onWire` 转发每行解析后的原始 JSON（RPC 的 `response`/`agent_settled` 只在此层可见）。
 - `runstore.ts` — 每 run `status.json` 元数据快照（落 `teams/runs/<runId>/`，与 transcript 同目录同 7 天 retention）：coordinator claim 即写 running（含 leaderPid），每条退出路径落终态；`session_start` reconcile 把上次会话残留的 running 翻成 failed 记录（只报告**不杀**孤儿 leader，避免 PID 复用误杀）。
 - `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
 - `doctor.ts` — `/team:doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
@@ -44,6 +44,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - viewer 打开期间必须暂停下方 widget（`RunWidgetController.setPaused`），关闭恢复。
 - **viewer 帧行单行不变量（v1.13.3）**：多行 tool 条目（`cockpit.ts:499` 的 `team_dispatch 派发 →\n  - 成员: 任务`）必须按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 再兜底把残余 CR/LF 折成空格——帧行携带原始换行会让宿主按物理行写出时把尾巴挤到下一行同列（overlay 左缘残行 + 帧几何漂移，diff 无法清理；真机事故见 `docs/incidents.md`）。widget 同族路径由 `flatten`（`\s+`）保证。
 - **leader 可注入、成员不可注入**：leader 子进程以 `--mode rpc` 拉起，cockpit 持有其 stdin（`steerLeader()` 写 `steer` 命令，仅 run 活跃且通道未关时可写——`agent_settled`/prompt 拒绝/run 收尾即 `end()`，之后回退队列语义）；成员子进程归 leader 派生、cockpit 无任何通道，成员消息仍编成新 run 的 task（chat.ts 派单语义），绝不试图写运行中子进程的 stdin。
+- **子进程 stdin 模式（v1.15.1）**：`PiSpawn`/`runChildPi` 的 `stdin` 默认 `ignore`，只有 leader RPC 显式要 `pipe`（`cockpit.ts` 是唯一写 stdin 的调用方）——pi 的 `--mode json -p` 会读 stdin 到 EOF 才推进，成员 prompt 已在 argv 却持有无人关闭的管道 ⇒ 每次成员派发死锁（v1.15.0 真机事故，见 `docs/incidents.md`）。新增子进程调用点：**不写 stdin 就别开管道**。
 - **RPC 收尾不变量**：leader 进程只在 stdin 结束时退出（`onInputEnd`→shutdown）——必须在 `agent_settled` 时关 stdin；prompt 预检失败（`response.prompt.success=false`）不会产生 settle，必须同样关 stdin 否则 run 永久挂起；`promptError` 折进 failed 记录（不让预检失败落成 completed 空报告）。
 - chat 队列条目只存 `{ targetLabel, message }`，上文尾部派出时刻现读（不随消息缓存，避免排队期间陈旧）；链式门控仅 completed 续发，failed/aborted 全清——显式停止（team_stop/D//team:clear）同样清队列。
 - **不偷编辑器按键**：亮块**默认折叠单行**（未选中态只有激活键被消费，其余（含 esc）原样交还编辑器）——`↓`/`←`（空编辑器 ∧ 主编辑器焦点）或 `alt+↓`/`alt+↑` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行）+ 底部提示行，`esc` 或第 0 行再按 `↑`/`k` 收回折叠；`main` 行 enter 只收起选中（fleet main 语义），leader/成员行 enter 按 actor 进查看器；**按键 release 过滤**（v1.13.2）：widget/viewer 的 key reducer 顶部 `isKeyRelease` 短路（fleet-status.ts:699 同款）——Kitty flag 2 下 release 事件（`:3` 编码）同样能被 `matchesKey` 命中，漏过滤 = 一次按键生效两次；repeat（`:2`）保留供长按连续移动；**焦点门控**（对齐 fleet-status `editorHasFocus`，v1.9.1）：`ensureRunWidget` 挂载时经 factory 形态 `setWidget` 一次性捕获宿主 TUI（宿主同步调用 factory，空组件在 controller 首帧（running）或首个字符串帧被替换、无可见变化），`editorFocus: () => probeEditorFocus(state.tui)`——`getFocusedComponent()` 优先、`focusedComponent` 字段回退、五方法结构判定编辑器形状（`isEditorComponentLike`，不用 `instanceof`：跨 jiti 模块边界不可靠）；焦点确定非编辑器（`/login`、`/model`、`/settings` 选择器，`ctx.ui.select`，overlay 对话框）时 widget 完全不介入（含 alt 通道）且选中态退出让行；宿主无焦点信息/取用抛错 → `undefined`，降级为旧门控（仅空编辑器）。bare `↓`/`←` 仅当焦点在主编辑器且编辑器为空才激活（`editorState` 端口注入 `getEditorText`，宿主缺该 API 时降级为仅 alt 通道）；选中态 `↑`/`k` 在第 0 行再按退出选中（fleet-status 同构，后续键到达编辑器，退出保持 cursor 供再次激活恢复）。
@@ -66,10 +67,11 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码，如 `\x1b[1;1:3B`），release 同样能被 `matchesKey` 命中——widget/viewer 的 key reducer 漏过滤会一次按键生效两次（真机 2026-09-15 实锤，fleet-status.ts:699 同款过滤）；repeat（`:2`）不得一并过滤，否则长按不能连续移动。
 - widget 展开态窗口化（v1.14.2，差异条目 tui-sync §3.14）：帧总行数（含折叠提示行与底部提示行）≤ `WIDGET_MAX_LINES = 10`＝宿主 `setExtensionWidget` 对 `string[]` 的硬上限（超出会被宿主截为前 10 行 + `... (widget truncated)`）；选中行恒在窗口内、窗口 7..9 行，隐藏侧以 `  … 上方/下方还有 N 行` 明示；`WIDGET_MAX_LINES` 与宿主常量的等值由测试直接读宿主 dist 源码锁定（宿主漂移即红）。
 - 入口接受 `{ spawn }` 供工具级测试（`test/run-tool.test.ts`）。
+- **成员派发死锁（v1.15.0，真机 100% 复现；v1.15.1 修）**：`defaultSpawn` 的 stdio 从 `ignore` 改 `pipe` 后，成员 `--mode json -p` 等 stdin EOF、无人关管道 → run 永远 running（零输出 / 零 TCP 连接 / CPU 冻结）。`makeFakeSpawn`/`FakeChild` 的 stdin 是普通对象、不会真的等 EOF——**纯 fake 测试永远抓不到这类进程边界语义**；`runner.test.ts` 的两个真实子进程用例（默认模式见 EOF 即退出、显式 `pipe` 可写）就是它的回归护栏。
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（354 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（356 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。

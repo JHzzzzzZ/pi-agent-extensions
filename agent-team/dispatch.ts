@@ -354,6 +354,9 @@ export function createDispatchExecutor(deps: DispatchDeps) {
         };
       }
 
+      // The task travels through argv, so this child must not get a writable
+      // stdin: pi's `-p` mode waits for stdin EOF before it works, and nobody
+      // ever closes the pipe — the dispatch would hang forever (v1.15.0).
       const args: string[] = ["--mode", "json", "-p", "--no-session"];
       if (plan.member.model) args.push("--model", plan.member.model);
       if (plan.member.tools && plan.member.tools.length > 0) args.push("--tools", plan.member.tools.join(","));

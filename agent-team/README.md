@@ -179,7 +179,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（354 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（356 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

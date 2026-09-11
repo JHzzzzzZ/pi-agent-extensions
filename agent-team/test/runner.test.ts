@@ -202,12 +202,58 @@ test("runChildPi hands the child handle to onChild and every raw wire line to on
   assert.equal(outcome.finalText, "ok");
 });
 
-test("defaultSpawn opens a real stdin pipe: write reaches the child, end makes it exit", async () => {
+test("defaultSpawn ignores stdin unless asked, so a `-p` child never waits for EOF", async () => {
+  // 复刻 pi 0.85.1 的 `--mode json -p` 启动语义：stdin 读到 EOF 才推进。
+  // 成员 prompt 全在 argv，没人会去关 stdin —— 因此默认必须是 ignore；
+  // 默认开管道（v1.15.0）会让 leader 等子进程退出、子进程等 stdin EOF。
+  const spawnFn = defaultSpawn();
+  const child = spawnFn(
+    process.execPath,
+    ["-e", "process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write('eof')})"],
+    {},
+  );
+  let out = "";
+  child.stdout.on("data", (chunk) => {
+    out += String(chunk);
+  });
+  const closed = new Promise<number>((resolve) => child.on("close", (code) => resolve(code ?? 0)));
+  const stalled = await Promise.race([closed.then(() => false), sleep(5000).then(() => true)]);
+  if (stalled) child.kill("SIGKILL");
+  assert.equal(stalled, false, "child saw no stdin EOF — an open pipe deadlocks `-p` children");
+  assert.match(out, /eof/);
+});
+
+test("runChildPi asks the spawn port for the right stdin mode (member ignore, RPC pipe)", async () => {
+  const memberSpawn = makeFakeSpawn();
+  const memberRun = runChildPi({
+    command: "pi",
+    args: ["--mode", "json", "-p", "Task: 51"],
+    spawn: memberSpawn.spawn,
+  });
+  const memberChild = await waitForChild(memberSpawn);
+  assert.equal(memberSpawn.records[0].stdin, "ignore", "member default resolves to ignore");
+  memberChild.emitClose(0);
+  await memberRun;
+
+  const leaderSpawn = makeFakeSpawn();
+  const leaderRun = runChildPi({
+    command: "pi",
+    args: ["--mode", "rpc", "--no-session"],
+    spawn: leaderSpawn.spawn,
+    stdin: "pipe",
+  });
+  const leaderChild = await waitForChild(leaderSpawn);
+  assert.equal(leaderSpawn.records[0].stdin, "pipe", "RPC channel keeps a live stdin pipe");
+  leaderChild.emitClose(0);
+  await leaderRun;
+});
+
+test("defaultSpawn opens a real stdin pipe when the caller asks for one (leader RPC channel)", async () => {
   const spawnFn = defaultSpawn();
   const child = spawnFn(
     process.execPath,
     ["-e", "process.stdin.pipe(process.stdout);process.stdin.on('end',()=>process.exit(0))"],
-    {},
+    { stdin: "pipe" },
   );
   let out = "";
   child.stdout.on("data", (chunk) => {

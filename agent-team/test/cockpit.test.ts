@@ -72,6 +72,7 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   const record = spawn.records[0];
 
   assert.deepEqual(record.args.slice(0, 3), ["--mode", "rpc", "--no-session"]);
+  assert.equal(record.stdin, "pipe", "RPC leader keeps a live stdin channel");
   assert.equal(record.args[record.args.indexOf("--model") + 1], "anthropic/claude-opus-4-5");
   const extIndex = record.args.indexOf("-e");
   assert.equal(record.args[extIndex + 1], "/ext/agent-team/index.ts");
