@@ -165,7 +165,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 - 派发报告对环境级失败（worktree/git 不可用、成员/模型不存在）附带指令：重试无效，不要再次派发同一成员。
 - **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行（可用团队文件 `budget:` 块调整）；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
 - **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块展开头行在设了费用上限时显示余额提示（折叠行不含）。
-- **崩溃恢复**：每个 run 的元数据快照（`status.json`，含 leader PID）落盘在 `~/.pi/agent/teams/runs/<runId>/`；主会话中断后下次启动自动把残留 running 翻成 failed 记录并警告（孤儿 leader **只诊断不杀**，PID 可能复用，请人工确认后处理）；`/team:doctor` 可查看全部残留与损坏文件。
+- **崩溃恢复**：每个 run 的元数据快照（`status.json`，含 leader PID 与属主会话 PID）落盘在 `~/.pi/agent/teams/runs/<runId>/`；主会话中断后下次启动只把**属主已死**（ownerPid 探活失败）或无 ownerPid 的残留 running 翻成 failed 记录并警告——别的活会话正在跑的 run 不会被误翻；孤儿 leader **只诊断不杀**（PID 可能复用，请人工确认后处理）；`/team:doctor` 可查看全部残留与损坏文件。
 
 ## 命令与工具一览
 

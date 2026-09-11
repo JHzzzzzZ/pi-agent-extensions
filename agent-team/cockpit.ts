@@ -63,6 +63,11 @@ export interface CoordinatorDeps {
    * reconciled on the next session_start.
    */
   runStore?: RunStoreWriter;
+  /**
+   * Main-session PID recorded in status.json snapshots (ownerPid). Defaults
+   * to this process; another live session must not reconcile our runs.
+   */
+  ownerPid?: number;
   /** Test seams. */
   now?: () => string;
   nowMs?: () => number;
@@ -86,6 +91,8 @@ interface RunPlan {
   now: () => string;
   nowMs: () => number;
   runId: string;
+  /** Claim-time ISO timestamp reused by every snapshot/record of this run. */
+  startedAt: string;
   startedAtMs: number;
   progress: RunProgress;
 }
@@ -332,6 +339,7 @@ export class TeamRunCoordinator {
         startedAt: input.startedAt,
         status: input.status,
         ...(input.leaderPid !== undefined ? { leaderPid: input.leaderPid } : {}),
+        ownerPid: this.deps.ownerPid ?? process.pid,
         ...(input.error !== undefined ? { error: input.error } : {}),
         updatedAt: input.now(),
       });
@@ -361,6 +369,10 @@ export class TeamRunCoordinator {
     const nowMs = this.deps.nowMs ?? (() => Date.now());
     const runId = `run-${nowMs()}`;
     const startedAtMs = nowMs();
+    // One claim-time timestamp for the whole run: running snapshot, spawn
+    // refresh, terminal snapshot and terminal record all reuse it, so
+    // elapsed = updatedAt - startedAt stays truthful after settle.
+    const startedAt = now();
     // Claim the run BEFORE any await: two concurrent starts can no longer
     // both pass the RUN_IN_PROGRESS gate, stopAndSettle has a stable handle
     // (this.pending), and team_run can read the runId right after start().
@@ -402,12 +414,12 @@ export class TeamRunCoordinator {
     this.currentProgress = progress;
     // Crash-recovery snapshot: a running status.json on disk means the next
     // session can reconcile this run if this session dies mid-run.
-    this.persistRunStatus({ runId, team: team.name, task, startedAt: now(), status: "running", now });
+    this.persistRunStatus({ runId, team: team.name, task, startedAt, status: "running", now });
     if (options.signal) {
       if (options.signal.aborted) controller.abort();
       else options.signal.addEventListener("abort", () => controller.abort(), { once: true });
     }
-    const run = this.runActive(controller, options, { now, nowMs, runId, startedAtMs, progress });
+    const run = this.runActive(controller, options, { now, nowMs, runId, startedAt, startedAtMs, progress });
     this.pending = run;
     return run;
   }
@@ -420,7 +432,7 @@ export class TeamRunCoordinator {
    */
   private async runActive(controller: AbortController, options: StartOptions, plan: RunPlan): Promise<StartRunResult> {
     const { team, task } = options;
-    const { now, nowMs, runId, startedAtMs, progress } = plan;
+    const { now, nowMs, runId, startedAt, startedAtMs, progress } = plan;
     const git = this.deps.gitRunner ?? defaultGitRunner();
     const baseCwd = this.deps.cwd();
 
@@ -443,7 +455,7 @@ export class TeamRunCoordinator {
     // leader PID is carried into the terminal snapshot for orphan diagnostics.
     let leaderPid: number | undefined;
     const writeTerminal = (status: RunStatus, error?: string): void =>
-      this.persistRunStatus({ runId, team: team.name, task, startedAt: now(), status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
+      this.persistRunStatus({ runId, team: team.name, task, startedAt, status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
 
     // Budget accounting: leader turns are cumulative (event.usage), member
     // dispatches accumulate per tool_execution_end (details.totalUsage).
@@ -631,7 +643,7 @@ export class TeamRunCoordinator {
         onSpawn: (pid) => {
           if (pid === undefined) return;
           leaderPid = pid;
-          this.persistRunStatus({ runId, team: team.name, task, startedAt: now(), status: "running", leaderPid: pid, now });
+          this.persistRunStatus({ runId, team: team.name, task, startedAt, status: "running", leaderPid: pid, now });
         },
         // RPC channel: send the task once the child exists …
         onChild: (child) => {
@@ -700,7 +712,7 @@ export class TeamRunCoordinator {
         runId,
         team: team.name,
         task,
-        startedAt: now(),
+        startedAt,
         status: aborted ? "aborted" : failed ? "failed" : "completed",
         ...(failed
           ? {
