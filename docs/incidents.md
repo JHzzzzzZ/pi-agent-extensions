@@ -98,3 +98,10 @@
 - 根因：Windows 默认 260 字符 MAX_PATH 上限；node_modules 里嵌套依赖的 `dist-types/ts3.4` 路径超限，普通删除 API 无法遍历/删除这些条目，且失败不是总是报错（PowerShell 静默跳过）。
 - 处置（可复用流程）：① 空目录镜像两遍 `MSYS_NO_PATHCONV=1 robocopy <empty> <target> /MIR`（Git Bash 会把 `/MIR` 当路径转换，必须加 `MSYS_NO_PATHCONV=1` 或写 `//MIR`），第一遍删大部分、第二遍清剩余长路径文件；② `find <target> -depth -type d -exec rmdir {} \;` 逐级删空目录。删前先确认没有 reparse point（`Get-ChildItem -Recurse -Force -Directory | Where-Object { $_.Attributes -band ReparsePoint }`）——junction 删除另有事故（见上）。
 - 教训：worktree 删除失败不要反复重试或硬删；长路径是 Windows 结构性限制，每次使用上述 robocopy 流程（不试探），并先用 `find`/`du` 确认只剩空壳再删。
+
+## 成员派发死锁：子进程 stdin 无人关闭（agent-team v1.15.0 回归）
+
+- 症状：`count-duet` 两次真机派单（1→50、50→100）都卡在第一次 `team_dispatch`——成员子进程收到 prompt 后 4–8 分钟零输出、**零 TCP 连接**（连本地代理都没拨过）、CPU 冻结（46s 内 user 15.00s→15.00s），run 永远 running，只有 `team_stop` 能解除。
+- 根因：v1.15.0（819553a，steer/RPC 改造）把 `runner.ts` `defaultSpawn` 的 stdio 从 `["ignore","pipe","pipe"]` 改成 `["pipe","pipe","pipe"]`（为 leader RPC 通道），但成员走的是**同一个共享 spawn**——成员 prompt 全在 argv（`dispatch.ts`），全仓没有任何地方 `end()` 成员 stdin；pi 0.85.1 在 `--mode json -p` 下**读 stdin 到 EOF 才推进** ⇒ leader 同步等子进程退出、子进程等 stdin EOF。
+- 定位手段（可复用）：① 进程树取证（`Get-CimInstance Win32_Process` 拿父子关系 + UserModeTime/KernelModeTime 两次采样）——CPU 冻结 + 零连接说明**不是**"连着 provider 等响应"；② 同一 CLI / 模型 / prompt 的最小对照实验，唯一变量 = stdin（`</dev/null` 11s 完成 vs 打开管道 75s 零输出 vs 打开 20s 后关闭 23s 完成）。
+- 教训：① **子进程 stdio 是契约不是细节**——谁需要 stdin 必须逐调用方声明（现为 `runChildPi`/`PiSpawn` 的 `stdin` 选项，默认 `ignore`，leader RPC 显式 `pipe`）；② 共享 spawn 工厂的默认值改动会波及所有调用方，改 stdio/信号/窗口这类共享面必须逐个调用点复验；③ **fake 子进程测不出进程边界语义**（`makeFakeSpawn`/`FakeChild` 的 stdin 是普通对象，不会等 EOF）——回归护栏落在真实子进程用例（`runner.test.ts`）；④ 排障先取证再下结论：本轮最初把"无进展"讲成"阻塞"（判断对了但证据不足），事后才用对照实验坐实。
