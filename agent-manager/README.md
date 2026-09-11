@@ -46,6 +46,8 @@ npm run test:e2e       # 真机 e2e（opt-in，需 AGENT_MANAGER_E2E_MODEL + 鉴
 
 `--pi` 推荐指向 `cli.js`（如 `.../node_modules/@earendil-works/pi-coding-agent/dist/cli.js`）：Node 直启，绕开 Windows 上 `.cmd` 必须经 `cmd.exe` 包装与引号问题。留空则用 PATH 中的 `pi`。
 
+**Windows 已知限制（实测）**：`piPath` 走 PATH 中的 `pi.cmd`（经 `cmd.exe` 包装）时，提示词里的英文双引号等 cmd 元字符会被 cmd 解析破坏，子进程可能立即退出且无任何输出。提示词含引号/`&`/`|`/`>` 时，请把 pi 路径设为 `cli.js`（设置页或 `--pi`）。
+
 ## 功能
 
 **会话页**：列出/检索（用户+助手文本与会话名，大小写不敏感）会话，预览尾文与宿主接续命令；重命名 = 向会话文件末尾追加一条宿主语义的 `session_info`（不改文件名/header）；删除 = 移入工具回收站（可恢复，含原路径与 mtime）。重命名/删除/恢复都是**两段式**：先 dry-run 返回计划，页面弹确认后再带 `confirm:true` 执行。
