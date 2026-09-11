@@ -13,7 +13,7 @@
         │ spawn（同一 leader 会话文件原地续写 + 父 run 的 worktree）
         ▼
         Leader 子进程 pi --mode rpc --session <父会话文件> [--model <覆盖模型>]
-              │ team_dispatch { tasks: [{agent, task}] }（≤8 个/次，≤4 并发）
+              │ team_dispatch { tasks: [{agent, task}] }（≤8 个/次，≤8 并发）
               ▼
         Member 子进程 ×N：pi --mode json -p --no-session --model <member.model> [--tools ...]
                            [--append-system-prompt <member.prompt>]  "Task: <子任务>"

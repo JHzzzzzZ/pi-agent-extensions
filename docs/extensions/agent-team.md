@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 5d73480
+> last verified @ 376cd35
 
 ## 职责与边界
 
@@ -25,7 +25,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 ## 核心数据流
 
 1. `team_run`/`/team:run` → **model 预检**（`preflightTeamModels`，坏引用即 `MODEL_NOT_FOUND` 不 spawn）→ 默认后台派单（立即返回，含 runId）→ 拉起 leader 子进程（注入 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`），coordinator claim 即落 `status.json` running 快照。
-2. leader 解释团队 prompt → 调 `team_dispatch`（每 dispatch ≤8 任务、≤4 并发成员；预算来自团队 frontmatter `budget:`，默认 12/40）。
+2. leader 解释团队 prompt → 调 `team_dispatch`（每 dispatch ≤8 任务、≤8 并发成员；预算来自团队 frontmatter `budget:`，默认 12/40）。
 3. 每任务物化 `team-tmp://` prompt → member 子 pi 执行（env 剥 leader 三键、args 带 `--exclude-tools subagent,team_run`）→ 结果 ≤50KB / 摘要 ≤8KB 回 leader。
 4. cockpit 侧把 leader turn usage + 每次 dispatch 的 `details.totalUsage` 折叠进 `RunBudgetSnapshot`；费用/token 超限 → abort controller，终态 aborted + `BUDGET_EXCEEDED`。
 5. leader 汇总 → 终态记录经 `finalizeRun`（wait/后台单一终态路径）持久化 + 交付：后台 followUp 自动送达主会话——**completed 送报告，failed 送失败摘要**（`formatFailureNotice`：状态/runId/耗时/费用 + 错误 + 任务 + 成员结果行 + 部分报告；动态字段压平换行；整体 8KB `truncateUtf8` 上限，报告最后放所以先被截），aborted 不送达；`wait: true` 内联返回（同步契约不变，failed 带 `isError`）。
@@ -40,7 +40,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 - 命令面：冒号命令面（v1.12.0）——裸 `/team` 无参=列团队（`/team:list` 同义）、带参=用法提示；`/team:run <团队名> <任务>` 唯一派单入口，`/team:resume <runId> [补充指示]` 续跑入口（v1.21.0），`/team:status|:stop|:view|:clear|:doctor` 各自独立静态注册。旧空格子命令与 `/team <团队名> <任务>` 参数路由只提示改名、绝不执行；不再动态注册 `team:<name>`（v1.9.0）；团队名可与任意子命令同名（保留词概念退役）。
 - 自包含：不引 pwr、不依赖其它扩展目录，独立可复制加载。
-- 上限：每 dispatch 8 任务、4 并发、50KB 结果、8KB 摘要（协议级常量，不可配；`TeamErrorCodes` result union）。派发/成员运行预算可配（frontmatter `budget:`，默认 12/40；费用/token 默认无限），schema 级上限不进 budget。
+- 上限：每 dispatch 8 任务、8 并发、50KB 结果、8KB 摘要（协议级常量，不可配；`TeamErrorCodes` result union）。派发/成员运行预算可配（frontmatter `budget:`，默认 12/40；费用/token 默认无限），schema 级上限不进 budget。
 - **worktree 同 run 重派复用（v1.15.3）**：`createWorktree` 先读 `git worktree list --porcelain`——路径已注册且分支匹配 ⇒ 直接复用（返回 `{path, branch}`）；已注册但分支不匹配 ⇒ 提示 `git worktree remove --force "<path>"`；已注册但目录缺失（stale）⇒ 提示 `git worktree prune`；目录存在但未注册（被普通目录占用）⇒ 提示手工清理；`git worktree add <path> -b <branch>` 失败后分类：分支存在且被其它 worktree 检出 ⇒ 真 fatal + `git worktree list` 定位提示，分支存在但空闲 ⇒ attach 复用既有分支（`worktree add <path> <branch>`）。**设计决策：选复用而非新错误码**——同 run 二次派发对 leader 语义上应成功，可自动恢复的情况不推给人工（真机事故见 `docs/incidents.md`）。错误文案统一经导出的 `worktreeError()`：跳过 git 进度行（Preparing worktree / HEAD is now at / Updating files / Checking out files）取 fatal/error 行，无非进度行才回退首行；CRLF/连续空白压单行，仍 300 字上限。
 - **worktree 分支契约（v1.15.4）**：模板收敛到 `worktree.ts` 单一来源——团队共享 `teamWorktreeBranch(runId)` = `team-run-<runId>`（连字符：`team/<runId>` 会占据成员分支 `team/<runId>/<member>` 的 ref 目录，git ref 不能既是文件又是目录，先建团队 worktree 后首个成员 worktree add 必 `cannot lock ref` → `WORKTREE_UNAVAILABLE`，真机 run-1789108491578 见 `docs/incidents.md`）；成员 `memberWorktreeBranch(runId, member)` = `team/<runId>/<member>`。旧命名（`team/<runId>`）的存量团队 worktree 重派时走「已注册但分支不匹配」路径：可操作提示（`git worktree remove --force`），不崩溃、不静默删除。
 - `status.json` 只存元数据快照（runId/team/task/startedAt/status/leaderPid/ownerPid/updatedAt/error，v1.21.0 另加可选 `parentRunId`/`leaderSessionFile`/`worktree`）——完整 `TeamRunRecord` 仍走 session entries；写入 best-effort，读取宽松解析（ownerPid 等可选，v1 旧文件读为 undefined），损坏文件隔离不抛错（doctor/reconcile 报告）。**startedAt 语义**：claim 时生成一次放进 `RunPlan.startedAt`，running 快照/spawn 刷新/终态快照/终态 `TeamRunRecord` 同用该值——终态 elapsed = updatedAt − startedAt 才真实（旧缺陷：终态重写 `now()`，elapsed 恒 0）。

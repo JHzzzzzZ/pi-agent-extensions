@@ -13,7 +13,7 @@
 | leader 提问（人工澄清） | leader 侧 `ask.ts` `askLeaderQuestion`（team_ask 工具）；cockpit 侧 `AskChannel` + `index.ts` `askPortFrom(ctx)` 宿主对话框；RPC 协议 = pi stdout `extension_ui_request` ↔ stdin `extension_ui_response` |
 | 续跑/换模型 | `resume.ts`（父 status/会话镜像/cwd/override 纯函数 + `restoreWorktree` 在 `worktree.ts`）+ `cockpit.ts` `start({resume})`（`--session <父文件>` 原地续写 + 父 worktree 恢复）+ `team_resume` 工具//`/team:resume`；leader 会话落盘 `<runsRoot>/<runId>/session/`（v1.21.0） |
 | 停止/终态 | `cockpit.ts` `TeamRunCoordinator.stop()`（同步 abort）/`stopAndSettle()`（有界等待落定返回终态记录）+ `team_stop` 工具（runId 必填；aborted 记录补全 roster 成员） |
-| 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，4 并发成员 |
+| 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，8 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
 | 子进程 env / 工具面 | 成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`，exclude 优先于 `--tools`） |
 | 隔离分支 | `worktree.ts`（每次 run 独立分支；同 run 重派复用已注册 worktree / 空闲同名分支，不碰当前目录） |
@@ -39,7 +39,7 @@
 
 ## ANTI-PATTERNS
 - 从 pwr import 复用 —— 实证：自包含声明，`runner.ts` 另写一份子 pi 适配，不引 `pwr/runner`。
-- dispatch 超 8 任务/4 并发 —— 实证：`dispatch.ts` 硬上限，超发直接拒绝不排队。
+- dispatch 超 8 任务/8 并发 —— 实证：`dispatch.ts` 硬上限，超发直接拒绝不排队。
 - 成员 prompt 一句空话 —— 实证：`examples/dev-team.example.md` 要求角色+约束+输出格式+验收。
 - 前台 run 切视角换行重影 —— 实证：`todos/agent-team-todo.md` 未关闭条目，`view` 下 leader 派活后复现。
 
