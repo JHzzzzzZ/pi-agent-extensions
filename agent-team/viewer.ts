@@ -401,6 +401,8 @@ type Block =
   | { kind: "assistant"; text: string; ts: string }
   | { kind: "tools"; lines: string[] }
   | { kind: "error"; text: string; ts: string }
+  | { kind: "question"; text: string; ts: string }
+  | { kind: "answer"; text: string; ts: string }
   | { kind: "system"; text: string; ts: string };
 
 /** Old artifacts baked ▶/✓ icons into tool text; strip them for uniform styling. */
@@ -432,6 +434,10 @@ export function buildBlocks(entries: TranscriptEntry[], showTools: boolean): Blo
       blocks.push({ kind: "task", text: entry.text });
     } else if (entry.kind === "error") {
       blocks.push({ kind: "error", text: entry.text, ts: timestampOf(entry) });
+    } else if (entry.kind === "question") {
+      blocks.push({ kind: "question", text: entry.text, ts: timestampOf(entry) });
+    } else if (entry.kind === "answer") {
+      blocks.push({ kind: "answer", text: entry.text, ts: timestampOf(entry) });
     } else if (entry.kind === "system") {
       blocks.push({ kind: "system", text: entry.text, ts: timestampOf(entry) });
     }
@@ -476,6 +482,14 @@ export function blockLines(
       });
     case "error":
       return wrapText(`✗ ${block.text}`, width).map((line) => styles.error(line));
+    case "question": {
+      const label = styles.accent(`❓ 提问${block.ts ? ` · ${block.ts}` : ""}`);
+      return [label, ...wrapText(block.text, width)];
+    }
+    case "answer": {
+      const label = styles.success(`✔ 回答${block.ts ? ` · ${block.ts}` : ""}`);
+      return [label, ...wrapText(block.text, width)];
+    }
     case "system":
       return wrapText(`ℹ ${block.text}`, width).map((line) => styles.dim(line));
   }

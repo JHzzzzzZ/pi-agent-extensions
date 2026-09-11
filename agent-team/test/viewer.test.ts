@@ -171,6 +171,30 @@ test("buildBlocks merges consecutive tool rows and keeps each message separate",
   assert.deepEqual(firstTools.lines, ["read src/login.tsx", "read → file body"]);
 });
 
+test("buildBlocks keeps question/answer entries as their own blocks", () => {
+  const blocks = buildBlocks(
+    [
+      entry("assistant", "需要确认一下"),
+      entry("question", "提问：要发到哪个环境？"),
+      entry("answer", "回答：staging"),
+      entry("tool", "read x"),
+    ],
+    true,
+  );
+  assert.deepEqual(blocks.map((b) => b.kind), ["assistant", "question", "answer", "tools"]);
+});
+
+test("blockLines renders question/answer with distinct labels", () => {
+  const question = blockLines({ kind: "question", text: "要发到哪个环境？", ts: "12:34:56" }, 40, styles);
+  assert.equal(question[0], "❓ 提问 · 12:34:56");
+  assert.deepEqual(question.slice(1), ["要发到哪个环境？"]);
+  const answer = blockLines({ kind: "answer", text: "staging", ts: "12:35:00" }, 40, styles);
+  assert.equal(answer[0], "✔ 回答 · 12:35:00");
+  assert.deepEqual(answer.slice(1), ["staging"]);
+  const noTs = blockLines({ kind: "question", text: "x", ts: "" }, 40, styles);
+  assert.equal(noTs[0], "❓ 提问");
+});
+
 test("buildBlocks hides tool rows when toggled off and strips legacy icon prefixes", () => {
   const hidden = buildBlocks([entry("task", "t"), entry("tool", "▶ read x")], false);
   assert.deepEqual(hidden.map((b) => b.kind), ["task"]);
