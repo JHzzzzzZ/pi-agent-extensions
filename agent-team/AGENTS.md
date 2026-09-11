@@ -45,7 +45,7 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 559 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 564 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```

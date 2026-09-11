@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`） | 559 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`） | 564 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -272,7 +272,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 - **对话式建团** — 主 agent 调 `team_create`/`team_list` 工具直接创建/查看团队；团队定义文件（`~/.pi/agent/teams/*.md` 或项目 `.pi/teams/*.md`）可随时手改，下一次派单即生效
 - **派单与复用** — `/team:run <团队> <任务>`（统一派单入口）、`team_run` 工具（默认后台，返回含 runId；报告或失败摘要完成后自动送达主会话——failed 状态/错误/成员结果/部分报告同通道必达，主 agent 可重试或如实转告用户）；同一团队反复使用；`/team:stop [runId]` 或 `team_stop` 工具中止（settle-aware：停止后拿到 aborted 终态记录，报告 followUp 不再送达，可立即重新派单）；团队名可与子命令同名（保留词概念已退役）
-- **多 run 并发（v1.24.0）** — 同一会话最多同时推进 **3 个 run**（协议常量，不可配；第 4 个同步回 `RUN_IN_PROGRESS` 并列出活跃 runId；同毫秒派单自动 `run-<ms>-n` 后缀）；各 run 的进度/预算/停止/RPC 插话/提问独立，跨 run 互不串写。`team_status { runId }` 与 `/team:status [runId]` 定位单个 run（省略 = 全部活跃分节 + 最近终态；再附「近期 run」尾注），`team_stop`/`/team:stop` 省略 runId 三态（恰 1 活跃停它 / 0 活跃提示 / ≥2 活跃要求显式指定并列 runId）；viewer 按 `[`/`]` 环形切 run（多 run 时图例追加 ` · [/] 切 run`）；widget 多 run 折叠行 `agent-team · N run 并行 · ↓/← 查看详情`、展开为单 `main` 根 + 每 run 一棵子树；终态记录保留最近 5 条（`/reload` 逐条水合）
+- **多 run 并发（v1.25.0）** — 同一会话最多同时推进 **3 个 run**（协议常量，不可配；第 4 个同步回 `RUN_IN_PROGRESS` 并列出活跃 runId；同毫秒派单自动 `run-<ms>-n` 后缀）；各 run 的进度/预算/停止/RPC 插话/提问独立，跨 run 互不串写。`team_status { runId }` 与 `/team:status [runId]` 定位单个 run（省略 = 全部活跃分节 + 最近终态；再附「近期 run」尾注），`team_stop`/`/team:stop` 省略 runId 三态（恰 1 活跃停它 / 0 活跃提示 / ≥2 活跃要求显式指定并列 runId）；viewer 按 `[`/`]` 环形切 run（多 run 时图例追加 ` · [/] 切 run`）；widget 多 run 折叠行 `agent-team · N run 并行 · ↓/← 查看详情`、展开为单 `main` 根 + 每 run 一棵子树；终态记录保留最近 5 条（`/reload` 逐条水合）
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
 - **进度可视（可选中亮块）** — 数据驱动：有活跃 run 才挂亮块，run 落定自动消失（不再常驻终态行）。默认只有一行折叠提示（`agent-team <团队> · ↓/← 查看详情`），`↓`/`←`（焦点在主编辑器且编辑器为空时）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行：`↓`/`j` 到底即最后一个成员；成员行连接符 `├─`（非末项）/ `╰─`（末项圆角）、带状态图标与最新活动尾注，多行文本先压平成单行；每行按宿主内容宽补齐并包背景，选中行用更强背景），再按 `↑`/`↓`/`j`/`k` 移动，第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中、在 leader/成员行直接打开查看器并定位该 actor、`esc`/其它键退出并放行编辑器；`/login`、`/model` 等选择器/对话框打开时焦点不在编辑器，widget 完全不介入（方向键原样让给选择器，选中态自动退出）；状态变化（leader 事件/派发起止）即时刷新，1s tick 仅兜底。`/team:clear` 用于丢弃排队的 viewer 对话消息（无内容时提示亮块随 run 结束自动隐藏）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [agent-team/docs/tui-sync.md](agent-team/docs/tui-sync.md））
 - **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team:doctor` 自检报告
@@ -282,7 +282,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd agent-team
-npm install && npm test        # 559 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
+npm install && npm test        # 564 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck

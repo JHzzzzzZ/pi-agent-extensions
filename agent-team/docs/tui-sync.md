@@ -38,7 +38,7 @@
 | viewer 刷新动作 | `refresh: ["r", "R"]`（`fleet.ts:43`） | `r`/`R` 绕过 750ms 指纹门控强制重载重绘 | 已对齐 |
 
 | viewer 成员切换/滚动键位 | `selectUp: ["up", "k"]`、`selectDown: ["down", "j"]`、`selectFirst: ["home"]`、`selectLast: ["end"]`、`scrollUp: ["K"]`、`scrollDown: ["J"]`、`pageUp: ["pageUp"]`、`pageDown: ["pageDown"]`、`toggleTools: ["x", "X", "ctrl+o"]`（`fleet.ts:33-48`） | v1.7.0 及以前：`↑↓/j/k/PgUp/PgDn/g/G` 滚右栏、`←→/h/l/Tab/1-9` 切成员 | v1.8.0 起**全面对齐**（差异表 §3.2）；旧键退役按下忽略 |
-| viewer 切 run 键位 | fleet 无对应（fleet 检查器无多 run 概念） | v1.24.0：`prevRun: ["["]`、`nextRun: ["]"]` 按 `data.runs` 环形切换（actives 升序 + records 新→旧）；`runs ≤ 1`/无 runs 数据 → no-op；输入模式（m）下 `[`/`]` 进 buffer（现状语义优先）；确认态忽略 | agent-team 特有，差异表 §3.21 |
+| viewer 切 run 键位 | fleet 无对应（fleet 检查器无多 run 概念） | v1.25.0：`prevRun: ["["]`、`nextRun: ["]"]` 按 `data.runs` 环形切换（actives 升序 + records 新→旧）；`runs ≤ 1`/无 runs 数据 → no-op；输入模式（m）下 `[`/`]` 进 buffer（现状语义优先）；确认态忽略 | agent-team 特有，差异表 §3.21 |
 
 
 ## 3. 差异条目表
@@ -116,10 +116,10 @@
 | close 键位 | `["escape", "ctrl+c", "q"]` | `fleet.ts:34`、`fleet.ts:1150-1154` |
 | 退役键 | `←`/`→`/`h`/`l`/`Tab`/`1-9`/`g`/`G`（agent-team 旧键位；按下忽略不改状态，不关闭不报错） | fleet 无对应绑定（同为忽略路径）；agent-team v1.8.0 起 |
 | 发消息键位（特有） | `m` 进入单行输入模式；输入模式优先于一切现有按键：可打印字符（含 CJK）追加 buffer，backspace（`\x7f`）删最后一个码点，Enter 提交（返回 `chat-submit`），Esc/ctrl+c 只退出输入不关 viewer，其余控制序列忽略 | fleet 无对应语义（inspector 无对话输入）；agent-team 特有，`viewer.ts` `handleViewerKey` 输入分支 + `viewer-chat.test.ts` 锁定 |
-| viewer 切 run 键位 | `prevRun: ["["]`、`nextRun: ["]"]`（按 `data.runs` 环形；`runs≤1` no-op；输入模式优先；确认态忽略） | agent-team 特有（v1.24.0，差异条目 §3.21）；`viewer.ts` `VIEWER_ACTION_KEYS` + `handleViewerKey` |
-| viewer legend 多 run 追加段 | ` · [/] 切 run`（仅 `data.runs.length > 1`；位于基础图例与 `成员 x/y` 之间：`… q 关闭 · [/] 切 run · 成员 1/2`） | agent-team 特有（v1.24.0）；`viewer.ts` `legendRow` |
-| widget 多 run 折叠行 | `agent-team · <N> run 并行 · ↓/← 查看详情`（N = 活跃 run 数；单 run 仍为 `agent-team <团队> · ↓/← 查看详情`） | agent-team 特有（v1.24.0）；`widget.ts` `buildWidgetView` |
-| widget 多 run 树 | 单 `main` 根 + 每 run（startedAt 升序）一棵 leader 子树（leader 行沿用单 run 格式；成员末项按本 run 组内判定）；`WidgetRowSpec.runId`（root 行 `""`）、`onConfirm(actor, runId)` | agent-team 特有（v1.24.0）；`widget.ts` `buildWidgetView` |
+| viewer 切 run 键位 | `prevRun: ["["]`、`nextRun: ["]"]`（按 `data.runs` 环形；`runs≤1` no-op；输入模式优先；确认态忽略） | agent-team 特有（v1.25.0，差异条目 §3.21）；`viewer.ts` `VIEWER_ACTION_KEYS` + `handleViewerKey` |
+| viewer legend 多 run 追加段 | ` · [/] 切 run`（仅 `data.runs.length > 1`；位于基础图例与 `成员 x/y` 之间：`… q 关闭 · [/] 切 run · 成员 1/2`） | agent-team 特有（v1.25.0）；`viewer.ts` `legendRow` |
+| widget 多 run 折叠行 | `agent-team · <N> run 并行 · ↓/← 查看详情`（N = 活跃 run 数；单 run 仍为 `agent-team <团队> · ↓/← 查看详情`） | agent-team 特有（v1.25.0）；`widget.ts` `buildWidgetView` |
+| widget 多 run 树 | 单 `main` 根 + 每 run（startedAt 升序）一棵 leader 子树（leader 行沿用单 run 格式；成员末项按本 run 组内判定）；`WidgetRowSpec.runId`（root 行 `""`）、`onConfirm(actor, runId)` | agent-team 特有（v1.25.0）；`widget.ts` `buildWidgetView` |
 | 最小宽度门 | `width < 36` → 单行提示（agent-team 文案：`agent-team viewer 至少需要 36 列。Esc 关闭。`） | `fleet.ts:1321` |
 | innerWidth | `width - 2`（两侧 `│` 边框各占 1 列，无内边距空格） | `fleet.ts:1322` |
 | bodyHeight 公式 | `max(2, floor(rows * 0.85) - 6)`；rows 缺省 `?? 32` | `fleet.ts:1326-1327` |
@@ -155,7 +155,7 @@
 | agent-team 1.19.0 | 2026-09-11 | leader 提问（人工澄清）：leader 模式新增 `team_ask` 工具（`ask.ts`，自由文本/选项、默认 10 分钟、clamp 30s~30min），答复经 pi RPC dialog 协议走 cockpit `AskChannel` → 主会话宿主对话框（`askPortFrom`）→ 回写 leader stdin；超时/取消/无 UI/stop 全部 fail-closed 回 cancelled。transcript 新增 `question`/`answer` 条目，viewer 独立成块（`❓ 提问` / `✔ 回答`），等待期 leader activity「等待人工回答…」；差异条目 §3.19 + §4 字面量。测试 442→475（新增 ask/cockpit-ask/真实 pi E2E 等 33 个），全绿 + typecheck 零错误 | `772ef36` |
 | agent-team 1.21.0 | 2026-09-11 | `Run:` 行续跑 lineage（差异条目 §3.20）：续跑 run 显示 `Run: <runId>（续跑自 <parentRunId>）`（`ViewerData.parentRunId` 由 `buildViewerData` 装配）；头部仍 5 行、帧高不变量与键位不变。同期续跑功能：leader 会话落盘（`--session-dir`）/原地续写（`--session`）、`team_resume`/`/team:resume`、模型覆盖、worktree 复用——renderer 路径仅上述一行变化；viewer 测试锁定 lineage 且帧行数不变 | `feat/agent-team-resume` |
 | agent-team 1.23.0 | 2026-09-11 | 差异条目 §3.22：viewer ↔ 宿主对话框互斥——`team_ask` 提问到达先收起 viewer（`openTranscriptViewer.onOpen` + `viewerDialogHooks`），作答/取消/超时后自动重开（`askPortFrom` finally）；`VIEWER_SUSPEND_WAIT_MS = 1500` 有界放行。修复真机 bug：宿主对话框渲染在 editorContainer 基础层被 overlay 盖住且焦点被抢（todo #153） | `team-run-run-1789135763878` |
-| agent-team 1.24.0 | 2026-09-16 | 多 run 并发 TUI：viewer `[`/`]` 环形切 run（`ViewerData.runs`、`ViewerState.runId` 钉选、actor 丢失回 leader、scroll/notice 复位、绕指纹强制重绘；`stop(runId)`/`onMessage` target 携带当前 runId；legend 追加 ` · [/] 切 run`）；widget 多 run 树（单 `main` 根 + 每 run 一棵 leader 子树、组内末项判定；折叠行 `agent-team · <N> run 并行 · ↓/← 查看详情`；`WidgetRowSpec.runId` + `onConfirm(actor, runId)`）。差异条目 §3.21 + §4 新增四行；截图场景补双 run（viewer legend + widget 双子树）；提问互斥重开恢复 runId 位姿（`viewerLastRunId` → `viewerRunId`） | `feat/agent-team-multi-run-tui` |
+| agent-team 1.25.0 | 2026-09-16 | 多 run 并发 TUI：viewer `[`/`]` 环形切 run（`ViewerData.runs`、`ViewerState.runId` 钉选、actor 丢失回 leader、scroll/notice 复位、绕指纹强制重绘；`stop(runId)`/`onMessage` target 携带当前 runId；legend 追加 ` · [/] 切 run`）；widget 多 run 树（单 `main` 根 + 每 run 一棵 leader 子树、组内末项判定；折叠行 `agent-team · <N> run 并行 · ↓/← 查看详情`；`WidgetRowSpec.runId` + `onConfirm(actor, runId)`）。差异条目 §3.21 + §4 新增四行；截图场景补双 run（viewer legend + widget 双子树）；提问互斥重开恢复 runId 位姿（`viewerLastRunId` → `viewerRunId`） | `feat/agent-team-multi-run-tui` |
 
 ## 6. 范围外（明确不做）
 
