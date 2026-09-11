@@ -140,3 +140,10 @@
 - 根因：`dispatch.ts` 派生成员子进程时未显式声明 env（node spawn 缺省继承父进程环境 = leader 环境），而 leader 与成员共用一份扩展代码、靠环境变量分叉模式；工具面同理——子进程默认拿到全量工具。
 - 处置（v1.17.1）：成员 env 经 `stripLeaderEnv()` 剥离三键（其余变量原样保留，含哨兵/凭据）；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`DERIVED_AGENT_TOOL_DENYLIST` 单一来源；宿主 `isAllowedTool` 中 exclude 优先于 `--tools` 白名单）——真实 node 子进程边界测试锁定 env 剥离，fake spawn 锁定 args。
 - 教训：① 子进程环境是契约的一部分——派生方要显式列出「传什么/不传什么」，默认继承会把父进程的模式标记泄漏成子进程的行为开关；② 同一份代码多模式宿主，模式判据（env）绝不能让派生进程隐式继承；③ 「禁止子进程再派生」要在进程边界用 `--exclude-tools` 声明（工具名 denylist），只改 prompt 约束不住模型行为。
+
+## worktree 分支不匹配即白派 + 文案建议 remove --force 丢成员工作（agent-team v1.24.0，真机 run-1789133982726）
+
+- 症状：成员在 worktree 里自建 `feat/member` 分支干活，同一 run 再次派发给该成员时 `createWorktree` 判分支不匹配直接 `WORKTREE_UNAVAILABLE`——leader 收到的环境级失败指令是「不要再次派发」，整次回派白费；且错误文案建议 `git worktree remove --force "<path>"`，照做会连同成员未合并的改动一起丢掉。
+- 根因：`createWorktree` 把「已注册 worktree 的分支 ≠ 期望分支」一律当致命错误，没有区分「可无损切回」（期望分支存在 + 未被任何 worktree 检出 + 工作树干净）与「真不可恢复」（脏改/分支被占/分支已被删）；文案也只给了破坏性出路。
+- 处置（v1.24.0）：三条件成立时 `git switch <branch>` 自愈并返回可选 `switchedBackFrom`（dispatch 进度 note 与报告 worktree 行标注「已从 X 切回」）；其余失败改非破坏文案——当前/期望分支 + `Fix: git -C "<path>" switch "<branch>"`（脏区注明 commit/stash、分支被检出附 holder 路径 + `git worktree list`），分支不匹配路径禁提 `remove --force`；真实临时 git 仓库 5 用例 + dispatch 级集成回归（`test/worktree-branch-heal.test.ts`）。
+- 教训：① **「检测到不一致」不等于「不可恢复」**——修复类路径要先枚举无损恢复条件，只有条件不成立时才是错误；② **错误文案里的每条命令都是会被执行的建议**——`remove --force` 这类破坏性出路不该出现在可自愈/可人工决策的场景；③ 成员自建分支是子 agent 的正常行为，隔离层应兜底而不是惩罚。

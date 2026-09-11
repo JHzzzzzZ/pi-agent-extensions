@@ -411,7 +411,8 @@ export interface MemberRunResult {
   summary: string;
   usage: AgentUsage;
   durationMs: number;
-  worktree?: { path: string; branch: string };
+  /** `switchedBackFrom` 仅分支自愈时出现（切回前成员自建分支名，见 docs/incidents.md）。 */
+  worktree?: { path: string; branch: string; switchedBackFrom?: string };
   error?: { code: TeamErrorCode; message: string };
 }
 
