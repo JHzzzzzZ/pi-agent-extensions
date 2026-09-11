@@ -49,6 +49,22 @@ export const RUN_RESULT_MESSAGE_TYPE = "agent-team-result";
 /** Widget id (one status surface per extension, per repo convention). */
 export const WIDGET_ID = "agent-team";
 
+/**
+ * Default wait for a leader question before it degrades to "no answer"
+ * (user-chosen: 10 minutes — long enough for a human to notice, bounded so an
+ * unattended run never idles forever).
+ */
+export const ASK_TIMEOUT_DEFAULT_MS = 10 * 60 * 1000;
+
+/** Minimum wait the team_ask tool allows (never ask a human for less than 30s). */
+export const ASK_TIMEOUT_MIN_MS = 30 * 1000;
+
+/** Maximum wait for a leader question (tool + wire clamp). */
+export const ASK_TIMEOUT_MAX_MS = 30 * 60 * 1000;
+
+/** Leader-mode tool: ask the main session (human) a clarifying question. */
+export const ASK_TOOL_NAME = "team_ask";
+
 /** Repaint interval of the below-editor run widget (elapsed labels). */
 export const WIDGET_TICK_MS = 1000;
 

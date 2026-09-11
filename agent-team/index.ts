@@ -24,6 +24,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { askLeaderQuestion, formatAskResult, type AskPort, type AskToolOutcome } from "./ask.ts";
 import { discoverTeams, findTeam, parseTeamFile, splitModelThinking } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
@@ -46,7 +47,10 @@ import {
   type TranscriptEntry,
 } from "./transcript.ts";
 import {
+  ASK_TIMEOUT_DEFAULT_MS,
+  ASK_TOOL_NAME,
   LEADER_ENV_FILE,
+  LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
   MAX_RESULT_BYTES,
   RUN_ENTRY_TYPE,
@@ -140,6 +144,46 @@ function uiPortFrom(ctx: ExtensionContext): UiPort {
         return ctx.ui.theme.fg("dim", text);
       } catch {
         return text;
+      }
+    },
+  };
+}
+
+/**
+ * Builds the leader-question port over the main session's ctx.ui: the RPC
+ * dialog bridge presents the leader's question as a host dialog and returns
+ * the answer. Fail-closed — no UI, stale ctx, host errors and blank answers
+ * all degrade to cancelled so the leader never blocks on an impossible ask.
+ */
+function askPortFrom(ctx: ExtensionContext): AskPort {
+  return {
+    async present(request, signal) {
+      try {
+        if (!ctx.hasUI) return { kind: "unavailable" };
+        const opts = { ...(request.timeoutMs !== undefined ? { timeout: request.timeoutMs } : {}), signal };
+        if (request.method === "select") {
+          const value = await ctx.ui.select(request.title, request.options ?? [], opts);
+          return typeof value === "string" && value.trim().length > 0
+            ? { kind: "answer", value }
+            : { kind: "cancelled" };
+        }
+        if (request.method === "confirm") {
+          return { kind: "answer", value: await ctx.ui.confirm(request.title, request.message ?? "", opts) };
+        }
+        if (request.method === "editor") {
+          // ctx.ui.editor has no timeout/signal options; the channel backstop
+          // still bounds the wait from the leader's side.
+          const value = await ctx.ui.editor(request.title, request.prefill);
+          return typeof value === "string" && value.trim().length > 0
+            ? { kind: "answer", value }
+            : { kind: "cancelled" };
+        }
+        const value = await ctx.ui.input(request.title, request.placeholder, opts);
+        return typeof value === "string" && value.trim().length > 0
+          ? { kind: "answer", value }
+          : { kind: "cancelled" };
+      } catch {
+        return { kind: "cancelled" };
       }
     },
   };
@@ -267,6 +311,55 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
           totalUsage,
         },
       };
+    },
+  });
+
+  // Leader → human questions: the child runs in `--mode rpc`, so ctx.ui
+  // dialogs surface as extension_ui_request lines the cockpit answers over
+  // stdin. Every wait is bounded (tool floor/ceiling + cockpit backstop),
+  // and an unanswered question is a normal tool result (never an error) so
+  // the leader proceeds on its own judgment instead of retrying.
+  const teamName = parsed && parsed.ok ? parsed.value.name : process.env[LEADER_ENV_NAME] || "team";
+  pi.registerTool({
+    name: ASK_TOOL_NAME,
+    label: "Team Ask",
+    description:
+      "向用户（主会话）提问并阻塞等待回答：需求有歧义、需要人类拍板、或影响结果的假设无法自行判断时使用。不传 options 为自由文本输入，传 options（2~10 项）为选项选择。超时/被取消/主会话无 UI 时返回“未获回答”，据此继续任务并在报告中说明假设。",
+    parameters: Type.Object({
+      question: Type.String({ description: "要问用户的问题：写清上下文、影响与期望（用户看不到你与成员的对话，必须自包含）" }),
+      options: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "提供选项时向用户呈现选择列表（2~10 项）；省略则请求自由文本",
+          minItems: 2,
+          maxItems: 10,
+        }),
+      ),
+      timeoutMs: Type.Optional(
+        Type.Number({
+          description: "等待回答的超时（毫秒），默认 600000（10 分钟），范围 30000~1800000",
+          default: ASK_TIMEOUT_DEFAULT_MS,
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      let outcome: AskToolOutcome;
+      try {
+        outcome = await askLeaderQuestion(
+          ctx.ui,
+          teamName,
+          {
+            question: params.question,
+            ...(params.options ? { options: params.options } : {}),
+            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+          },
+          signal,
+        );
+      } catch {
+        // ctx.ui access itself can throw on a stale context — fail closed.
+        outcome = { answered: false };
+      }
+      const result = formatAskResult(outcome);
+      return { content: [{ type: "text" as const, text: result.text }], details: result.details };
     },
   });
 }
@@ -713,6 +806,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       team,
       task,
       ui,
+      ask: askPortFrom(ctx),
       // 状态变化点事件即时重绘（不必等 1s tick）：首个事件通常要等 leader
       // 子进程启动，故下一行再补一帧，派单后亮块立即出现。
       onProgress: () => refreshWidget(),
@@ -826,6 +920,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         task: params.task,
         ui,
         signal,
+        ask: askPortFrom(ctx),
         onProgress: (progress) => {
           // 状态变化点事件即时重绘（下方亮块与工具进度共用同一观察点）。
           refreshWidget();

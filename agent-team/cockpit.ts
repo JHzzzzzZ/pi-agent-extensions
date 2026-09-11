@@ -11,6 +11,7 @@
 
 import * as path from "node:path";
 import { startAlignedTicker } from "./aligned-ticker.ts";
+import { AskChannel, outcomeEntryText, questionEntryText, type AskPort } from "./ask.ts";
 import { splitModelThinking } from "./config.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
@@ -73,6 +74,8 @@ export interface CoordinatorDeps {
   /** Test seams. */
   now?: () => string;
   nowMs?: () => number;
+  /** Test seam: backstop margin over a leader question's timeout (default 5000ms). */
+  askBackstopMarginMs?: number;
 }
 
 export type StartRunResult =
@@ -84,6 +87,8 @@ interface StartOptions {
   team: TeamConfig;
   task: string;
   ui: UiPort;
+  /** Main-session dialog port for leader questions (absent = fail-closed). */
+  ask?: AskPort;
   onProgress?: (progress: RunProgress) => void;
   signal?: AbortSignal;
 }
@@ -128,6 +133,9 @@ export interface RunStatusSnapshot {
 
 /** 任务行显示上限（仅任务文本本身，不含 `任务: ` 前缀）：60 显示列。 */
 const STATUS_TASK_MAX_WIDTH = 60;
+
+/** Live leader activity shown while a question waits for the human. */
+const ASK_ACTIVITY_MAX_WIDTH = 80;
 
 /** 任务文本：先压平换行，再按显示宽度截断（CJK 双宽，超宽补 `…`）。 */
 function statusTaskText(task: string): string {
@@ -463,6 +471,9 @@ export class TeamRunCoordinator {
     // stale "running" on disk (session_start reconcile depends on it). The
     // leader PID is carried into the terminal snapshot for orphan diagnostics.
     let leaderPid: number | undefined;
+    // Leader → human questions: created once the transcript sink exists,
+    // disposed on settle/abort (see the finally block).
+    let askChannel: AskChannel | undefined;
     const writeTerminal = (status: RunStatus, error?: string): void =>
       this.persistRunStatus({ runId, team: team.name, task, startedAt, status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
 
@@ -539,6 +550,28 @@ export class TeamRunCoordinator {
           /* observer failures never break the run */
         }
       };
+
+      // Leader questions (RPC dialogs): presented in the main session, the
+      // answer travels back over the same stdin channel steer uses. Every
+      // failure path is bounded (timeout / abort / no UI) — the run never
+      // waits forever on a human.
+      askChannel = new AskChannel({
+        port: options.ask,
+        write: (line) => this.leaderStdin?.write(line),
+        signal: controller.signal,
+        backstopMarginMs: this.deps.askBackstopMarginMs,
+        onQuestion: (request) => {
+          recordTranscript("question", questionEntryText(request));
+          progress.leaderActivity = `等待人工回答：${truncateVisible(flattenText(request.title), ASK_ACTIVITY_MAX_WIDTH)}`;
+          render();
+        },
+        onOutcome: (_request, outcome) => {
+          const entry = outcomeEntryText(outcome);
+          recordTranscript(entry.kind, entry.text);
+          progress.leaderActivity = outcome.kind === "answer" ? "已收到回答，leader 继续" : "未获回答，leader 继续";
+          render();
+        },
+      });
 
       const onEvent = (event: ChildEvent) => {
         if (event.type === "message_end" && event.role === "assistant") {
@@ -715,14 +748,22 @@ export class TeamRunCoordinator {
         // process exits — it only ever returns on stdin end.
         onWire: (message) => {
           if (message.type === "agent_settled") {
+            // Leader is exiting: drop any in-flight question and close stdin
+            // (RPC exits only on stdin end).
+            askChannel?.dispose();
             this.closeLeaderStdin();
             return;
           }
           if (message.command === "prompt" && message.success === false) {
             this.promptError =
               typeof message.error === "string" ? message.error : "pi rejected the leader prompt";
+            askChannel?.dispose();
             this.closeLeaderStdin();
+            return;
           }
+          // Dialog requests (extension_ui_request) are bridged to the main
+          // session; everything else stays tolerated-and-ignored.
+          askChannel?.handle(message);
         },
       });
 
@@ -807,6 +848,7 @@ export class TeamRunCoordinator {
       writeTerminal("failed", `failed to start leader process: ${message}`);
       return { ok: false, code: "CHILD_FAILED", message: `failed to start leader process: ${message}` };
     } finally {
+      askChannel?.dispose();
       this.closeLeaderStdin();
       this.promptError = undefined;
       this.active = null;
