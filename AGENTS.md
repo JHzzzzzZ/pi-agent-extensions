@@ -59,7 +59,7 @@ node tools/install-smoke.mjs --install <pi install 源>   # 真跑 README 推荐
 
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 45 个测试
-cd agent-team && npm install && npm test                                        # 512 个测试（node --test test/*.test.ts；另 node test/resume-host-smoke.mjs 验真实 pi 的 --session 续写）
+cd agent-team && npm install && npm test                                        # 514 个测试（node --test test/*.test.ts；另 node test/resume-host-smoke.mjs 验真实 pi 的 --session 续写）
 node --experimental-strip-types --test run-timer/run-timer.test.ts run-timer/aligned-ticker.test.ts   # 59 个测试，此目录无 package.json
 node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts                # 63 个测试，此目录无 package.json
 node --experimental-strip-types --test human-notify/index.test.ts                # 37 个测试，此目录无 package.json

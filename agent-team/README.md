@@ -204,7 +204,7 @@ leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（512 个测试，含真实 git worktree 与真实 pi 子进程 E2E）
+npm test          # node --test test/*.test.ts（514 个测试，含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
