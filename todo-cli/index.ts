@@ -3,7 +3,9 @@
  * 变成 agent 可直接调用的原子操作，取代 skill 里的人工 grep + edit 步骤。
  *
  * 能力（实现源见 ./core.ts，与仓库 CLI `tools/todo.mjs` 同一套逻辑）：
- *   todo 工具（agent 调用，作用于当前会话工作目录的 todos/）
+ *   todos 工具（agent 调用，作用于当前会话工作目录的 todos/）
+ *     —— 工具名用复数 `todos`：第三方扩展常注册单数 `todo`（如 @juicesharp/rpiv-todo，
+ *        宿主的工具注册表无命名空间，同名会让后加载的一方整个扩展加载失败）
  *     action="summary"  按文件汇总（open/processing/done/total）
  *     action="list"     条目列表，可过滤 status / file
  *     action="add"      登记新需求（跨全部文件查重，重复拒绝且不写入）
@@ -29,7 +31,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { main } from "./core.ts";
 
-export const TODO_TOOL = "todo";
+export const TODO_TOOL = "todos";
 export const TODO_COMMAND = "todo";
 
 /** 冒号子命令（独立静态注册；裸 /todo 只做盘点摘要与用法提示）。 */
@@ -181,7 +183,7 @@ export default function todoCli(pi: ExtensionAPI, overrides: TodoCliOverrides = 
 
   pi.registerTool({
     name: TODO_TOOL,
-    label: "Todo",
+    label: "Todos",
     description: [
       "读写当前项目 `todos/` 工作流文件（`todos/<插件名>-todo.md`）：盘点、登记（跨文件查重）、领取（processing 标注）、完成（勾选 + 注记）、交接扫描（triage）、lint。",
       "agent 的自有工作流：新需求先 add 登记（拒绝重复）；开工先 claim 领取；收尾 complete 并写完成注记；新工作段开始用 triage 盘点 worktree 与遗留条目。",
@@ -234,7 +236,7 @@ export default function todoCli(pi: ExtensionAPI, overrides: TodoCliOverrides = 
         };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `todo 执行失败：${describeError(error)}` }],
+          content: [{ type: "text", text: `todos 执行失败：${describeError(error)}` }],
           details: { action: params.action },
           isError: true,
         };
