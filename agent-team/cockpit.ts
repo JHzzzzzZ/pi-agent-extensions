@@ -21,6 +21,7 @@ import { fileRunStore, RUN_STATUS_VERSION, type RunStoreWriter } from "./runstor
 import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, teamWorktreeBranch, type GitRunner } from "./worktree.ts";
 import {
+  DERIVED_AGENT_TOOL_DENYLIST,
   LEADER_ENV_FILE,
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
@@ -573,6 +574,10 @@ export class TeamRunCoordinator {
 
       const onEvent = (event: ChildEvent) => {
         if (event.type === "message_end" && event.role === "assistant") {
+          // Leader 阶段：assistant 消息落地 = 思考/等待下一个事件（v1.17.0 活动行）。
+          progress.leaderPhase = "waiting";
+          delete progress.leaderToolName;
+          progress.leaderLastEventAtMs = nowMs();
           if (event.fullText) recordTranscript("assistant", event.fullText);
           if (event.usage) {
             progress.leaderNote = `turn ${event.usage.turns}`;
@@ -589,9 +594,17 @@ export class TeamRunCoordinator {
           return;
         }
         if (event.type === "tool_execution_start") {
+          // Leader 阶段：进入工具调用（工具名供 viewer 活动行显示）。
+          progress.leaderPhase = "tool";
+          progress.leaderToolName = event.toolName;
+          progress.leaderLastEventAtMs = nowMs();
           // Transcript keeps every leader tool call; progress only tracks dispatch.
           recordTranscript("tool", toolCallText(event.toolName, event.args));
-          if (event.toolName !== "team_dispatch") return;
+          if (event.toolName !== "team_dispatch") {
+            // 普通工具的起止也改变 leader 活动阶段：必须刷新观察者。
+            render();
+            return;
+          }
           const tasks = (event.args as { tasks?: Array<{ agent?: string; task?: string }> } | undefined)?.tasks;
           const b = progress.budget;
           if (b) {
@@ -611,9 +624,39 @@ export class TeamRunCoordinator {
           render();
           return;
         }
+        if (event.type === "tool_execution_update") {
+          // 工具流式输出：只刷新时间；team_dispatch 的进度载荷带成员活动，
+          // 按名字折入 progress.members（viewer 成员活动行数据源，v1.17.0）。
+          progress.leaderLastEventAtMs = nowMs();
+          if (event.toolName === "team_dispatch") {
+            const members = parseDispatchMemberResults(event.details);
+            if (members) {
+              for (const member of members) {
+                const existing = progress.members.find((m) => m.name === member.name);
+                if (!existing) continue;
+                existing.status = member.status;
+                if (member.note !== undefined) existing.note = member.note;
+                if (member.latest !== undefined) existing.latest = member.latest;
+                if (member.phase !== undefined) existing.phase = member.phase;
+                if (member.toolName !== undefined) existing.toolName = member.toolName;
+                else delete existing.toolName;
+                if (member.lastActivityAtMs !== undefined) existing.lastActivityAtMs = member.lastActivityAtMs;
+              }
+            }
+          }
+          render();
+          return;
+        }
         if (event.type === "tool_execution_end") {
+          // Leader 阶段：工具结束 = 思考中（活动行显式回 waiting）。
+          progress.leaderPhase = "waiting";
+          delete progress.leaderToolName;
+          progress.leaderLastEventAtMs = nowMs();
           recordTranscript("tool", toolResultText(event.toolName, event.text));
-          if (event.toolName !== "team_dispatch") return;
+          if (event.toolName !== "team_dispatch") {
+            render();
+            return;
+          }
           const totalUsage = parseDispatchTotalUsage(event.details);
           if (totalUsage) {
             memberCost += totalUsage.cost;
@@ -658,6 +701,7 @@ export class TeamRunCoordinator {
       if (team.leader.model) args.push("--model", team.leader.model);
       if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
       if (this.deps.extensionEntryPath) args.push("-e", this.deps.extensionEntryPath);
+      args.push("--exclude-tools", DERIVED_AGENT_TOOL_DENYLIST.join(","));
       args.push("--append-system-prompt", `team-tmp://${leaderPrompt}`);
 
       const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);

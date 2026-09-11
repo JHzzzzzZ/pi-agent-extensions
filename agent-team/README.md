@@ -137,7 +137,7 @@ agent-team count-duet · ↓/← 查看详情
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的四行元信息头（`Run:` / `State:` / `成员:` / `模型:`——模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的五行元信息头（`Run:` / `State:` / `成员:` / `模型:` / `活动:`——模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`；活动行为选中 actor 的当前活动（v1.17.0）：`思考中` / `工具调用 <tool>` / `排队中` / `已完成`/`失败`/`已中止` / `run 已结束`，活动已知时附 ` · 距上次输出 <age>`（age 5 秒分桶：`0s`/`5s`…，≥60s 如 `2m5s`；分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘），live 阶段由 leader/member 子进程事件驱动（tool start/update/end、assistant message_end），无 live progress 时从 transcript 末条推导），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
@@ -166,7 +166,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 - **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行（可用团队文件 `budget:` 块调整）；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
 - **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块展开头行在设了费用上限时显示余额提示（折叠行不含）。
 - **崩溃恢复**：每个 run 的元数据快照（`status.json`，含 leader PID 与属主会话 PID）落盘在 `~/.pi/agent/teams/runs/<runId>/`；主会话中断后下次启动只把**属主已死**（ownerPid 探活失败）或无 ownerPid 的残留 running 翻成 failed 记录并警告——别的活会话正在跑的 run 不会被误翻；孤儿 leader **只诊断不杀**（PID 可能复用，请人工确认后处理）；`/team:doctor` 可查看全部残留与损坏文件。
-- **终态记录自动归档（v1.17.0）**：run 落终态（completed/failed/aborted）或 `session_start` reconcile 翻 failed 时，把该 run 的工作记录复制到主工作区 `history/team-runs/<runId>/`。记录源两种形态都扫：运行项目根（`<worktreeRoot>/<runId>/` 的一层子目录——team 共享 worktree 与各成员 worktree——以及主会话 cwd）下的 `.pi/team-runs/<runId>/`（目录，其下文件平铺复制）与 `.pi/team-runs/<runId>.md`（单文件，复制进目标目录）。**为什么必须归档**：worktree 团队的 run worktree 会被 `git worktree remove` 整体删除，只有主工作区 `history/` 副本存活。目标已有同名文件且字节不同 → 保留既有，新记录改名 `<名>.conflict-<UTC 紧凑时间戳>` 另存（双方都留）；字节相同 → 幂等跳过；目标目录已存在只做文件级合并，不覆盖。源永不删除、不做任何 git 操作；归档全程异常隔离，失败只发 warning 诊断，绝不影响 run 终态。
+- **终态记录自动归档（v1.18.0）**：run 落终态（completed/failed/aborted）或 `session_start` reconcile 翻 failed 时，把该 run 的工作记录复制到主工作区 `history/team-runs/<runId>/`。记录源两种形态都扫：运行项目根（`<worktreeRoot>/<runId>/` 的一层子目录——team 共享 worktree 与各成员 worktree——以及主会话 cwd）下的 `.pi/team-runs/<runId>/`（目录，其下文件平铺复制）与 `.pi/team-runs/<runId>.md`（单文件，复制进目标目录）。**为什么必须归档**：worktree 团队的 run worktree 会被 `git worktree remove` 整体删除，只有主工作区 `history/` 副本存活。目标已有同名文件且字节不同 → 保留既有，新记录改名 `<名>.conflict-<UTC 紧凑时间戳>` 另存（双方都留）；字节相同 → 幂等跳过；目标目录已存在只做文件级合并，不覆盖。源永不删除、不做任何 git 操作；归档全程异常隔离，失败只发 warning 诊断，绝不影响 run 终态。
 
 ## 命令与工具一览
 
@@ -181,7 +181,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（413 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（437 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
@@ -203,5 +203,6 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 
 - 零构建 TS ESM；entry `index.ts` 默认导出工厂；通过环境变量 `PI_AGENT_TEAM_FILE` 区分 leader 模式（只注册 `team_dispatch`）与驾驶舱模式（注册命令/工具/Widget）——同一份代码两种形态。
 - 成员子进程与 pwr 的 `PiAgentRunner`、官方 subagent 扩展同模式：`--mode json -p --no-session`、行 JSON 事件流解析（usage/stopReason/finalText）、`team-tmp://` prompt 物化为 0600 临时文件、SIGTERM→SIGKILL 中止。本扩展自包含，不 import pwr。
+- 子进程环境与工具面显式声明（v1.17.1）：成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
 - 结果截断：单成员结果 50KB、摘要 8KB；错误按成员隔离（单个成员失败不拖垮整次 dispatch）。
 - 已知限制（v1）：任务为纯文本（GitHub issue 输入、成员后端适配外部 CLI 如 codex/claude-code 预留后续）；worktree 不自动合并；无超时（手动 `/team:stop`）。

@@ -17,9 +17,12 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { TuiMainScreen, type Component } from "@earendil-works/pi-tui";
 import {
+  VIEWER_CHROME_ROWS,
   VIEWER_OVERLAY_OPTIONS,
   TranscriptViewer,
   charWidth,
+  computeFrameHeight,
+  formatActorActivity,
   plainStyles,
   stripAnsi,
   type ViewerData,
@@ -495,6 +498,130 @@ test("TranscriptViewer dispose 幂等：双调不炸且 timer 只停一次", asy
     const afterDispose = loadCount;
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(loadCount, afterDispose, "dispose 后 timer 停：load 不再增长");
+  } finally {
+    viewer.dispose();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Slice 8：活动行（v1.17.0）——真实 TuiMainScreen + 假终端全链路
+// ---------------------------------------------------------------------------
+
+/** 活动行场景：activity 由生产侧 buildViewerData 烘焙（此处直接给出）。 */
+function activityData(activity: string, fields: { phase?: "tool" | "waiting"; toolName?: string; lastActivityAtMs?: number } = {}): ViewerData {
+  return {
+    team: "count-duet",
+    runId: "run-1788938207941",
+    runStatus: "running",
+    elapsed: "53s",
+    actors: [
+      { actor: "_leader", label: "leader", status: "running", activity, ...fields },
+      { actor: "front", label: "front", status: "running" },
+    ],
+    entries: new Map<string, TranscriptEntry[]>([["_leader", [entry("task", "从1数到10")]]]),
+  };
+}
+
+/** 真实宿主脚手架：真 TuiMainScreen + 假终端 + 真 TranscriptViewer（load 可换）。 */
+function mountActivityHost(load: () => ViewerData): {
+  term: { columns: number; rows: number };
+  tui: TuiMainScreen;
+  baseLines: string[];
+  viewer: TranscriptViewer;
+  screen: FakeScreen;
+} {
+  const screen = new FakeScreen(160, 40);
+  const term = {
+    columns: screen.cols,
+    rows: screen.rows,
+    write: (data: string): void => {
+      screen.feed(data);
+    },
+    hideCursor: (): void => {},
+    showCursor: (): void => {},
+  };
+  const tui = new TuiMainScreen(term as never);
+  const baseLines = ["$ pi agent-team count-duet 从1数到10"];
+  const base: Component = {
+    render: () => [...baseLines],
+    handleInput: () => {},
+    invalidate: () => {},
+  };
+  tui.addChild(base);
+  const viewer = new TranscriptViewer({
+    load,
+    done: () => {},
+    styles: plainStyles(),
+    rows: () => term.rows,
+    refreshMs: 3600_000, // 定时器不参与：帧由 renderNow 精确驱动
+  });
+  tui.showOverlay(viewer, VIEWER_OVERLAY_OPTIONS);
+  return { term, tui, baseLines, viewer, screen };
+}
+
+// 验收 1：活动行随阶段变化，思考中与工具调用都能从真实写屏路径辨认。
+test("真实宿主：活动行随阶段变化（思考中 ↔ 工具调用 <tool>），反复重绘 chrome 恒一组", () => {
+  let data = activityData("思考中 · 距上次输出 5s", { phase: "waiting", lastActivityAtMs: 1_000 });
+  const { tui, baseLines, viewer, screen } = mountActivityHost(() => data);
+  try {
+    tui.renderNow();
+    assert.ok(
+      screen.text().some((line) => line.includes("活动: 思考中 · 距上次输出 5s")),
+      `像素屏缺思考中活动行：${screen.text().filter((l) => l.includes("活动:")).join(" | ")}`,
+    );
+
+    data = activityData("工具调用 team_dispatch · 距上次输出 5s", { phase: "tool", toolName: "team_dispatch", lastActivityAtMs: 1_000 });
+    baseLines.push("leader turn 1 streaming…");
+    tui.renderNow();
+    assert.ok(
+      screen.text().some((line) => line.includes("活动: 工具调用 team_dispatch · 距上次输出 5s")),
+      `像素屏缺工具调用活动行：${screen.text().filter((l) => l.includes("活动:")).join(" | ")}`,
+    );
+
+    // 重影回归：活动来回切换 + 主屏增长的多帧重绘后，chrome 仍恰一组、帧高不变。
+    for (let i = 0; i < 5; i++) {
+      data =
+        i % 2 === 0
+          ? activityData("思考中 · 距上次输出 10s", { phase: "waiting", lastActivityAtMs: 1_000 })
+          : activityData("工具调用 read · 距上次输出 10s", { phase: "tool", toolName: "read", lastActivityAtMs: 1_000 });
+      baseLines.push(`leader turn ${i + 2} streaming…`);
+      tui.renderNow();
+    }
+    const model = (tui as unknown as { previousLines: string[] }).previousLines;
+    assert.equal(model.filter(isTitleRow).length, 1, "屏模型标题行应恰 1");
+    assert.equal(screen.text().filter(isTitleRow).length, 1, "像素屏标题行应恰 1");
+    assert.equal(screen.text().filter(isRosterRow).length, 1, "像素屏 roster 行应恰 1");
+    assert.equal(viewer.render(160).length, computeFrameHeight(40) + VIEWER_CHROME_ROWS, "帧总行数不变");
+  } finally {
+    viewer.dispose();
+  }
+});
+
+// 验收 2：长时间无输出时时长文本按 5s 桶推进、可辨认（同桶不跳字）。
+test("真实宿主：时长 5s 分桶推进（0s → 5s → 2m5s）可辨认", () => {
+  const lastActivityAtMs = 1_000_000;
+  let nowMs = lastActivityAtMs;
+  const { tui, viewer, screen } = mountActivityHost(() => {
+    const activity = formatActorActivity({ status: "running", phase: "waiting", lastActivityAtMs }, true, nowMs);
+    return activityData(activity, { phase: "waiting", lastActivityAtMs });
+  });
+  try {
+    tui.renderNow();
+    assert.ok(screen.text().some((line) => line.includes("距上次输出 0s")), "起始 0s 桶上屏");
+
+    nowMs += 4_999;
+    tui.renderNow();
+    assert.ok(screen.text().some((line) => line.includes("距上次输出 0s")), "同桶推进不跳字");
+    assert.ok(!screen.text().some((line) => line.includes("距上次输出 5s")), "未跨桶不出现 5s");
+
+    nowMs += 1; // 跨过 5000ms 桶边界
+    tui.renderNow();
+    assert.ok(screen.text().some((line) => line.includes("距上次输出 5s")), "跨桶后 5s 上屏");
+
+    nowMs = lastActivityAtMs + 125_000;
+    tui.renderNow();
+    assert.ok(screen.text().some((line) => line.includes("距上次输出 2m5s")), "长无输出分秒文案可辨认");
+    assert.equal(viewer.render(160).length, computeFrameHeight(40) + VIEWER_CHROME_ROWS, "帧总行数不变");
   } finally {
     viewer.dispose();
   }

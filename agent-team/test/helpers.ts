@@ -170,3 +170,8 @@ export function toolExecutionStartLine(toolName: string, args: unknown): string 
 export function toolExecutionEndLine(toolName: string, result: unknown): string {
   return JSON.stringify({ type: "tool_execution_end", toolName, result });
 }
+
+/** JSON tool_execution_update line (pi stream format: `partial.content`/`partial.details`). */
+export function toolExecutionUpdateLine(toolName: string, partial: unknown): string {
+  return JSON.stringify({ type: "tool_execution_update", toolName, partial });
+}

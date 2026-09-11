@@ -14,10 +14,19 @@ import {
   createDispatchExecutor,
   parseDispatchMemberResults,
   parseDispatchRequest,
+  stripLeaderEnv,
 } from "../dispatch.ts";
-import { truncateUtf8, type DispatchOutcome } from "../types.ts";
+import { defaultSpawn, runChildPi } from "../runner.ts";
+import {
+  DERIVED_AGENT_TOOL_DENYLIST,
+  LEADER_ENV_FILE,
+  LEADER_ENV_NAME,
+  LEADER_ENV_RUNID,
+  truncateUtf8,
+  type DispatchOutcome,
+} from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
-import { makeFakeSpawn, messageEndLine, sleep, waitForChild } from "./helpers.ts";
+import { makeFakeSpawn, messageEndLine, sleep, toolExecutionEndLine, toolExecutionStartLine, toolExecutionUpdateLine, waitForChild } from "./helpers.ts";
 
 function assistantLine(text: string): string {
   return messageEndLine("assistant", {
@@ -325,6 +334,117 @@ test("buildProgressText renders status icons, notes and latest activity", () => 
   assert.match(text, /✓ b done/);
 });
 
+/**
+ * Snapshot/restore the env keys these tests mutate. The leader keys are set
+ * in the test process to prove the member path strips them (and the real
+ * boundary test proves the OS-level child never sees them).
+ */
+function snapshotMemberEnv(): () => void {
+  const keys = [LEADER_ENV_FILE, LEADER_ENV_NAME, LEADER_ENV_RUNID, "AGENT_TEAM_STRIP_SENTINEL"] as const;
+  const saved = new Map<string, string | undefined>(keys.map((key) => [key, process.env[key]]));
+  return () => {
+    for (const key of keys) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+function seedLeaderEnv(): void {
+  process.env[LEADER_ENV_FILE] = "/tmp/teams/dev-team.md";
+  process.env[LEADER_ENV_NAME] = "dev-team";
+  process.env[LEADER_ENV_RUNID] = "run-1789115942094";
+  process.env.AGENT_TEAM_STRIP_SENTINEL = "1";
+}
+
+test("stripLeaderEnv drops the three leader keys and keeps the rest of the environment", () => {
+  const source: NodeJS.ProcessEnv = {
+    PATH: "/usr/bin",
+    AGENT_TEAM_STRIP_SENTINEL: "1",
+    [LEADER_ENV_FILE]: "/tmp/teams/dev-team.md",
+    [LEADER_ENV_NAME]: "dev-team",
+    [LEADER_ENV_RUNID]: "run-1789115942094",
+  };
+  const stripped = stripLeaderEnv(source);
+
+  assert.equal(stripped[LEADER_ENV_FILE], undefined);
+  assert.equal(stripped[LEADER_ENV_NAME], undefined);
+  assert.equal(stripped[LEADER_ENV_RUNID], undefined);
+  assert.equal(stripped.AGENT_TEAM_STRIP_SENTINEL, "1");
+  assert.equal(stripped.PATH, "/usr/bin");
+  // Shallow copy: the caller's object is never mutated.
+  assert.equal(source[LEADER_ENV_FILE], "/tmp/teams/dev-team.md");
+});
+
+test("derived-agent denylist bans nested agent tools but leaves team_dispatch to the leader", () => {
+  assert.ok(DERIVED_AGENT_TOOL_DENYLIST.includes("subagent"));
+  assert.ok(DERIVED_AGENT_TOOL_DENYLIST.includes("team_run"));
+  assert.ok(!(DERIVED_AGENT_TOOL_DENYLIST as readonly string[]).includes("team_dispatch"));
+});
+
+test("member children get a leader-env-stripped env and the derived-tool denylist in argv", async () => {
+  const restoreEnv = snapshotMemberEnv();
+  seedLeaderEnv();
+  try {
+    const { deps, spawn } = baseDeps();
+    const executor = createDispatchExecutor(deps);
+    const promise = executor({ tasks: [{ agent: "frontend", task: "写登录页" }] }, undefined, undefined);
+    const child = await waitForChild(spawn, 0);
+    const record = spawn.records.find((r) => r.args[r.args.length - 1] === "Task: 写登录页");
+    assert.ok(record);
+
+    // The member child must not inherit leader mode (it would load
+    // agent-team as a leader and bind to the parent run).
+    assert.equal(record.env?.[LEADER_ENV_FILE], undefined);
+    assert.equal(record.env?.[LEADER_ENV_NAME], undefined);
+    assert.equal(record.env?.[LEADER_ENV_RUNID], undefined);
+    assert.equal(record.env?.AGENT_TEAM_STRIP_SENTINEL, "1", "non-leader env is preserved");
+    assert.equal(record.env?.PATH, process.env.PATH, "PATH is preserved");
+
+    // Derived agents may not re-enter team/subagent tooling; the flag pair
+    // must travel together and precede the task text.
+    const denyIndex = record.args.indexOf("--exclude-tools");
+    assert.ok(denyIndex >= 0, "member argv carries --exclude-tools");
+    assert.equal(record.args[denyIndex + 1], DERIVED_AGENT_TOOL_DENYLIST.join(","));
+    assert.ok(denyIndex < record.args.indexOf("--append-system-prompt"));
+    assert.ok(denyIndex < record.args.length - 1);
+
+    child.autoRespond([assistantLine("done")], 0, 5);
+    await unwrap(promise);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("real child process spawns at the OS level without the leader keys", async () => {
+  const restoreEnv = snapshotMemberEnv();
+  seedLeaderEnv();
+  try {
+    const outcome = await runChildPi({
+      command: process.execPath,
+      args: ["-e", "process.stderr.write(JSON.stringify(process.env))"],
+      env: stripLeaderEnv(),
+      spawn: defaultSpawn(),
+    });
+    assert.equal(outcome.exitCode, 0);
+    const jsonLine = outcome.stderr
+      .split(/\r?\n/)
+      .reverse()
+      .find((line) => line.startsWith("{"));
+    assert.ok(jsonLine, `child env JSON missing in stderr: ${outcome.stderr}`);
+    const childEnv = JSON.parse(jsonLine) as Record<string, string>;
+
+    assert.equal(childEnv[LEADER_ENV_FILE], undefined);
+    assert.equal(childEnv[LEADER_ENV_NAME], undefined);
+    assert.equal(childEnv[LEADER_ENV_RUNID], undefined);
+    assert.equal(childEnv.AGENT_TEAM_STRIP_SENTINEL, "1");
+    assert.equal(childEnv.PATH, process.env.PATH);
+  } finally {
+    restoreEnv();
+  }
+});
+
 test("buildDispatchReport includes cost, member sections and failure guidance", () => {
   const ok = buildDispatchReport([
     {
@@ -356,4 +476,46 @@ test("buildDispatchReport includes cost, member sections and failure guidance", 
   assert.match(withFailure, /错误: \/repo 不是 git 仓库/);
   assert.match(withFailure, /失败处理指令/);
   assert.match(withFailure, /不要再次派发/);
+});
+
+// ---------------------------------------------------------------------------
+// v1.17.0 成员活动阶段（viewer 活动行的成员侧数据源）
+// ---------------------------------------------------------------------------
+
+test("成员子进程事件写入活动阶段：tool start→tool+名字、update 刷新、end/message_end→waiting", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor(deps);
+  const updates: unknown[] = [];
+  const promise = executor({ tasks: [{ agent: "frontend", task: "写登录页" }] }, undefined, (update) => updates.push(update.details));
+  const child = await waitForChild(spawn, 0);
+
+  const member = () => parseDispatchMemberResults(updates.at(-1))?.find((m) => m.name === "frontend");
+
+  child.emitLine(toolExecutionStartLine("read", { path: "login.tsx" }));
+  assert.equal(member()?.status, "running");
+  assert.equal(member()?.phase, "tool");
+  assert.equal(member()?.toolName, "read");
+  assert.equal(typeof member()?.lastActivityAtMs, "number");
+
+  child.emitLine(toolExecutionUpdateLine("read", { content: [{ type: "text", text: "chunk" }] }));
+  assert.equal(member()?.phase, "tool", "update 保持工具阶段");
+  assert.equal(member()?.toolName, "read");
+  assert.equal(typeof member()?.lastActivityAtMs, "number");
+
+  child.emitLine(toolExecutionEndLine("read", { content: [{ type: "text", text: "ok" }] }));
+  assert.equal(member()?.phase, "waiting", "工具结束回 waiting");
+  assert.equal(member()?.toolName, undefined, "工具名随之清除");
+
+  child.emitLine(
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "完成" }],
+      usage: { input: 1, output: 1, cost: { total: 0 }, totalTokens: 2, turns: 1 },
+    }),
+  );
+  assert.equal(member()?.phase, "waiting");
+  assert.equal(member()?.latest, "完成");
+
+  child.emitClose(0);
+  const outcome = await unwrap(promise);
+  assert.equal(outcome.results[0].status, "done");
 });

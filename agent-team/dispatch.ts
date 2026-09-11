@@ -17,6 +17,10 @@ import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { type TranscriptEntryKind, type TranscriptSink } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, memberWorktreeBranch, type GitRunner } from "./worktree.ts";
 import {
+  DERIVED_AGENT_TOOL_DENYLIST,
+  LEADER_ENV_FILE,
+  LEADER_ENV_NAME,
+  LEADER_ENV_RUNID,
   MAX_PARALLEL_MEMBERS,
   MAX_RESULT_BYTES,
   MAX_SUMMARY_BYTES,
@@ -26,6 +30,7 @@ import {
   truncateUtf8,
   type AgentUsage,
   type DispatchOutcome,
+  type MemberPhase,
   type MemberProgress,
   type MemberProgressStatus,
   type MemberRunResult,
@@ -39,6 +44,20 @@ export interface DispatchRequest {
   tasks: Array<{ agent: string; task: string }>;
 }
 
+/**
+ * Copies an environment and removes the three leader-mode keys. Member
+ * child processes must not inherit them: agent-team would load in leader
+ * mode inside a member and bind its tooling to the parent run. Everything
+ * else (PATH, provider keys, credentials) is preserved.
+ */
+export function stripLeaderEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const copy = { ...env };
+  delete copy[LEADER_ENV_FILE];
+  delete copy[LEADER_ENV_NAME];
+  delete copy[LEADER_ENV_RUNID];
+  return copy;
+}
+
 export interface DispatchMemberDetail {
   name: string;
   ok: boolean;
@@ -46,6 +65,14 @@ export interface DispatchMemberDetail {
   summary?: string;
   /** Latest assistant activity tail (progress display only). */
   latest?: string;
+  /** Short progress note (turn count / worktree setup / failure code). */
+  note?: string;
+  /** Live activity phase reported by the member's child events. */
+  phase?: MemberPhase;
+  /** Tool name while `phase === "tool"`. */
+  toolName?: string;
+  /** Epoch ms of the member's last observed child event. */
+  lastActivityAtMs?: number;
   usage?: AgentUsage;
   worktree?: { path: string; branch: string };
   error?: { code: string; message: string };
@@ -281,14 +308,29 @@ export function createDispatchExecutor(deps: DispatchDeps) {
     const toolResultText = (toolName: string, text: unknown): string =>
       shortMessage(`${toolName}${text === undefined ? "" : ` → ${text}`}`, 300);
 
-    const setProgress = (name: string, status: MemberProgressStatus, note?: string, latest?: string) => {
+    const setProgress = (
+      name: string,
+      status: MemberProgressStatus,
+      note?: string,
+      latest?: string,
+      activity?: { phase: MemberPhase; toolName?: string },
+    ) => {
       const previous = statuses.get(name);
-      statuses.set(name, {
-        name,
-        status,
-        ...(note !== undefined ? { note } : previous?.note ? { note: previous.note } : {}),
-        ...(latest !== undefined ? { latest } : previous?.latest ? { latest: previous.latest } : {}),
-      });
+      const next: MemberProgress = { name, status };
+      if (note !== undefined) next.note = note;
+      else if (previous?.note !== undefined) next.note = previous.note;
+      if (latest !== undefined) next.latest = latest;
+      else if (previous?.latest !== undefined) next.latest = previous.latest;
+      if (activity !== undefined) {
+        next.phase = activity.phase;
+        if (activity.phase === "tool" && activity.toolName !== undefined) next.toolName = activity.toolName;
+        next.lastActivityAtMs = Date.now();
+      } else if (previous !== undefined) {
+        if (previous.phase !== undefined) next.phase = previous.phase;
+        if (previous.toolName !== undefined) next.toolName = previous.toolName;
+        if (previous.lastActivityAtMs !== undefined) next.lastActivityAtMs = previous.lastActivityAtMs;
+      }
+      statuses.set(name, next);
       emitProgress();
     };
 
@@ -360,6 +402,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       const args: string[] = ["--mode", "json", "-p", "--no-session"];
       if (plan.member.model) args.push("--model", plan.member.model);
       if (plan.member.tools && plan.member.tools.length > 0) args.push("--tools", plan.member.tools.join(","));
+      args.push("--exclude-tools", DERIVED_AGENT_TOOL_DENYLIST.join(","));
       if (plan.member.prompt.trim()) args.push("--append-system-prompt", `team-tmp://${plan.member.prompt}`);
       args.push(`Task: ${plan.task}`);
 
@@ -372,6 +415,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           command: invocation.command,
           args: invocation.args,
           cwd: plan.worktree?.path ?? deps.cwd,
+          env: stripLeaderEnv(),
           spawn,
           signal,
           killGraceMs: deps.killGraceMs,
@@ -379,18 +423,25 @@ export function createDispatchExecutor(deps: DispatchDeps) {
             if (event.type === "message_end" && event.role === "assistant") {
               if (event.fullText) record(name, "assistant", event.fullText);
               if (event.usage) {
-                setProgress(name, "running", `turn ${event.usage.turns}`, event.text);
-              } else if (event.text) {
-                setProgress(name, "running", undefined, event.text);
+                setProgress(name, "running", `turn ${event.usage.turns}`, event.text, { phase: "waiting" });
+              } else {
+                setProgress(name, "running", undefined, event.text, { phase: "waiting" });
               }
               return;
             }
             if (event.type === "tool_execution_start") {
               record(name, "tool", toolCallText(event.toolName, event.args));
+              setProgress(name, "running", undefined, undefined, { phase: "tool", toolName: event.toolName });
+              return;
+            }
+            if (event.type === "tool_execution_update") {
+              // 流式输出只刷新时间（保持工具阶段与工具名）。
+              setProgress(name, "running", undefined, undefined, { phase: "tool", toolName: event.toolName });
               return;
             }
             if (event.type === "tool_execution_end") {
               record(name, "tool", toolResultText(event.toolName, event.text));
+              setProgress(name, "running", undefined, undefined, { phase: "waiting" });
               return;
             }
             if (event.type === "error") {
@@ -494,6 +545,12 @@ export function parseDispatchMemberResults(details: unknown): DispatchMemberDeta
       status: raw.status as MemberProgressStatus,
       ...(typeof raw.summary === "string" ? { summary: raw.summary } : {}),
       ...(typeof raw.latest === "string" ? { latest: raw.latest } : {}),
+      ...(typeof raw.note === "string" ? { note: raw.note } : {}),
+      ...(raw.phase === "tool" || raw.phase === "waiting" ? { phase: raw.phase } : {}),
+      ...(typeof raw.toolName === "string" ? { toolName: raw.toolName } : {}),
+      ...(typeof raw.lastActivityAtMs === "number" && Number.isFinite(raw.lastActivityAtMs)
+        ? { lastActivityAtMs: raw.lastActivityAtMs }
+        : {}),
       ...(raw.usage !== null && typeof raw.usage === "object" ? { usage: raw.usage as AgentUsage } : {}),
       ...(raw.worktree !== null && typeof raw.worktree === "object"
         ? { worktree: raw.worktree as { path: string; branch: string } }
