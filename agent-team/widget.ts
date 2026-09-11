@@ -37,7 +37,7 @@ import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import { startAlignedTicker } from "./aligned-ticker.ts";
 import { elapsedLabel, type RunStatusSnapshot } from "./cockpit.ts";
 import { LEADER_ACTOR, sanitizeActorName } from "./transcript.ts";
-import { truncateVisible, type Styles } from "./viewer.ts";
+import { flattenText, truncateVisible, type Styles } from "./viewer.ts";
 import { WIDGET_TICK_MS, type MemberProgress, type RunProgress } from "./types.ts";
 
 /** Row role in the `main → leader → member` tree (viewer-open semantics). */
@@ -63,21 +63,16 @@ function memberIcon(status: string): string {
           : "·";
 }
 
-/** 连续空白（含换行）压成单空格并 trim——宿主把残余换行渲染成额外行。 */
-function flatten(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
 /** 任务摘要：压平后 44 字符 + `…`（截断后 trimEnd，避免 "…" 前留空格）。 */
 function truncateTask(text: string): string {
-  const flat = flatten(text);
+  const flat = flattenText(text);
   const clipped = flat.length > 44 ? `${flat.slice(0, 44)}…` : flat;
   return clipped.trimEnd();
 }
 
 /** 成员尾注：压平后 ≤30 字符（超出取 29 字 + `…`，总长不超上限）。 */
 function truncateMemberTail(text: string): string {
-  const flat = flatten(text);
+  const flat = flattenText(text);
   return flat.length > 30 ? `${flat.slice(0, 29)}…` : flat;
 }
 
@@ -98,14 +93,14 @@ function leaderRowText(progress: RunProgress, nowMs: number): string {
   }
   const task = truncateTask(progress.task);
   const summary = task.length > 0 ? ` · ${task}` : "";
-  return `leader ${flatten(progress.team)}${summary} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`;
+  return `leader ${flattenText(progress.team)}${summary} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`;
 }
 
 /** 成员行：`|- <成员名> <图标> <状态>[ · <尾部>]`（尾部 note 优先，否则 latest）。 */
 function memberRowText(member: MemberProgress): string {
   const tail = member.note ?? member.latest;
-  const suffix = tail !== undefined && flatten(tail).length > 0 ? ` · ${truncateMemberTail(tail)}` : "";
-  return `|- ${flatten(member.name)} ${memberIcon(member.status)} ${member.status}${suffix}`;
+  const suffix = tail !== undefined && flattenText(tail).length > 0 ? ` · ${truncateMemberTail(tail)}` : "";
+  return `|- ${flattenText(member.name)} ${memberIcon(member.status)} ${member.status}${suffix}`;
 }
 
 /**
@@ -131,7 +126,7 @@ export function buildWidgetView(snapshot: RunStatusSnapshot, nowMs: number): Wid
   for (const member of progress.members) {
     rows.push({ text: memberRowText(member), actor: sanitizeActorName(member.name), kind: "member" });
   }
-  return { collapsed: `agent-team ${flatten(progress.team)} · ↓/← 查看详情`, rows };
+  return { collapsed: `agent-team ${flattenText(progress.team)} · ↓/← 查看详情`, rows };
 }
 
 // ---------------------------------------------------------------------------

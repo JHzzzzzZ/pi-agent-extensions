@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
+import { visibleWidth } from "../viewer.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import {
   makeFakeSpawn,
@@ -281,6 +282,82 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
 
   const empty = formatStatusSnapshot({ running: false, progress: null, lastRecord: null }, 0);
   assert.match(empty, /没有 team run 记录/);
+});
+
+test("formatStatusSnapshot 任务行压平多行任务（运行态与终态同口径，不产生残行）", () => {
+  const multiLine = "目标：修复登录页\n  第二步：回归测试\n\t第三步：交付";
+  const flattened = "目标：修复登录页 第二步：回归测试 第三步：交付";
+  const running = formatStatusSnapshot(
+    {
+      running: true,
+      progress: { runId: "r", team: "dev-team", task: multiLine, startedAtMs: 0, members: [] },
+      lastRecord: null,
+    },
+    0,
+  );
+  const done = formatStatusSnapshot(
+    {
+      running: false,
+      progress: null,
+      lastRecord: {
+        runId: "run-1",
+        team: "dev-team",
+        task: multiLine,
+        startedAt: "2026-09-05T12:00:00Z",
+        status: "completed",
+        members: [],
+        totalCost: 0,
+        totalTokens: 0,
+      },
+    },
+    0,
+  );
+  for (const [label, output] of [["运行态", running], ["终态", done]] as const) {
+    const lines = output.split("\n");
+    const taskLine = lines.find((line) => line.startsWith("任务: "));
+    assert.equal(taskLine, `任务: ${flattened}`, `${label}：任务残片必须压平成单行并以单空格相连`);
+    assert.ok(
+      !lines.some((line) => line.trim() === "第二步：回归测试" || line.trim() === "第三步：交付"),
+      `${label}：任务子行不得再作为独立物理行出现`,
+    );
+  }
+});
+
+test("formatStatusSnapshot 任务行按显示宽度截断（上限 60 列、CJK 双宽，运行态与终态同口径）", () => {
+  const longTask = "分析".repeat(50) + "abc".repeat(50);
+  const running = formatStatusSnapshot(
+    {
+      running: true,
+      progress: { runId: "r", team: "dev-team", task: longTask, startedAtMs: 0, members: [] },
+      lastRecord: null,
+    },
+    0,
+  );
+  const done = formatStatusSnapshot(
+    {
+      running: false,
+      progress: null,
+      lastRecord: {
+        runId: "run-1",
+        team: "dev-team",
+        task: longTask,
+        startedAt: "2026-09-05T12:00:00Z",
+        status: "completed",
+        members: [],
+        totalCost: 0,
+        totalTokens: 0,
+      },
+    },
+    0,
+  );
+  for (const [label, output] of [["运行态", running], ["终态", done]] as const) {
+    const taskLine = output.split("\n").find((line) => line.startsWith("任务: "));
+    assert.ok(taskLine, `${label}：必须输出任务行`);
+    const taskText = taskLine.slice("任务: ".length);
+    assert.ok(visibleWidth(taskText) <= 60, `${label}：任务文本 ≤ 60 显示列（实际 ${visibleWidth(taskText)}）`);
+    assert.ok(taskText.endsWith("…"), `${label}：超宽任务以 … 结尾`);
+    assert.ok(visibleWidth(taskLine) <= 66, `${label}：任务行 ≤ 66 显示列（实际 ${visibleWidth(taskLine)}）`);
+  }
 });
 
 test("restoreLastRecord keeps the most recent record (hydration after reload)", () => {
