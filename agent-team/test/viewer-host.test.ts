@@ -222,7 +222,7 @@ function scenarioData(elapsedSec: number, dispatches: number): ViewerData {
     runStatus: "running",
     elapsed: `${elapsedSec}s`,
     actors: [
-      { actor: "_leader", label: "leader", status: "running" },
+      { actor: "_leader", label: "leader", status: "running", model: "claude-opus-4-5", thinkingLevel: "high" },
       { actor: "front", label: "front", status: "running" },
     ],
     entries: new Map<string, TranscriptEntry[]>([
@@ -314,6 +314,20 @@ test("真实宿主中途改终端高度：重绘后仍为一组标题+roster", (
   assert.equal(counts.modelTitles, 1, `改高度后屏模型标题应恰 1，实得 ${counts.modelTitles}`);
   assert.equal(counts.gridTitles, 1, `改高度后像素屏标题应恰 1，实得 ${counts.gridTitles}`);
   assert.equal(counts.gridRoster, 1, `改高度后像素屏 roster 应恰 1，实得 ${counts.gridRoster}`);
+});
+
+// 需求 B：thinking 级别必须经真实合成/写屏路径上屏（纯函数单测抽不到宿主渲染）。
+test("真实宿主：detail 头第 4 行渲染 `模型: … · 思考 <level>`（真实渲染+写屏路径）", () => {
+  const { model, grid } = driveHostViewer();
+  const expected = "模型: claude-opus-4-5 · 思考 high";
+  assert.ok(
+    model.some((line) => stripAnsi(line).includes(expected)),
+    `宿主待写帧行缺 thinking 段：${model.filter((line) => line.includes("模型:")).map(stripAnsi).join(" | ")}`,
+  );
+  assert.ok(
+    grid.some((line) => line.includes(expected)),
+    `像素屏缺 thinking 段：${grid.filter((line) => line.includes("模型:")).join(" | ")}`,
+  );
 });
 
 // 真机事故（重复行第四轮）：多行 tool 条目（team_dispatch 派发 →\n  - 成员: 任务）

@@ -121,6 +121,12 @@ export interface ViewerActor {
    * `（默认）`).
    */
   model?: string;
+  /**
+   * Thinking level for this actor: the child-reported provider level, or the
+   * declared model-suffix (`provider/id:level`). Absent = provider default
+   * (rendered as `思考 （默认）` next to a known model).
+   */
+  thinkingLevel?: string;
 }
 
 /** Everything the viewer needs to render one frame (reloaded on refresh). */
@@ -513,19 +519,33 @@ function rosterLines(data: ViewerData, state: ViewerState, width: number, bodyHe
 }
 
 /**
+ * 模型行文本：`<model> · 思考 <level>`；未知侧降级 `（默认）`——model 已知
+ * 而级别未知（legacy/unmanaged provider）→ `· 思考 （默认）`；两者均未知 →
+ * 仅 `（默认）`；无选中成员 → `（无成员）`。头部仍固定 4 行（帧总行数不变）。
+ */
+function modelHeaderText(actor: ViewerActor | undefined): string {
+  if (!actor) return "（无成员）";
+  if (actor.model === undefined) {
+    return actor.thinkingLevel === undefined ? "（默认）" : `（默认） · 思考 ${actor.thinkingLevel}`;
+  }
+  return `${actor.model} · 思考 ${actor.thinkingLevel ?? "（默认）"}`;
+}
+
+/**
  * Fixed detail-pane meta header (the agent-team counterpart of fleet's
  * `structuredHeader`): Run / State / 成员 / 模型. Key names bold like
  * fleet's `^(Run|State|…):` rule; the header never scrolls with the
  * transcript. 模型 shows the selected actor's backend in the unified
  * `provider/id` caliber (declared provider prefix + the child's actually
- * reported id; `（默认）` when the child runs pi's default).
+ * reported id; `（默认）` when the child runs pi's default) plus its
+ * thinking level (`· 思考 <level>`; unknown level degrades to `（默认）`).
  */
 function detailHeaderLines(data: ViewerData, state: ViewerState, styles: Styles): string[] {
   const selected = selectedActor(data, state);
   const member = selected
     ? `${selected.actor.label}（${selected.actor.status ?? "unknown"}）· ${selected.index + 1}/${data.actors.length}`
     : "（无成员）";
-  const model = selected ? (selected.actor.model ?? "（默认）") : "（无成员）";
+  const model = modelHeaderText(selected?.actor);
   return [
     `${styles.bold("Run:")} ${data.runId || "(no run)"}`,
     `${styles.bold("State:")} ${data.runStatus}`,

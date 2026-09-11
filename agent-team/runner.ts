@@ -139,6 +139,8 @@ interface StreamedMessage {
   content?: Array<{ type?: string; text?: string }>;
   usage?: unknown;
   model?: string;
+  /** Provider-native thinking level (legacy/unmanaged providers omit it). */
+  providerThinkingLevel?: string;
   stopReason?: string;
   errorMessage?: string;
 }
@@ -281,6 +283,7 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
             outcome.model = msg.model;
             outcome.usage.model = msg.model;
           }
+          if (msg.providerThinkingLevel) outcome.usage.thinkingLevel = msg.providerThinkingLevel;
           if (msg.stopReason) outcome.stopReason = msg.stopReason;
           if (msg.errorMessage) outcome.errorMessage = msg.errorMessage;
         }
@@ -294,6 +297,7 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
           ...(msg.stopReason ? { stopReason: msg.stopReason } : {}),
           ...(role === "assistant" && msg.usage ? { usage: { ...outcome.usage } } : {}),
           ...(msg.model ? { model: msg.model } : {}),
+          ...(msg.providerThinkingLevel ? { thinkingLevel: msg.providerThinkingLevel } : {}),
         });
         return;
       }

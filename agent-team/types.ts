@@ -229,6 +229,8 @@ export interface AgentUsage {
   cost: number;
   turns: number;
   model?: string;
+  /** Provider-native thinking level from the child's assistant message_end (absent on legacy/unmanaged providers). */
+  thinkingLevel?: string;
 }
 
 export function emptyUsage(): AgentUsage {
@@ -296,6 +298,8 @@ export type ChildEvent =
       stopReason?: string;
       usage?: AgentUsage;
       model?: string;
+      /** Provider-native thinking level reported by the child (message_end only). */
+      thinkingLevel?: string;
     }
   | { type: "tool_execution_start"; toolName: string; args?: unknown }
   | { type: "tool_execution_update"; toolName: string; text?: string; details?: unknown }
@@ -367,6 +371,8 @@ export interface TeamRunRecord {
   leaderUsage?: AgentUsage;
   /** Declared leader model from the team file (viewer/status caliber composition). */
   leaderDeclaredModel?: string;
+  /** Leader's terminal thinking level: child-reported value, declared model-suffix fallback. */
+  leaderThinkingLevel?: string;
   totalCost: number;
   totalTokens: number;
   durationMs?: number;
@@ -388,6 +394,8 @@ export interface MemberProgress {
   latest?: string;
   /** Declared backend model from the team file (child pi default when unset). */
   model?: string;
+  /** Declared model-suffix / child-reported thinking level (absent = provider default). */
+  thinkingLevel?: string;
 }
 
 export interface RunProgress {
@@ -398,6 +406,8 @@ export interface RunProgress {
   leaderModel?: string;
   /** Declared leader model from the team file (provider prefix for the display caliber). */
   leaderDeclaredModel?: string;
+  /** Declared model-suffix level, overridden by the child-reported value once it arrives. */
+  leaderThinkingLevel?: string;
   leaderNote?: string;
   /** Leader's latest activity tail (progress display only). */
   leaderActivity?: string;

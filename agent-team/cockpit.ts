@@ -11,6 +11,7 @@
 
 import * as path from "node:path";
 import { startAlignedTicker } from "./aligned-ticker.ts";
+import { splitModelThinking } from "./config.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
@@ -158,6 +159,7 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     }
     for (const member of p.members) {
       const bits = [`${icon(member.status)} ${member.name} ${member.status}`];
+      if (member.model) bits.push(member.model);
       if (member.note) bits.push(member.note);
       if (member.latest) bits.push(member.latest);
       lines.push(line(`  ${bits.join(" — ")}`));
@@ -382,6 +384,7 @@ export class TeamRunCoordinator {
     // run must never swallow a steer or a settle).
     this.leaderStdin = undefined;
     this.promptError = undefined;
+    const leaderThinkingLevel = splitModelThinking(team.leader.model).thinkingLevel;
     const progress: RunProgress = {
       runId,
       team: team.name,
@@ -390,13 +393,18 @@ export class TeamRunCoordinator {
       // 声明值进 progress：live leader 的展示口径需要 provider 前缀与
       // 子进程实际上报的裸 id 组合（viewer/status 归一在展示层做）。
       ...(team.leader.model ? { leaderDeclaredModel: team.leader.model } : {}),
-      members: team.members.map((m) => ({
-        name: m.name,
-        status: "queued" as const,
-        // 声明模型进 progress：viewer 头部要显示每个成员的后端模型，
-        // 不能每次 750ms 刷新都去扫盘重读团队文件。
-        ...(m.model ? { model: m.model } : {}),
-      })),
+      ...(leaderThinkingLevel ? { leaderThinkingLevel } : {}),
+      members: team.members.map((m) => {
+        const declaredThinking = splitModelThinking(m.model).thinkingLevel;
+        return {
+          name: m.name,
+          status: "queued" as const,
+          // 声明模型进 progress：viewer 头部要显示每个成员的后端模型，
+          // 不能每次 750ms 刷新都去扫盘重读团队文件。
+          ...(m.model ? { model: m.model } : {}),
+          ...(declaredThinking ? { thinkingLevel: declaredThinking } : {}),
+        };
+      }),
       budget: (() => {
         const b = resolveRunBudget(team.budget);
         return {
@@ -543,6 +551,7 @@ export class TeamRunCoordinator {
             checkBudgetCap();
           }
           if (event.model) progress.leaderModel = event.model;
+          if (event.thinkingLevel) progress.leaderThinkingLevel = event.thinkingLevel;
           if (event.text) progress.leaderActivity = event.text;
           render();
           return;
@@ -587,6 +596,10 @@ export class TeamRunCoordinator {
               const next: MemberProgress = {
                 name: member.name,
                 status: member.status,
+                // 实际上报值（子进程 message_end）取代声明 id，但保留声明的
+                // provider 前缀（口径归一，与终态/leader 一致）；思考级别同源。
+                ...(member.usage?.model ? { model: resolveModelCaliber(existing?.model, member.usage.model) } : {}),
+                ...(member.usage?.thinkingLevel ? { thinkingLevel: member.usage.thinkingLevel } : {}),
                 ...(member.error ? { note: `${member.error.code}: ${member.error.message}` } : {}),
                 ...(member.latest ? { latest: member.latest } : {}),
               };
@@ -708,6 +721,8 @@ export class TeamRunCoordinator {
         }
       }
 
+      // 终态 leader 思考级别：实际事件最后值优先，无实际上报时回退声明后缀。
+      const terminalLeaderThinking = progress.leaderThinkingLevel ?? splitModelThinking(team.leader.model).thinkingLevel;
       const record: TeamRunRecord = {
         runId,
         team: team.name,
@@ -730,6 +745,7 @@ export class TeamRunCoordinator {
         members,
         leaderUsage: outcome.usage,
         ...(team.leader.model ? { leaderDeclaredModel: team.leader.model } : {}),
+        ...(terminalLeaderThinking ? { leaderThinkingLevel: terminalLeaderThinking } : {}),
         totalCost: outcome.usage.cost,
         totalTokens: outcome.usage.input + outcome.usage.output,
         durationMs: nowMs() - startedAtMs,

@@ -24,7 +24,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { discoverTeams, findTeam, parseTeamFile } from "./config.ts";
+import { discoverTeams, findTeam, parseTeamFile, splitModelThinking } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
 import { buildDoctorReport } from "./doctor.ts";
@@ -366,12 +366,15 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
 
     const memberStatuses = new Map<string, string>();
     const memberModels = new Map<string, string>();
+    const memberThinking = new Map<string, string>();
     if (progress) {
       for (const member of progress.members) {
         memberStatuses.set(member.name, member.status);
-        // live 成员只有声明值（实际值要等 dispatch 结果），归一后原样展示。
+        // live 成员：progress.model 在派发结果到达后被覆盖为「声明 provider
+        // 前缀 + 实际上报 id」（cockpit 侧归一）；此处对未派发成员兜底归一。
         const model = resolveModelCaliber(member.model);
         if (model) memberModels.set(member.name, model);
+        if (member.thinkingLevel) memberThinking.set(member.name, member.thinkingLevel);
       }
     } else if (lastRecord) {
       for (const member of lastRecord.members) {
@@ -379,6 +382,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         // 声明 provider 前缀 + 子进程实际上报 id（无声明/无实际各有规则）。
         const model = resolveModelCaliber(member.model, member.usage?.model);
         if (model) memberModels.set(member.name, model);
+        // 思考级别同口径：实际上报值优先，回退声明模型后缀。
+        const thinkingLevel = member.usage?.thinkingLevel ?? splitModelThinking(member.model).thinkingLevel;
+        if (thinkingLevel) memberThinking.set(member.name, thinkingLevel);
       }
     }
     // live leader：声明值（启动时进 progress）+ 实际上报裸 id 组合；
@@ -386,6 +392,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     const leaderModel = progress
       ? resolveModelCaliber(progress.leaderDeclaredModel, progress.leaderModel)
       : resolveModelCaliber(lastRecord?.leaderDeclaredModel, lastRecord?.leaderUsage?.model);
+    const leaderThinkingLevel =
+      progress?.leaderThinkingLevel ?? lastRecord?.leaderThinkingLevel ?? lastRecord?.leaderUsage?.thinkingLevel;
 
     const actors: ViewerActor[] = [
       {
@@ -393,11 +401,19 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         label: "leader",
         status: progress ? "running" : lastRecord?.status,
         ...(leaderModel ? { model: leaderModel } : {}),
+        ...(leaderThinkingLevel ? { thinkingLevel: leaderThinkingLevel } : {}),
       },
     ];
     for (const [name, status] of memberStatuses) {
       const model = memberModels.get(name);
-      actors.push({ actor: sanitizeActorName(name), label: name, status, ...(model ? { model } : {}) });
+      const thinkingLevel = memberThinking.get(name);
+      actors.push({
+        actor: sanitizeActorName(name),
+        label: name,
+        status,
+        ...(model ? { model } : {}),
+        ...(thinkingLevel ? { thinkingLevel } : {}),
+      });
     }
     for (const fileActor of listTranscriptActors(transcriptRoot(), runId)) {
       if (fileActor === LEADER_ACTOR) continue;
@@ -855,6 +871,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
             label: a.label,
             status: a.status,
             ...(a.model ? { model: a.model } : {}),
+            ...(a.thinkingLevel ? { thinkingLevel: a.thinkingLevel } : {}),
           })),
         },
       };

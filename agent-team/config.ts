@@ -39,6 +39,26 @@ import {
 
 const NAME_PATTERN = /^[^\s/\\]+$/;
 
+/**
+ * Host `VALID_THINKING_LEVELS`（pi coding agent `--model provider/id:level`）。
+ * 手动同步，扩展不 import 宿主内部模块。
+ */
+const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * 拆分 `provider/id[:level]` 声明模型：仅当**最后一个** `:` 后缀是宿主的有效
+ * 思考级别时剥离，否则原样返回（模型 id 本身可能含冒号）。空值/undefined 安全。
+ */
+export function splitModelThinking(model?: string): { model?: string; thinkingLevel?: string } {
+  if (!model) return {};
+  const colonIndex = model.lastIndexOf(":");
+  // `<= 0`：剥完会得到空模型（裸后缀 `:high`）不剥，它不是可解析的模型引用。
+  if (colonIndex <= 0) return { model };
+  const suffix = model.slice(colonIndex + 1);
+  if (!VALID_THINKING_LEVELS.has(suffix)) return { model };
+  return { model: model.slice(0, colonIndex), thinkingLevel: suffix };
+}
+
 // ---------------------------------------------------------------------------
 // Parsing / validation
 // ---------------------------------------------------------------------------

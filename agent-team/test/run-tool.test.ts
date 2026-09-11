@@ -314,6 +314,70 @@ test("team_transcript live view composes the leader's declared provider with the
   }
 });
 
+// 需求 B：team_transcript 的 details.actors 与 viewer 同口径带思考级别
+// （leader 实际 provider 级别优先、成员回退声明后缀）。
+test("team_transcript details expose each actor's thinking level (leader actual + member declared suffix)", async () => {
+  const { pi, spawn, run, ctx, cleanup } = await setup();
+  try {
+    const team = fixtureTeam({
+      name: "proj-team",
+      description: "项目团队",
+      filePath: "",
+      notes: undefined,
+      leader: { model: "anthropic/claude-opus-4-5:high", prompt: "你是技术负责人。" },
+      members: [
+        { name: "frontend", model: "chatanywhere/gpt-5.6:medium", prompt: "你是前端工程师。" },
+        { name: "backend", model: "anthropic/claude-sonnet-4-5:xhigh", prompt: "你是后端工程师。" },
+      ],
+    });
+    fs.writeFileSync(path.join(ctx.cwd, ".pi", "teams", "proj-team.md"), serializeTeam(team));
+
+    const promise = run({ team: "proj-team", task: "修复登录 bug", wait: true });
+    const child = await waitForChild(spawn, 0);
+    child.autoRespond(
+      [
+        toolExecutionStartLine("team_dispatch", { tasks: [{ agent: "frontend", task: "a" }] }),
+        dispatchDetails([
+          { name: "frontend", ok: true, status: "done", summary: "前端做完", usage: { input: 10, output: 5, cost: 0.01, turns: 1 } },
+        ]),
+        messageEndLine("assistant", {
+          content: [{ type: "text", text: "FINAL REPORT" }],
+          usage: { input: 50, output: 20, cost: { total: 0.05 }, totalTokens: 300 },
+          model: "claude-opus-4-5",
+          providerThinkingLevel: "low",
+        }),
+      ],
+      0,
+      5,
+    );
+    await promise;
+
+    const tool = pi.tools.get("team_transcript") as unknown as {
+      execute: (
+        id: string,
+        params: Record<string, unknown>,
+        signal?: undefined,
+        onUpdate?: undefined,
+        ctx?: unknown,
+      ) => Promise<{ content: Array<{ text: string }>; details?: unknown }>;
+    };
+    const result = await tool.execute("call-1", {}, undefined, undefined, ctx);
+    const actors = (result.details as { actors: Array<{ actor: string; thinkingLevel?: string }> }).actors;
+    assert.equal(
+      actors.find((a) => a.actor === "_leader")?.thinkingLevel,
+      "low",
+      "leader thinking level comes from the child's providerThinkingLevel",
+    );
+    assert.equal(
+      actors.find((a) => a.actor === "frontend")?.thinkingLevel,
+      "medium",
+      "member thinking level falls back to the declared model suffix (no provider report)",
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 test("team_run background result exposes the runId (team_stop's handle)", async () => {
   const { pi, spawn, run, cleanup } = await setup();
   try {
