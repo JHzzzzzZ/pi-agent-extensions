@@ -10,9 +10,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { serializeTeam } from "../config.ts";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
-import type { TeamConfig } from "../types.ts";
+import type { ExternalBackend, ExternalCliResolveResult, TeamConfig } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import {
   makeFakeSpawn,
@@ -76,7 +77,10 @@ type RunTool = (params: Record<string, unknown>) => Promise<{
   isError?: boolean;
 }>;
 
-async function setup(teamOverrides: Partial<TeamConfig> = {}): Promise<{
+async function setup(
+  teamOverrides: Partial<TeamConfig> = {},
+  extensionOpts: { resolveExternalCli?: (backend: ExternalBackend) => ExternalCliResolveResult } = {},
+): Promise<{
   pi: ReturnType<typeof fakePi>;
   spawn: FakeSpawnHandle;
   run: RunTool;
@@ -92,7 +96,7 @@ async function setup(teamOverrides: Partial<TeamConfig> = {}): Promise<{
   fs.writeFileSync(path.join(projectDir, ".pi", "teams", "proj-team.md"), serializeTeam(team));
   const spawn = makeFakeSpawn();
   const pi = fakePi();
-  agentTeamExtension(pi as never, { spawn: spawn.spawn });
+  agentTeamExtension(pi as never, { spawn: spawn.spawn, ...extensionOpts });
   const ctx = fakeCtx(projectDir, true);
   await pi.fire("session_start", { reason: "startup" }, ctx);
   const tool = pi.tools.get("team_run") as unknown as {
@@ -153,6 +157,17 @@ function leaderLines(): string[] {
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 400 && !predicate(); i++) await sleep(5);
+}
+
+const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+
+/** 外部 CLI fixture JSONL 行（跳过注释/空行）——fake child 逐行回放用。 */
+function fixtureLines(name: string): string[] {
+  return fs
+    .readFileSync(path.join(FIXTURES, name), "utf-8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
 }
 
 test("team_run defaults to background: returns while the child runs, report arrives as followUp", async () => {
@@ -619,6 +634,108 @@ test("team_resume preflights the effective (override) models: bad override → M
     assert.equal(spawn.records.length, 1, "preflight failure never spawns the resume leader");
   } finally {
     cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// v1.22.0 外部 CLI 后端：run 预检门（index.ts 接线，10-design §5/§6）
+// ---------------------------------------------------------------------------
+
+test("team_run 预检拒绝外部 leader（EXTERNAL_LEADER_UNSUPPORTED），零 spawn", async () => {
+  const { spawn, run, cleanup } = await setup({
+    leader: { model: "anthropic/claude-opus-4-5", prompt: "你是技术负责人。", backend: "codex" },
+  });
+  try {
+    const result = await run({ team: "proj-team", task: "修复登录 bug" });
+    assert.equal(result.isError, true);
+    assert.equal((result.details as { code?: string }).code, "EXTERNAL_LEADER_UNSUPPORTED");
+    assert.match(result.content[0].text, /v1 限制/);
+    assert.equal(spawn.records.length, 0, "no leader spawned on external-leader preflight failure");
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_run 预检：外部成员 CLI 不可解析 → CLI_NOT_FOUND 且零 spawn", async () => {
+  const seen: ExternalBackend[] = [];
+  const { spawn, run, cleanup } = await setup(
+    { members: [{ name: "coder", backend: "codex", model: "gpt-5.1-codex", prompt: "你是外部码农。" }] },
+    {
+      resolveExternalCli: (backend): ExternalCliResolveResult => {
+        seen.push(backend);
+        return { ok: false, code: "CLI_NOT_FOUND", message: "未找到可直接 spawn 的 codex CLI" };
+      },
+    },
+  );
+  try {
+    const result = await run({ team: "proj-team", task: "写脚本" });
+    assert.equal(result.isError, true);
+    assert.equal((result.details as { code?: string }).code, "CLI_NOT_FOUND");
+    assert.deepEqual(seen, ["codex"], "resolver called for the external member");
+    assert.equal(spawn.records.length, 0, "no leader spawned when the run preflight fails");
+  } finally {
+    cleanup();
+  }
+});
+
+test("leader 模式 team_dispatch：外部成员 usage 折回 details.totalUsage", async () => {
+  isolateRunsDir();
+  resetDoubleLoadGuardForTests();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-leader-extcli-"));
+  const teamFile = path.join(dir, "ext-team.md");
+  fs.writeFileSync(
+    teamFile,
+    serializeTeam(
+      fixtureTeam({
+        name: "ext-team",
+        description: "外部 CLI 团队",
+        filePath: "",
+        notes: undefined,
+        members: [{ name: "coder", backend: "codex", model: "gpt-5.1-codex", prompt: "你是外部码农。" }],
+      }),
+    ),
+  );
+  const spawn = makeFakeSpawn();
+  const pi = fakePi();
+  const previousFile = process.env.PI_AGENT_TEAM_FILE;
+  const previousRunId = process.env.PI_AGENT_TEAM_RUN_ID;
+  process.env.PI_AGENT_TEAM_FILE = teamFile;
+  process.env.PI_AGENT_TEAM_RUN_ID = "run-leader-extcli";
+  try {
+    agentTeamExtension(pi as never, {
+      spawn: spawn.spawn,
+      resolveExternalCli: () => ({ ok: true, value: { command: "C:\\tools\\codex.exe" } }),
+    });
+    const tool = pi.tools.get("team_dispatch") as unknown as {
+      execute: (
+        id: string,
+        params: Record<string, unknown>,
+        signal?: undefined,
+        onUpdate?: undefined,
+        ctx?: unknown,
+      ) => Promise<{ content: Array<{ type: string; text: string }>; details?: unknown; isError?: boolean }>;
+    };
+    const promise = tool.execute("call-1", { tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, undefined, undefined);
+    const child = await waitForChild(spawn, 0);
+    child.autoRespond(fixtureLines("external-codex-success.jsonl"), 0, 5);
+    const result = await promise;
+
+    assert.notEqual(result.isError, true);
+    const details = result.details as {
+      members: Array<{ name: string; status: string; usage: { input: number; turns: number } }>;
+      totalUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; turns: number };
+    };
+    assert.equal(details.members[0].name, "coder");
+    assert.equal(details.members[0].status, "done");
+    assert.equal(details.members[0].usage.input, 17704);
+    assert.equal(details.members[0].usage.turns, 1);
+    assert.deepEqual(details.totalUsage, { input: 17704, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 });
+  } finally {
+    if (previousFile === undefined) delete process.env.PI_AGENT_TEAM_FILE;
+    else process.env.PI_AGENT_TEAM_FILE = previousFile;
+    if (previousRunId === undefined) delete process.env.PI_AGENT_TEAM_RUN_ID;
+    else process.env.PI_AGENT_TEAM_RUN_ID = previousRunId;
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

@@ -11,8 +11,9 @@
 
 import * as fs from "node:fs";
 import { discoverTeams, type DiscoveryResult } from "./config.ts";
-import { readRunStatuses, type RunStatusesRead } from "./runstore.ts";
+import { resolveExternalCli } from "./external.ts";
 import { preflightTeamModels, type ModelLookup } from "./preflight.ts";
+import { readRunStatuses, type RunStatusesRead } from "./runstore.ts";
 import { resolveRunBudget, type TeamConfig } from "./types.ts";
 
 /** Where the doctor runs: main session (cockpit) or leader child. */
@@ -87,7 +88,8 @@ function budgetLine(team: TeamConfig): string {
 
 /** Per-team model preflight line. */
 function preflightLine(team: TeamConfig, lookup: ModelLookup): string {
-  const result = preflightTeamModels(team, lookup);
+  // 同一 resolver（external.ts 真实 PATH 探测）：doctor 能报外部成员 CLI 缺失。
+  const result = preflightTeamModels(team, lookup, { resolveCli: resolveExternalCli });
   if (result.ok) {
     if (result.warnings.length === 0) return `- ✓ ${team.name}: 全部模型可解析`;
     return [`- ⚠ ${team.name}: 模型可解析，但存在鉴权警告`, ...result.warnings.map((w) => `  - ${w}`)].join("\n");
