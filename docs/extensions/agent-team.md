@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ e42a45f
+> last verified @ 08987d9
 
 ## 职责与边界
 
@@ -42,7 +42,8 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - 亮块 `setWidget` 传**纯字符串数组**（无样式）——`ExtensionUIContext` 无 `theme` 字段，类型化访问 `ctx.ui.theme` 无法编译。
 - **widget 挂载不变量（v1.13.0，触发形式对齐 fleet-status）**：controller 每会话挂一次（`session_start` 无条件，TUI + 未禁用），宿主 widget 注册由数据决定——`snapshot.running` ⇒ string[] 帧，落定 ⇒ `setWidget(key, undefined)` 自动卸载（终态行不常驻）；`refresh()` 数据为空时同步复位选择态并清指纹；点击/事件与 1s tick 共用该路径。刷新双触发：coordinator `onProgress` 事件即时 + 1s tick 兜底，指纹相同跳过；终态不重挂（/reload 水合只恢复 `lastRecord`，不影响 widget）。`/team:clear` 不再手动卸亮块（只清排队对话），集成测试要看到帧必须走真实派单。
 - viewer 打开期间必须暂停下方 widget（`RunWidgetController.setPaused`），关闭恢复。
-- **viewer 帧行单行不变量（v1.13.3）**：多行 tool 条目（`cockpit.ts:499` 的 `team_dispatch 派发 →\n  - 成员: 任务`）必须按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 再兜底把残余 CR/LF 折成空格——帧行携带原始换行会让宿主按物理行写出时把尾巴挤到下一行同列（overlay 左缘残行 + 帧几何漂移，diff 无法清理；真机事故见 `docs/incidents.md`）。widget 同族路径由 `flatten`（`\s+`）保证。
+- **viewer 帧行单行不变量（v1.13.3）**：多行 tool 条目（`cockpit.ts:499` 的 `team_dispatch 派发 →\n  - 成员: 任务`）必须按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 再兜底把残余 CR/LF 折成空格——帧行携带原始换行会让宿主按物理行写出时把尾巴挤到下一行同列（overlay 左缘残行 + 帧几何漂移，diff 无法清理；真机事故见 `docs/incidents.md`）。widget/cockpit 同族路径由 `flattenText`（viewer.ts 单一实现，`\s+`）保证。
+- **status 任务行压平与截断（v1.15.2）**：`/team:status` 与 `team_status` 的 `任务:` 行经 `statusTaskText()` 先 `flattenText` 压平换行、再按 `STATUS_TASK_MAX_WIDTH=60` 显示列 `truncateVisible` 截断（CJK 双宽），运行态与终态两处拼接点同调；flatten 只有 viewer.ts 一份（widget/cockpit 共用），不许在 cockpit.ts 复制实现。
 - **leader 可注入、成员不可注入**：leader 子进程以 `--mode rpc` 拉起，cockpit 持有其 stdin（`steerLeader()` 写 `steer` 命令，仅 run 活跃且通道未关时可写——`agent_settled`/prompt 拒绝/run 收尾即 `end()`，之后回退队列语义）；成员子进程归 leader 派生、cockpit 无任何通道，成员消息仍编成新 run 的 task（chat.ts 派单语义），绝不试图写运行中子进程的 stdin。
 - **子进程 stdin 模式（v1.15.1）**：`PiSpawn`/`runChildPi` 的 `stdin` 默认 `ignore`，只有 leader RPC 显式要 `pipe`（`cockpit.ts` 是唯一写 stdin 的调用方）——pi 的 `--mode json -p` 会读 stdin 到 EOF 才推进，成员 prompt 已在 argv 却持有无人关闭的管道 ⇒ 每次成员派发死锁（v1.15.0 真机事故，见 `docs/incidents.md`）。新增子进程调用点：**不写 stdin 就别开管道**。
 - **RPC 收尾不变量**：leader 进程只在 stdin 结束时退出（`onInputEnd`→shutdown）——必须在 `agent_settled` 时关 stdin；prompt 预检失败（`response.prompt.success=false`）不会产生 settle，必须同样关 stdin 否则 run 永久挂起；`promptError` 折进 failed 记录（不让预检失败落成 completed 空报告）。
@@ -71,7 +72,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（356 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（358 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。

@@ -37,6 +37,6 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 326 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 358 测试（node --test test/*.test.ts）
 npm run typecheck
 ```
