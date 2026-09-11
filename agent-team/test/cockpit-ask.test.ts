@@ -179,7 +179,8 @@ test("stop aborts the in-flight dialog and answers cancelled", async () => {
     const child = await waitForChild(spawn, 0);
     child.emitLine(askLine());
     await sleep(10);
-    const stopped = await coordinator.stopAndSettle(200);
+    const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    const stopped = await coordinator.stopAndSettle(runId, 200);
     assert.equal(stopped.wasRunning, true);
     assert.equal(signals[0]?.aborted, true, "host dialog signal aborted by the run abort");
     assert.deepEqual(responses(child), [{ type: "extension_ui_response", id: "q1", cancelled: true }]);

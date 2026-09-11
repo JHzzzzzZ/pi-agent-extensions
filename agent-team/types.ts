@@ -29,6 +29,22 @@ export const MAX_TASKS_PER_DISPATCH = 8;
 /** Maximum member child processes running concurrently. */
 export const MAX_PARALLEL_MEMBERS = 4;
 
+/**
+ * Maximum team runs a single session may push forward concurrently
+ * (protocol constant, not configurable; exceeding it answers RUN_IN_PROGRESS
+ * with the active runIds listed). One run alone may still dispatch up to
+ * MAX_TASKS_PER_DISPATCH tasks with MAX_PARALLEL_MEMBERS member children —
+ * this cap is the cross-run layer, deliberately without a second child-count
+ * limit on top (worst case 3 × (1 leader + 4 members)).
+ */
+export const MAX_CONCURRENT_TEAM_RUNS = 3;
+
+/**
+ * Terminal run records kept in memory (records[] in the status snapshot,
+ * newest first; hydration restores at most this many).
+ */
+export const MAX_RETAINED_RUN_RECORDS = 5;
+
 /** Dispatch-call budget per run (leader loop guard — exceeded ⇒ wrap up). */
 export const MAX_DISPATCH_CALLS_PER_RUN = 12;
 

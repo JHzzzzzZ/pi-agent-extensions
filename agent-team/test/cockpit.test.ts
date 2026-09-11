@@ -146,9 +146,10 @@ test("RPC steer：run 运行中插话写入 stdin，agent_settled 后关闭 stdi
   });
   const promise = coordinator.start({ team: fixtureTeam(), task: "数数", ui: fakeUi() });
   const child = await waitForChild(spawn, 0);
+  const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
 
-  assert.equal(coordinator.steerLeader("插话一"), true);
-  assert.equal(coordinator.steerLeader("插话二"), true);
+  assert.equal(coordinator.steerLeader(runId, "插话一"), true);
+  assert.equal(coordinator.steerLeader(runId, "插话二"), true);
   assert.deepEqual(
     child.writes.slice(1).map((line) => JSON.parse(line)),
     [
@@ -160,7 +161,7 @@ test("RPC steer：run 运行中插话写入 stdin，agent_settled 后关闭 stdi
   // agent_settled = 本轮任务结束 → 关 stdin，RPC 进程才能退出
   child.emitLine(JSON.stringify({ type: "agent_settled" }));
   assert.equal(child.ended, true, "settle 后关闭 stdin");
-  assert.equal(coordinator.steerLeader("太晚了"), false, "关闭后不再接受插话");
+  assert.equal(coordinator.steerLeader(runId, "太晚了"), false, "关闭后不再接受插话");
 
   child.autoRespond(leaderLines(), 0, 5);
   const result = await promise;
@@ -276,6 +277,8 @@ test("formatStatusSnapshot 标注续跑来源并在可续 run 上提示 team_res
   const running = formatStatusSnapshot(
     {
       running: true,
+      actives: [],
+      records: [],
       progress: { runId: "run-new", parentRunId: "run-old", team: "dev-team", task: "继续", startedAtMs: 0, members: [] },
       lastRecord: null,
     },
@@ -286,6 +289,8 @@ test("formatStatusSnapshot 标注续跑来源并在可续 run 上提示 team_res
   const failed = formatStatusSnapshot(
     {
       running: false,
+      actives: [],
+      records: [],
       progress: null,
       lastRecord: {
         runId: "run-old",
@@ -309,6 +314,8 @@ test("formatStatusSnapshot 标注续跑来源并在可续 run 上提示 team_res
   const completed = formatStatusSnapshot(
     {
       running: false,
+      actives: [],
+      records: [],
       progress: null,
       lastRecord: {
         runId: "run-done",
@@ -331,6 +338,8 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
   const running = formatStatusSnapshot(
     {
       running: true,
+      actives: [],
+      records: [],
       progress: {
         runId: "r",
         team: "dev-team",
@@ -356,6 +365,8 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
   const done = formatStatusSnapshot(
     {
       running: false,
+      actives: [],
+      records: [],
       progress: null,
       lastRecord: {
         runId: "run-1",
@@ -388,7 +399,7 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
   assert.match(done, /✓ db done — opencode-go\/deepseek-flash/, "record member: no actual report → declared as-is");
   assert.match(done, /共享 worktree: `\/wt\/team`/);
 
-  const empty = formatStatusSnapshot({ running: false, progress: null, lastRecord: null }, 0);
+  const empty = formatStatusSnapshot({ running: false, progress: null, lastRecord: null, actives: [], records: [] }, 0);
   assert.match(empty, /没有 team run 记录/);
 });
 
@@ -398,6 +409,8 @@ test("formatStatusSnapshot 任务行压平多行任务（运行态与终态同�
   const running = formatStatusSnapshot(
     {
       running: true,
+      actives: [],
+      records: [],
       progress: { runId: "r", team: "dev-team", task: multiLine, startedAtMs: 0, members: [] },
       lastRecord: null,
     },
@@ -406,6 +419,8 @@ test("formatStatusSnapshot 任务行压平多行任务（运行态与终态同�
   const done = formatStatusSnapshot(
     {
       running: false,
+      actives: [],
+      records: [],
       progress: null,
       lastRecord: {
         runId: "run-1",
@@ -436,6 +451,8 @@ test("formatStatusSnapshot 任务行按显示宽度截断（上限 60 列、CJK 
   const running = formatStatusSnapshot(
     {
       running: true,
+      actives: [],
+      records: [],
       progress: { runId: "r", team: "dev-team", task: longTask, startedAtMs: 0, members: [] },
       lastRecord: null,
     },
@@ -444,6 +461,8 @@ test("formatStatusSnapshot 任务行按显示宽度截断（上限 60 列、CJK 
   const done = formatStatusSnapshot(
     {
       running: false,
+      actives: [],
+      records: [],
       progress: null,
       lastRecord: {
         runId: "run-1",
@@ -468,7 +487,7 @@ test("formatStatusSnapshot 任务行按显示宽度截断（上限 60 列、CJK 
   }
 });
 
-test("restoreLastRecord keeps the most recent record (hydration after reload)", () => {
+test("restoreRecord keeps the newest records, dedupes by runId and caps at five", () => {
   const spawn = makeFakeSpawn();
   const coordinator = new TeamRunCoordinator({
     cwd: () => "/repo",
@@ -478,12 +497,27 @@ test("restoreLastRecord keeps the most recent record (hydration after reload)", 
   });
   const older = { runId: "run-1", team: "t", task: "x", startedAt: "2026-09-05T10:00:00Z", status: "completed" } as never;
   const newer = { runId: "run-2", team: "t", task: "y", startedAt: "2026-09-05T11:00:00Z", status: "failed" } as never;
-  coordinator.restoreLastRecord(older);
-  coordinator.restoreLastRecord(newer);
+  coordinator.restoreRecord(older);
+  coordinator.restoreRecord(newer);
   assert.equal(coordinator.getStatus().lastRecord?.runId, "run-2");
+
+  // Same runId re-hydrated: the fresh record replaces the old one (no duplicate).
+  const refreshing = { runId: "run-2", team: "t", task: "y2", startedAt: "2026-09-05T11:30:00Z", status: "completed" } as never;
+  coordinator.restoreRecord(refreshing);
+  const deduped = coordinator.getStatus();
+  assert.equal(deduped.records.length, 2);
+  assert.equal(deduped.records[0]?.task, "y2");
+
+  // Insertion order does not matter: startedAt decides, oldest fall out at cap 5.
+  for (let i = 3; i <= 8; i++) {
+    coordinator.restoreRecord({ runId: `run-${i}`, team: "t", task: `t${i}`, startedAt: `2026-09-06T00:00:0${i}Z`, status: "completed" } as never);
+  }
+  const grown = coordinator.getStatus();
+  assert.equal(grown.records.length, 5);
+  assert.deepEqual(grown.records.map((r) => r.runId), ["run-8", "run-7", "run-6", "run-5", "run-4"]);
 });
 
-test("second start while running is rejected with RUN_IN_PROGRESS", async () => {
+test("the concurrency cap rejects the next start with RUN_IN_PROGRESS listing active runIds", async () => {
   const spawn = makeFakeSpawn();
   const coordinator = new TeamRunCoordinator({
     cwd: () => "/repo",
@@ -491,15 +525,23 @@ test("second start while running is rejected with RUN_IN_PROGRESS", async () => 
     spawn: spawn.spawn,
     piCommand: "pi",
   });
-  const first = coordinator.start({ team: fixtureTeam(), task: "t1", ui: fakeUi() });
+  const promises = [0, 1, 2].map((i) => coordinator.start({ team: fixtureTeam(), task: `t${i}`, ui: fakeUi() }));
   await waitForChild(spawn, 0);
-  const second = await coordinator.start({ team: fixtureTeam(), task: "t2", ui: fakeUi() });
-  assert.ok(!second.ok);
-  assert.equal(second.code, "RUN_IN_PROGRESS");
-  const child = await waitForChild(spawn, 0);
-  child.autoRespond(leaderLines());
-  const result = await first;
-  assert.ok(result.ok);
+  await waitForChild(spawn, 1);
+  await waitForChild(spawn, 2);
+  const activeIds = coordinator.activeRunIds();
+  assert.equal(activeIds.length, 3, "three parallel runs claimed");
+
+  const rejected = await coordinator.start({ team: fixtureTeam(), task: "t3", ui: fakeUi() });
+  assert.ok(!rejected.ok);
+  assert.equal(rejected.code, "RUN_IN_PROGRESS");
+  assert.match(rejected.message, /已达上限（3）/);
+  for (const id of activeIds) assert.ok(rejected.message.includes(id), `message lists ${id}`);
+  assert.equal(spawn.records.length, 3, "no fourth leader spawned");
+
+  for (const child of spawn.children) child.autoRespond(leaderLines());
+  const results = await Promise.all(promises);
+  for (const result of results) assert.ok(result.ok);
 });
 
 test("stop() aborts the run and the record is marked aborted", async () => {
@@ -513,14 +555,16 @@ test("stop() aborts the run and the record is marked aborted", async () => {
   });
   const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
   const child = await waitForChild(spawn, 0);
-  assert.equal(coordinator.stop(), true);
+  const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+  assert.equal(coordinator.stop(), 1);
   await new Promise((r) => setTimeout(r, 40));
   assert.ok(child.killed.includes("SIGTERM"));
   child.emitClose(null);
   const result = await promise;
   assert.ok(result.ok);
   assert.equal(result.value?.status, "aborted");
-  assert.equal(coordinator.stop(), false);
+  assert.equal(coordinator.stop(), 0);
+  assert.equal(coordinator.isRunActive(runId), false, "settled run released its handle");
 });
 
 test("stopAndSettle aborts the active run and returns the terminal aborted record", async () => {
@@ -533,7 +577,8 @@ test("stopAndSettle aborts the active run and returns the terminal aborted recor
   });
   const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
   const child = await waitForChild(spawn, 0);
-  const settle = coordinator.stopAndSettle();
+  const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+  const settle = coordinator.stopAndSettle(runId);
   assert.ok(child.killed.includes("SIGTERM"), "abort sent synchronously");
   child.emitClose(null);
   const outcome = await settle;
@@ -565,7 +610,7 @@ test("stopAndSettle with no active run reports wasRunning:false", async () => {
     worktreeRoot: "/tmp/worktrees",
     piCommand: "pi",
   });
-  const outcome = await coordinator.stopAndSettle();
+  const outcome = await coordinator.stopAndSettle("run-none");
   assert.deepEqual(outcome, { wasRunning: false, settled: true, record: null });
 });
 
@@ -579,7 +624,8 @@ test("stopAndSettle times out while children are still shutting down (settled:fa
   });
   const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
   const child = await waitForChild(spawn, 0);
-  const outcome = await coordinator.stopAndSettle(30);
+  const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+  const outcome = await coordinator.stopAndSettle(runId, 30);
   assert.equal(outcome.wasRunning, true);
   assert.equal(outcome.settled, false);
   assert.equal(outcome.record, null);
@@ -616,7 +662,9 @@ test("aborted runs fold the full roster into the record: queued/running members 
       { name: "frontend", ok: true, status: "done", summary: "前端做完", usage: { input: 10, output: 5, cost: 0.01, turns: 1 } },
     ]),
   );
-  void coordinator.stopAndSettle();
+  void coordinator.stopAndSettle(
+    spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "",
+  );
   child.emitClose(null);
   const result = await promise;
   assert.ok(result.ok);
@@ -654,7 +702,9 @@ test("aborted roster fold leaves completed members untouched", async () => {
       { name: "backend", ok: false, status: "failed", summary: "f", usage: { input: 1, output: 1, cost: 0, turns: 1 } },
     ]),
   );
-  void coordinator.stopAndSettle();
+  void coordinator.stopAndSettle(
+    spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "",
+  );
   child.emitClose(null);
   const result = await promise;
   assert.ok(result.ok);
@@ -796,6 +846,8 @@ test("formatStatusSnapshot running 成员行在状态后带模型（与终态成
   const running = formatStatusSnapshot(
     {
       running: true,
+      actives: [],
+      records: [],
       progress: {
         runId: "r",
         team: "dev-team",

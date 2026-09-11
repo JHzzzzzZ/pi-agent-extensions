@@ -31,6 +31,8 @@ initTheme();
 function liveSnapshot(): RunStatusSnapshot {
   return {
     running: true,
+    actives: [],
+    records: [],
     progress: {
       runId: "r",
       team: "dev-team",

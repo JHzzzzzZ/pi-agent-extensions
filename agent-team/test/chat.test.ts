@@ -28,7 +28,7 @@ import { fixtureTeam } from "./fixtures.ts";
 
 test("buildChatTask：目标 leader — 用户消息 + leader 上文尾部", () => {
   const task = buildChatTask(
-    { actor: LEADER_ACTOR, label: "leader", isLeader: true },
+    { actor: LEADER_ACTOR, label: "leader", isLeader: true, runId: "run-1" },
     "把 backend 的任务停一下",
     "[assistant] 收到，正在派发",
   );
@@ -39,14 +39,14 @@ test("buildChatTask：目标 leader — 用户消息 + leader 上文尾部", () 
 });
 
 test("buildChatTask：目标 leader — 无上文尾部时不出现尾部段", () => {
-  const task = buildChatTask({ actor: LEADER_ACTOR, label: "leader", isLeader: true }, "你好", "");
+  const task = buildChatTask({ actor: LEADER_ACTOR, label: "leader", isLeader: true, runId: "run-1" }, "你好", "");
   assert.doesNotMatch(task, /最近会话尾部/);
   assert.match(task, /你好/);
 });
 
 test("buildChatTask：目标成员 — 指示 leader 转派并点名成员", () => {
   const task = buildChatTask(
-    { actor: "frontend", label: "frontend", isLeader: false },
+    { actor: "frontend", label: "frontend", isLeader: false, runId: "run-1" },
     "你写的组件用一下 TypeScript",
     "[tool] edit src/App.tsx",
   );
@@ -103,11 +103,11 @@ function fakeDeps(overrides: {
   team?: { ok: true; value: ReturnType<typeof fixtureTeam> } | { ok: false; message: string };
   startError?: string;
   tail?: string;
-  steer?: (message: string) => boolean;
+  steer?: (runId: string, message: string) => boolean;
 } = {}) {
   const starts: FakeStartRecord[] = [];
   const notes: Array<{ text: string; level: string }> = [];
-  const steers: string[] = [];
+  const steers: Array<{ runId: string; message: string }> = [];
   const deps = {
     resolveTeam: (name: string) =>
       overrides.team ?? { ok: true as const, value: fixtureTeam({ name }) },
@@ -117,12 +117,12 @@ function fakeDeps(overrides: {
       starts.push({ teamName: team.name, task });
       return { ok: true as const, runId: `run-${starts.length}` };
     },
-    contextTail: (_actor: string) => overrides.tail ?? "[assistant] 旧上下文",
+    contextTail: (_runId: string, _actor: string) => overrides.tail ?? "[assistant] 旧上下文",
     ...(overrides.steer
       ? {
-          steerLeader: (message: string) => {
-            steers.push(message);
-            return overrides.steer!(message);
+          steerLeader: (runId: string, message: string) => {
+            steers.push({ runId, message });
+            return overrides.steer!(runId, message);
           },
         }
       : {}),
@@ -130,7 +130,8 @@ function fakeDeps(overrides: {
   return { deps, starts, notes, steers };
 }
 
-const leaderTarget = { actor: LEADER_ACTOR, label: "leader", isLeader: true };
+const leaderTarget = { actor: LEADER_ACTOR, label: "leader", isLeader: true, runId: "run-1" };
+const memberTarget = { actor: "frontend", label: "frontend", isLeader: false, runId: "run-1" };
 
 function session(fake: ReturnType<typeof fakeDeps>, teamName = "dev-team") {
   return {
@@ -166,31 +167,49 @@ test("onRunFinalized：completed → 按队列顺序链式派出一条", () => {
   chat.submit(session(fake), leaderTarget, "第一条");
   chat.submit(session(fake), leaderTarget, "第二条");
   fake.deps.isRunning = () => false;
-  chat.onRunFinalized("completed");
+  chat.onRunFinalized("run-1", "completed");
   assert.equal(fake.starts.length, 1, "一次只链发一条，下一条等本 run 落定");
   assert.match(fake.starts[0]?.task ?? "", /第一条/);
   assert.equal(chat.size, 1);
   assert.match(fake.notes[0]?.text ?? "", /自动续发/);
 });
 
-test("onRunFinalized：failed/aborted → 清空队列并通知丢弃条数", () => {
+test("onRunFinalized：failed/aborted → 只丢弃该 run 的排队条目并通知丢弃条数", () => {
   const fake = fakeDeps({ running: true });
   const chat = new ChatCoordinator(fake.deps);
   chat.submit(session(fake), leaderTarget, "a");
   chat.submit(session(fake), leaderTarget, "b");
   fake.deps.isRunning = () => false;
-  chat.onRunFinalized("aborted");
+  chat.onRunFinalized("run-1", "aborted");
   assert.equal(fake.starts.length, 0, "中止后不续发");
   assert.equal(chat.size, 0);
   assert.match(fake.notes[0]?.text ?? "", /aborted/);
   assert.match(fake.notes[0]?.text ?? "", /2 条/);
+  assert.match(fake.notes[0]?.text ?? "", /run-1/);
+});
+
+test("onRunFinalized：failed 只丢弃属于该 run 的条目，其他 run 的排队保留", () => {
+  const fake = fakeDeps({ running: true });
+  const chat = new ChatCoordinator(fake.deps);
+  chat.submit(session(fake), { ...leaderTarget, runId: "run-a" }, "给 run-a");
+  chat.submit(session(fake), { ...leaderTarget, runId: "run-b" }, "给 run-b");
+  chat.onRunFinalized("run-a", "failed");
+  assert.equal(chat.size, 1, "run-b 的排队条目保留");
+  assert.match(fake.notes[0]?.text ?? "", /run-a/);
+  assert.match(fake.notes[0]?.text ?? "", /1 条/);
+
+  // run-b 不受 run-a 失败影响，之后 completed 仍能链式派出。
+  fake.deps.isRunning = () => false;
+  chat.onRunFinalized("run-b", "completed");
+  assert.equal(fake.starts.length, 1);
+  assert.match(fake.starts[0]?.task ?? "", /给 run-b/);
 });
 
 test("onRunFinalized：队列空 → 什么都不做", () => {
   const fake = fakeDeps({ running: false });
   const chat = new ChatCoordinator(fake.deps);
-  chat.onRunFinalized("completed");
-  chat.onRunFinalized("failed");
+  chat.onRunFinalized("run-1", "completed");
+  chat.onRunFinalized("run-1", "failed");
   assert.equal(fake.starts.length, 0);
   assert.equal(fake.notes.length, 0);
 });
@@ -225,6 +244,22 @@ test("clear：返回丢弃条数并清空", () => {
   assert.equal(chat.clear(), 0);
 });
 
+test("clearRun：只丢弃属于该 run 的排队条目", () => {
+  const fake = fakeDeps({ running: true });
+  const chat = new ChatCoordinator(fake.deps);
+  chat.submit(session(fake), { ...leaderTarget, runId: "run-a" }, "a1");
+  chat.submit(session(fake), { ...leaderTarget, runId: "run-b" }, "b1");
+  chat.submit(session(fake), { ...leaderTarget, runId: "run-a" }, "a2");
+  assert.equal(chat.clearRun("run-a"), 2);
+  assert.equal(chat.size, 1);
+  assert.equal(chat.clearRun("run-nope"), 0);
+
+  fake.deps.isRunning = () => false;
+  chat.onRunFinalized("run-b", "completed");
+  assert.equal(fake.starts.length, 1);
+  assert.match(fake.starts[0]?.task ?? "", /b1/);
+});
+
 test("chatSubmitNotice：三种结果映射为 notice 文案", () => {
   assert.equal(chatSubmitNotice({ kind: "started", runId: "run-9" }, "leader").kind, "success");
   assert.match(chatSubmitNotice({ kind: "started", runId: "run-9" }, "leader").text, /run-9/);
@@ -246,8 +281,19 @@ test("submit：run 运行中 + leader 目标 + steer 可用 → 插话（不排�
   assert.equal(fake.starts.length, 0, "不派新 run");
   assert.equal(chat.size, 0, "不进队列");
   assert.equal(fake.steers.length, 1);
-  assert.deepEqual(fake.steers[0], buildSteerMessage("数数途中打个招呼"));
-  assert.match(fake.steers[0] ?? "", /【用户消息·插话】/);
+  assert.equal(fake.steers[0]?.runId, "run-1", "steer 定向到目标 actor 的 runId");
+  assert.deepEqual(fake.steers[0]?.message, buildSteerMessage("数数途中打个招呼"));
+  assert.match(fake.steers[0]?.message ?? "", /【用户消息·插话】/);
+});
+
+test("submit：目标 run 的 steer 不可用（如 runB 未活跃）→ 回退队列，不误插其他 run", () => {
+  const fake = fakeDeps({ running: true, steer: (runId) => runId === "run-a" });
+  const chat = new ChatCoordinator(fake.deps);
+  const outcome = chat.submit(session(fake), { ...leaderTarget, runId: "run-b" }, "给 run-b");
+  assert.deepEqual(outcome, { kind: "queued", pending: 1 });
+  assert.equal(fake.steers.length, 1);
+  assert.equal(fake.steers[0]?.runId, "run-b", "steer 尝试只发给目标 run");
+  assert.equal(chat.size, 1, "回退到队列（带目标 runId）");
 });
 
 test("submit：steer 失败回退队列；成员目标不尝试 steer（无通道）", () => {
@@ -259,7 +305,7 @@ test("submit：steer 失败回退队列；成员目标不尝试 steer（无通�
   const memberFake = fakeDeps({ running: true, steer: () => true });
   const memberChat = new ChatCoordinator(memberFake.deps);
   assert.deepEqual(
-    memberChat.submit(session(memberFake), { actor: "frontend", label: "frontend", isLeader: false }, "成员消息"),
+    memberChat.submit(session(memberFake), memberTarget, "成员消息"),
     { kind: "queued", pending: 1 },
   );
   assert.equal(memberFake.steers.length, 0, "成员子进程无 steer 通道，走队列");
@@ -275,21 +321,21 @@ test("submit：run 未运行时不走 steer，直接派单", () => {
 test("submit：成员目标 — task 指示 leader 转派给该成员", () => {
   const fake = fakeDeps();
   const chat = new ChatCoordinator(fake.deps);
-  chat.submit(session(fake), { actor: "frontend", label: "frontend", isLeader: false }, "跑一下测试");
+  chat.submit(session(fake), memberTarget, "跑一下测试");
   assert.match(fake.starts[0]?.task ?? "", /frontend/);
   assert.match(fake.starts[0]?.task ?? "", /请转派/);
 });
 
-test("ChatMessage 队列条目只存 targetLabel 与 message（不缓存上下文）", () => {
+test("ChatMessage 队列条目只存 runId/targetLabel 与 message（不缓存上下文）", () => {
   // 上下文在派出时经 deps.contextTail 现读——用 tail 变化验证。
   let tail = "旧上下文";
   const fake = fakeDeps({ running: true, tail: "占位" });
-  const deps = { ...fake.deps, contextTail: (): string => tail };
+  const deps = { ...fake.deps, contextTail: (_runId: string, _actor: string): string => tail };
   const chat = new ChatCoordinator(deps);
   chat.submit(session(fake), leaderTarget, "排队消息");
   tail = "新上下文（派出时现读）";
   fake.deps.isRunning = () => false;
-  chat.onRunFinalized("completed");
+  chat.onRunFinalized("run-1", "completed");
   assert.match(fake.starts[0]?.task ?? "", /新上下文（派出时现读）/, "派出时刻才解析上文");
 });
 

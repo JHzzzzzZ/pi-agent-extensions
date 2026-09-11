@@ -21,17 +21,21 @@ import type { TeamConfig } from "./types.ts";
 /** 上文尾部上限（字节，UTF-8）：派出时刻从上一 run 的 transcript 现读。 */
 export const CHAT_CONTEXT_TAIL_BYTES = 2000;
 
-/** 队列条目：只存目标显示名与消息本身，上下文派出时现读（不缓存）。 */
+/** 队列条目：只存目标 runId/显示名与消息本身，上下文派出时现读（不缓存）。 */
 export interface ChatMessage {
+  /** 消息提交时目标 actor 所属的 run（failed 时只丢弃该 run 的排队条目）。 */
+  runId: string;
   targetLabel: string;
   message: string;
 }
 
-/** 消息目标：actor id（transcript 文件名）+ 显示名 + 是否 leader。 */
+/** 消息目标：actor id（transcript 文件名）+ 显示名 + 是否 leader + 所属 run。 */
 export interface ChatTarget {
   actor: string;
   label: string;
   isLeader: boolean;
+  /** 目标 actor 当前所属的 runId（steer 定向与队列归属）。 */
+  runId: string;
 }
 
 /** 一次提交的宿主会话绑定（team 名 + ctx + 通知口），随每次 submit 刷新。 */
@@ -57,13 +61,13 @@ export interface ChatCoordinatorDeps {
     team: TeamConfig,
     task: string,
   ) => { ok: true; runId: string } | { ok: false; code: string; message: string };
-  /** 目标 actor 的 transcript 尾部（宿主实现按当前/最近 runId 现读）。 */
-  contextTail: (actor: string) => string;
+  /** 目标 actor 的 transcript 尾部（宿主实现按目标 runId 现读）。 */
+  contextTail: (runId: string, actor: string) => string;
   /**
-   * 向运行中的 leader 插话（RPC steer：当前回合边界送达，不打断任务）。
+   * 向指定 run 的 leader 插话（RPC steer：当前回合边界送达，不打断任务）。
    * 不可用时返回 false，提交回退到队列语义。
    */
-  steerLeader?: (message: string) => boolean;
+  steerLeader?: (runId: string, message: string) => boolean;
 }
 
 /**
@@ -130,27 +134,30 @@ export class ChatCoordinator {
    */
   submit(session: ChatSession, target: ChatTarget, message: string): ChatSubmitOutcome {
     this.session = session;
-    if (target.isLeader && this.deps.isRunning() && this.deps.steerLeader?.(buildSteerMessage(message))) {
+    if (target.isLeader && this.deps.isRunning() && this.deps.steerLeader?.(target.runId, buildSteerMessage(message))) {
       return { kind: "steered" };
     }
-    this.queue.push({ targetLabel: target.label, message });
+    this.queue.push({ runId: target.runId, targetLabel: target.label, message });
     if (this.deps.isRunning()) return { kind: "queued", pending: this.queue.length };
     return this.dispatchNext(session);
   }
 
   /**
-   * run 落定回调（宿主在 startBackgroundRun 的 runPromise 收尾调用）：
-   * completed → 链式派出下一条（一次只发一条，本 run 落定后再续下一条）；
-   * failed/aborted → 清空队列——用户显式停止 / team_stop / 超预算中止均属
-   * "变卦"，排队消息一并丢弃，与 run 语义一致。
+   * run 落定回调（宿主在 startBackgroundRun 的 runPromise 收尾调用，带
+   * 该 run 的 runId）：completed → 链式派出下一条（一次只发一条，本 run
+   * 落定后再续下一条）；failed/aborted → 只丢弃属于该 run 的排队条目——
+   * 其余并行 run 的排队消息保留（用户变卦只针对停止的这个 run）。
    */
-  onRunFinalized(status: string): void {
+  onRunFinalized(runId: string, status: string): void {
     if (this.queue.length === 0) return;
     const session = this.session;
     if (status !== "completed") {
-      const dropped = this.queue.length;
-      this.queue = [];
-      session?.notify(`上一 run ${status}（未完成）：已丢弃排队的 ${dropped} 条 viewer 对话消息`, "warning");
+      const before = this.queue.length;
+      this.queue = this.queue.filter((entry) => entry.runId !== runId);
+      const dropped = before - this.queue.length;
+      if (dropped > 0) {
+        session?.notify(`run ${runId} ${status}（未完成）：已丢弃排队的 ${dropped} 条 viewer 对话消息`, "warning");
+      }
       return;
     }
     if (!session) {
@@ -164,6 +171,13 @@ export class ChatCoordinator {
       this.queue = [];
       session.notify(`续发排队消息失败：${outcome.message}；已清空队列`, "error");
     }
+  }
+
+  /** 丢弃属于该 run 的排队条目，返回丢弃条数（定向停止路径）。 */
+  clearRun(runId: string): number {
+    const before = this.queue.length;
+    this.queue = this.queue.filter((entry) => entry.runId !== runId);
+    return before - this.queue.length;
   }
 
   /** 显式停止/清除时丢弃整个队列，返回丢弃条数（宿主提示用）。 */
@@ -182,8 +196,8 @@ export class ChatCoordinator {
       this.queue = [];
       return { kind: "rejected", message: team.message };
     }
-    const target = chatTargetForLabel(entry.targetLabel);
-    const task = buildChatTask(target, entry.message, this.deps.contextTail(target.actor));
+    const target = chatTargetForLabel(entry.targetLabel, entry.runId);
+    const task = buildChatTask(target, entry.message, this.deps.contextTail(target.runId, target.actor));
     const started = this.deps.startRun(session.ctx, team.value, task);
     if (!started.ok) {
       this.queue = [];
@@ -194,9 +208,9 @@ export class ChatCoordinator {
 }
 
 /** 由显示名还原消息目标（leader 显示名固定为 "leader"）。 */
-function chatTargetForLabel(label: string): ChatTarget {
-  if (label === "leader") return { actor: LEADER_ACTOR, label, isLeader: true };
-  return { actor: sanitizeActorName(label), label, isLeader: false };
+function chatTargetForLabel(label: string, runId: string): ChatTarget {
+  if (label === "leader") return { actor: LEADER_ACTOR, label, isLeader: true, runId };
+  return { actor: sanitizeActorName(label), label, isLeader: false, runId };
 }
 
 /** 提交结果 → viewer 顶部 notice 文案（纯映射，供宿主与测试共用）。 */

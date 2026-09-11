@@ -205,13 +205,72 @@ test("team_stop errors with RUN_NOT_FOUND for an unknown runId", async () => {
   }
 });
 
-test("team_stop errors with RUN_ID_REQUIRED when runId is omitted", async () => {
+test("team_stop without runId on an idle session reports nothing to stop (not an error)", async () => {
   const { spawn, stop, cleanup } = await setup();
   try {
     const result = await stop({});
+    assert.notEqual(result.isError, true, "0 活跃不是错误");
+    assert.match(result.content[0].text, /当前没有正在进行的 team run/);
+    assert.deepEqual(result.details, { stopped: false, activeCount: 0 });
+    assert.equal(spawn.records.length, 0, "nothing spawned");
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_stop without runId stops the single active run", async () => {
+  const { pi, spawn, run, stop, cleanup } = await setup();
+  try {
+    const first = await run({ team: "proj-team", task: "one" });
+    const runId = (first.details as { runId?: string }).runId;
+    const child = await waitForChild(spawn, 0);
+
+    const stopPromise = stop({});
+    assert.ok(child.killed.includes("SIGTERM"), "single active run aborted");
+    child.emitClose(null);
+    const result = await stopPromise;
+    assert.notEqual(result.isError, true);
+    const details = result.details as { stopped?: boolean; settled?: boolean; runId?: string };
+    assert.equal(details.stopped, true);
+    assert.equal(details.settled, true);
+    assert.equal(details.runId, runId);
+    const abortedEntry = pi.appendedEntries.find(
+      (entry) => entry.type === "agent-team-run-v1" && (entry.data as { runId?: string }).runId === runId,
+    );
+    assert.equal((abortedEntry?.data as { status?: string }).status, "aborted");
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_stop without runId errors with RUN_ID_REQUIRED while two runs run in parallel", async () => {
+  const { pi, spawn, run, stop, cleanup } = await setup();
+  try {
+    const first = await run({ team: "proj-team", task: "one" });
+    const second = await run({ team: "proj-team", task: "two" });
+    const firstId = (first.details as { runId?: string }).runId ?? "";
+    const secondId = (second.details as { runId?: string }).runId ?? "";
+    const childA = await waitForChild(spawn, 0);
+    const childB = await waitForChild(spawn, 1);
+
+    const result = await stop({});
     assert.equal(result.isError, true);
     assert.equal((result.details as { code?: string }).code, "RUN_ID_REQUIRED");
-    assert.equal(spawn.records.length, 0, "nothing spawned");
+    assert.match(result.content[0].text, new RegExp(firstId));
+    assert.match(result.content[0].text, new RegExp(secondId));
+    assert.equal(childA.killed.length, 0, "ambiguous stop signals nobody");
+    assert.equal(childB.killed.length, 0);
+
+    // An explicit runId still stops only that run.
+    const targeted = stop({ runId: secondId });
+    assert.ok(childB.killed.includes("SIGTERM"));
+    assert.equal(childA.killed.length, 0, "the other run is untouched");
+    childB.emitClose(null);
+    const targetedResult = await targeted;
+    assert.equal((targetedResult.details as { runId?: string }).runId, secondId);
+
+    childA.emitClose(0);
+    await waitFor(() => pi.sentMessages.length > 0);
   } finally {
     cleanup();
   }
