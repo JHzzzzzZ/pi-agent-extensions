@@ -25,16 +25,17 @@ import { fileURLToPath } from "node:url";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { archiveRunRecords } from "./archive.ts";
+import { askLeaderQuestion, formatAskResult, type AskPort, type AskToolOutcome } from "./ask.ts";
 import { discoverTeams, findTeam, parseTeamFile, splitModelThinking } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
-import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
+import { TeamRunCoordinator, failedRunRecord, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
 import { defaultIsProcessAlive, orphanRunError, reconcileStaleRuns } from "./runstore.ts";
-import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
+import { appendRunRecord, createRunEntryRenderer, deliverRunResult, formatFailureNotice, type SessionPort } from "./session.ts";
 import { RunWidgetController, probeEditorFocus } from "./widget.ts";
 import { activityFromTranscript, formatActorActivity, formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
 import {
@@ -47,7 +48,10 @@ import {
   type TranscriptEntry,
 } from "./transcript.ts";
 import {
+  ASK_TIMEOUT_DEFAULT_MS,
+  ASK_TOOL_NAME,
   LEADER_ENV_FILE,
+  LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
   MAX_RESULT_BYTES,
   RUN_ENTRY_TYPE,
@@ -141,6 +145,46 @@ function uiPortFrom(ctx: ExtensionContext): UiPort {
         return ctx.ui.theme.fg("dim", text);
       } catch {
         return text;
+      }
+    },
+  };
+}
+
+/**
+ * Builds the leader-question port over the main session's ctx.ui: the RPC
+ * dialog bridge presents the leader's question as a host dialog and returns
+ * the answer. Fail-closed — no UI, stale ctx, host errors and blank answers
+ * all degrade to cancelled so the leader never blocks on an impossible ask.
+ */
+function askPortFrom(ctx: ExtensionContext): AskPort {
+  return {
+    async present(request, signal) {
+      try {
+        if (!ctx.hasUI) return { kind: "unavailable" };
+        const opts = { ...(request.timeoutMs !== undefined ? { timeout: request.timeoutMs } : {}), signal };
+        if (request.method === "select") {
+          const value = await ctx.ui.select(request.title, request.options ?? [], opts);
+          return typeof value === "string" && value.trim().length > 0
+            ? { kind: "answer", value }
+            : { kind: "cancelled" };
+        }
+        if (request.method === "confirm") {
+          return { kind: "answer", value: await ctx.ui.confirm(request.title, request.message ?? "", opts) };
+        }
+        if (request.method === "editor") {
+          // ctx.ui.editor has no timeout/signal options; the channel backstop
+          // still bounds the wait from the leader's side.
+          const value = await ctx.ui.editor(request.title, request.prefill);
+          return typeof value === "string" && value.trim().length > 0
+            ? { kind: "answer", value }
+            : { kind: "cancelled" };
+        }
+        const value = await ctx.ui.input(request.title, request.placeholder, opts);
+        return typeof value === "string" && value.trim().length > 0
+          ? { kind: "answer", value }
+          : { kind: "cancelled" };
+      } catch {
+        return { kind: "cancelled" };
       }
     },
   };
@@ -268,6 +312,55 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
           totalUsage,
         },
       };
+    },
+  });
+
+  // Leader → human questions: the child runs in `--mode rpc`, so ctx.ui
+  // dialogs surface as extension_ui_request lines the cockpit answers over
+  // stdin. Every wait is bounded (tool floor/ceiling + cockpit backstop),
+  // and an unanswered question is a normal tool result (never an error) so
+  // the leader proceeds on its own judgment instead of retrying.
+  const teamName = parsed && parsed.ok ? parsed.value.name : process.env[LEADER_ENV_NAME] || "team";
+  pi.registerTool({
+    name: ASK_TOOL_NAME,
+    label: "Team Ask",
+    description:
+      "向用户（主会话）提问并阻塞等待回答：需求有歧义、需要人类拍板、或影响结果的假设无法自行判断时使用。不传 options 为自由文本输入，传 options（2~10 项）为选项选择。超时/被取消/主会话无 UI 时返回“未获回答”，据此继续任务并在报告中说明假设。",
+    parameters: Type.Object({
+      question: Type.String({ description: "要问用户的问题：写清上下文、影响与期望（用户看不到你与成员的对话，必须自包含）" }),
+      options: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "提供选项时向用户呈现选择列表（2~10 项）；省略则请求自由文本",
+          minItems: 2,
+          maxItems: 10,
+        }),
+      ),
+      timeoutMs: Type.Optional(
+        Type.Number({
+          description: "等待回答的超时（毫秒），默认 600000（10 分钟），范围 30000~1800000",
+          default: ASK_TIMEOUT_DEFAULT_MS,
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      let outcome: AskToolOutcome;
+      try {
+        outcome = await askLeaderQuestion(
+          ctx.ui,
+          teamName,
+          {
+            question: params.question,
+            ...(params.options ? { options: params.options } : {}),
+            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+          },
+          signal,
+        );
+      } catch {
+        // ctx.ui access itself can throw on a stale context — fail closed.
+        outcome = { answered: false };
+      }
+      const result = formatAskResult(outcome);
+      return { content: [{ type: "text" as const, text: result.text }], details: result.details };
     },
   });
 }
@@ -679,6 +772,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           `team ${record.team} ${record.status}: ${record.error ?? "已中止"}`,
           record.status === "aborted" ? "warning" : "error",
         );
+        // 失败必达：failed 与 completed 走同一 followUp 通道（派单主 agent
+        // 需要状态/错误/成员结果/部分报告才能重试或如实转告用户）；aborted
+        // 维持 team_stop 契约（不送达）。
+        if (record.status === "failed") {
+          deliverRunResult(pi as unknown as SessionPort, formatFailureNotice(record));
+        }
       }
       return { text: "", isError: false };
     }
@@ -714,23 +813,39 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       team,
       task,
       ui,
+      ask: askPortFrom(ctx),
       // 状态变化点事件即时重绘（不必等 1s tick）：首个事件通常要等 leader
       // 子进程启动，故下一行再补一帧，派单后亮块立即出现。
       onProgress: () => refreshWidget(),
     });
     const runId = state.coordinator.activeRunId() ?? "";
+    // Dispatch-time identity for launch-level failures: the coordinator can
+    // fail before producing a record (worktree pre-flight / leader spawn
+    // error) — a minimal failed record is rebuilt from these so the failure
+    // reaches the main session and /team:status like any terminal state.
+    const dispatchStartedAt = new Date().toISOString();
+    const failureRecord = (error: string): TeamRunRecord | undefined =>
+      runId !== "" ? failedRunRecord({ runId, team: team.name, task, startedAt: dispatchStartedAt, error }) : undefined;
     refreshWidget();
     ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
     // Completion still persists the record and wakes the session with the
     // report (followUp turn), then drives the viewer chat queue: completed
     // → chain-dispatch the next queued message; failed/aborted → drop it.
+    // The startup notice promises a report when the run is done — failures
+    // must honor that too (status/error/member rows/partial report through
+    // the same channel), not only completion.
     // refreshWidget AFTER onRunFinalized: a chained dispatch claims the next
     // run synchronously, so the widget re-registers in the same frame
     // instead of flickering unmounted between runs.
     void runPromise
       .then((result) => {
         if (!result.ok) {
-          ui.notify(result.message, "error");
+          const record = result.record ?? failureRecord(result.message);
+          if (record) finalizeRun(record, ui, "followUp");
+          else {
+            ui.notify(result.message, "error");
+            deliverRunResult(pi as unknown as SessionPort, `team ${team.name} run 失败: ${result.message}`);
+          }
           chat.onRunFinalized("failed");
           refreshWidget();
           return;
@@ -740,7 +855,13 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         refreshWidget();
       })
       .catch((e: unknown) => {
-        ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
+        const message = e instanceof Error ? e.message : String(e);
+        const record = failureRecord(message);
+        if (record) finalizeRun(record, ui, "followUp");
+        else {
+          ui.notify(`team run 异常退出: ${message}`, "error");
+          deliverRunResult(pi as unknown as SessionPort, `team ${team.name} run 异常退出: ${message}`);
+        }
         chat.onRunFinalized("failed");
         refreshWidget();
       });
@@ -827,6 +948,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         task: params.task,
         ui,
         signal,
+        ask: askPortFrom(ctx),
         onProgress: (progress) => {
           // 状态变化点事件即时重绘（下方亮块与工具进度共用同一观察点）。
           refreshWidget();

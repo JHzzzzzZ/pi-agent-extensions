@@ -15,6 +15,14 @@ export const MAX_RESULT_BYTES = 50 * 1024;
 /** Maximum per-member summary embedded in run records (bytes, UTF-8). */
 export const MAX_SUMMARY_BYTES = 8 * 1024;
 
+/**
+ * Maximum failure notice delivered to the main session (bytes, UTF-8).
+ * Bounds the followUp payload for a failed run (status + error + member
+ * rows + partial report); the report is placed last so truncation eats it
+ * first.
+ */
+export const MAX_FAILURE_NOTICE_BYTES = 8 * 1024;
+
 /** Maximum tasks accepted in a single team_dispatch call. */
 export const MAX_TASKS_PER_DISPATCH = 8;
 
@@ -48,6 +56,22 @@ export const RUN_RESULT_MESSAGE_TYPE = "agent-team-result";
 
 /** Widget id (one status surface per extension, per repo convention). */
 export const WIDGET_ID = "agent-team";
+
+/**
+ * Default wait for a leader question before it degrades to "no answer"
+ * (user-chosen: 10 minutes — long enough for a human to notice, bounded so an
+ * unattended run never idles forever).
+ */
+export const ASK_TIMEOUT_DEFAULT_MS = 10 * 60 * 1000;
+
+/** Minimum wait the team_ask tool allows (never ask a human for less than 30s). */
+export const ASK_TIMEOUT_MIN_MS = 30 * 1000;
+
+/** Maximum wait for a leader question (tool + wire clamp). */
+export const ASK_TIMEOUT_MAX_MS = 30 * 60 * 1000;
+
+/** Leader-mode tool: ask the main session (human) a clarifying question. */
+export const ASK_TOOL_NAME = "team_ask";
 
 /** Repaint interval of the below-editor run widget (elapsed labels). */
 export const WIDGET_TICK_MS = 1000;

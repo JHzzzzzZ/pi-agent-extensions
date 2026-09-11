@@ -2,14 +2,15 @@
 <!-- PROJECT KNOWLEDGE BASE / Generated: 2026-09-09T03:50:04Z / Commit: 457adcf / Branch: dev-laptop / Parent: 根 AGENTS.md -->
 
 ## OVERVIEW
-可复用多 agent 团队：独立 leader 子进程经 `team_dispatch` 调度成员子进程，自包含不引 pwr。
+可复用多 agent 团队：独立 leader 子进程经 `team_dispatch` 调度成员子进程；遇需求歧义时经 `team_ask` 向主会话（用户）提问并阻塞等待，答案经 cockpit 回写后继续。自包含不引 pwr。
 
 ## WHERE TO LOOK
 | 任务 | 位置 |
 |---|---|
 | 团队文件格式 | `~/.pi/agent/teams/*.md` 或受信项目 `.pi/teams/`（项目优先），frontmatter `leader` + `members[]` |
 | 成员字段 | 每成员 `provider/model` + `tools` + `worktree` + 块标量 `prompt`，见 `examples/dev-team.example.md` |
-| 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（仅 `team_dispatch`），无则 cockpit 模式（`team_create/list/run/status/stop` + `/team*`） |
+| 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（`team_dispatch` + `team_ask`），无则 cockpit 模式（`team_create/list/run/status/stop` + `/team*`） |
+| leader 提问（人工澄清） | leader 侧 `ask.ts` `askLeaderQuestion`（team_ask 工具）；cockpit 侧 `AskChannel` + `index.ts` `askPortFrom(ctx)` 宿主对话框；RPC 协议 = pi stdout `extension_ui_request` ↔ stdin `extension_ui_response` |
 | 停止/终态 | `cockpit.ts` `TeamRunCoordinator.stop()`（同步 abort）/`stopAndSettle()`（有界等待落定返回终态记录）+ `team_stop` 工具（runId 必填；aborted 记录补全 roster 成员） |
 | 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，4 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
@@ -31,6 +32,9 @@
 - 亮块行文本不允许含换行：任务/尾注先 `\s+` 压平再截断（任务 44 + `…`、成员尾注 ≤30）—— 残余换行由宿主渲染成额外行（截图回归）；折叠单行只报团队名，状态/耗时/并行数只在展开树。
 - 亮块挂载由数据决定（v1.13.0）：`buildWidgetView` 仅在 `running && progress` 时产出视图，否则返回空——`RunWidgetController.refresh()` 空视图即卸载（setWidget undefined + 复位选择态）；刷新由 coordinator `onProgress` 事件即时驱动 + 1s tick 兜底，`/team:clear` 不碰 widget（只清排队对话）。
 - 按键 reducer（widget `handleWidgetKey` / viewer `handleViewerKey`）顶部必须 `isKeyRelease` 短路（fleet-status.ts:699）：Kitty 键盘协议 flag 2 下 release 事件（`:3` 编码）同样能被 `matchesKey` 命中，漏过滤 = 一次按键生效两次（激活+移动/跳两行/开关两回）；repeat（`:2`）故意保留（长按连移）。
+- leader 提问必须 fail-closed：任何等待都有界（工具侧超时 30s~30min，默认 10 分钟；cockpit 侧 backstop = 超时 + 5s），超时/取消/主会话无 UI/run abort 一律回 `extension_ui_response {cancelled}`，leader 按工具结果自行决策 —— 无界等待会把 run 挂死（对齐 v1.15.0 教训）。
+- RPC dialog 不能从 `session_start` 触发：pi 在 session-start 处理器 pending 期间不消费 RPC stdin，请求永远收不到 response（真机 E2E 实证，fixture 改用 `/ask-e2e` 命令触发）。
+- 真机 E2E 起 pi 子进程用包的真实 bin 入口 `dist/bundle/cli.js`（unbundled `dist/cli.js` 在本工作区不启动），并以 `PI_CODING_AGENT_DIR` 隔离用户全局扩展/配置。
 
 ## ANTI-PATTERNS
 - 从 pwr import 复用 —— 实证：自包含声明，`runner.ts` 另写一份子 pi 适配，不引 `pwr/runner`。
@@ -40,6 +44,6 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 431 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 475 测试（node --test test/*.test.ts）
 npm run typecheck
 ```

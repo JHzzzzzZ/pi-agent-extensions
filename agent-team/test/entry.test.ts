@@ -50,6 +50,9 @@ test("leader prompt embeds the user strategy verbatim, then roster and tool rule
   assert.match(prompt, /\{ "tasks": \[\{ "agent"/);
   assert.match(prompt, /1~8 个子任务/);
   assert.match(prompt, /自包含/);
+  // Question tool contract (leader → human clarification)
+  assert.match(prompt, /team_ask/);
+  assert.match(prompt, /不获回答|未获回答/);
   // Final report format
   assert.match(prompt, /## 结论/);
   assert.match(prompt, /## 各成员贡献/);
@@ -62,6 +65,14 @@ test("leader prompt embeds the user strategy verbatim, then roster and tool rule
 
 interface RegisteredTool {
   name: string;
+  parameters?: unknown;
+  execute?: (
+    toolCallId: string,
+    params: never,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    ctx?: unknown,
+  ) => Promise<{ content: Array<{ type: string; text: string }>; details?: unknown; isError?: boolean }>;
 }
 
 function fakePi() {
@@ -131,7 +142,7 @@ function withEnv(file: string | undefined, fn: () => void | Promise<void>): Prom
   else process.env.PI_AGENT_TEAM_FILE = previous;
 }
 
-test("leader mode (env set) registers only the team_dispatch tool", async () => {
+test("leader mode (env set) registers only the team_dispatch and team_ask tools", async () => {
   resetDoubleLoadGuardForTests();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-entry-"));
   const teamFile = path.join(dir, "dev-team.md");
@@ -139,9 +150,77 @@ test("leader mode (env set) registers only the team_dispatch tool", async () => 
   await withEnv(teamFile, () => {
     const pi = fakePi();
     agentTeamExtension(pi as never);
-    assert.equal(pi.tools.size, 1);
+    assert.equal(pi.tools.size, 2);
     assert.ok(pi.tools.has("team_dispatch"));
+    assert.ok(pi.tools.has("team_ask"));
     assert.equal(pi.commands.size, 0);
+  });
+});
+
+test("team_ask maps params onto the child's ctx.ui dialog and returns the human answer", async () => {
+  resetDoubleLoadGuardForTests();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-entry-"));
+  const teamFile = path.join(dir, "dev-team.md");
+  fs.writeFileSync(teamFile, VALID_TEAM_MD);
+  await withEnv(teamFile, async () => {
+    const pi = fakePi();
+    agentTeamExtension(pi as never);
+    const tool = pi.tools.get("team_ask");
+    assert.ok(tool?.execute);
+    const calls: Array<{ kind: string; title: string; placeholder?: string; options?: string[]; timeout?: number }> = [];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        input: async (title: string, placeholder?: string, opts?: { timeout?: number }) => {
+          calls.push({ kind: "input", title, placeholder, timeout: opts?.timeout });
+          return "  staging  ";
+        },
+        select: async (title: string, options: string[], opts?: { timeout?: number }) => {
+          calls.push({ kind: "select", title, options, timeout: opts?.timeout });
+          return options[1];
+        },
+      },
+    };
+    const answered = await tool!.execute!("call-1", { question: "要发到哪个环境？" } as never, undefined, undefined, ctx);
+    assert.deepEqual(calls[0], {
+      kind: "input",
+      title: "[dev-team] 要发到哪个环境？",
+      placeholder: "输入回答后回车；Esc 取消",
+      timeout: 600_000,
+    });
+    assert.equal(answered.isError, undefined);
+    assert.deepEqual(answered.details, { answered: true, answer: "staging" });
+    assert.match(answered.content[0].text, /用户回答：\nstaging/);
+
+    const selected = await tool!.execute!(
+      "call-2",
+      { question: "环境？", options: ["staging", "prod"], timeoutMs: 1000 } as never,
+      undefined,
+      undefined,
+      ctx,
+    );
+    assert.equal(calls[1].kind, "select");
+    assert.deepEqual(calls[1].options, ["staging", "prod"]);
+    assert.equal(calls[1].timeout, 30_000, "tool floor");
+    assert.deepEqual(selected.details, { answered: true, answer: "prod" });
+  });
+});
+
+test("team_ask degrades to a proceed-on-your-own tool result when nobody answers", async () => {
+  resetDoubleLoadGuardForTests();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-entry-"));
+  const teamFile = path.join(dir, "dev-team.md");
+  fs.writeFileSync(teamFile, VALID_TEAM_MD);
+  await withEnv(teamFile, async () => {
+    const pi = fakePi();
+    agentTeamExtension(pi as never);
+    const tool = pi.tools.get("team_ask");
+    const ctx = { hasUI: false, ui: {} };
+    const result = await tool!.execute!("call-1", { question: "q" } as never, undefined, undefined, ctx);
+    assert.equal(result.isError, undefined, "unanswered is not an error (no retry loops)");
+    assert.deepEqual(result.details, { answered: false });
+    assert.match(result.content[0].text, /未获回答/);
+    assert.match(result.content[0].text, /最合理的假设/);
   });
 });
 
