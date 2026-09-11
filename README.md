@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十二个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、todos 工作流工具）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十三个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、todos 工作流工具、会话管理器）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -17,6 +17,7 @@
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
 | [`todo-cli/`](#todo-cli) | `todos/` 工作流原子操作：agent 工具 `todo`（登记查重/领取标注/完成收口/交接扫描）+ 人类命令 `/todo`、`/todo:list|add|claim|complete|triage|lint` | 5 个（node:test） |
+| [`session-manager/`](#session-manager) | 落盘会话只读浏览/检索：agent 工具 `session`（list/search/preview）+ 人类命令 `/session-manager`、`/session-manager:list|search|preview`；接续/分支交给宿主 `pi --session/--fork` | 10 个（node:test） |
 
 ## 安装
 
@@ -26,7 +27,7 @@
 
 ### 方式一：pi install（推荐）
 
-> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（13 个扩展）。不带 ref 的安装会装到 master 旧包。
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（14 个扩展）。不带 ref 的安装会装到 master 旧包。
 
 ```bash
 # 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
@@ -66,10 +67,10 @@ pi install ./pi-agent-extensions
 
 ### 安装自检（可选）
 
-不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 13 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 14 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
 
 ```bash
-node tools/install-smoke.mjs        # ✓ = 13/13 扩展在干净目录下加载成功；✗ 时打印问题清单
+node tools/install-smoke.mjs        # ✓ = 14/14 扩展在干净目录下加载成功；✗ 时打印问题清单
 node tools/install-smoke.mjs --task # 加跑一条真实模型任务：让模型调用全新安装的 loop_list 工具
 node tools/install-smoke.mjs --install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
                                     # 真跑一遍上面「方式一」的 pi install（联网）：核对装到的包版本/扩展清单/全部命令
@@ -503,9 +504,24 @@ cd todo-cli && npm install && npm test   # 5 个测试
 
 ---
 
+## session-manager
+
+把 `~/.pi/agent/sessions/` 里落盘的 Pi 会话（按工作目录组织、v3 JSONL 树）变成可查询的资产：以前想找「上次那个任务聊到哪了」只能靠宿主 `/resume` 翻列表或手写 grep，现在 agent 与人都能一条命令列出/检索/预览。
+
+- **agent 工具 `session`** — `action="list"` 列会话（id/时间/大小/模型/标题/目录，按最近修改排序）；`action="search"` 在用户/助手文本与会话名上大小写不敏感全文检索（工具输出不搜，避免命令回显噪音）；`action="preview"` 看单条详情 + 最近 6 条消息 + 宿主接续命令。`scope="current"` 只看当前项目。
+- **人类命令** — 裸 `/session-manager` 列当前项目会话；`/session-manager:list [current|all]`、`/session-manager:search <检索词>`、`/session-manager:preview <id 前缀>`（旧空格写法只提示改名）。
+- **接续/分支交给宿主** — preview 输出 `pi --session <id>` 与 `pi --fork <id>`（宿主支持 id 前缀），本扩展不 spawn 进程、不写会话文件、不做「第二个主界面」。
+- **边界** — 只读扫描；一个坏文件（无 header / JSON 损坏 / 读失败）不影响整次扫描；目录缺失与检索词为空都给可读错误。写操作（重命名 / 打标签 / 清理归档）留待后续增量，默认 dry-run。
+
+```bash
+cd session-manager && npm install && npm test   # 10 个测试
+```
+
+---
+
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/`、`todo-cli/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/`、`todo-cli/`、`session-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`pwr/vendor/acorn.mjs` 为生成文件，勿修改
