@@ -5,7 +5,7 @@
 
 ## 项目概览
 
-Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。主项目 `pwr/`（Pi Workflow Runtime，本地工作流编排）加 13 个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、todos 工作流工具、会话管理器）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。主项目 `pwr/`（Pi Workflow Runtime，本地工作流编排）加 12 个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、会话管理器）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 每个扩展的职责边界、文件地图、数据流、不变量与已知坑：见 [`docs/INDEX.md`](docs/INDEX.md) 路由到的卡片与各扩展 README。安装/加载：复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目），Pi 中执行 `/reload` 生效。
 
@@ -14,19 +14,19 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 以下规则无例外；与其他考量冲突时以本节为准。
 
 1. **仓库边界**——默认只改本仓库内文件。宿主 npm 全局安装（`@earendil-works/pi-coding-agent` / `pi-tui` 的 `dist/`、`bundle/chunks/` 等）、其它全局包、用户配置（`~/.pi/agent/`）、系统文件一律不动。宿主/依赖行为不满足需求只有两条路：① 插件侧用公开扩展 API 解决；② 向上游提 issue/PR（或请用户人工处理）。确需动仓库外文件：先说明「改哪个文件、为什么、风险、回滚方式」，取得用户对具体改动的逐次明确同意，改完在交付报告中登记（文件、备份、回滚）；仓库内文档/待办不得把「已应用宿主补丁」当作插件行为的前提或契约；违反本规则的历史改动一律还原并在 `todos/` 记录真实状态。
-2. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点（skill `todo-add`）：现有插件 → `todos/<插件名>-todo.md`；未实现的特定插件 → 新建 `todos/<插件名>-todo.md`；通用领域功能或涉及多个插件的需求 → `todos/general-todo.md`。已有匹配条目直接领取，没有则末尾追加 `- [ ] <需求描述>`；领取/新建后立即标注 `（processing）`，完成前保持该状态；完成（代码 + 文档同步）后改 `- [x]` 并去标注；取消/搁置的注明原因后还原或删除——`todos/` 始终反映真实状态。
+2. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点（skill `todo-add`）：现有插件 → `todos/<插件名>-todo.md`；未实现的特定插件 → 新建 `todos/<插件名>-todo.md`；通用领域功能或涉及多个插件的需求 → `todos/general-todo.md`；仓库级工具（非插件）的需求 → 该工具的专门 todo 文件（现仅 `todos/todo-cli-todo.md`）。已有匹配条目直接领取，没有则末尾追加 `- [ ] <需求描述>`；领取/新建后立即标注 `（processing）`，完成前保持该状态；完成（代码 + 文档同步）后改 `- [x]` 并去标注；取消/搁置的注明原因后还原或删除——`todos/` 始终反映真实状态。
 3. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记。自测达标（全量测试绿 + `npm run typecheck` 零错误）后才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`。
 4. **命令必须显式超时**——每次执行命令都传 bash 工具的 `timeout` 参数：快速 shell 操作（ls/grep/git）30–60 秒，`npm test`/`npm run typecheck` 120–300 秒；不允许不带超时的命令，长工作拆成多个有界小步骤。
 5. **TDD 测试先行**——新能力、bug 修复与重构一律测试先行：先写能复现问题或锁定新行为的失败测试（红），再实现到绿；没有保护网不动被测代码。
 6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
-7. **交付四处同步 + 收尾核对**——任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数）、AGENTS.md（架构/布局/约定/命令/测试数变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件必须与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应，新增插件同变更创建 todo 文件；通用/跨插件需求另置 `todos/general-todo.md`（非插件文件）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
+7. **交付四处同步 + 收尾核对**——任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数）、AGENTS.md（架构/布局/约定/命令/测试数变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件必须与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应，新增插件同变更创建 todo 文件；todo-cli 是既有专门非插件（工具）文件，不参与插件文件↔pi.extensions 一一对应；通用/跨插件需求另置 `todos/general-todo.md`（非插件文件）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
 
 ## 关键目录
 
-- `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键/状态条/solo 审批门）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
-- `test/` — 根契约测试（`status-bar-contract.test.ts`：footer 排序带 + 段分隔/首段定格 + widget 栈顺序，`npm run test:contract`）、安装冒烟工具的纯逻辑单测（`install-smoke.test.ts`，`npm run test:smoke`）与 todo CLI 单测（`todo-cli.test.ts`，`npm run test:todo`）。
-- `tools/` — 仓库级开发工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc` 进程，验证 14 个扩展在“手动复制”安装形态下全部加载，`node tools/install-smoke.mjs`；`--task` 追加真实模型工具调用任务；`--install <源>` 真跑 `pi install` 推荐安装路径并核对装到的包版本/扩展清单/命令面，联网）；`todo.mjs`（agentic todo CLI 薄入口，实现源 `todo-cli/core.ts`：解析/查重/追加/领取/完成/lint/triage 全部是可导出纯函数，`summary`/`list`/`add`/`claim`/`complete`/`lint`/`triage` 七个子命令，只读写仓库 `todos/`、保持 CRLF 行尾、不 commit；`triage` 只读扫描 worktree↔条目关联与遗留）。
-- 卫星扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port/status-band + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota` + `status-band.ts`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器 + `status-band.ts`）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约 + `status-band.ts` + `pi --solo` 启动 flag）、`todo-cli/`（`todos/` 工作流：agent 工具 `todos` + 裸 `/todo` 与六条冒号命令，核心 `core.ts` 与仓库 CLI `tools/todo.mjs` 共用、目录自包含；带 `pi.extensions` 清单的 package.json）、`session-manager/`（落盘会话只读浏览/检索：`core.ts` 纯解析 + 可注入 fs（`SessionFsDeps`）+ `index.ts` 注册 `session` 工具（list/search/preview）与 `/session-manager:*` 冒号命令；接续/分支只输出宿主 `pi --session/--fork` 命令不 spawn；带 `pi.extensions` 清单的 package.json）。
+- `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键/状态条/solo 审批门）→ `tools/<工具名>.md` 仓库工具卡（非插件，现仅 todo-cli）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
+- `test/` — 根契约测试（`status-bar-contract.test.ts`：footer 排序带 + 段分隔/首段定格 + widget 栈顺序，`npm run test:contract`）、安装冒烟工具的纯逻辑单测（`install-smoke.test.ts`，`npm run test:smoke`）与 todo CLI 单测（`todo-cli.test.ts`，`npm run test:todo`，含进程边界 E2E）。
+- `tools/` — 仓库级开发工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc` 进程，验证 13 个扩展在“手动复制”安装形态下全部加载，`node tools/install-smoke.mjs`；`--task` 追加真实模型工具调用任务；`--install <源>` 真跑 `pi install` 推荐安装路径并核对装到的包版本/扩展清单/命令面，联网）；`todo.mjs`（仓库级 todo CLI 唯一入口，实现源 `todo-cli/core.ts`，CLI-only 无 pi 依赖：解析/查重/追加/领取/完成/lint/triage 全部是可导出纯函数，`summary`/`list`/`add`/`claim`/`complete`/`lint`/`triage` 七个子命令，只读写仓库 `todos/`、保持 CRLF 行尾、不 commit；`triage` 只读扫描 worktree↔条目关联与遗留）。
+- 卫星扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port/status-band + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota` + `status-band.ts`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器 + `status-band.ts`）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约 + `status-band.ts` + `pi --solo` 启动 flag）、`session-manager/`（落盘会话只读浏览/检索：`core.ts` 纯解析 + 可注入 fs（`SessionFsDeps`）+ `index.ts` 注册 `session` 工具（list/search/preview）与 `/session-manager:*` 冒号命令；接续/分支只输出宿主 `pi --session/--fork` 命令不 spawn；带 `pi.extensions` 清单的 package.json）。
 
 pwr 与 agent-team 的目录地图、架构与数据流：见 `docs/extensions/pwr.md` + `pwr/DELIVERY.md`（权威架构/安全文档 + 版本历史）与 `docs/extensions/agent-team.md`。文档截图（无头真实渲染 → SVG，三个场景：agent-team 查看器 / pwr 查看器 / agent-team 亮块）由 `agent-team/tools/capture-screens.mjs` 生成到 `docs/assets/`，用法见 agent-team README。
 
@@ -46,9 +46,9 @@ node --test runtime/test/scheduler.test.ts
 ```bash
 npm run test:contract   # 状态条排序带 + 段前缀 + widget 栈顺序（3 个测试，doc 见 docs/cross/status-bar.md）
 npm run test:smoke      # 安装冒烟工具纯逻辑单测（19 个测试，不 spawn pi）
-npm run test:todo       # todo CLI 纯逻辑 + 临时目录闭环单测（13 个测试）
+npm run test:todo       # todo CLI 纯逻辑 + 临时目录闭环单测（16 个测试，含 3 个进程边界 E2E）
 node tools/todo.mjs summary    # agentic todo CLI：全量盘点（list/add/claim/complete/lint/triage 见文件头）
-node tools/install-smoke.mjs   # 端到端：干净临时配置目录 + 真实 pi 进程，验证 14 扩展加载（需已装 pi）
+node tools/install-smoke.mjs   # 端到端：干净临时配置目录 + 真实 pi 进程，验证 13 扩展加载（需已装 pi）
 node tools/install-smoke.mjs --task   # 追加真实模型任务（需鉴权 + 网络；模型取配置默认值，可 --model 覆盖）
 node tools/install-smoke.mjs --install <pi install 源>   # 真跑 README 推荐安装路径（联网）：定位装到的包、核对版本/扩展清单/命令面；可与 --task 叠加
 ```
@@ -66,7 +66,6 @@ node --experimental-strip-types --test provider-quota/index.test.ts             
 node --experimental-strip-types --test chatanywhere-provider/test/*.test.ts        # 32 个测试，此目录无 package.json
 cd loop && npm install && npm test                                               # 196 个测试；另有 npm run typecheck
 cd opencode-bridge && npm install && npm test                                    # 114 个测试（helper 集成测试派生真实 helper + 手写 fake SOCKS5）；另有 npm run typecheck
-cd todo-cli && npm install && npm test                                           # 5 个测试（命令面 + 工具链路；核心 core.ts 与仓库 CLI 共用）
 cd session-manager && npm install && npm test                                    # 10 个测试（真实临时 JSONL 目录 + fake fs / fake ExtensionAPI 接线）
 cd deep-init && npm install && npm test                                               # 37 个测试（纯函数 + fake scanner）；另有 npm run typecheck
 ```
@@ -127,6 +126,6 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 356；run-timer 59；loop 196；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 22；todo-cli 5；session-manager 10；根契约 3 + 安装冒烟单测 19 + todo CLI 13。
+- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 356；run-timer 59；loop 196；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 22；session-manager 10；根契约 3 + 安装冒烟单测 19 + todo CLI 16。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。
