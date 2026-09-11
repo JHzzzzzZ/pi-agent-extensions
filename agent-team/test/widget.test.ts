@@ -498,7 +498,8 @@ test("renderWidgetView 大团队窗口的每行同样受终端宽度约束（折
 
 test("widget rows never carry raw newlines (multi-line task/activity/latest flattened)", () => {
   // 与 viewer 同族的边界契约：宿主逐行渲染 widget 字符串项，任何残余换行都会
-  // 变成额外残行（widget.ts 的 flatten/truncateTask 是唯一防线，此测试钉住它）。
+  // 变成额外残行（viewer.ts 的 flattenText + widget.ts 的 truncateTask 是唯一防线，
+  // 此测试钉住它）。
   const snapshot = liveSnapshot();
   snapshot.progress!.task = "第一行\n第二行";
   snapshot.progress!.leaderActivity = "审查中\n回显第二行";

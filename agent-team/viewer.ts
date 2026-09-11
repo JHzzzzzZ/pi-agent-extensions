@@ -249,6 +249,11 @@ export function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, "");
 }
 
+/** 连续空白（含换行）压成单空格并 trim——宿主把残余换行渲染成额外行。 */
+export function flattenText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /** Display width ignoring ANSI escape sequences. */
 export function visibleWidth(text: string): number {
   let width = 0;

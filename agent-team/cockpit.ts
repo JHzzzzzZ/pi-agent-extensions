@@ -36,6 +36,7 @@ import {
   type TeamErrorCode,
   type TeamRunRecord,
 } from "./types.ts";
+import { flattenText, truncateVisible } from "./viewer.ts";
 
 /** UI surface used by the coordinator (implemented over ctx.ui, guarded). */
 export interface UiPort {
@@ -98,15 +99,13 @@ export function elapsedLabel(startedAtMs: number, nowMs: number): string {
 
 /** One-line bounded summaries of tool calls/results (transcript display). */
 function toolCallText(toolName: string, payload: unknown): string {
-  const single = (text: string): string => text.replace(/\s+/g, " ").trim();
-  const payloadText = payload === undefined || payload === null ? "" : ` ${single(JSON.stringify(payload))}`;
-  const text = single(`${toolName}${payloadText}`);
+  const payloadText = payload === undefined || payload === null ? "" : ` ${flattenText(JSON.stringify(payload))}`;
+  const text = flattenText(`${toolName}${payloadText}`);
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
 function toolResultText(toolName: string, result: unknown): string {
-  const single = (text: string): string => text.replace(/\s+/g, " ").trim();
-  const text = single(`${toolName}${result === undefined || result === null ? "" : ` → ${result}`}`);
+  const text = flattenText(`${toolName}${result === undefined || result === null ? "" : ` → ${result}`}`);
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
@@ -115,6 +114,14 @@ export interface RunStatusSnapshot {
   running: boolean;
   progress: RunProgress | null;
   lastRecord: TeamRunRecord | null;
+}
+
+/** 任务行显示上限（仅任务文本本身，不含 `任务: ` 前缀）：60 显示列。 */
+const STATUS_TASK_MAX_WIDTH = 60;
+
+/** 任务文本：先压平换行，再按显示宽度截断（CJK 双宽，超宽补 `…`）。 */
+function statusTaskText(task: string): string {
+  return truncateVisible(flattenText(task), STATUS_TASK_MAX_WIDTH);
 }
 
 /** Formats a status snapshot for /team:status and the team_status tool. */
@@ -128,7 +135,7 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     const lines = [
       line(`当前 run：team ${p.team} ▶ running · ${elapsedLabel(p.startedAtMs, nowMs)}`),
       line(`runId: ${p.runId}`),
-      line(`任务: ${p.task}`),
+      line(`任务: ${statusTaskText(p.task)}`.trimEnd()),
     ];
     const leaderBits: string[] = [];
     if (p.leaderModel) leaderBits.push(p.leaderModel);
@@ -156,7 +163,7 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     const lines = [
       line(`最近一次 run：team ${record.team} ${icon(record.status)} ${record.status}${secs}${cost}`),
       line(`runId: ${record.runId}`),
-      line(`任务: ${record.task}`),
+      line(`任务: ${statusTaskText(record.task)}`.trimEnd()),
     ];
     if (record.error) lines.push(line(`错误: ${record.error}`));
     for (const member of record.members) {
