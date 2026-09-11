@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 772ef36
+> last verified @ 623af40
 
 ## 职责与边界
 
@@ -12,6 +12,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - `config.ts` — 团队发现：`~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`，同名项目优先，每次使用重扫；frontmatter `budget:` 块解析（非法值 → `INVALID_TEAM_FILE`）。
 - `runner.ts` — 子 `pi` 进程契约：**leader 走 `--mode rpc`**（stdin 发 `prompt`/`steer` JSON 行，`agent_settled` 后关 stdin 使进程退出；RPC 只在 stdin 结束时退出）；member 走 `--mode json -p`（一次性，prompt 全在 argv ⇒ stdin 默认 `ignore`）。`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn`）与 stdin（`onChild`）；`onWire` 转发每行解析后的原始 JSON（RPC 的 `response`/`agent_settled` 只在此层可见）。
 - `runstore.ts` — 每 run `status.json` 元数据快照（落 `teams/runs/<runId>/`，与 transcript 同目录同 7 天 retention）：coordinator claim 即写 running（含 leaderPid + ownerPid），每条退出路径落终态；`session_start` reconcile 只翻「非本进程 in-memory 且 ownerPid 已死/缺失」的 running（属主会话还活着的 run 不动），只报告**不杀**孤儿 leader，避免 PID 复用误杀。
+- `archive.ts` — run 记录终态归档（v1.20.0，纯 fs 直用、不注入）：把 `<worktreeRoot>/<runId>/` 一层子目录（team 共享 worktree 与各成员 worktree）与主会话 cwd 两处的 `.pi/team-runs/<runId>/`（目录，其下文件平铺）与 `<runId>.md`（单文件）复制到主工作区 `history/team-runs/<runId>/`；目标同名异内容 → 既有保留、新记录 `<名>.conflict-<UTC 紧凑时间戳><扩展名>` 另存，同字节幂等跳过；全程异常隔离，返回 `{archived, conflicts, failures}`，永不 throw。
 - `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：`provider/id:level` 思考级别后缀按基础 id 查注册表（告警/报错保留原串）；解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
 - `model-caliber.ts` — 展示层模型口径归一纯函数 `resolveModelCaliber(declared, actual)`（viewer「模型:」行与 `/team:status` 共用，v1.15.4）：声明 provider 前缀 + 子进程实际上报 id 组合；runner.ts 原始上报数据不动（事实源）。
 - `ask.ts` — leader 提问（`team_ask`）与 cockpit 侧 RPC dialog 桥：`parseAskRequest`（只识别 select/confirm/input/editor 四条 dialog 方法，其余 wire 行继续忽略）、`AskChannel`（FIFO 串行、超时 backstop、abort/dispose 取消）、`askLeaderQuestion`（工具参数→`ctx.ui` 对话框，clamp 30s~30min，默认 10 分钟）、`questionEntryText`/`outcomeEntryText`（transcript 文本）。**改提问超时/降级语义必看这里。**
@@ -31,6 +32,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 7. 崩溃恢复：主会话中断 ⇒ 下次 `session_start` 只把**属主已死**（ownerPid 探活失败）或无 ownerPid 的残留 running `status.json` 翻成 failed 记录 + 孤儿 leader PID 警告（不杀进程）；属主会话仍在跑自己的 run，非属主会话不得翻；`/team:doctor` 可看全部残留与损坏文件。
 8. viewer 发消息（`m`，`chat.ts` + index 接线）：**目标 = leader 且 run 运行中且 leader stdin 可用 → RPC `steer` 插话**（`ChatCoordinatorDeps.steerLeader` → `cockpit.steerLeader()` 写 `{"type":"steer"}`；pi 在当前助手回合执行完工具调用后、下次 LLM 调用前送达——不打断任务；提交返回 `{kind:"steered"}`，notice 提示「已插话（steer）」）；其余情况走派单语义：消息 → `buildChatTask`（leader 直发 / 成员转派，附目标 actor transcript 尾部 ≤2000 字节，**派出时刻现读**）→ 复用 `startBackgroundRun`（含 model 预检）派新后台 run；run 运行中则 FIFO 入队，runPromise 收尾调 `chat.onRunFinalized`——completed 链式派出下一条（一次一条，链式 run 的收尾继续驱动），failed/aborted 清空队列并 notify；`team_stop`/`/team:stop`/viewer `D`（`viewerStopAndClearChat`）/`/team:clear` 显式停止也清队列并提示丢弃条数。队列驻留在 cockpit 闭包不落盘（易失交互态，/reload 丢失可接受）。
 9. leader 提问（`team_ask`，`ask.ts`）：leader 调工具 → 子进程 RPC 模式把 `ctx.ui.select/input` 变成 stdout `extension_ui_request`（带 id/method/options/timeout）→ cockpit `onWire` → `AskChannel`（FIFO 一次一个）→ 主会话宿主对话框（`askPortFrom(ctx)` 映射 select/input/confirm/editor，`!ctx.hasUI` 立即 unavailable）→ 用户作答 / Esc / 超时 → 写 leader stdin `extension_ui_response` → 工具结果回 leader 上下文。任何失败（超时、取消、无 UI、stop）都回 `{cancelled:true}`，工具结果提示「未获回答…基于合理假设继续并声明」，绝不无界等待；问答落 leader transcript（`question`/`answer`/`system` 条目）并在 viewer 独立成块，等待期 leader activity 显示「等待人工回答…」。
+10. 终态归档（v1.20.0）：cockpit `runActive` 的 4 条终态路径统一走 `finish()`（先落 `status.json` 终态快照、再 `archiveRunRecords`；与启动级失败补记录 `writeFailedRecord` 并存——先 finish 后补 record，互不依赖），`session_start` reconcile 翻 failed 的每个 stale run 同样归档一次。**根因**：worktree 团队的记录落在 `<worktreeRoot>/<runId>/team|<member>/.pi/team-runs/`，run worktree 随后会被 `git worktree remove` 整体删除——只有主工作区 `history/team-runs/<runId>/` 副本存活；非 worktree 团队落在主会话 cwd。归档失败/冲突只走 `ui.notify(..., "warning")`（notify 自身也 try/catch），绝不改 run 终态、绝不抛异常；预检失败等无记录路径归档是正常空操作。
 
 ## 不变量
 
@@ -41,6 +43,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - **worktree 分支契约（v1.15.4）**：模板收敛到 `worktree.ts` 单一来源——团队共享 `teamWorktreeBranch(runId)` = `team-run-<runId>`（连字符：`team/<runId>` 会占据成员分支 `team/<runId>/<member>` 的 ref 目录，git ref 不能既是文件又是目录，先建团队 worktree 后首个成员 worktree add 必 `cannot lock ref` → `WORKTREE_UNAVAILABLE`，真机 run-1789108491578 见 `docs/incidents.md`）；成员 `memberWorktreeBranch(runId, member)` = `team/<runId>/<member>`。旧命名（`team/<runId>`）的存量团队 worktree 重派时走「已注册但分支不匹配」路径：可操作提示（`git worktree remove --force`），不崩溃、不静默删除。
 - `status.json` 只存元数据快照（runId/team/task/startedAt/status/leaderPid/ownerPid/updatedAt/error）——完整 `TeamRunRecord` 仍走 session entries；写入 best-effort，读取宽松解析（ownerPid 可选，v1 旧文件读为 undefined），损坏文件隔离不抛错（doctor/reconcile 报告）。**startedAt 语义**：claim 时生成一次放进 `RunPlan.startedAt`，running 快照/spawn 刷新/终态快照/终态 `TeamRunRecord` 同用该值——终态 elapsed = updatedAt − startedAt 才真实（旧缺陷：终态重写 `now()`，elapsed 恒 0）。
 - **reconcile 只报告不杀**：孤儿 leader 的 PID 仅进诊断信息（PID 复用风险）；判定顺序：非 running 跳过 → in-memory run 跳过 → `ownerPid === currentPid` 跳过（防御兜底）→ ownerPid 存在且探活（默认 `process.kill(pid, 0)`：ESRCH 死 / EPERM 活）为真 ⇒ 跳过 → ownerPid 存在但已死 ⇒ 翻 failed（孤儿诊断不变）→ 无 ownerPid（v1 旧残留）⇒ 保持旧行为翻 failed（防永久滞留）。`ownerPid` 是写快照的主 pi 进程 PID，区别于 `leaderPid`（leader 子进程）。
+- **终态归档契约（v1.20.0）**：归档只发生在 run 落终态之后（cockpit `finish()` 单一出口）或 reconcile 翻 failed 之后；观测语义是「复制」不是「搬移」——源永不删除、不做任何 git add/commit，目标 `<主会话 cwd>/history/team-runs/<runId>/` 不存在则在首次需要复制时 mkdir -p（无记录 → 不建空目录）；同名冲突保留双方（新文件 `<名>.conflict-<UTC 紧凑时间戳>`，重复归档同内容幂等跳过）；`archiveRunRecords` 永不 throw，`failures` 非空 = 有失败诊断，调用方只发 warning notify；cwd 非 git 仓库不设门槛。
 - wait/后台两条路径共用 `finalizeRun`（appendRunRecord + 通知/交付单一实现）——改终态行为只改这一处。
 - **失败终态必达（v1.18.0）**：后台 run 落 `failed` 与 `completed` 走同一 followUp 通道（同一 `agent-team-result` customType）；`ui.notify` 并行保留为用户端瞬态信号（信息分工，不重复打印）。启动级异步失败（worktree 预检 / `createWorktree` 失败 / leader spawn 抛出 → `StartRunResult` `!ok`）与后台 promise `.catch` 兜底：cockpit 在 `writeTerminal` 后用 `failedRunRecord()` 补一条 `members: []` 的最小 failed 记录（写进 `lastRecord`，`/team:status` 与 viewer 可回看），`startBackgroundRun` 统一走 `finalizeRun` 送达；无 runId 时退化为纯文本送达。**设计决策**：aborted 维持不送达（`team_stop` 契约与文案不变，避免把「用户主动停」误报为失败）；同步启动拒绝（model 预检 / `RUN_IN_PROGRESS`）不补送达——`team_run` 已把错误内联返回主 agent，命令路径仍是 notify。
 - run 生命周期由 coordinator 同步 claim 保护：`start()` 在首个 await 前占住 active/pending/progress，finally 清空——并发 start 竞态与终态后残留 progress 均由此拦截；aborted 终态必须补全 roster 成员（queued/running → aborted），否则 widget/status 少报。
@@ -82,7 +85,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（431 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（481 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。

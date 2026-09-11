@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务，需求不明时 `team_ask` 向用户提问等待澄清（超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，大团队自动窗口化；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 475 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务，需求不明时 `team_ask` 向用户提问等待澄清（超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，大团队自动窗口化；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`） | 481 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -280,7 +280,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd agent-team
-npm install && npm test        # 475 个测试（含真实 git worktree 与真实 pi 子进程 E2E 用例）
+npm install && npm test        # 481 个测试（含真实 git worktree 与真实 pi 子进程 E2E 用例）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
 ```

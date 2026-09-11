@@ -10,6 +10,7 @@
  */
 
 import * as path from "node:path";
+import { archiveRunRecords } from "./archive.ts";
 import { startAlignedTicker } from "./aligned-ticker.ts";
 import { AskChannel, outcomeEntryText, questionEntryText, type AskPort } from "./ask.ts";
 import { splitModelThinking } from "./config.ts";
@@ -230,6 +231,31 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
   }
 
   return "当前没有 team run 记录。用 /team:run <团队> <任务> 或 team_run 工具派单。";
+}
+
+/**
+ * 终态归档：把该 run 的记录复制到主工作区 `history/team-runs/<runId>/`
+ * （worktree 记录会随 run worktree 被删，见 archive.ts 根因说明）。冲突与失败
+ * 只发 warning 诊断，绝不影响终态、绝不抛异常；扫描源期间记录尚未落盘或已被
+ * 移除都只是正常空操作。
+ */
+function archiveTerminalRun(deps: CoordinatorDeps, runId: string, ui: UiPort): void {
+  try {
+    const result = archiveRunRecords({
+      runId,
+      baseCwd: deps.cwd(),
+      worktreeRunRoot: path.join(deps.worktreeRoot, runId),
+    });
+    const diagnostics = [...result.failures, ...result.conflicts];
+    if (diagnostics.length === 0) return;
+    try {
+      ui.notify(`run ${runId} 记录归档诊断：\n${diagnostics.join("\n")}`, "warning");
+    } catch {
+      /* notify failures never break the run */
+    }
+  } catch {
+    /* archiving must never break a run */
+  }
 }
 
 /**
@@ -505,6 +531,12 @@ export class TeamRunCoordinator {
     let askChannel: AskChannel | undefined;
     const writeTerminal = (status: RunStatus, error?: string): void =>
       this.persistRunStatus({ runId, team: team.name, task, startedAt, status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
+    // 终态单一出口：先落终态快照，再归档 run 记录（归档异常绝不影响终态；
+    // 预检失败等无记录路径归档只是空操作）。
+    const finish = (status: RunStatus, error?: string): void => {
+      writeTerminal(status, error);
+      archiveTerminalRun(this.deps, runId, options.ui);
+    };
     // Minimal failed record for launches that die before any dispatch
     // (worktree pre-flight / createWorktree / spawn): keeps /team:status and
     // the viewer able to look the failure up, and lets the background
@@ -553,7 +585,7 @@ export class TeamRunCoordinator {
       if (needsWorktree) {
         if (!(await isGitRepo(git, baseCwd))) {
           const message = `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`;
-          writeTerminal("failed", message);
+          finish("failed", message);
           return {
             ok: false,
             code: "WORKTREE_UNAVAILABLE",
@@ -570,7 +602,7 @@ export class TeamRunCoordinator {
           });
           if (!created.ok) {
             const message = `预检失败：创建团队共享 worktree 失败 — ${created.message}`;
-            writeTerminal("failed", message);
+            finish("failed", message);
             return { ok: false, code: created.code, message, record: writeFailedRecord(message) };
           }
           sharedWorktree = created.value;
@@ -878,14 +910,14 @@ export class TeamRunCoordinator {
       const runStatus = aborted ? "aborted" : failed ? "failed" : "completed";
       recordTranscript("system", `run ${runStatus} · ${Math.round((record.durationMs ?? 0) / 100) / 10}s · $${record.totalCost.toFixed(4)}`);
       if (record.error) recordTranscript("error", record.error);
-      writeTerminal(record.status, record.error);
+      finish(record.status, record.error);
       this.lastRecord = record;
       return { ok: true, value: record };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const error = `failed to start leader process: ${message}`;
       recordTranscript("error", `CHILD_FAILED: ${error}`);
-      writeTerminal("failed", error);
+      finish("failed", error);
       return { ok: false, code: "CHILD_FAILED", message: error, record: writeFailedRecord(error) };
     } finally {
       askChannel?.dispose();
