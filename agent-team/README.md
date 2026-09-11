@@ -136,7 +136,7 @@ agent-team count-duet · ↓/← 查看详情
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的四行元信息头（`Run:` / `State:` / `成员:` / `模型:`——模型为选中 actor 的后端：leader 显示子进程实际上报值、成员显示团队文件声明值，未声明时显示 `（默认）`），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的四行元信息头（`Run:` / `State:` / `成员:` / `模型:`——模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
@@ -179,7 +179,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（356 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（364 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
