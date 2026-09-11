@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 0db6236
+> last verified @ ee7f29d
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -20,6 +20,7 @@
 | 历史事故与教训（渲染堆叠、误杀进程、编码坑） | `incidents.md` |
 | PWR DSL 白名单 / 上限 / 脚本版本权威定义 | `pwr/engine/spec.ts`（代码即真相）+ `extensions/pwr.md` |
 | PWR 完整架构 / 安全不变量 / 版本历史 | `pwr/DELIVERY.md`（pwr 卡从薄，不重复它） |
+| agent-manager 独立工具（会话/agent 进程管理，非扩展）的边界、数据流、不变量、坑 | `tools/agent-manager.md` |
 
 ## 扩展卡一览（一行摘要）
 
@@ -37,11 +38,11 @@
 | run-timer | 会话/任务/回合计时 widget |
 | solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启 |
 | todo-cli | `todos/` 工作流原子操作：agent 工具 `todos` + 冒号命令面；`core.ts` 与仓库 CLI 共用，triage 只读扫描 worktree↔条目 |
-| [session-manager](extensions/session-manager.md) | 落盘会话只读浏览/检索：`session` 工具 list/search/preview + `/session-manager:*`；接续/分支只输出宿主 `pi --session/--fork` 命令 |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 
 ## 收录与淘汰
 
 - 新增插件：同变更内建卡 + 本表登记（见 AGENTS.md 规则红线·交付四处同步）。
+- 新增独立工具（非插件）：同变更在 `docs/tools/<名>.md` 建卡 + 路由表登记；不计入「扩展卡一览」。
 - 卡片超过 100 行 → 说明在抄代码，砍掉；有价值的长内容放扩展自身 README 并从卡里链过去。
 - 发现卡片与代码不符：先改代码或改卡对齐，再更新 last verified 行，不留矛盾。
