@@ -3,7 +3,9 @@
  *
  * 边界说明：这里覆盖解析/状态判定/查重/标注等可在文件系统边界内验证的行为；
  * 真实仓库 `todos/` 上的写操作只允许在临时 fixture 目录里演练，测试不触碰
- * 仓库真实条目（防止把跑测试变成改待办）。
+ * 仓库真实条目（防止把跑测试变成改待办）。末尾三个进程边界 E2E 只跑只读命令
+ * （summary/--help/未知命令），同样不在真实 `todos/` 写入；写操作边界由既有
+ * in-process `main(deps)` + 临时 fixture 用例覆盖。
  */
 
 import test from "node:test";
@@ -11,6 +13,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
   appendEntry,
@@ -25,6 +29,11 @@ import {
   summarize,
   triageRepo,
 } from "../tools/todo.mjs";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const TODO_CLI = path.join(REPO_ROOT, "tools", "todo.mjs");
+const runCli = (args, cwd) =>
+  spawnSync(process.execPath, [TODO_CLI, ...args], { cwd, encoding: "utf8", timeout: 30_000 });
 
 const FIXTURE = [
   "# 某插件 TODO",
@@ -291,4 +300,33 @@ test("main triage：fake git 事实驱动只读报告，只读不写、--json �
   assert.equal(main(["triage"], { repoRoot: root, execGit, log: (l) => text.push(l) }), 0);
   assert.match(text.join("\n"), /feat\/live/);
   assert.match(text.join("\n"), /active/);
+});
+
+// ---------------------------------------------------------------------------
+// 进程边界 E2E：真实子进程 + 陌生 cwd 跑 CLI 入口（只读，不写真实 todos/）
+// ---------------------------------------------------------------------------
+
+test("CLI E2E：任意 cwd 跑 summary 退出 0 且有输出", () => {
+  const res = runCli(["summary"], os.tmpdir());
+  assert.equal(res.status, 0);
+  assert.equal(res.stderr, "");
+  assert.ok(res.stdout.trim().length > 0, "summary 输出非空");
+  assert.match(res.stdout, /-todo/);
+});
+
+test("CLI E2E：--help 退出 0 且含完整用法", () => {
+  const res = runCli(["--help"], os.tmpdir());
+  assert.equal(res.status, 0);
+  assert.match(res.stdout, /用法/);
+  for (const sub of ["summary", "list", "add", "claim", "complete", "lint", "triage"]) {
+    assert.ok(res.stdout.includes(sub), `用法含子命令 ${sub}`);
+  }
+});
+
+test("CLI E2E：未知命令退出 1 并提示", () => {
+  const res = runCli(["definitely-not-a-command"], os.tmpdir());
+  assert.equal(res.status, 1);
+  assert.match(res.stdout, /未知命令：definitely-not-a-command/);
+  assert.match(res.stdout, /用法/);
+  assert.equal(res.stderr, "");
 });
