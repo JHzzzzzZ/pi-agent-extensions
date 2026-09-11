@@ -107,10 +107,6 @@ export const EXTENSION_EXPECTATIONS = {
     uiKeys: [],
   },
   "deep-init": { commands: ["deep-init"], uiKeys: [] },
-  "todo-cli": {
-    commands: ["todo", "todo:add", "todo:claim", "todo:complete", "todo:lint", "todo:list", "todo:triage"],
-    uiKeys: [],
-  },
   "session-manager": {
     commands: ["session-manager", "session-manager:list", "session-manager:preview", "session-manager:search"],
     uiKeys: [],
