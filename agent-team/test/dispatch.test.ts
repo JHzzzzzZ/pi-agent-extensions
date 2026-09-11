@@ -122,6 +122,9 @@ test("member children receive model/tools/prompt flags and the task text", async
   assert.match(fs.readFileSync(promptPath, "utf-8"), /你是前端工程师/);
   assert.equal(args[args.length - 1], "Task: 写登录页");
   assert.deepEqual(args.slice(0, 4), ["--mode", "json", "-p", "--no-session"]);
+  // 成员 prompt 全在 argv：stdin 必须保持 ignore，否则 pi 的 `-p` 模式
+  // 会等一个永不关闭的管道（v1.15.0 真机死锁）
+  assert.equal(record.stdin, "ignore", "member stdin stays ignored");
 
   child.autoRespond([assistantLine("done")], 0, 5);
   await unwrap(promise);

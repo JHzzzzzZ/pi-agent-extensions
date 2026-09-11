@@ -270,7 +270,19 @@ export interface PiChildStdin {
   end(): void;
 }
 
-export type PiSpawn = (command: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv }) => PiChildProcess;
+/**
+ * How a child's stdin is wired. `ignore` is the safe default for children
+ * whose prompt travels through argv: pi's `--mode json -p` reads stdin to
+ * EOF before it starts working, so an open-but-unused pipe deadlocks the
+ * run. Only the leader's RPC channel needs `pipe`.
+ */
+export type ChildStdinMode = "pipe" | "ignore";
+
+export type PiSpawn = (
+  command: string,
+  args: string[],
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdin?: ChildStdinMode },
+) => PiChildProcess;
 
 /** Sanitized events parsed from a child's `--mode json` stdout stream. */
 export type ChildEvent =

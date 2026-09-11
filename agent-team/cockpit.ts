@@ -607,6 +607,9 @@ export class TeamRunCoordinator {
           [LEADER_ENV_RUNID]: runId,
         },
         spawn: this.deps.spawn ?? defaultSpawn(),
+        // The leader's RPC channel needs a live stdin pipe (prompt below,
+        // closed at settle) — members never do, so they keep the default.
+        stdin: "pipe",
         signal: controller.signal,
         killGraceMs: this.deps.killGraceMs,
         onEvent,

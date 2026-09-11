@@ -22,6 +22,7 @@ import {
   type AgentUsage,
   type ChildEvent,
   type ChildOutcome,
+  type ChildStdinMode,
   type PiChildProcess,
   type PiSpawn,
 } from "./types.ts";
@@ -43,13 +44,19 @@ export function getPiInvocation(args: string[]): { command: string; args: string
   return { command: "pi", args };
 }
 
+/**
+ * Spawns a real child pi process. stdin defaults to `ignore` (safe): a child
+ * whose prompt travels through argv must not inherit an open pipe, because
+ * pi's `--mode json -p` waits for stdin EOF before it does anything — a pipe
+ * nobody closes hangs the child forever (and with it the run).
+ */
 export function defaultSpawn(): PiSpawn {
   return (command, args, opts) => {
     const child = spawn(command, args, {
       cwd: opts.cwd,
       env: opts.env,
       shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: [opts.stdin ?? "ignore", "pipe", "pipe"],
     });
     const adapter: PiChildProcess = {
       pid: child.pid,
@@ -101,6 +108,12 @@ export interface RunChildOptions {
   cwd?: string;
   /** Extra environment variables merged over process.env for the child. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * stdin wiring for the child (default `ignore`). Members pass their prompt
+   * through argv and never read stdin, so the default is also the safe one;
+   * the leader's RPC channel is the only caller that asks for `pipe`.
+   */
+  stdin?: ChildStdinMode;
   spawn: PiSpawn;
   signal?: AbortSignal;
   /** Live event callback (called as events are parsed, before resolution). */
@@ -186,6 +199,7 @@ export function textTail(text: string, max = 160): string {
  */
 export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome> {
   const { command, args, cwd, env, spawn: spawnFn, signal, onEvent, onSpawn, onChild } = options;
+  const stdinMode: ChildStdinMode = options.stdin ?? "ignore";
   const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
   const outcome: ChildOutcome = {
     exitCode: 0,
@@ -225,7 +239,7 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
   try {
     let spawned: PiChildProcess;
     try {
-      spawned = spawnFn(command, args, { cwd, env });
+      spawned = spawnFn(command, args, { cwd, env, stdin: stdinMode });
     } catch (err) {
       throw err instanceof Error ? err : new Error(String(err));
     }
