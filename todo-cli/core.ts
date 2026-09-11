@@ -1,8 +1,8 @@
 /**
  * todo-cli/core.ts — agentic todo 核心（GOAL.md §2「自己这把」+ AGENTS.md 需求登记纪律）
  *
- * 本文件是唯一实现源：Pi 扩展（index.ts）与仓库 CLI（tools/todo.mjs）都从这里调用；
- * 扩展自包含（复制 todo-cli/ 到 extensions/ 即可用），不依赖仓库内其它路径。
+ * 本文件是仓库 CLI（`node tools/todo.mjs`）的唯一实现源：导出纯函数 + `main(argv, deps)`，
+ * 无任何 Pi/宿主依赖，任意 cwd 可调用（REPO_ROOT 由脚本位置解析）。
  *
  * 背景：todos/ 工作流的规则（查重、路由、processing 标注、完成收口）目前只写在
  * skill 里，靠 agent 人工 grep + edit 执行——格式破坏、漏查重、错文件都发生过风险。
