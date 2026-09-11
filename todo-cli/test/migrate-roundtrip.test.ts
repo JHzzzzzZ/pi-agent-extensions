@@ -184,8 +184,8 @@ test("时间戳迁移：claim 时刻 t1 经强制漂移重导入后 claimedAt �
 
   // 1) 首次导入 + 模拟 claim 落时间戳（W4 claim 路径 = atomicWriteFile + reimportFile + stampEntry）。
   store.writeTxn(() => {
-    store.reimportFile("general", original, () => t1);
-    assert.equal(store.stampEntry("general", normalizeText("未领取条目"), "claimedAt", t1), true, "stampEntry 应命中唯一条目");
+    store.reimportFile("general-todo", original, () => t1);
+    assert.equal(store.stampEntry("general-todo", normalizeText("未领取条目"), "claimedAt", t1), true, "stampEntry 应命中唯一条目");
   });
   let rows = store.listEntryRows().filter((row) => row.text.includes("未领取条目"));
   assert.equal(rows.length, 1);
@@ -195,7 +195,7 @@ test("时间戳迁移：claim 时刻 t1 经强制漂移重导入后 claimedAt �
   // 2) 强制漂移：claim 标注增删不改变 normalizeText 结果，重导入后时间戳按归一化文本迁移。
   const claimed = setProcessing(original, "未领取条目", "feat/claim");
   if (!claimed.ok) assert.fail(`setProcessing 应成功：${claimed.code}`);
-  store.writeTxn(() => store.reimportFile("general", claimed.content, () => t2));
+  store.writeTxn(() => store.reimportFile("general-todo", claimed.content, () => t2));
   rows = store.listEntryRows().filter((row) => row.text.includes("未领取条目"));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].claimedAt, t1, "重导入后 claimedAt 必须按归一化文本迁移保留");

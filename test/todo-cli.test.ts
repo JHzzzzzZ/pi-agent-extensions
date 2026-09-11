@@ -29,6 +29,9 @@ import {
   summarize,
   triageRepo,
 } from "../tools/todo.mjs";
+import { findDuplicateHits, PROCESSING_REF_RE } from "../tools/todo.mjs";
+import { parseBranchRef } from "../todo-cli/query.ts";
+import { storeFile } from "../todo-cli/store.ts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TODO_CLI = path.join(REPO_ROOT, "tools", "todo.mjs");
@@ -329,4 +332,286 @@ test("CLI E2E：未知命令退出 1 并提示", () => {
   assert.match(res.stdout, /未知命令：definitely-not-a-command/);
   assert.match(res.stdout, /用法/);
   assert.equal(res.stderr, "");
+});
+
+// ---------------------------------------------------------------------------
+// L14/L15 接线增补（§6 清单 24–30；既有 16 条零修改）
+// ---------------------------------------------------------------------------
+
+const NEW_FIXTURE_GENERAL = [
+  "# 通用 TODO",
+  "",
+  "- [ ] 修复并发写入（processing 2026-09-11 @ feat/todo-cli-db）",
+  "- [ ] 优化查询 #性能",
+  "- [ ] 另一条 #性能（processing 2026-09-10 @ feat/other）",
+  "- [x] 完成的 #性能（完成 2026-09-11 @ feat/todo-cli-db）",
+  "",
+].join("\r\n");
+
+/** 临时仓库 fixture：files = { 名字（无 .md）: 内容 }；只写临时目录，不碰真实 todos/。 */
+function makeRepo(files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-w4-"));
+  fs.mkdirSync(path.join(root, "todos"));
+  for (const [name, content] of Object.entries(files)) {
+    fs.writeFileSync(path.join(root, "todos", `${name}.md`), content);
+  }
+  return root;
+}
+
+function readRepoFile(root, name) {
+  return fs.readFileSync(path.join(root, "todos", `${name}.md`), "utf8");
+}
+
+/** CRLF 保持：拆掉全部 \r\n 后不得再有裸 \n。 */
+function hasBareLf(content) {
+  return content.split("\r\n").some((part) => part.includes("\n"));
+}
+
+test("W4-24 list 组合条件：--status processing --file todo-cli 一条命令（验收②锚点；旧双 flag 走今日路径）", () => {
+  const root = makeRepo({
+    "todo-cli-todo": [
+      "# todo-cli TODO",
+      "",
+      "- [ ] 未领取条目",
+      "- [ ] 进行中的 todo-cli 条目（processing 2026-09-11 @ feat/todo-cli-db）",
+      "- [x] 已完成的 todo-cli 条目（完成 2026-09-11 @ feat/old）",
+      "",
+    ].join("\r\n"),
+    "general-todo": "# 通用 TODO\r\n\r\n- [ ] 通用进行中（processing 2026-09-11 @ feat/general）\r\n",
+  });
+  const out = [];
+  assert.equal(main(["list", "--status", "processing", "--file", "todo-cli"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.deepEqual(out, ["[~] todo-cli-todo:4  进行中的 todo-cli 条目（processing 2026-09-11 @ feat/todo-cli-db）"]);
+  assert.equal(fs.existsSync(storeFile(root)), false, "旧双 flag 路径不得触发建库（今日代码路径）");
+});
+
+test("W4-25 list 新 flags：--branch/--tag/--text 与旧 flags AND 组合 + --json 机读", () => {
+  const root = makeRepo({ "general-todo": NEW_FIXTURE_GENERAL });
+  const runList = (args) => {
+    const out = [];
+    const code = main(["list", ...args], { repoRoot: root, log: (l) => out.push(l) });
+    return { code, out };
+  };
+
+  const branch = runList(["--branch", "todo-cli"]);
+  assert.equal(branch.code, 0);
+  assert.deepEqual(branch.out.map((line) => line.split("  ")[0]), ["[~] general-todo:3", "[x] general-todo:6"]);
+
+  const tag = runList(["--tag", "性能"]);
+  assert.deepEqual(tag.out.map((line) => line.split("  ")[0]), ["[ ] general-todo:4", "[~] general-todo:5", "[x] general-todo:6"]);
+
+  const and = runList(["--branch", "todo-cli", "--tag", "性能"]);
+  assert.deepEqual(and.out.map((line) => line.split("  ")[0]), ["[x] general-todo:6"]);
+
+  const combo = runList(["--status", "processing", "--text", "并发"]);
+  assert.deepEqual(combo.out, ["[~] general-todo:3  修复并发写入（processing 2026-09-11 @ feat/todo-cli-db）"]);
+
+  const json = runList(["--branch", "todo-cli", "--tag", "性能", "--json"]);
+  assert.equal(json.code, 0);
+  assert.equal(json.out.length, 1, "--json 单次整体输出");
+  const rows = JSON.parse(json.out[0]);
+  assert.deepEqual(
+    rows.map((row) => ({
+      file: row.file,
+      line: row.line,
+      status: row.status,
+      text: row.text,
+      branch: row.branch,
+      tags: row.tags,
+      claimedAt: row.claimedAt,
+      completedAt: row.completedAt,
+    })),
+    [
+      {
+        file: "general-todo",
+        line: 6,
+        status: "done",
+        text: "完成的 #性能（完成 2026-09-11 @ feat/todo-cli-db）",
+        branch: "feat/todo-cli-db",
+        tags: ["性能"],
+        claimedAt: null,
+        completedAt: null,
+      },
+    ],
+  );
+  assert.equal(typeof rows[0].createdAt, "string", "DB 路径 createdAt 应有值");
+});
+
+test("W4-26 降级注入 openStore→null：七子命令照常、--claimed-since 明确报错、db status/rebuild 不可用", () => {
+  const content = "# 通用 TODO\r\n\r\n- [ ] 一号条目\r\n- [ ] 二号条目\r\n";
+  const rootA = makeRepo({ "general-todo": content });
+  const rootB = makeRepo({ "general-todo": content });
+  fs.writeFileSync(path.join(rootA, "package.json"), "{}\n");
+  fs.writeFileSync(path.join(rootB, "package.json"), "{}\n");
+  const degraded = { openStore: () => null };
+  const record = (root, deps, args) => {
+    const out = [];
+    const code = main(args, { repoRoot: root, log: (l) => out.push(l), ...deps });
+    return { code, out };
+  };
+
+  for (const args of [
+    ["add", "--file", "general", "三号条目 降级演练"],
+    ["claim", "--file", "general", "--match", "一号条目", "--branch", "feat/degraded"],
+    ["complete", "--file", "general", "--match", "二号条目", "--note", "feat/degraded：完成"],
+  ]) {
+    const golden = record(rootA, {}, args);
+    const fallback = record(rootB, degraded, args);
+    assert.equal(golden.code, 0, `黄金路径 ${args[0]} 应 exit 0`);
+    assert.equal(fallback.code, golden.code, `降级 ${args[0]} 退出码同黄金路径`);
+    assert.deepEqual(fallback.out, golden.out, `降级 ${args[0]} 输出同黄金路径`);
+  }
+  assert.equal(readRepoFile(rootB, "general-todo"), readRepoFile(rootA, "general-todo"), "降级写结果与黄金路径字节一致");
+  assert.equal(hasBareLf(readRepoFile(rootB, "general-todo")), false, "降级路径 CRLF 保持");
+  assert.equal(fs.existsSync(storeFile(rootB)), false, "注入 null 不得建库");
+
+  for (const args of [["summary", "--json"], ["list", "--status", "processing"], ["lint"]]) {
+    const golden = record(rootA, {}, args);
+    const fallback = record(rootB, degraded, args);
+    assert.equal(fallback.code, golden.code, `降级 ${args.join(" ")} 退出码同黄金`);
+    assert.deepEqual(fallback.out, golden.out, `降级 ${args.join(" ")} 输出同黄金`);
+  }
+
+  const textQuery = record(rootB, degraded, ["list", "--text", "降级演练"]);
+  assert.equal(textQuery.code, 0);
+  assert.match(textQuery.out.join("\n"), /三号条目 降级演练/);
+  const since = record(rootB, degraded, ["list", "--claimed-since", "2026-01-01"]);
+  assert.equal(since.code, 1);
+  assert.match(since.out.join("\n"), /node:sqlite 不可用/);
+
+  const status = record(rootB, degraded, ["db", "status"]);
+  assert.equal(status.code, 1);
+  assert.match(status.out.join("\n"), /node:sqlite 不可用/);
+  const rebuild = record(rootB, degraded, ["db", "rebuild"]);
+  assert.equal(rebuild.code, 1);
+  assert.equal(fs.existsSync(storeFile(rootB)), false, "降级 rebuild 不得落库");
+  assert.equal(record(rootB, degraded, ["db", "drop"]).code, 0);
+
+  const execGit = (args) => {
+    if (args[0] === "worktree") return `worktree ${rootB}\nHEAD aaaa1111\nbranch refs/heads/dev-laptop\n`;
+    if (args[0] === "branch") return "* dev-laptop\n";
+    if (args[0] === "status") return "";
+    throw new Error(`unexpected git: ${args.join(" ")}`);
+  };
+  const triage = record(rootB, { execGit }, ["triage", "--json"]);
+  assert.equal(triage.code, 0);
+  assert.ok(JSON.parse(triage.out.join("\n")), "triage --json 仍可机读");
+});
+
+test("W4-27 db 子命令：status/rebuild/drop 退出码与输出；不修改 md", () => {
+  const root = makeRepo({
+    "a-todo": "# a\r\n\r\n- [ ] 甲\r\n- [x] 乙\r\n",
+    "b-todo": "# b\r\n\r\n- [ ] 丙\r\n",
+  });
+  const beforeA = readRepoFile(root, "a-todo");
+  const beforeB = readRepoFile(root, "b-todo");
+  const run = (args) => {
+    const out = [];
+    const code = main(args, { repoRoot: root, log: (l) => out.push(l) });
+    return { code, out: out.join("\n") };
+  };
+
+  const missing = run(["db", "status"]);
+  assert.equal(missing.code, 1);
+  assert.match(missing.out, /索引不存在/);
+  assert.equal(fs.existsSync(storeFile(root)), false, "db status 不得建库");
+
+  const rebuild = run(["db", "rebuild"]);
+  assert.equal(rebuild.code, 0);
+  assert.match(rebuild.out, /索引已重建：2 个文件 · 3 条目/);
+  assert.ok(fs.existsSync(storeFile(root)));
+
+  const status = run(["db", "status"]);
+  assert.equal(status.code, 0);
+  assert.match(status.out, /索引可用：2 个文件 · 3 条目 · schema v1/);
+
+  const statusJson = run(["db", "status", "--json"]);
+  assert.equal(statusJson.code, 0);
+  assert.deepEqual(JSON.parse(statusJson.out), { available: true, reason: null, files: 2, entries: 3, schemaVersion: 1 });
+
+  const drop = run(["db", "drop"]);
+  assert.equal(drop.code, 0);
+  assert.match(drop.out, /index\.db/);
+  assert.equal(fs.existsSync(storeFile(root)), false);
+  assert.equal(run(["db", "drop"]).out, "无可删除的索引文件");
+
+  const unknown = run(["db", "bogus"]);
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.out, /未知 db 子命令：bogus/);
+
+  assert.equal(readRepoFile(root, "a-todo"), beforeA, "db 子命令不得修改 md");
+  assert.equal(readRepoFile(root, "b-todo"), beforeB, "db 子命令不得修改 md");
+});
+
+test("W4-28 findDuplicates ≡ findDuplicateHits 等价（同批文本两口径 deepEqual）", () => {
+  const docs = [
+    { name: "a-todo", content: FIXTURE },
+    { name: "b-todo", content: "- [ ] 另一个需求（processing 2026-09-10 @ feat/z）\n" },
+  ];
+  const entries = docs.flatMap((doc) =>
+    parseTodoFile(doc.content).map((entry) => ({ name: doc.name, line: entry.line, status: entry.status, text: entry.text })),
+  );
+  for (const text of ["另一个需求", "全新的需求描述", "未领取的条目：做点事情", "另一条未领取", "条目", ""]) {
+    assert.deepEqual(findDuplicates(text, docs), findDuplicateHits(text, entries), `口径必须一致：${text}`);
+  }
+});
+
+test("W4-29 PROCESSING_REF_RE ≡ query.parseBranchRef 对照（两处独立实现口径锁定）", () => {
+  const texts = [
+    "进行中的条目（processing 2026-09-11 @ feat/y：在做）",
+    "已完成（完成 2026-09-11 @ feat/x）",
+    "无引用条目",
+    "@feat/at-start",
+    "多个 @ feat/a 和 @ feat/b",
+    "括号（@ feat/close）",
+    "冒号@ feat/colon：x",
+    "逗号@ feat/comma，x",
+    "中文（processing@ feat/nospace）",
+    "空白前缀 @  feat/spaced",
+  ];
+  for (const text of texts) {
+    const match = PROCESSING_REF_RE.exec(text);
+    assert.equal(match ? match[1] : null, parseBranchRef(text), `分支引用口径必须一致：${text}`);
+  }
+});
+
+test("W4-30 DB 路径写命令：消息行与 CRLF 文件内容字节不变（默认 store 路径）", () => {
+  const root = makeRepo({ "general-todo": "# general TODO\r\n\r\n- [ ] 一号需求\r\n" });
+  const run = (args) => {
+    const out = [];
+    const code = main(args, { repoRoot: root, log: (l) => out.push(l) });
+    return { code, out };
+  };
+
+  const add = run(["add", "--file", "general", "九号新需求"]);
+  assert.equal(add.code, 0);
+  assert.deepEqual(add.out, ["已登记到 todos/general-todo.md：九号新需求"]);
+  assert.ok(readRepoFile(root, "general-todo").endsWith("- [ ] 九号新需求\r\n"));
+
+  const claim = run(["claim", "--file", "general", "--match", "九号新需求", "--branch", "feat/db"]);
+  assert.equal(claim.code, 0);
+  assert.deepEqual(claim.out, ["已领取（已写入）：general · 九号新需求"]);
+  assert.ok(readRepoFile(root, "general-todo").includes("- [ ] 九号新需求（processing @ feat/db）\r\n"));
+
+  const claimAgain = run(["claim", "--file", "general", "--match", "九号新需求", "--branch", "feat/db"]);
+  assert.deepEqual(claimAgain.out, ["已领取（状态未变）：general · 九号新需求"]);
+
+  const complete = run(["complete", "--file", "general", "--match", "九号新需求", "--note", "feat/db：完成"]);
+  assert.equal(complete.code, 0);
+  assert.deepEqual(complete.out, ["已完成（已写入）：general · 九号新需求"]);
+  assert.ok(readRepoFile(root, "general-todo").includes("- [x] 九号新需求（完成 feat/db：完成）\r\n"));
+
+  const completeAgain = run(["complete", "--file", "general", "--match", "九号新需求"]);
+  assert.deepEqual(completeAgain.out, ["已完成（状态未变）：general · 九号新需求"]);
+
+  assert.ok(fs.existsSync(storeFile(root)), "默认路径必须走 DB 索引");
+  assert.equal(hasBareLf(readRepoFile(root, "general-todo")), false, "CRLF 保持");
+
+  const jsonOut = [];
+  assert.equal(main(["list", "--text", "九号新需求", "--json"], { repoRoot: root, log: (l) => jsonOut.push(l) }), 0);
+  const rows = JSON.parse(jsonOut.join("\n"));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, "done");
+  assert.equal(typeof rows[0].claimedAt, "string", "claim 时刻应落库");
+  assert.equal(typeof rows[0].completedAt, "string", "complete 时刻应落库");
 });
