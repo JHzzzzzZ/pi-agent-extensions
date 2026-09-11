@@ -20,6 +20,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 5. **TDD 测试先行**——新能力、bug 修复与重构一律测试先行：先写能复现问题或锁定新行为的失败测试（红），再实现到绿；没有保护网不动被测代码。
 6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
 7. **交付四处同步 + 收尾核对**——任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数）、AGENTS.md（架构/布局/约定/命令/测试数变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件必须与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应，新增插件同变更创建 todo 文件；todo-cli、agent-manager 是既有专门非插件（工具）文件，不参与插件文件↔pi.extensions 一一对应；通用/跨插件需求另置 `todos/general-todo.md`（非插件文件）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
+8. **团队方案先审批**——agent team 出具方案后、实施改动之前，必须用 `team_ask` 把方案交用户审批并取得明确同意；未获同意（含超时/取消/无法提问）不得开始写代码或改文件，只停下如实报告；只读排查与评审不受限，审批结论随 run 记录留存。
 
 ## 关键目录
 
@@ -58,7 +59,7 @@ node tools/install-smoke.mjs --install <pi install 源>   # 真跑 README 推荐
 
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 45 个测试
-cd agent-team && npm install && npm test                                        # 550 个测试（node --test test/*.test.ts；另 node test/resume-host-smoke.mjs 验真实 pi 的 --session 续写）
+cd agent-team && npm install && npm test                                        # 559 个测试（node --test test/*.test.ts；另 node test/resume-host-smoke.mjs 验真实 pi 的 --session 续写）
 node --experimental-strip-types --test run-timer/run-timer.test.ts run-timer/aligned-ticker.test.ts   # 59 个测试，此目录无 package.json
 node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts                # 63 个测试，此目录无 package.json
 node --experimental-strip-types --test human-notify/index.test.ts                # 37 个测试，此目录无 package.json
@@ -127,6 +128,6 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 550；run-timer 59；loop 196；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 22；agent-manager 37（+4 e2e opt-in）；根契约 3 + 安装冒烟单测 19 + todo CLI 50。
+- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 559；run-timer 59；loop 196；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 22；agent-manager 37（+4 e2e opt-in）；根契约 3 + 安装冒烟单测 19 + todo CLI 50。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。

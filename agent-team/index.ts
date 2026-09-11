@@ -69,6 +69,7 @@ import {
   MAX_RESULT_BYTES,
   RUN_ENTRY_TYPE,
   STOP_SETTLE_TIMEOUT_MS,
+  VIEWER_SUSPEND_WAIT_MS,
   WIDGET_ID,
   resolveRunBudget,
   truncateUtf8,
@@ -167,40 +168,138 @@ function uiPortFrom(ctx: ExtensionContext): UiPort {
 }
 
 /**
+ * State slice the viewer/dialog mutex needs (cockpit state subset; tests
+ * construct it directly).
+ */
+export interface ViewerDialogState {
+  /** True while the transcript viewer overlay is open. */
+  viewerOpen: boolean;
+  /** 程序化收起（dispose + done），由 openTranscriptViewer 的 onOpen 记录。 */
+  viewerClose?: () => void;
+  /** viewer 的 custom 调用落定（openViewer finally）时 resolve。 */
+  viewerSettled?: (() => void) | undefined;
+  /** viewer 最后停留的 actor（重开时恢复）。 */
+  viewerActor?: string;
+  /** viewer 最近一次实际展示的 runId（openViewer 的 load 记录；重开时恢复）。 */
+  viewerLastRunId?: string;
+  /** widget-enter 预置的 run 钉选；重开前由 viewerLastRunId 回填。 */
+  viewerRunId?: string;
+}
+
+/**
+ * viewer ↔ 宿主对话框互斥钩子：宿主 `showExtensionSelector`/`showExtensionInput`
+ * 把对话框渲染进 `editorContainer` 基础层（interactive-mode.js:1953-1982 /
+ * 2005-2031），viewer 的 overlay 永远盖在其上且抢走焦点——提问到达时先收起
+ * viewer，作答/取消/超时后自动重开（见 test/viewer-ask-host.test.ts）。
+ */
+export interface ViewerDialogHooks {
+  /** viewer 打开时收起并等其 custom 落定（有界 VIEWER_SUSPEND_WAIT_MS）；未打开返回 false。 */
+  suspendViewer(): Promise<boolean>;
+  /** 重开 viewer（恢复最后停留的 actor；失败全吞）。 */
+  resumeViewer(): void;
+}
+
+/**
+ * Builds the viewer/dialog mutex hooks. `openViewer` is the cockpit's viewer
+ * opener narrowed to its actor argument (the caller closes over its own ctx).
+ */
+export function viewerDialogHooks(
+  state: ViewerDialogState,
+  openViewer: (initialActor?: string) => Promise<void>,
+): ViewerDialogHooks {
+  return {
+    async suspendViewer(): Promise<boolean> {
+      if (!state.viewerOpen) return false;
+      let settleWait!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settleWait = resolve;
+      });
+      state.viewerSettled = settleWait;
+      try {
+        state.viewerClose?.();
+      } catch {
+        /* close failures never block the question */
+      }
+      // 超时也放行：custom 异常不落定时，次优选择是让对话框继续（可能被
+      // 残留 overlay 盖住一帧），绝不让 leader 的提问挂起（fail-closed 语义）。
+      await Promise.race([
+        settled,
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, VIEWER_SUSPEND_WAIT_MS);
+          if (typeof timer.unref === "function") timer.unref();
+        }),
+      ]);
+      return true;
+    },
+    resumeViewer(): void {
+      try {
+        // 多 run 位姿：重开回到收起前实际展示的 run（widget 钉选通道同一字段）。
+        state.viewerRunId = state.viewerLastRunId;
+        void openViewer(state.viewerActor).catch(() => {
+          /* reopening failures never break the ask */
+        });
+      } catch {
+        /* reopening failures never break the ask */
+      }
+    },
+  };
+}
+
+/**
  * Builds the leader-question port over the main session's ctx.ui: the RPC
  * dialog bridge presents the leader's question as a host dialog and returns
  * the answer. Fail-closed — no UI, stale ctx, host errors and blank answers
  * all degrade to cancelled so the leader never blocks on an impossible ask.
+ * 带 hooks 时先收起 viewer（宿主对话框与 overlay 互斥），作答后重开。
+ * 导出仅为测试（viewer-ask-host 惯例，同 viewerStopAction）。
  */
-function askPortFrom(ctx: ExtensionContext): AskPort {
+export function askPortFrom(ctx: ExtensionContext, hooks?: ViewerDialogHooks): AskPort {
   return {
     async present(request, signal) {
+      let suspended = false;
       try {
-        if (!ctx.hasUI) return { kind: "unavailable" };
-        const opts = { ...(request.timeoutMs !== undefined ? { timeout: request.timeoutMs } : {}), signal };
-        if (request.method === "select") {
-          const value = await ctx.ui.select(request.title, request.options ?? [], opts);
+        if (hooks) {
+          try {
+            suspended = await hooks.suspendViewer();
+          } catch {
+            suspended = false;
+          }
+        }
+        try {
+          if (!ctx.hasUI) return { kind: "unavailable" };
+          const opts = { ...(request.timeoutMs !== undefined ? { timeout: request.timeoutMs } : {}), signal };
+          if (request.method === "select") {
+            const value = await ctx.ui.select(request.title, request.options ?? [], opts);
+            return typeof value === "string" && value.trim().length > 0
+              ? { kind: "answer", value }
+              : { kind: "cancelled" };
+          }
+          if (request.method === "confirm") {
+            return { kind: "answer", value: await ctx.ui.confirm(request.title, request.message ?? "", opts) };
+          }
+          if (request.method === "editor") {
+            // ctx.ui.editor has no timeout/signal options; the channel backstop
+            // still bounds the wait from the leader's side.
+            const value = await ctx.ui.editor(request.title, request.prefill);
+            return typeof value === "string" && value.trim().length > 0
+              ? { kind: "answer", value }
+              : { kind: "cancelled" };
+          }
+          const value = await ctx.ui.input(request.title, request.placeholder, opts);
           return typeof value === "string" && value.trim().length > 0
             ? { kind: "answer", value }
             : { kind: "cancelled" };
+        } catch {
+          return { kind: "cancelled" };
         }
-        if (request.method === "confirm") {
-          return { kind: "answer", value: await ctx.ui.confirm(request.title, request.message ?? "", opts) };
+      } finally {
+        if (suspended) {
+          try {
+            hooks?.resumeViewer();
+          } catch {
+            /* resume failures never break the ask */
+          }
         }
-        if (request.method === "editor") {
-          // ctx.ui.editor has no timeout/signal options; the channel backstop
-          // still bounds the wait from the leader's side.
-          const value = await ctx.ui.editor(request.title, request.prefill);
-          return typeof value === "string" && value.trim().length > 0
-            ? { kind: "answer", value }
-            : { kind: "cancelled" };
-        }
-        const value = await ctx.ui.input(request.title, request.placeholder, opts);
-        return typeof value === "string" && value.trim().length > 0
-          ? { kind: "answer", value }
-          : { kind: "cancelled" };
-      } catch {
-        return { kind: "cancelled" };
       }
     },
   };
@@ -446,6 +545,14 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
      * it undefined → default run: newest active, else newest record).
      */
     viewerRunId: string | undefined;
+    /** viewer 最近一次实际展示的 runId（load 时记录；提问互斥重开时恢复位姿）。 */
+    viewerLastRunId?: string;
+    /** 程序化收起入口（dispose + done），由 openTranscriptViewer 的 onOpen 记录。 */
+    viewerClose?: () => void;
+    /** viewer 的 custom 调用落定时 resolve（suspendViewer 的有界等待）。 */
+    viewerSettled?: (() => void) | undefined;
+    /** viewer 最后停留的 actor（提问收起后重开时恢复）。 */
+    viewerActor?: string;
   } = {
     coordinator: new TeamRunCoordinator({
       cwd: () => state.cwd,
@@ -461,6 +568,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     tui: undefined,
     viewerOpen: false,
     viewerRunId: undefined,
+    viewerLastRunId: undefined,
+    viewerClose: undefined,
+    viewerSettled: undefined,
+    viewerActor: undefined,
   };
 
   const resolveTeam = (name: string): { ok: true; value: TeamConfig } | { ok: false; message: string } => {
@@ -673,6 +784,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     // 检查器同样只认单实例（`fleetInspectorOpen`），这里直接 early-return。
     if (state.viewerOpen) return;
     state.viewerOpen = true;
+    // 提问收起后重开用同一位姿：只有显式带 actor 才覆盖（/team:view 空参
+    // 保留上次停留的成员）。
+    if (initialActor !== undefined) state.viewerActor = initialActor;
     // widget enter 预置的钉选（`/team:view` 为 undefined）：viewer 打开时自身
     // 不接收初始 runId，load 缺省时用它解析；消费后立即清掉，关闭不留残值。
     const pinnedRunId = state.viewerRunId !== "" ? state.viewerRunId : undefined;
@@ -684,8 +798,16 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     }
     try {
       await openTranscriptViewer(ctx.ui, {
-        load: (targetRunId) => buildViewerData(targetRunId ?? pinnedRunId),
+        load: (targetRunId) => {
+          const data = buildViewerData(targetRunId ?? pinnedRunId);
+          // 记录实际展示的 run：提问互斥收起后按同一位姿重开（多 run 不丢钉选）。
+          if (data.runId !== "") state.viewerLastRunId = data.runId;
+          return data;
+        },
         ...(initialActor !== undefined ? { initialActor } : {}),
+        onOpen: (close) => {
+          state.viewerClose = close;
+        },
         // stop/onMessage 消费 viewer 传入的「当前查看 run」runId（`[`/`]`
         // 切换后的 run），不再回退默认 run。
         stop: (runId) => viewerStopAndClearChat(runId),
@@ -707,6 +829,16 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       });
     } finally {
       state.viewerOpen = false;
+      state.viewerClose = undefined;
+      const settle = state.viewerSettled;
+      state.viewerSettled = undefined;
+      if (settle) {
+        try {
+          settle();
+        } catch {
+          /* settle observers never break the session */
+        }
+      }
       try {
         state.widget?.setPaused(false);
       } catch {
@@ -920,7 +1052,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       task,
       ui,
       ...(resume !== undefined ? { resume } : {}),
-      ask: askPortFrom(ctx),
+      ask: askPortFrom(ctx, viewerDialogHooks(state, (actor) => openViewer(ctx, actor))),
       // 状态变化点事件即时重绘（不必等 1s tick）：首个事件通常要等 leader
       // 子进程启动，故下一行再补一帧，派单后亮块立即出现。
       onProgress: () => refreshWidget(),
@@ -1178,7 +1310,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         task: params.task,
         ui,
         signal,
-        ask: askPortFrom(ctx),
+        ask: askPortFrom(ctx, viewerDialogHooks(state, (actor) => openViewer(ctx, actor))),
         onProgress: (progress) => {
           // 状态变化点事件即时重绘（下方亮块与工具进度共用同一观察点）。
           refreshWidget();
@@ -1478,7 +1610,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         task: prepared.task,
         ui,
         resume,
-        ask: askPortFrom(ctx),
+        ask: askPortFrom(ctx, viewerDialogHooks(state, (actor) => openViewer(ctx, actor))),
         signal,
         onProgress: () => {
           refreshWidget();
@@ -1835,6 +1967,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     state.coordinator.stop();
     state.widget?.stop();
     state.widget = undefined;
+    state.viewerClose = undefined;
+    state.viewerSettled = undefined;
+    state.viewerActor = undefined;
+    state.viewerLastRunId = undefined;
     clearWidget(ctx);
   });
 

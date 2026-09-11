@@ -282,7 +282,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd agent-team
-npm install && npm test        # 550 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
+npm install && npm test        # 559 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck

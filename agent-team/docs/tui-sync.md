@@ -31,13 +31,14 @@
 | 无变化跳过重绘 | `renderKey` 相同则跳过；running 时仍强制重绘（墙钟 spinner，`fleet-status.ts:585-591`） | v1.11.0：渲染串指纹相同则跳过（折叠行不含时间 → running 静止不 churn）；展开态 leader 行 elapsed 每秒重建 | 已对齐（agent-team 无 spinner，「running 强制重绘」不适用；差异表 §3.4） |
 | widget 折叠/展开形态 | 未激活：单行 `  <label> · <usage> · ↓/← to inspect`（`fleet-status.ts:757-789`）；激活：顶部提示行 + 空行 + 内容 | 未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`（不含状态/耗时/并行数/余额）；选中态 = `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（v1.13.0，任务行于 v1.13.1 并入 leader 行） | 折叠默认态**已对齐**；展开树/提示行位置差异见 §3.11 |
 | open/close 互斥 | 单实例（`fleetInspectorOpen` 等守卫） | `openViewer` early-return + `viewerOpen` 门控 | 已对齐 |
+| viewer ↔ 宿主对话框互斥 | 无对应（fleet 检查器不开宿主对话框） | v1.21.0 及以前：`team_ask` 的宿主对话框被 viewer overlay 盖住且焦点被 selector 抢走 | **agent-team 特有**：提问到达先程序化收起 viewer，作答/取消/超时后重开（有界 `VIEWER_SUSPEND_WAIT_MS`）；见 §3.22 |
 | widget 隐藏/恢复 | inspector 打开期间 `clearWidget` + 恢复时 `refresh`（`fleet-status.ts:543-596`） | `setPaused(true)` 隐藏 + `setPaused(false)` 立即重绘 | 已对齐 |
 | 销毁与重入 | 组件 `dispose` 清理订阅/timer | `dispose` 先停 timer 再调 done；幂等 | 已对齐（测试锁死） |
 | viewer 停止动作 | `stop: ["D"]` 两步确认（`stopConfirming`；确认态 Enter/Y 确认、Esc/ctrl+c/N/backspace 取消，取消不关闭；其余键忽略，`fleet.ts:46/1134-1150`） | `D` 运行中进确认态，确认后经 `viewerStopAction` → `stopAndSettle()`（与 team_stop 同语义）；已结束仅 error notice 不进确认态 | 已对齐（agent-team 特有：横幅占正文窗口顶部、窗口收缩、帧总高不变，见差异表 §3.8） |
 | viewer 刷新动作 | `refresh: ["r", "R"]`（`fleet.ts:43`） | `r`/`R` 绕过 750ms 指纹门控强制重载重绘 | 已对齐 |
 
 | viewer 成员切换/滚动键位 | `selectUp: ["up", "k"]`、`selectDown: ["down", "j"]`、`selectFirst: ["home"]`、`selectLast: ["end"]`、`scrollUp: ["K"]`、`scrollDown: ["J"]`、`pageUp: ["pageUp"]`、`pageDown: ["pageDown"]`、`toggleTools: ["x", "X", "ctrl+o"]`（`fleet.ts:33-48`） | v1.7.0 及以前：`↑↓/j/k/PgUp/PgDn/g/G` 滚右栏、`←→/h/l/Tab/1-9` 切成员 | v1.8.0 起**全面对齐**（差异表 §3.2）；旧键退役按下忽略 |
-| viewer 切 run 键位 | fleet 无对应（fleet 检查器无多 run 概念） | v1.22.0：`prevRun: ["["]`、`nextRun: ["]"]` 按 `data.runs` 环形切换（actives 升序 + records 新→旧）；`runs ≤ 1`/无 runs 数据 → no-op；输入模式（m）下 `[`/`]` 进 buffer（现状语义优先）；确认态忽略 | agent-team 特有，差异表 §3.21 |
+| viewer 切 run 键位 | fleet 无对应（fleet 检查器无多 run 概念） | v1.24.0：`prevRun: ["["]`、`nextRun: ["]"]` 按 `data.runs` 环形切换（actives 升序 + records 新→旧）；`runs ≤ 1`/无 runs 数据 → no-op；输入模式（m）下 `[`/`]` 进 buffer（现状语义优先）；确认态忽略 | agent-team 特有，差异表 §3.21 |
 
 
 ## 3. 差异条目表
@@ -65,6 +66,7 @@
 | 3.19 | leader 提问/回答在 leader transcript 里以 `question`/`answer` 条目落地，viewer 独立成块（标签 `❓ 提问 · <ts>` / `✔ 回答 · <ts>` + 正文换行，不并入工具行块）；未获回答落 `system` 条目（dim `ℹ`） | **特有语义（fleet 检查器无问答概念）** | 用户 2026-09-11 需求：leader 可向主会话提问（人工澄清），问答计入 run 记录/transcript 与 viewer 展示（留档范围选定）。区块模型/帧几何/键位/焦点不变，仅新增两个内容块种类；提问等待期 live 状态行由 `progress.leaderActivity` 显示“等待人工回答…”（widget/status 既有通路）。见 `ask.ts` `questionEntryText`/`outcomeEntryText` + `cockpit.ts` `AskChannel` 接线 + `viewer.ts` `buildBlocks`/`blockLines`。 |
 | 3.20 | `Run:` 行在续跑 run 上追加 `（续跑自 <parentRunId>）`（如 `Run: run-123（续跑自 run-456）`；无 parentRunId 时不变） | **特有语义（fleet 无续跑概念）** | v1.21.0 续跑功能的一部分：`ViewerData.parentRunId` 由 `buildViewerData` 从 `RunProgress.parentRunId` / 终态 `record.parentRunId` 装配，`detailHeaderLines` 单行拼接——**头部仍固定 5 行、帧总行数不变量不变、无键位/焦点变化**；`/team:status` 同口径（runId 行 + failed/aborted 的续跑提示行）。见 `viewer.ts` `detailHeaderLines` + `cockpit.ts` `formatStatusSnapshot`。 |
 | 3.21 | viewer `[`/`]` 切 run（多 run 并行）：按 `data.runs` 环形上/下一个——切换后钉选 `state.runId`、actor 钉选保留（新 run 无该 actor 回 leader 首位）、scroll/follow 复位、notice 清空、绕指纹强制重绘；`runs.length ≤ 1` 时消费为 no-op；输入模式（m）下 `[`/`]` 是可打印字符进 buffer（现状语义优先）；确认态忽略；`stop(runId)` 与 `onMessage` target 带当前查看 run 的 runId；legend 仅 `runs.length > 1` 追加 ` · [/] 切 run` | **特有语义（fleet 检查器无多 run 概念）** | 键集与 fleet `DEFAULT_FLEET_KEYBINDINGS` 无冲突（v0.66.0 `fleet.ts:33-48` 无 `[`/`]` 绑定，已核）。`viewer.ts` `VIEWER_ACTION_KEYS.prevRun/nextRun` + `handleViewerKey` 的 `run-switch` 结果 + `TranscriptViewer.switchRun`/`loadData`（按 `data.runs` 重解析钉选，消失回默认 run）；`ViewerData.runs` 由 `buildViewerData` 装配（actives 升序 + records 新→旧）。切换走真实宿主 `viewer-host.test.ts` + 假终端验证（帧重建/无重影/帧高不变）。 |
+| 3.22 | **viewer 与宿主对话框互斥（提问收起 viewer，答后重开）**：`team_ask` 提问到达时若 viewer 打开 → 程序化收起（`onOpen` 记录的 dispose+done）→ 宿主对话框独占屏幕 → 作答/取消/超时后自动重开（恢复最后停留的 actor 与 runId——与多 run 切 run 位姿同字段）；收起等待上限 `VIEWER_SUSPEND_WAIT_MS = 1500`，超时也放行（宁可对话框可能被残留 overlay 盖一帧，也不让提问挂起） | **特有语义（fleet 检查器无提问/对话框互斥）** | 真机 bug（todo #153）：宿主 `showExtensionSelector`/`showExtensionInput` 把对话框渲染进 `editorContainer` 基础层并 `setFocus(selector)`（`interactive-mode.js:1953-1982 / 2005-2031`），viewer 的 `ui.custom` overlay（`interactive-mode.js:2158-2207`）永远盖在其上——用户看不见提问、viewer 的 `q`/`Esc` 也失效。扩展 API 无法把宿主对话框置顶 overlay，故反方向收起。见 `viewer.ts` `openTranscriptViewer.onOpen` + `index.ts` `viewerDialogHooks`/`askPortFrom`；宿主级真实渲染锁在 `test/viewer-ask-host.test.ts`，接线锁在 `test/viewer-mutex.test.ts`。 |
 
 ## 4. 规格字面量表（测试期望值唯一来源）
 
@@ -98,6 +100,7 @@
 | 活动行文本 | `活动: 思考中` / `活动: 工具调用 <tool>`（无 toolName → 仅 `工具调用`）/ `活动: 排队中` / `活动: 已完成` / `活动: 失败` / `活动: 已中止` / `活动: run 已结束`；活动已知附 ` · 距上次输出 <age>`（无 `lastActivityAtMs` 不带时长段；无选中成员 → `活动: （无成员）`） | agent-team 特有（v1.17.0，差异条目 §3.18）；`viewer.ts` `formatActorActivity` |
 | 活动时长分桶 | `ACTIVITY_BUCKET_MS = 5000`；`bucketSec = floor(ageMs / 5000) * 5`；<60s `${bucketSec}s`，≥60s `${floor(bucketSec/60)}m${bucketSec%60}s`（如 125s → `2m5s`）；负 age 钳 0；终态 run / 成员终态 status 不带时长 | agent-team 特有（v1.17.0）；分桶文本必须进 `viewerDataFingerprint`（重影约束：时钟重绘 ≤ 每桶一次） |
 | 问答块文本 | question：`❓ 提问 · <ts>` + 正文换行；answer：`✔ 回答 · <ts>` + 正文换行；无 ts 时省略 ` · <ts>`；未获回答 = `system` 条目（`未获回答（超时）` / `（用户取消）` / `（主会话无 UI）`） | agent-team 特有（v1.19.0，差异条目 §3.19）；`viewer.ts` `blockLines` + `ask.ts` `outcomeEntryText`；提问等待期 leader activity = `等待人工回答：<压平 ≤80 列>` |
+| viewer 收起等待上限 | `VIEWER_SUSPEND_WAIT_MS = 1500`（提问到达等待 viewer 落定；超时放行对话框，不放行会让 leader 提问挂起） | agent-team 特有（差异条目 §3.22）；`types.ts` + `index.ts` `viewerDialogHooks` |
 | widget 任务摘要 | 压平后 44 字符 + `…`（截断后 `trimEnd()`）；空白任务省略 ` · <任务>` 段 | agent-team 特有（v1.13.1；leader 行内，不占独立行） |
 | widget 成员尾注 | 取 `note`，否则 `latest`；`\s+` 压平后 ≤30 字符（超出 29 字 + `…`）；空白尾注省略 ` · ` 段 | agent-team 特有（v1.13.0）；`widget.ts` `truncateMemberTail` |
 | widget 挂载不变量 | `snapshot.running && snapshot.progress` ⇒ string[] 帧；否则 `setWidget(key, undefined)`（终态自动卸载；`running` 但无 progress 同样隐藏） | agent-team 特有接线（v1.13.0，触发形式对齐 fleet 活跃表面） |
@@ -113,10 +116,10 @@
 | close 键位 | `["escape", "ctrl+c", "q"]` | `fleet.ts:34`、`fleet.ts:1150-1154` |
 | 退役键 | `←`/`→`/`h`/`l`/`Tab`/`1-9`/`g`/`G`（agent-team 旧键位；按下忽略不改状态，不关闭不报错） | fleet 无对应绑定（同为忽略路径）；agent-team v1.8.0 起 |
 | 发消息键位（特有） | `m` 进入单行输入模式；输入模式优先于一切现有按键：可打印字符（含 CJK）追加 buffer，backspace（`\x7f`）删最后一个码点，Enter 提交（返回 `chat-submit`），Esc/ctrl+c 只退出输入不关 viewer，其余控制序列忽略 | fleet 无对应语义（inspector 无对话输入）；agent-team 特有，`viewer.ts` `handleViewerKey` 输入分支 + `viewer-chat.test.ts` 锁定 |
-| viewer 切 run 键位 | `prevRun: ["["]`、`nextRun: ["]"]`（按 `data.runs` 环形；`runs≤1` no-op；输入模式优先；确认态忽略） | agent-team 特有（v1.22.0，差异条目 §3.21）；`viewer.ts` `VIEWER_ACTION_KEYS` + `handleViewerKey` |
-| viewer legend 多 run 追加段 | ` · [/] 切 run`（仅 `data.runs.length > 1`；位于基础图例与 `成员 x/y` 之间：`… q 关闭 · [/] 切 run · 成员 1/2`） | agent-team 特有（v1.22.0）；`viewer.ts` `legendRow` |
-| widget 多 run 折叠行 | `agent-team · <N> run 并行 · ↓/← 查看详情`（N = 活跃 run 数；单 run 仍为 `agent-team <团队> · ↓/← 查看详情`） | agent-team 特有（v1.22.0）；`widget.ts` `buildWidgetView` |
-| widget 多 run 树 | 单 `main` 根 + 每 run（startedAt 升序）一棵 leader 子树（leader 行沿用单 run 格式；成员末项按本 run 组内判定）；`WidgetRowSpec.runId`（root 行 `""`）、`onConfirm(actor, runId)` | agent-team 特有（v1.22.0）；`widget.ts` `buildWidgetView` |
+| viewer 切 run 键位 | `prevRun: ["["]`、`nextRun: ["]"]`（按 `data.runs` 环形；`runs≤1` no-op；输入模式优先；确认态忽略） | agent-team 特有（v1.24.0，差异条目 §3.21）；`viewer.ts` `VIEWER_ACTION_KEYS` + `handleViewerKey` |
+| viewer legend 多 run 追加段 | ` · [/] 切 run`（仅 `data.runs.length > 1`；位于基础图例与 `成员 x/y` 之间：`… q 关闭 · [/] 切 run · 成员 1/2`） | agent-team 特有（v1.24.0）；`viewer.ts` `legendRow` |
+| widget 多 run 折叠行 | `agent-team · <N> run 并行 · ↓/← 查看详情`（N = 活跃 run 数；单 run 仍为 `agent-team <团队> · ↓/← 查看详情`） | agent-team 特有（v1.24.0）；`widget.ts` `buildWidgetView` |
+| widget 多 run 树 | 单 `main` 根 + 每 run（startedAt 升序）一棵 leader 子树（leader 行沿用单 run 格式；成员末项按本 run 组内判定）；`WidgetRowSpec.runId`（root 行 `""`）、`onConfirm(actor, runId)` | agent-team 特有（v1.24.0）；`widget.ts` `buildWidgetView` |
 | 最小宽度门 | `width < 36` → 单行提示（agent-team 文案：`agent-team viewer 至少需要 36 列。Esc 关闭。`） | `fleet.ts:1321` |
 | innerWidth | `width - 2`（两侧 `│` 边框各占 1 列，无内边距空格） | `fleet.ts:1322` |
 | bodyHeight 公式 | `max(2, floor(rows * 0.85) - 6)`；rows 缺省 `?? 32` | `fleet.ts:1326-1327` |
@@ -151,7 +154,8 @@
 | agent-team 1.17.0 | 2026-09-11 | viewer detail 元信息头新增第 5 行 `活动:`——选中 actor 当前活动（思考中 / 工具调用 <tool> / 排队中 / 已完成/失败/已中止 / run 已结束）+ 距上次输出时长（5s 分桶；终态恒 `run 已结束` 不带时长）；live 阶段由 leader/member 子进程事件折入 progress（cockpit onEvent + dispatch 经 `team_dispatch` update 的 details.members），无 live progress 从 transcript 末条推导；分桶文本计入刷新指纹（重影约束：时钟重绘 ≤ 每桶一次、终态零时钟）；头部 4→5 行、帧总行数/键位不变；差异条目 §3.18 + §4 两行字面量；viewer-activity/cockpit/dispatch/viewer-host/viewer-mutex 共 +20 测试（407→427 全绿） | `0c7365f` |
 | agent-team 1.19.0 | 2026-09-11 | leader 提问（人工澄清）：leader 模式新增 `team_ask` 工具（`ask.ts`，自由文本/选项、默认 10 分钟、clamp 30s~30min），答复经 pi RPC dialog 协议走 cockpit `AskChannel` → 主会话宿主对话框（`askPortFrom`）→ 回写 leader stdin；超时/取消/无 UI/stop 全部 fail-closed 回 cancelled。transcript 新增 `question`/`answer` 条目，viewer 独立成块（`❓ 提问` / `✔ 回答`），等待期 leader activity「等待人工回答…」；差异条目 §3.19 + §4 字面量。测试 442→475（新增 ask/cockpit-ask/真实 pi E2E 等 33 个），全绿 + typecheck 零错误 | `772ef36` |
 | agent-team 1.21.0 | 2026-09-11 | `Run:` 行续跑 lineage（差异条目 §3.20）：续跑 run 显示 `Run: <runId>（续跑自 <parentRunId>）`（`ViewerData.parentRunId` 由 `buildViewerData` 装配）；头部仍 5 行、帧高不变量与键位不变。同期续跑功能：leader 会话落盘（`--session-dir`）/原地续写（`--session`）、`team_resume`/`/team:resume`、模型覆盖、worktree 复用——renderer 路径仅上述一行变化；viewer 测试锁定 lineage 且帧行数不变 | `feat/agent-team-resume` |
-| agent-team 1.22.0 | 2026-09-16 | 多 run 并发 TUI：viewer `[`/`]` 环形切 run（`ViewerData.runs`、`ViewerState.runId` 钉选、actor 丢失回 leader、scroll/notice 复位、绕指纹强制重绘；`stop(runId)`/`onMessage` target 携带当前 runId；legend 追加 ` · [/] 切 run`）；widget 多 run 树（单 `main` 根 + 每 run 一棵 leader 子树、组内末项判定；折叠行 `agent-team · <N> run 并行 · ↓/← 查看详情`；`WidgetRowSpec.runId` + `onConfirm(actor, runId)`）。差异条目 §3.21 + §4 新增四行；截图场景补双 run（viewer legend + widget 双子树） | `feat/agent-team-multi-run-tui` |
+| agent-team 1.23.0 | 2026-09-11 | 差异条目 §3.22：viewer ↔ 宿主对话框互斥——`team_ask` 提问到达先收起 viewer（`openTranscriptViewer.onOpen` + `viewerDialogHooks`），作答/取消/超时后自动重开（`askPortFrom` finally）；`VIEWER_SUSPEND_WAIT_MS = 1500` 有界放行。修复真机 bug：宿主对话框渲染在 editorContainer 基础层被 overlay 盖住且焦点被抢（todo #153） | `team-run-run-1789135763878` |
+| agent-team 1.24.0 | 2026-09-16 | 多 run 并发 TUI：viewer `[`/`]` 环形切 run（`ViewerData.runs`、`ViewerState.runId` 钉选、actor 丢失回 leader、scroll/notice 复位、绕指纹强制重绘；`stop(runId)`/`onMessage` target 携带当前 runId；legend 追加 ` · [/] 切 run`）；widget 多 run 树（单 `main` 根 + 每 run 一棵 leader 子树、组内末项判定；折叠行 `agent-team · <N> run 并行 · ↓/← 查看详情`；`WidgetRowSpec.runId` + `onConfirm(actor, runId)`）。差异条目 §3.21 + §4 新增四行；截图场景补双 run（viewer legend + widget 双子树）；提问互斥重开恢复 runId 位姿（`viewerLastRunId` → `viewerRunId`） | `feat/agent-team-multi-run-tui` |
 
 ## 6. 范围外（明确不做）
 

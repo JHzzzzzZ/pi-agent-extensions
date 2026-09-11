@@ -27,7 +27,7 @@ export const MAX_FAILURE_NOTICE_BYTES = 8 * 1024;
 export const MAX_TASKS_PER_DISPATCH = 8;
 
 /** Maximum member child processes running concurrently. */
-export const MAX_PARALLEL_MEMBERS = 4;
+export const MAX_PARALLEL_MEMBERS = 8;
 
 /**
  * Maximum team runs a single session may push forward concurrently
@@ -88,6 +88,15 @@ export const ASK_TIMEOUT_MAX_MS = 30 * 60 * 1000;
 
 /** Leader-mode tool: ask the main session (human) a clarifying question. */
 export const ASK_TOOL_NAME = "team_ask";
+
+/**
+ * 提问（或任何宿主对话框）到达时等待 viewer overlay 收起的上限（ms）。
+ * 收起 = 程序化 dispose + done，宿主 showExtensionCustom 的 custom promise
+ * 通常在同帧落定；这里只兜底异常路径——超时也放行对话框，宁可它可能被
+ * 残留 overlay 盖住一帧，也绝不让 leader 的提问因 viewer 收起失败而挂起
+ * （问答链路的 fail-closed 语义见 ask.ts 头注）。
+ */
+export const VIEWER_SUSPEND_WAIT_MS = 1500;
 
 /** Repaint interval of the below-editor run widget (elapsed labels). */
 export const WIDGET_TICK_MS = 1000;
