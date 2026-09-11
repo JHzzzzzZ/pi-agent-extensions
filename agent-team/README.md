@@ -137,7 +137,7 @@ agent-team count-duet · ↓/← 查看详情
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的四行元信息头（`Run:` / `State:` / `成员:` / `模型:`——模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的五行元信息头（`Run:` / `State:` / `成员:` / `模型:` / `活动:`——模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`；活动行为选中 actor 的当前活动（v1.17.0）：`思考中` / `工具调用 <tool>` / `排队中` / `已完成`/`失败`/`已中止` / `run 已结束`，活动已知时附 ` · 距上次输出 <age>`（age 5 秒分桶：`0s`/`5s`…，≥60s 如 `2m5s`；分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘），live 阶段由 leader/member 子进程事件驱动（tool start/update/end、assistant message_end），无 live progress 时从 transcript 末条推导），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
@@ -162,7 +162,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ### 防失控与失败可见性
 
 - 每个成员的失败会显示**具体原因**（不只错误码），Widget、进度流和派发报告中都可见。
-- **失败终态必达主 agent（v1.17.0）**：后台 run 落 `failed` 时，除用户端 `ui.notify` 外，主会话还会收到一条失败摘要 followUp（`agent-team-result`，与完成报告同通道）——头行含状态/runId/耗时/费用，随后是错误、任务、各成员结果行（`done/failed/aborted` + 摘要）与部分报告（leader 失败前已产出的内容）；总量 8KB 上限，超长先截报告。启动级失败（worktree 预检、创建 worktree 失败、leader 进程拉起异常）同样送达，并补落一条最小 failed 记录（`members: []`），`/team:status` 与查看器可回看。**中止（stop/D）不送达**——那是用户主动叫停，`team_stop` 返回 aborted 终态记录；model 预检 / `RUN_IN_PROGRESS` 等同步拒绝也不补送达（`team_run` 已内联报错）。
+- **失败终态必达主 agent（v1.18.0）**：后台 run 落 `failed` 时，除用户端 `ui.notify` 外，主会话还会收到一条失败摘要 followUp（`agent-team-result`，与完成报告同通道）——头行含状态/runId/耗时/费用，随后是错误、任务、各成员结果行（`done/failed/aborted` + 摘要）与部分报告（leader 失败前已产出的内容）；总量 8KB 上限，超长先截报告。启动级失败（worktree 预检、创建 worktree 失败、leader 进程拉起异常）同样送达，并补落一条最小 failed 记录（`members: []`），`/team:status` 与查看器可回看。**中止（stop/D）不送达**——那是用户主动叫停，`team_stop` 返回 aborted 终态记录；model 预检 / `RUN_IN_PROGRESS` 等同步拒绝也不补送达（`team_run` 已内联报错）。
 - 派发报告对环境级失败（worktree/git 不可用、成员/模型不存在）附带指令：重试无效，不要再次派发同一成员。
 - **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行（可用团队文件 `budget:` 块调整）；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
 - **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块展开头行在设了费用上限时显示余额提示（折叠行不含）。
@@ -181,7 +181,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（418 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（442 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
