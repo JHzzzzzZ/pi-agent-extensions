@@ -140,15 +140,18 @@ export async function isGitRepo(git: GitRunner, cwd: string): Promise<boolean> {
 /**
  * Creates an isolated worktree at `worktreePath` on `branch`. The parent
  * directory is created if missing. Re-entrant: a same-run re-dispatch whose
- * worktree is already registered on the same branch reuses it, and a branch
- * that exists but is held by no worktree is attached to the path.
+ * worktree is already registered on the same branch reuses it, a branch
+ * that exists but is held by no worktree is attached to the path, and a
+ * worktree that drifted to another branch (the member created one itself)
+ * is switched back when that is provably safe — branch exists, nothing else
+ * holds it, tree clean (v1.24.0 incident, see docs/incidents.md).
  */
 export async function createWorktree(options: {
   git: GitRunner;
   repoCwd: string;
   worktreePath: string;
   branch: string;
-}): Promise<Result<{ path: string; branch: string }>> {
+}): Promise<Result<{ path: string; branch: string; switchedBackFrom?: string }>> {
   const { git, repoCwd, worktreePath, branch } = options;
   if (!(await isGitRepo(git, repoCwd))) {
     return fail(`"${repoCwd}" is not a git repository — worktree isolation requires one`);
@@ -165,10 +168,14 @@ export async function createWorktree(options: {
   const existing = findRegistered(registered, worktreePath);
   if (existing) {
     if (existing.branch !== branch) {
-      return fail(
-        `worktree path "${worktreePath}" is already registered on branch "${existing.branch ?? "(detached HEAD)"}" ` +
-          `but this dispatch needs "${branch}" — run \`git worktree remove --force "${worktreePath}"\` and retry`,
-      );
+      return healDriftedWorktree({
+        git,
+        repoCwd,
+        worktreePath,
+        branch,
+        current: existing.branch ?? "(detached HEAD)",
+        registered,
+      });
     }
     if (!fs.existsSync(worktreePath)) {
       return fail(
@@ -205,6 +212,52 @@ export async function createWorktree(options: {
     return fail(`git worktree add failed: ${worktreeError(attach.stderr)}`);
   }
   return ok({ path: worktreePath, branch });
+}
+
+/**
+ * Branch-mismatch recovery for a registered worktree that drifted to another
+ * branch (the member switched to one it created itself). The drift is healed
+ * only when that is provably lossless: the expected branch still exists, no
+ * worktree holds it and the tree is clean — then a plain `git switch` back.
+ * Every other case stays an error, but with an actionable, non-destructive
+ * message (`git -C <path> switch <branch>`; commit/stash for a dirty tree).
+ * The old message advised `git worktree remove --force`, which threw away the
+ * member's work (real machine run-1789133982726, v1.24.0).
+ */
+async function healDriftedWorktree(options: {
+  git: GitRunner;
+  repoCwd: string;
+  worktreePath: string;
+  branch: string;
+  current: string;
+  registered: WorktreeEntry[];
+}): Promise<Result<{ path: string; branch: string; switchedBackFrom?: string }>> {
+  const { git, repoCwd, worktreePath, branch, current, registered } = options;
+  const mismatch = `worktree path "${worktreePath}" is on branch "${current}" but this dispatch needs "${branch}" —`;
+  const fix = `Fix: git -C "${worktreePath}" switch "${branch}"`;
+  const branchCheck = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repoCwd);
+  if (branchCheck.code !== 0) {
+    return fail(`${mismatch} branch "${branch}" does not exist in the repository. ${fix} (recreate it first)`);
+  }
+  const holder = registered.find((entry) => entry.branch === branch);
+  if (holder) {
+    return fail(
+      `${mismatch} branch "${branch}" is already checked out at "${holder.path}"; ` +
+        `run \`git worktree list\` to locate it. ${fix}`,
+    );
+  }
+  const status = await git(["status", "--porcelain"], worktreePath);
+  if (status.code !== 0) {
+    return fail(`${mismatch} git status failed: ${worktreeError(status.stderr)}. ${fix}`);
+  }
+  if (status.stdout.trim() !== "") {
+    return fail(`${mismatch} the worktree has uncommitted changes; commit or stash them first. ${fix}`);
+  }
+  const switched = await git(["switch", branch], worktreePath);
+  if (switched.code !== 0) {
+    return fail(`${mismatch} git switch failed: ${worktreeError(switched.stderr)}. ${fix}`);
+  }
+  return ok({ path: worktreePath, branch, switchedBackFrom: current });
 }
 
 /**

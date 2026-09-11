@@ -90,7 +90,7 @@ export interface DispatchMemberDetail {
   /** Epoch ms of the member's last observed child event. */
   lastActivityAtMs?: number;
   usage?: AgentUsage;
-  worktree?: { path: string; branch: string };
+  worktree?: { path: string; branch: string; switchedBackFrom?: string };
   error?: { code: string; message: string };
 }
 
@@ -146,7 +146,7 @@ interface PlannedDispatch {
   agent: string;
   member?: TeamConfig["members"][number];
   task: string;
-  worktree?: { path: string; branch: string };
+  worktree?: { path: string; branch: string; switchedBackFrom?: string };
   preError?: PlannedMemberError;
 }
 
@@ -197,7 +197,11 @@ function statusLine(result: MemberRunResult): string {
 
 function worktreeLines(result: MemberRunResult): string[] {
   if (!result.worktree) return [];
-  return ["", `> worktree: \`${result.worktree.path}\`（分支 \`${result.worktree.branch}\`，改动留在该分支，未合并）`];
+  const healed = result.worktree.switchedBackFrom ? `，已从 \`${result.worktree.switchedBackFrom}\` 切回` : "";
+  return [
+    "",
+    `> worktree: \`${result.worktree.path}\`（分支 \`${result.worktree.branch}\`${healed}，改动留在该分支，未合并）`,
+  ];
 }
 
 /** Flattens a message to one line and bounds it (progress notes). */
@@ -384,6 +388,9 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       const created = await createWorktree({ git, repoCwd: deps.cwd, worktreePath, branch });
       if (created.ok) {
         plan.worktree = created.value;
+        if (created.value.switchedBackFrom) {
+          setProgress(plan.member.name, "running", `worktree 已从 ${created.value.switchedBackFrom} 切回 ${branch}`);
+        }
       } else {
         plan.preError = { code: created.code, message: created.message };
       }
@@ -576,7 +583,7 @@ export function parseDispatchMemberResults(details: unknown): DispatchMemberDeta
         : {}),
       ...(raw.usage !== null && typeof raw.usage === "object" ? { usage: raw.usage as AgentUsage } : {}),
       ...(raw.worktree !== null && typeof raw.worktree === "object"
-        ? { worktree: raw.worktree as { path: string; branch: string } }
+        ? { worktree: raw.worktree as { path: string; branch: string; switchedBackFrom?: string } }
         : {}),
       ...(raw.error !== null && typeof raw.error === "object" ? { error: raw.error as { code: string; message: string } } : {}),
     });
