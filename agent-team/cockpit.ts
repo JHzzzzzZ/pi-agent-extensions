@@ -916,7 +916,12 @@ export class TeamRunCoordinator {
       // own tick), aligned to the shared wall-clock second (status-bar contract).
       stopTicker = startAlignedTicker(render, { intervalMs: 1000 });
 
+      // 继承父进程环境再覆盖团队三键（对齐成员侧 stripLeaderEnv 的透传语义）：
+      // 宿主 applyHttpProxySettings 注入的 HTTPS_PROXY/NO_PROXY、PI_CODING_AGENT_DIR
+      // 等必须到达 leader；否则 leader 子进程里的外部成员拿不到 NO_PROXY，
+      // localhost BASE_URL（如 claude 本地代理）会被全局 httpProxy 劫持（验收 F1）。
       const leaderEnv: NodeJS.ProcessEnv = {
+        ...process.env,
         [LEADER_ENV_FILE]: team.filePath,
         [LEADER_ENV_NAME]: team.name,
         [LEADER_ENV_RUNID]: runId,

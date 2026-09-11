@@ -30,22 +30,19 @@ import {
   err,
   ok,
   truncateUtf8,
+  TeamErrorCodes,
   type ChildEvent,
   type ExternalBackend,
   type ExternalCliResolveResult,
   type ExternalParser,
   type ExternalResolveDeps,
-  type TeamErrorCode,
 } from "./types.ts";
 
 export { EXTERNAL_BACKENDS, EXTERNAL_BIN_ENV };
 export type { ExternalParser, ExternalResolveDeps };
 
-/**
- * CLI_NOT_FOUND 由写线 A 登记进 TeamErrorCodes；本分支（B-only worktree）只加
- * §4 契约块，故先用双跳断言让模块独立 typecheck —— A 合入后断言自然成立。
- */
-const CLI_NOT_FOUND = "CLI_NOT_FOUND" as string as TeamErrorCode;
+/** CLI 未找到（单一错误表引用，评审 #1：移除 B-only 时期的双跳断言）。 */
+const CLI_NOT_FOUND = TeamErrorCodes.CLI_NOT_FOUND;
 
 /** codex vendored 包的 arch → Rust triple 映射（探测 P1）。 */
 const CODEX_VENDOR_TRIPLE: Record<string, string> = { x64: "x86_64", arm64: "aarch64" };

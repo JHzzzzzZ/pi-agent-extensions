@@ -9,7 +9,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { failedRunRecord, formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
-import { DERIVED_AGENT_TOOL_DENYLIST, type RunProgress } from "../types.ts";
+import {
+  DERIVED_AGENT_TOOL_DENYLIST,
+  LEADER_ENV_FILE,
+  LEADER_ENV_NAME,
+  LEADER_ENV_RUNID,
+  type RunProgress,
+} from "../types.ts";
 import { visibleWidth } from "../viewer.ts";
 import { teamWorktreeBranch } from "../worktree.ts";
 import { fixtureTeam } from "./fixtures.ts";
@@ -134,6 +140,47 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   const status = coordinator.getStatus();
   assert.equal(status.running, false);
   assert.equal(status.lastRecord?.runId, run.runId);
+});
+
+test("leader env 继承父进程环境并覆盖三键（NO_PROXY/PI_CODING_AGENT_DIR 透传）", async () => {
+  const saved = new Map<string, string | undefined>();
+  const keys = ["NO_PROXY", "PI_CODING_AGENT_DIR", LEADER_ENV_FILE, LEADER_ENV_NAME, LEADER_ENV_RUNID];
+  for (const key of keys) saved.set(key, process.env[key]);
+  process.env.NO_PROXY = "127.0.0.1,localhost";
+  process.env.PI_CODING_AGENT_DIR = "/tmp/parent-agent-dir";
+  // 父进程残留的 leader 键必须被本次 run 的三键覆盖（继承展开在前、覆盖在后）。
+  process.env[LEADER_ENV_FILE] = "/stale/team.md";
+  process.env[LEADER_ENV_NAME] = "stale-team";
+  process.env[LEADER_ENV_RUNID] = "run-stale";
+  try {
+    const spawn = makeFakeSpawn();
+    const coordinator = new TeamRunCoordinator({
+      cwd: () => "/repo",
+      worktreeRoot: "/tmp/worktrees",
+      spawn: spawn.spawn,
+      piCommand: "pi",
+    });
+    const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+    const child = await waitForChild(spawn, 0);
+    const record = spawn.records[0];
+
+    // F1：宿主 applyHttpProxySettings 注入的代理环境必须能到 leader（再由
+    // leader 经 stripLeaderEnv 传给外部成员），NO_PROXY 放行本地 BASE_URL。
+    assert.equal(record.env?.NO_PROXY, "127.0.0.1,localhost");
+    assert.equal(record.env?.PI_CODING_AGENT_DIR, "/tmp/parent-agent-dir");
+    assert.equal(record.env?.[LEADER_ENV_FILE], fixtureTeam().filePath);
+    assert.equal(record.env?.[LEADER_ENV_NAME], "dev-team");
+    assert.match(record.env?.[LEADER_ENV_RUNID] ?? "", /^run-\d+$/);
+
+    child.autoRespond(leaderLines(), 0, 5);
+    const result = await promise;
+    assert.ok(result.ok, result.ok ? "" : result.message);
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test("RPC steer：run 运行中插话写入 stdin，agent_settled 后关闭 stdin（进程退出门）", async () => {

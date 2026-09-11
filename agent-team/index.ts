@@ -790,6 +790,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     // Without a host registry there are no provider/id refs to check, but
     // external CLI availability is independent of it — a permissive lookup
     // keeps the external probe active without inventing model failures.
+    // 已登记偏差（vs 1.21.0，评审 #2）：旧版无注册表时整门跳过（裸 id 放行）；
+    // 该 fallback 让「无注册表 + pi 成员声明不含 `/` 的裸 id model」从放行变为
+    // 硬失败 MODEL_NOT_FOUND（checkModelRef 对无分隔符引用直接记 missing）。
+    // 仅此罕见组合受影响，换取无注册表场景下外部成员 CLI 预检仍生效；
+    // 边缘行为由 test/run-tool.test.ts 的锁定用例钉住。
     const lookup = modelLookupFrom((ctx as unknown as { modelRegistry?: unknown }).modelRegistry) ?? {
       find: () => ({}),
       hasConfiguredAuth: () => true,
