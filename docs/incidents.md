@@ -105,3 +105,9 @@
 - 根因：v1.15.0（819553a，steer/RPC 改造）把 `runner.ts` `defaultSpawn` 的 stdio 从 `["ignore","pipe","pipe"]` 改成 `["pipe","pipe","pipe"]`（为 leader RPC 通道），但成员走的是**同一个共享 spawn**——成员 prompt 全在 argv（`dispatch.ts`），全仓没有任何地方 `end()` 成员 stdin；pi 0.85.1 在 `--mode json -p` 下**读 stdin 到 EOF 才推进** ⇒ leader 同步等子进程退出、子进程等 stdin EOF。
 - 定位手段（可复用）：① 进程树取证（`Get-CimInstance Win32_Process` 拿父子关系 + UserModeTime/KernelModeTime 两次采样）——CPU 冻结 + 零连接说明**不是**"连着 provider 等响应"；② 同一 CLI / 模型 / prompt 的最小对照实验，唯一变量 = stdin（`</dev/null` 11s 完成 vs 打开管道 75s 零输出 vs 打开 20s 后关闭 23s 完成）。
 - 教训：① **子进程 stdio 是契约不是细节**——谁需要 stdin 必须逐调用方声明（现为 `runChildPi`/`PiSpawn` 的 `stdin` 选项，默认 `ignore`，leader RPC 显式 `pipe`）；② 共享 spawn 工厂的默认值改动会波及所有调用方，改 stdio/信号/窗口这类共享面必须逐个调用点复验；③ **fake 子进程测不出进程边界语义**（`makeFakeSpawn`/`FakeChild` 的 stdin 是普通对象，不会等 EOF）——回归护栏落在真实子进程用例（`runner.test.ts`）；④ 排障先取证再下结论：本轮最初把"无进展"讲成"阻塞"（判断对了但证据不足），事后才用对照实验坐实。
+
+## widget 行按终端宽补齐被宿主 Text margin 折行（agent-team v1.15.3 外观改造）
+
+- 症状：亮块背景改造时发现——`renderWidgetView` 一直以终端宽为截断预算，而宿主 `setExtensionWidget` 对 `string[]` 每行包 `Text(line, 1, 0)`（左右各 1 列 margin，内容可用宽 = 终端宽 − 2）：CJK 满宽行（截图场景的 leader 行）在真实渲染里折成两个物理行，背景块随之断续；若行宽继续按终端宽补齐，每一行都会折行。此前无背景、文本多短于终端宽，所以问题潜伏。
+- 根因：字符串数组的「行宽预算」不等于终端宽——宿主在内容两侧各留 1 列 margin；`Text` 用 `contentWidth = width − 2 × paddingX` 做换行判断，超出即 wrap（不是截断）。
+- 教训：① 写入 `string[]` widget 的每一行必须按**宿主内容宽（终端宽 − 2）**做 CJK 感知截断+补齐，绝不能按终端宽补齐（超宽会折成额外物理行，甚至触发 `doRender` 超宽断言）；② 宿主包装常量与 `MAX_WIDGET_LINES` 一样直读宿主 dist 源码由测试锁定（漂移即红）；③ 背景块的连续性只有在真实渲染路径（`capture-screens` 的 `Container + Text(line,1,0)` + VT 仿真屏）上才能验证——纯函数断言看不到折行。
