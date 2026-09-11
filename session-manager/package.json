@@ -1,0 +1,19 @@
+{
+  "name": "pi-extension-session-manager",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "session-manager — Pi 扩展：落盘会话只读浏览/检索（list/search/preview + 宿主接续命令）",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "test": "node --test core.test.ts index.test.ts"
+  },
+  "devDependencies": {
+    "typebox": "^1.3.10"
+  }
+}
