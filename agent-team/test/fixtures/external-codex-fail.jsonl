@@ -1,0 +1,8 @@
+# 真机样例：codex-cli 0.145.0（Windows）`turn.failed` 失败路径（ChatGPT 账户拒绝模型 gpt-5-nano），exit=1，4.8s。
+# 来源：history/team-runs/run-1789134203331/probes/codex-run1.stdout.jsonl（探测 2026-09-11）。
+# 三禁：禁 shell:true；禁 team-tmp:// scheme；任务文本只进 argv 末位位置参数。
+{"type":"thread.started","thread_id":"01a090c0-6012-7771-9121-8feb502987fd"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-5-nano` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"error","message":"{\"detail\":\"The 'gpt-5-nano' model is not supported when using Codex with a ChatGPT account.\"}"}
+{"type":"turn.failed","error":{"message":"{\"detail\":\"The 'gpt-5-nano' model is not supported when using Codex with a ChatGPT account.\"}"}}

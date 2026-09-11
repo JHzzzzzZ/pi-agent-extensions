@@ -211,6 +211,59 @@ export function err(code: TeamErrorCode, message: string): Result<never> {
 }
 
 // ---------------------------------------------------------------------------
+// External agent CLI backends (v1: member-only codex / claude)
+// ---------------------------------------------------------------------------
+
+/** External agent CLI backends a team member can declare (v1). */
+export type ExternalBackend = "codex" | "claude";
+
+/** v1 supported backends (single source for validation and error messages). */
+export const EXTERNAL_BACKENDS: readonly ExternalBackend[] = ["codex", "claude"];
+
+/** Env 逃生门：指向可执行文件绝对路径（直接 spawn，不进 shell）。 */
+export const EXTERNAL_BIN_ENV: Record<ExternalBackend, string> = {
+  codex: "PI_AGENT_TEAM_CODEX_BIN",
+  claude: "PI_AGENT_TEAM_CLAUDE_BIN",
+};
+
+/** A resolved external CLI executable (spawned with shell:false). */
+export interface ExternalCli {
+  /** 可直接 spawn 的可执行文件（永不是 .cmd/.ps1 shim）。 */
+  command: string;
+  /** Backend the executable was resolved for (diagnostics; optional for caller compatibility). */
+  backend?: ExternalBackend;
+}
+
+/** External CLI resolution result; failure is always CLI_NOT_FOUND. */
+export type ExternalCliResolveResult = Result<ExternalCli>;
+
+export interface ExternalResolveDeps {
+  /** 默认 process.env；仅读 EXTERNAL_BIN_ENV 覆盖键。 */
+  env?: NodeJS.ProcessEnv;
+  /** 默认 process.env.PATH 按平台分隔符拆分。 */
+  pathDirs?: string[];
+  /** 默认 fs.existsSync。 */
+  exists?: (p: string) => boolean;
+  /** 默认 process.platform / process.arch（决定可执行文件扩展名与 codex vendor triple）。 */
+  platform?: NodeJS.Platform;
+  arch?: string;
+}
+
+/** stdout JSONL 行 → 既有 ChildEvent 流的增量解析器（实现见 external.ts）。 */
+export interface ExternalParser {
+  /** 喂入一行已 JSON.parse 的对象（runChildPi onWire 口径）；返回需上报的 ChildEvent。 */
+  feed(message: Record<string, unknown>): ChildEvent[];
+  /** 进程退出后收口：失败判定与错误消息。 */
+  finalize(): { failed: boolean; errorMessage?: string };
+  /** 累计 usage（turns = 完成回合数；codex cost 恒 0）。 */
+  readonly usage: AgentUsage;
+  /** 最终文本（codex: 末个 agent_message；claude: result.result，回退末条 assistant 文本）。 */
+  readonly finalText: string;
+  /** claude system/init.model（codex 事件流不报模型 id → undefined，展示层回退声明值）。 */
+  readonly model: string | undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Run budget (per-run loop/cost guards)
 // ---------------------------------------------------------------------------
 
