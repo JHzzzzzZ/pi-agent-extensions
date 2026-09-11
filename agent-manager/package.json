@@ -1,0 +1,20 @@
+{
+  "name": "pi-tool-agent-manager",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "agent-manager — 独立于 pi 的 agent 管理工具（会话浏览/检索/重命名/可恢复删除 + pi 子进程启动/输出/停止 + 零依赖浏览器前端；仅监听 127.0.0.1，不 import 宿主 SDK、不注册 pi 扩展点）",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node server.ts",
+    "test": "node --experimental-strip-types --test core.test.ts agent-runner.test.ts server.test.ts",
+    "test:e2e": "node --experimental-strip-types --test e2e.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}
