@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 4230933
+> last verified @ 5c41e1c
 
 ## 职责与边界
 
