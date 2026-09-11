@@ -92,3 +92,34 @@ test("missing auth on members is warned too (member name in the warning)", () =>
   assert.match(result.warnings[0], /frontend/);
   assert.match(result.warnings[0], /chatanywhere\/gpt-5.6/);
 });
+
+test("provider/id:level（宿主合法思考级别后缀）按基础 id 解析，后缀不参与注册表查询", () => {
+  const result = preflightTeamModels(
+    fixtureTeam({
+      leader: { model: "anthropic/claude-opus-4-5:max", prompt: "p" },
+      members: [{ name: "frontend", model: "chatanywhere/gpt-5.6:high", prompt: "p" }],
+    }),
+    lookup([
+      { provider: "anthropic", id: "claude-opus-4-5", auth: true },
+      { provider: "chatanywhere", id: "gpt-5.6", auth: true },
+    ]),
+  );
+  assert.ok(result.ok, result.ok ? "" : result.message);
+  assert.deepEqual(result.warnings, []);
+});
+
+test("非法后缀不剥离：照旧按原串查询并失败，报错保留原始引用", () => {
+  const result = preflightTeamModels(
+    fixtureTeam({
+      leader: { model: "anthropic/claude-opus-4-5:ultra", prompt: "p" },
+      members: [{ name: "frontend", model: "chatanywhere/gpt-5.6", prompt: "p" }],
+    }),
+    lookup([
+      { provider: "anthropic", id: "claude-opus-4-5", auth: true },
+      { provider: "chatanywhere", id: "gpt-5.6", auth: true },
+    ]),
+  );
+  assert.ok(!result.ok);
+  assert.equal(result.code, TeamErrorCodes.MODEL_NOT_FOUND);
+  assert.match(result.message, /anthropic\/claude-opus-4-5:ultra/);
+});

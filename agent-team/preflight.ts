@@ -16,6 +16,7 @@
  */
 
 import { type TeamConfig, TeamErrorCodes, type TeamErrorCode } from "./types.ts";
+import { splitModelThinking } from "./config.ts";
 
 /** Structural surface of the host model registry used here (kept testable). */
 export interface ModelLookup {
@@ -72,9 +73,12 @@ export function preflightTeamModels(
   const missing: string[] = [];
   const warnings: string[] = [];
   for (const ref of teamModelRefs(team)) {
-    const separator = ref.model.indexOf("/");
-    const provider = separator > 0 ? ref.model.slice(0, separator) : "";
-    const modelId = separator > 0 ? ref.model.slice(separator + 1) : "";
+    // 团队文件允许宿主级别后缀 `provider/id:level`（pi `--model` 同款语义）：
+    // 注册表只认模型 id，先剥掉合法级别后缀再查；非法后缀原样保留（照旧失败）。
+    const baseModel = splitModelThinking(ref.model).model ?? ref.model;
+    const separator = baseModel.indexOf("/");
+    const provider = separator > 0 ? baseModel.slice(0, separator) : "";
+    const modelId = separator > 0 ? baseModel.slice(separator + 1) : "";
     const model = provider && modelId ? lookup.find(provider, modelId) : undefined;
     if (!model) {
       missing.push(`${ref.owner}: ${ref.model}`);
