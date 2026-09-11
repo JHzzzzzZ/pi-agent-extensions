@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十一个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十二个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、todos 工作流工具）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
+| [`todo-cli/`](#todo-cli) | `todos/` 工作流原子操作：agent 工具 `todo`（登记查重/领取标注/完成收口/交接扫描）+ 人类命令 `/todo`、`/todo:list|add|claim|complete|triage|lint` | 5 个（node:test） |
 
 ## 安装
 
@@ -25,7 +26,7 @@
 
 ### 方式一：pi install（推荐）
 
-> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（12 个扩展）。不带 ref 的安装会装到 master 旧包。
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（13 个扩展）。不带 ref 的安装会装到 master 旧包。
 
 ```bash
 # 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
@@ -65,10 +66,10 @@ pi install ./pi-agent-extensions
 
 ### 安装自检（可选）
 
-不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 12 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 13 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
 
 ```bash
-node tools/install-smoke.mjs        # ✓ = 12/12 扩展在干净目录下加载成功；✗ 时打印问题清单
+node tools/install-smoke.mjs        # ✓ = 13/13 扩展在干净目录下加载成功；✗ 时打印问题清单
 node tools/install-smoke.mjs --task # 加跑一条真实模型任务：让模型调用全新安装的 loop_list 工具
 node tools/install-smoke.mjs --install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
                                     # 真跑一遍上面「方式一」的 pi install（联网）：核对装到的包版本/扩展清单/全部命令
@@ -489,9 +490,22 @@ node --experimental-strip-types --test solo-mode/index.test.ts   # 22 个测试
 
 ---
 
+## todo-cli
+
+把 `todos/` 工作流（登记 / 领取 / 完成 / 盘点 / 交接扫描）从「agent 手写 grep + edit」升级为有测试锁定的原子操作。同一套实现（`todo-cli/core.ts`）供 Pi 扩展与仓库 CLI `node tools/todo.mjs` 共用——扩展目录自包含，整目录复制即可安装。
+
+- **agent 工具 `todo`** — `action="summary|list|add|claim|complete|triage|lint"`：登记自带跨全部文件查重（重复拒绝且不写入）、领取标注 `（processing @ feat/x）`、完成勾选 `[x]` 并去标注、triage 只读扫描 worktree↔条目关联（活跃/可清理/孤儿目录/引用已消失）
+- **人类命令** — 裸 `/todo` 盘点摘要；`/todo:list [open|processing|done]`、`/todo:add <文件> <描述>`、`/todo:claim <文件> <子串> [--branch feat/x]`、`/todo:complete <文件> <子串> [--note 说明]`、`/todo:triage`、`/todo:lint`（旧空格写法只提示改名）
+- **边界** — 只读写工作目录 `todos/` 下文件（路径穿越拒绝）、保持 CRLF 行尾、绝不自动 commit；登记不标 processing，领取才标（动作显式分离）
+
+```bash
+cd todo-cli && npm install && npm test   # 5 个测试
+
+---
+
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/`、`todo-cli/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`pwr/vendor/acorn.mjs` 为生成文件，勿修改
