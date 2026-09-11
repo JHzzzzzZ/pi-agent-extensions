@@ -118,7 +118,7 @@
   - 复现：`formatStatusSnapshot` 喂入含 `\n` 且超长的 task，断言（a）输出每行不含原始换行（b）`任务:` 行显示宽度 ≤ 约定上限——当前两条路径都直接失败。
   - 待实现时定：截断口径（固定字符数 vs 终端显示列）与两条路径（running 的 `progress.task` / 终态的 `record.task`）是否同一常量。
   - 旁证：widget 侧已按宽度截断（v1.13.0 `truncateVisible` + v1.14.2 窗口化），真机若看到的是亮块内任务文本换行，按同口径在 widget 侧复核并记录复现帧。
-- [ ] 支持派单到其它 agent CLI（第一版仅 codex 与 claude code；来源：用户 2026-09-11）：团队配置可按成员（及 leader）声明外部 CLI 后端，任务经该 CLI 的非交互模式执行，结果摘要/使用量折回既有 run 记录、报告 followUp 与 viewer/status 链路；与现有「成员 = pi 子进程」默认契约并存，不改变未声明时的行为。（processing @ team-run-run-1789116579467）
+- [ ] 支持派单到其它 agent CLI（第一版仅 codex 与 claude code；来源：用户 2026-09-11）：团队配置可按成员（及 leader）声明外部 CLI 后端，任务经该 CLI 的非交互模式执行，结果摘要/使用量折回既有 run 记录、报告 followUp 与 viewer/status 链路；与现有「成员 = pi 子进程」默认契约并存，不改变未声明时的行为。（processing @ team-run-run-1789134203331）
   - 待实现时定：成员工具白名单/模型（provider/id）如何映射到外部 CLI 的 sandbox 与模型参数；超时、停止（stopAndSettle / SIGTERM→SIGKILL）与预算/费用统计口径；CLI 未安装/未登录时的 fail-closed 报错与提示；并发上限是否沿用成员 4 并发协议。
   - 验收：真实 codex 与 claude code 各跑通一次多成员派单（含一次停止或超时路径），run 记录、viewer/status、报告 followUp 展示正常；全量测试 + typecheck 绿。
 - [x] **P0 回归：成员派发死锁（v1.15.0 / 819553a 引入，两次真机派单 100% 复现）**：`runner.ts:52` 的 `defaultSpawn` 在该 commit 把 stdio 从 `["ignore","pipe","pipe"]` 改成 `["pipe","pipe","pipe"]`；成员走 `--mode json -p`、prompt 全在 argv（`dispatch.ts:357`），**全仓没有任何地方 end 成员 stdin**（`stdin.end()` 适配器只被 leader RPC 用，见 `cockpit.ts:252`），而 pi 0.85.1 在 `-p` 下**读 stdin 到 EOF 才推进** → 成员进程永久静默、leader 同步等子进程退出 = 死锁（run 永远停在 running，只能靠 stop 解除）。（完成 fix/agent-team-member-stdin：`PiSpawn`/`runChildPi` stdin 默认 ignore（leader RPC 显式 pipe ；真实子进程回归用例（runner.test.ts 默认模式见 EOF 即退出，修复前必红 + 接线断言（成员 ignore / leader pipe，354→356 测试 ；真机端到端（真实 dispatch + 真实 pi + deepseek-flash 11.2s 返回「51」；docs 卡/incidents/AGENTS/README×2 同步；agent-team 1.15.1 / 根 2.30.2，merge 4a39395）
