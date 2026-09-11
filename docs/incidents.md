@@ -126,3 +126,10 @@
 - 为何既有单测没抓到：`worktree.test.ts` 只创建单分支 worktree、`worktree-reuse.test.ts` 只覆盖「同一成员分支」的重派复用，没有「团队级 + 成员级同 run」的组合用例；且这是 git ref 树语义（真实仓库的文件/目录互斥），纯函数/fake git 都测不出来——必须真实临时仓库按 cockpit→dispatch 顺序组合建树。
 - 处置（v1.15.4）：团队共享分支改连字符 `team-run-<runId>`（成员分支 `team/<runId>/<member>` 不变）；两处模板收敛为 `worktree.ts` 单一来源 `teamWorktreeBranch()` / `memberWorktreeBranch()`；新增真实临时 git 仓库组合测试（团队+成员共存、dispatch 级首次派发成功、模板纯断言）与旧命名兼容测试（存量 `team/<runId>` worktree 重派走「已注册但分支不匹配 ⇒ `git worktree remove --force` 提示」，不崩溃、不静默删除）。
 - 教训：① 命名空间类缺陷要在**真实资源树**上做组合测试（谁占用前缀、谁挂在下面），不能只测单点创建；② 同一实体的命名模板应收敛到单一来源，避免两条路径各自演进再次撞车；③ 改命名默认考虑存量——旧资源重派必须走已有的可操作提示路径，绝不清删。
+
+## 跨会话 reconcile 误杀在跑 run + 终态 elapsed 恒 0（agent-team v1.15.6，真机 run-1789104483761）
+
+- 症状：① 主会话 A 的 run 刚启动 2 秒，另一 pi 会话 B `session_start` 就把 A 的 `status.json` 翻成 failed + 孤儿 leader 诊断，而 run 实际跑到 completed；② 同一 run 终态快照 `startedAt=updatedAt`（都是结束时刻）⇒ 按 status.json 算 elapsed 恒 0。
+- 根因：① `reconcileStaleRuns` 只排除**本进程** in-memory run——对另一活会话的 running 文件毫无判据，session_start 一律翻 failed；② `cockpit.ts` 终态 persist 与终态 `TeamRunRecord` 都重写 `startedAt: now()`，claim 时的开始时刻被丢掉。
+- 处置（v1.15.6）：① `status.json` 加可选 `ownerPid`（写快照的主 pi 进程，cockpit 默认 `process.pid`，可注入），`reconcileStaleRuns` 签名加必填 `currentPid` + 注入探活 `isProcessAlive`（默认 `process.kill(pid, 0)`：ESRCH 死 / EPERM 活），判定序：非 running → in-memory → ownerPid===currentPid → 属主活着跳过 → 属主已死/无 ownerPid 照旧翻 failed（旧格式防永久滞留）；② claim 时生成一次 `RunPlan.startedAt`，running 快照/spawn 刷新/终态快照/终态 record 四处同值。
+- 教训：① **进程级共享落盘资源必须带属主身份**——「重启后清理残留」这类 reconcile 若无属主判据，在多进程/多会话场景就是误杀；② 同一 run 的稳定时间戳要像 runId 一样在 claim 时定一次，任何「再取 now()」的写法都会让派生量（elapsed）失真；③ 两会话场景是独立测试类别（活属主不翻 / 本进程兜底不探活 / 已死翻 failed / 旧格式照旧），只测单会话路径跑不出这类缺陷。
