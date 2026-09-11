@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流仓库 CLI
 
-> last verified @ 56b7b49
+> last verified @ 86608e2
 
 ## 职责与边界
 
