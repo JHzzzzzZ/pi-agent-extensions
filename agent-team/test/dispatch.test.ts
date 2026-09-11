@@ -170,7 +170,7 @@ test("worktree members run in their isolated worktree path and branch", async ()
   const outcome = await unwrap(promise);
 
   const expectedPath = path.join("/tmp/worktrees", "run-1", "backend");
-  const add = gitCalls.find((c) => c.args[0] === "worktree");
+  const add = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "add");
   assert.ok(add, "git worktree add invoked");
   assert.deepEqual(add.args, ["worktree", "add", expectedPath, "-b", "team/run-1/backend"]);
   assert.equal(add.cwd, "/repo");
