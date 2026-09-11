@@ -49,7 +49,10 @@ export interface EntryRow {
 
 /** 存储句柄：打开即完成建目录/建表/PRAGMA；调用方负责 close。 */
 export interface TodoStore {
-  /** 串行临界区：BEGIN IMMEDIATE → fn() → COMMIT；fn 抛错 ROLLBACK 后重抛。 */
+  /**
+   * 串行临界区：BEGIN IMMEDIATE → fn() → COMMIT；fn 抛错 ROLLBACK 后重抛。
+   * 取锁 busy 时有界重试（只重试 BEGIN，绝不重跑 fn——fn 有写文件等副作用）。
+   */
   writeTxn<T>(fn: () => T): T;
   /** 全量条目行（file/line 升序）。 */
   listEntryRows(): EntryRow[];
@@ -87,7 +90,7 @@ interface SqliteDatabase {
 }
 
 interface SqliteModule {
-  DatabaseSync: new (file: string, options?: { readOnly?: boolean }) => SqliteDatabase;
+  DatabaseSync: new (file: string, options?: { readOnly?: boolean; timeout?: number }) => SqliteDatabase;
 }
 
 let sqliteModule: SqliteModule | null | undefined;
@@ -158,35 +161,80 @@ export function storeFile(repoRoot: string): string {
 // 打开 / 降级 / 损坏自愈
 // ---------------------------------------------------------------------------
 
+/** 打开库的锁等待上限（ms）：内核 timeout 与 PRAGMA busy_timeout 同值。 */
+const BUSY_TIMEOUT_MS = 5000;
+/** busy 重试总 deadline（ms）：用尽才返回 null 降级，保证调用方有界等待而非无限挂起。 */
+const BUSY_RETRY_DEADLINE_MS = 30_000;
+/** busy 重试的同步退避间隔（ms）。 */
+const BUSY_RETRY_DELAY_MS = 100;
+
 /**
- * 打开或创建索引库（建目录、建表、PRAGMA WAL/busy_timeout=5000）。
- * 返回 null：node:sqlite 不可用（SQLITE_UNAVAILABLE，上层降级）；
- * 库损坏（打开/建表抛错）→ 关连接后挪 index.db 为 index.db.corrupt（覆盖旧 .corrupt），
- * 并清掉 WAL/SHM 伴生文件（它们属于损坏库本体），本次返回 null、下次 open 自动重建。
+ * 打开或创建索引库（建目录、建表、PRAGMA busy_timeout/WAL）。
+ * 返回 null：node:sqlite 不可用（SQLITE_UNAVAILABLE，上层降级），
+ * 或库损坏（打开/建表抛非 busy 错 → 关连接后挪 index.db 为 index.db.corrupt，覆盖旧 .corrupt，
+ * 并清掉 WAL/SHM 伴生文件，本次返回 null、下次 open 自动重建）。
+ *
+ * 并发写者持锁（SQLITE_BUSY=5 / SQLITE_LOCKED=6）不是损坏：不 quarantine、不降级，
+ * 内核 timeout 等待 + 退避重试（总 deadline BUSY_RETRY_DEADLINE_MS），成功即正常打开；
+ * 只有 deadline 用尽才返回 null。
  */
 export function openTodoStore(repoRoot: string): TodoStore | null {
   const sqlite = loadSqliteModule();
   if (!sqlite) return null;
 
   const file = storeFile(repoRoot);
+  const deadline = Date.now() + BUSY_RETRY_DEADLINE_MS;
+  for (;;) {
+    const attempt = openStoreAttempt(sqlite, repoRoot, file);
+    if (attempt.kind === "ok") return makeStore(repoRoot, attempt.db);
+    if (attempt.kind === "corrupt") {
+      quarantineCorruptDb(file);
+      return null;
+    }
+    // busy：写者持锁（不是损坏）——等待是首选，deadline 用尽才降级。
+    if (Date.now() >= deadline) return null;
+    sleepSync(BUSY_RETRY_DELAY_MS);
+  }
+}
+
+type OpenAttempt = { kind: "ok"; db: SqliteDatabase } | { kind: "busy" } | { kind: "corrupt" };
+
+/** 单次 open 尝试：busy 错误原样上报重试循环，其余错误按损坏处理。 */
+function openStoreAttempt(sqlite: SqliteModule, repoRoot: string, file: string): OpenAttempt {
   let db: SqliteDatabase | null = null;
   try {
     fs.mkdirSync(storeDir(repoRoot), { recursive: true });
-    db = new sqlite.DatabaseSync(file);
+    // timeout 让构造期也等待锁；PRAGMA busy_timeout 必须在 journal_mode 之前，
+    // 否则持锁写者会让 journal_mode/schema 在设置 busy_timeout 之前就报 busy。
+    db = new sqlite.DatabaseSync(file, { timeout: BUSY_TIMEOUT_MS });
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     db.exec("PRAGMA journal_mode = WAL");
-    db.exec("PRAGMA busy_timeout = 5000");
     db.exec(SCHEMA_SQL);
     db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '1')").run();
-  } catch {
+    return { kind: "ok", db };
+  } catch (error) {
     try {
       db?.close();
     } catch {
-      // 关连接失败不阻断隔离
+      // 关连接失败不阻断重试/隔离
     }
-    quarantineCorruptDb(file);
-    return null;
+    return isSqliteBusy(error) ? { kind: "busy" } : { kind: "corrupt" };
   }
-  return makeStore(repoRoot, db);
+}
+
+/** SQLITE_BUSY(5)/SQLITE_LOCKED(6)：并发争锁，不是损坏——绝不 quarantine。 */
+function isSqliteBusy(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const errcode = (error as { errcode?: unknown }).errcode;
+  if (errcode === 5 || errcode === 6) return true;
+  return /database is locked|database table is locked|SQLITE_BUSY|SQLITE_LOCKED/i.test(
+    String((error as { message?: unknown }).message ?? ""),
+  );
+}
+
+/** 同步退避（open/writeTxn 都是同步 API）：Atomics.wait 阻塞等待，不引入异步签名。 */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /** 损坏库隔离：挪为 .corrupt 留证（覆盖旧件），清 WAL/SHM 避免新库误恢复旧日志。 */
@@ -217,7 +265,7 @@ function quarantineCorruptDb(file: string): void {
 function makeStore(repoRoot: string, db: SqliteDatabase): TodoStore {
   return {
     writeTxn(fn) {
-      db.exec("BEGIN IMMEDIATE");
+      beginImmediateWithRetry(db);
       try {
         const value = fn();
         db.exec("COMMIT");
@@ -317,6 +365,20 @@ function makeStore(repoRoot: string, db: SqliteDatabase): TodoStore {
       db.close();
     },
   };
+}
+
+/** BEGIN IMMEDIATE 的 busy 有界重试：只重试取锁本身（不重跑 fn，避免副作用二次执行）。 */
+function beginImmediateWithRetry(db: SqliteDatabase): void {
+  const deadline = Date.now() + BUSY_RETRY_DEADLINE_MS;
+  for (;;) {
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      return;
+    } catch (error) {
+      if (!isSqliteBusy(error) || Date.now() >= deadline) throw error;
+      sleepSync(BUSY_RETRY_DELAY_MS);
+    }
+  }
 }
 
 function toEntryRow(row: Record<string, unknown>): EntryRow {
