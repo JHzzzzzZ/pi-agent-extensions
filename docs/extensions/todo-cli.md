@@ -1,10 +1,10 @@
 # todo-cli — todos/ 工作流原子操作（agent 工具 + 冒号命令）
 
-> last verified @ 0db6236
+> last verified @ 4f4a604
 
 ## 职责与边界
 
-把 AGENTS.md 规则 2 的 `todos/` 工作流（登记 → 领取 → 完成，以及开工/收尾盘点的 triage）从「agent 手写 grep + edit」变成可测试的原子命令。服务面两套：agent 工具 `todo`（`action` 参数选择操作）与人类冒号命令 `/todo`、`/todo:list|add|claim|complete|triage|lint`。
+把 AGENTS.md 规则 2 的 `todos/` 工作流（登记 → 领取 → 完成，以及开工/收尾盘点的 triage）从「agent 手写 grep + edit」变成可测试的原子命令。服务面两套：agent 工具 `todos`（`action` 参数选择操作；复数名原因见「不变量」）与人类冒号命令 `/todo`、`/todo:list|add|claim|complete|triage|lint`。
 
 **不做**：不自动 commit；不碰 `todos/` 之外的仓库文件（triage 只读）；不做跨项目聚合（只作用于当前会话工作目录下的 `todos/`）；没有 TUI 状态条/widget（无 status 键）。
 
@@ -20,7 +20,7 @@
 
 ## 核心数据流
 
-1. agent 工具 `todo` → `buildArgv(params)` → `core.main(argv, { repoRoot: ctx.sessionManager.getCwd() ?? process.cwd(), log: 收集, execGit })` → 收集输出作为工具文本；`main` 退出码非 0 ⇒ 工具 `isError`。
+1. agent 工具 `todos` → `buildArgv(params)` → `core.main(argv, { repoRoot: ctx.sessionManager.getCwd() ?? process.cwd(), log: 收集, execGit })` → 收集输出作为工具文本；`main` 退出码非 0 ⇒ 工具 `isError`。
 2. 人类命令 → `parseFileRest`（`<文件> <子串> [--branch|--note ...]`）→ 同一 `run()` 通道 → `ctx.ui.notify`（失败按 warning/error 级别提示）。
 3. 写操作：`add` 先跨全部文件查重（重复拒绝、不写）；`claim`/`complete` 用 `--match` 子串唯一定位（缺失/歧义返回错误码，不猜）；完成 = 勾选 `[x]` + 去 `（processing…）` 标注 + 可选注记。
 4. `triage`：`git worktree list --porcelain` + `git branch --merged <主干>` + 条目文本里的 `@ feat/x` 引用 → 每个 worktree 判 active/cleanup/merged-dirty/orphan/missing、processing 三分（有工作台/引用已消失/无分支引用）、`.worktrees/` 孤儿目录；不写任何文件。
@@ -33,6 +33,7 @@
 - **行尾保持**：写回探测原文件 EOL（CRLF/LF）后还原，否则整文件 diff（历史事故预防）。
 - **查重口径**：`findDuplicates` 归一化文本（去空白/标点）后 exact/similar 两级；`add` 默认拒绝，`--force` 才写入——工具不暴露 force，要强制走 CLI。
 - **工具执行不抛异常**：argv 构造失败与 `main` 异常都转成 `isError` 文本，绝不把异常抛回宿主。
+- **工具名恒为 `todos`（复数）**：宿主工具注册表无命名空间，第三方扩展常占用单数 `todo`（如 `@juicesharp/rpiv-todo`，管会话任务列表）——同名会让后加载的一方整个扩展加载失败（用户实测）。命令面仍是 `/todo`（命令与工具是两张表，互不影响）。
 
 ## 已知坑
 
@@ -48,3 +49,4 @@
 - 改 core 行为：同步 `test/todo-cli.test.ts` 与 `todo-cli/index.test.ts`；改命令面：同步 `EXTENSION_EXPECTATIONS`（tools/install-smoke.mjs）+ 根 README + 本卡。
 - 新增动作/参数：`buildArgv` 与 `Type.Object` 同步；命令面按仓库冒号约定（旧空格写法只提示改名）。
 - 改路径规则/查重口径：本卡「不变量」与 `todos/todo-cli-todo.md` 同步。
+- 改工具名/参数：`TODO_TOOL` 常量 + `index.test.ts` 的回归断言（不得注册 `todo`）+ 根 README/AGENTS/本卡同步（命令面与工具名是两回事，改工具名不动命令）。

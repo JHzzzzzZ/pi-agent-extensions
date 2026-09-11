@@ -67,17 +67,20 @@ function readTodo(root: string): string {
 }
 
 async function runTool(tools: Map<string, any>, params: Record<string, unknown>, ctx: unknown) {
-  const tool = tools.get("todo");
-  assert.ok(tool, "应注册名为 todo 的工具");
+  const tool = tools.get("todos");
+  assert.ok(tool, "应注册名为 todos 的工具");
   return tool.execute("call-1", params, undefined, undefined, ctx);
 }
 
-test("todo-cli：注册 todo 工具与冒号命令面（/todo + 6 条子命令，均有描述）", () => {
+test("todo-cli：注册 todos 工具与冒号命令面（/todo + 6 条子命令，均有描述）", () => {
   const { api, tools, commands } = makeFakePi();
   todoCli(api, { execGit: fakeExecGit });
 
-  assert.ok(tools.get("todo"), "工具名应为 todo");
-  assert.match(tools.get("todo").description, /todos\//);
+  assert.ok(tools.get("todos"), "工具名应为 todos");
+  // 回归锁：第三方 @juicesharp/rpiv-todo 注册同名工具 todo，宿主注册表无命名空间，
+  // 再注册 "todo" 会让后加载的一方整个扩展加载失败（用户实测报错）。
+  assert.equal(tools.has("todo"), false, "不得再注册工具名 todo（与 rpiv-todo 冲突）");
+  assert.match(tools.get("todos").description, /todos\//);
   assert.deepEqual(
     [...commands.keys()].sort(),
     ["todo", "todo:add", "todo:claim", "todo:complete", "todo:lint", "todo:list", "todo:triage"],
@@ -85,7 +88,7 @@ test("todo-cli：注册 todo 工具与冒号命令面（/todo + 6 条子命令�
   for (const c of commands.values()) assert.ok(c.description.length > 0, `${c.name} 应有描述`);
 });
 
-test("工具 todo：add→claim→complete 全链路写真实文件、保持 CRLF、重复登记被拒", async () => {
+test("工具 todos：add→claim→complete 全链路写真实文件、保持 CRLF、重复登记被拒", async () => {
   const root = makeRepo();
   const { api, tools } = makeFakePi();
   todoCli(api, { execGit: fakeExecGit });
@@ -113,7 +116,7 @@ test("工具 todo：add→claim→complete 全链路写真实文件、保持 CRL
   assert.ok(!finalText.includes("processing @ feat/demo"));
 });
 
-test("工具 todo：list/summary/lint 只读输出，缺参返回可读错误", async () => {
+test("工具 todos：list/summary/lint 只读输出，缺参返回可读错误", async () => {
   const root = makeRepo();
   const { api, tools } = makeFakePi();
   todoCli(api, { execGit: fakeExecGit });
@@ -136,7 +139,7 @@ test("工具 todo：list/summary/lint 只读输出，缺参返回可读错误", 
   assert.match(bad.content[0].text, /match/);
 });
 
-test("工具 todo：triage 透出注入的 git 事实且不改写 todos/", async () => {
+test("工具 todos：triage 透出注入的 git 事实且不改写 todos/", async () => {
   const root = makeRepo();
   const { api, tools } = makeFakePi();
   todoCli(api, { execGit: fakeExecGit });
