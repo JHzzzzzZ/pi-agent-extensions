@@ -17,7 +17,7 @@ import {
 } from "../dispatch.ts";
 import { truncateUtf8, type DispatchOutcome } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
-import { makeFakeSpawn, messageEndLine, sleep, waitForChild } from "./helpers.ts";
+import { makeFakeSpawn, messageEndLine, sleep, toolExecutionEndLine, toolExecutionStartLine, toolExecutionUpdateLine, waitForChild } from "./helpers.ts";
 
 function assistantLine(text: string): string {
   return messageEndLine("assistant", {
@@ -356,4 +356,46 @@ test("buildDispatchReport includes cost, member sections and failure guidance", 
   assert.match(withFailure, /错误: \/repo 不是 git 仓库/);
   assert.match(withFailure, /失败处理指令/);
   assert.match(withFailure, /不要再次派发/);
+});
+
+// ---------------------------------------------------------------------------
+// v1.17.0 成员活动阶段（viewer 活动行的成员侧数据源）
+// ---------------------------------------------------------------------------
+
+test("成员子进程事件写入活动阶段：tool start→tool+名字、update 刷新、end/message_end→waiting", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor(deps);
+  const updates: unknown[] = [];
+  const promise = executor({ tasks: [{ agent: "frontend", task: "写登录页" }] }, undefined, (update) => updates.push(update.details));
+  const child = await waitForChild(spawn, 0);
+
+  const member = () => parseDispatchMemberResults(updates.at(-1))?.find((m) => m.name === "frontend");
+
+  child.emitLine(toolExecutionStartLine("read", { path: "login.tsx" }));
+  assert.equal(member()?.status, "running");
+  assert.equal(member()?.phase, "tool");
+  assert.equal(member()?.toolName, "read");
+  assert.equal(typeof member()?.lastActivityAtMs, "number");
+
+  child.emitLine(toolExecutionUpdateLine("read", { content: [{ type: "text", text: "chunk" }] }));
+  assert.equal(member()?.phase, "tool", "update 保持工具阶段");
+  assert.equal(member()?.toolName, "read");
+  assert.equal(typeof member()?.lastActivityAtMs, "number");
+
+  child.emitLine(toolExecutionEndLine("read", { content: [{ type: "text", text: "ok" }] }));
+  assert.equal(member()?.phase, "waiting", "工具结束回 waiting");
+  assert.equal(member()?.toolName, undefined, "工具名随之清除");
+
+  child.emitLine(
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "完成" }],
+      usage: { input: 1, output: 1, cost: { total: 0 }, totalTokens: 2, turns: 1 },
+    }),
+  );
+  assert.equal(member()?.phase, "waiting");
+  assert.equal(member()?.latest, "完成");
+
+  child.emitClose(0);
+  const outcome = await unwrap(promise);
+  assert.equal(outcome.results[0].status, "done");
 });
