@@ -81,7 +81,7 @@
   - 现状差距（`agent-team/widget.ts`）：`buildWidgetRows` 直接产出常显 rows；`renderWidgetView` 在 `state.selected === false` 时把 rows 全量 `dim` 输出——没有折叠态概念。改动点：行投影拆「折叠单行」/「展开 rows」两支，`renderWidgetView` 按 `selected` 选分支；`RunWidgetController.refresh` 的指纹门控与 `setWidget(key, string[])` 推送路径不变。
   - 约束：① 保持字符串 `setWidget` 路径，不做组件工厂化（`tui-sync.md` §3.1 残影教训）；② 时间类刷新继续走 `aligned-ticker`（当前 1s tick，§3.4）；③ 同步更新 `agent-team/docs/tui-sync.md`（§2 门控行、差异表新增折叠/展开行、§4 几何/文案字面量）；④ 版本 bump + AGENTS.md + 根 README（截图/用法）同步。
   - 验收：默认态只占 1 行且含激活提示；`↓`/`←` 展开出现 rows + 提示行；`esc` 收起回折叠；选择器/对话框场景不抢键；widget 纯函数测试 + 真宿主路径（`widget-focus-host.test.ts` 的 TuiMainScreen 仿真）锁定；全量测试 + typecheck 绿；真机截图复核。
-- [ ] 真正并发跑多个 team run（未领取）
+- [ ] 真正并发跑多个 team run（processing @ team-run-run-1789116514774）
   - 需求（用户 2026-09-10）：一个会话里可同时运行多个 team，各自 leader/成员子进程并行推进（当前第二个派单会被拒）。
   - 现状差距：`TeamRunCoordinator` 单 active（`this.active`/`this.pending` 各一个句柄），第二个 `/team:run` 直接返回 `RUN_IN_PROGRESS`；只保留 `lastRecord` 一条终态；`getStatus()` 返回单个 `RunStatusSnapshot`；widget 取单快照。`team_stop`/`stopAndSettle` 虽按 runId 对外暴露，但内部只有这一个句柄。
   - 改动要点（实现时定）：多 run registry（Map<runId, controller/pending/progress/record>）；按 runId 的 status/stop/settle/预算独立；runstore 已按 runId 落盘，`session_start` reconcile 需处理多条残留；跨 run 的总并发上限与子进程资源（成员 4 并发是单 dispatch 协议上限，需另定）；报告 followUp 交错；`/team:status`、`team_status`、viewer 选中 run 的定位；`RUN_IN_PROGRESS` 契约去留（保留为并发上限？改为可配？）；`team_stop` 省略 runId 的行为待重定。
