@@ -23,6 +23,7 @@ import {
   type WidgetRowSpec,
 } from "../widget.ts";
 import type { RunStatusSnapshot } from "../cockpit.ts";
+import type { RunProgress } from "../types.ts";
 import { plainStyles, visibleWidth, type Styles } from "../viewer.ts";
 
 const ACTIVATE_CSI = "\x1b[1;3B"; // alt+down, modified-arrow CSI encoding
@@ -81,11 +82,36 @@ function doneSnapshot(): RunStatusSnapshot {
 
 /** Main/leader/members tree rows for liveSnapshot at 1m5s（任务摘要并入 leader 行，无独立任务行）。 */
 const LIVE_ROWS: WidgetRowSpec[] = [
-  { text: "main", actor: "_leader", kind: "root" },
-  { text: "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行", actor: "_leader", kind: "leader" },
-  { text: "├─ frontend ● running · turn 1", actor: "frontend", kind: "member" },
-  { text: "╰─ backend ✓ done", actor: "backend", kind: "member" },
+  { text: "main", actor: "_leader", kind: "root", runId: "" },
+  { text: "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行", actor: "_leader", kind: "leader", runId: "r" },
+  { text: "├─ frontend ● running · turn 1", actor: "frontend", kind: "member", runId: "r" },
+  { text: "╰─ backend ✓ done", actor: "backend", kind: "member", runId: "r" },
 ];
+
+/** 两个并行 run（run-a 旧、run-b 新），各自一棵 leader + 双成员子树。 */
+function twoRunSnapshot(): RunStatusSnapshot {
+  const older: RunProgress = {
+    runId: "run-a",
+    team: "dev-team",
+    task: "修复登录 bug",
+    startedAtMs: 0,
+    members: [
+      { name: "frontend", status: "running", note: "turn 1" },
+      { name: "backend", status: "done" },
+    ],
+  };
+  const newer: RunProgress = {
+    runId: "run-b",
+    team: "dev-team",
+    task: "补测试",
+    startedAtMs: 5000,
+    members: [
+      { name: "gamma", status: "queued" },
+      { name: "delta", status: "running", latest: "跑用例" },
+    ],
+  };
+  return { running: true, actives: [older, newer], records: [], progress: newer, lastRecord: null };
+}
 
 // ---------------------------------------------------------------------------
 // Tree projection (pure)
@@ -229,6 +255,63 @@ test("buildWidgetView leader 行任务摘要：压平换行 + 44 字符截断 + 
   const collapsed = buildWidgetView(multilineTeam, 65000).collapsed;
   assert.equal(collapsed, "agent-team count duet · ↓/← 查看详情");
   assert.doesNotMatch(collapsed, /\n/);
+});
+
+// ---------------------------------------------------------------------------
+// 多 run 树（v1.22.0，设计 §6.2）：单 main 根 + 每 run 一棵 leader 子树
+// ---------------------------------------------------------------------------
+
+test("buildWidgetView 多 run：单 main 根 + 每 run（startedAt 升序）一棵子树，成员末项按本 run 组内判定", () => {
+  const view = buildWidgetView(twoRunSnapshot(), 65000);
+  assert.equal(view.collapsed, "agent-team · 2 run 并行 · ↓/← 查看详情", "多 run 折叠行");
+  assert.deepEqual(view.rows.map((row) => row.kind), ["root", "leader", "member", "member", "leader", "member", "member"]);
+  assert.deepEqual(view.rows.map((row) => row.runId), ["", "run-a", "run-a", "run-a", "run-b", "run-b", "run-b"]);
+  assert.deepEqual(
+    view.rows.map((row) => row.text),
+    [
+      "main",
+      "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行",
+      "├─ frontend ● running · turn 1",
+      "╰─ backend ✓ done",
+      "leader dev-team · 补测试 ▶ running · 1m0s · 1/2 并行",
+      "├─ gamma · queued",
+      "╰─ delta ● running · 跑用例",
+    ],
+    "每 run 组内末项成员用 ╰─（run 边界由 leader 行分隔，不加空行）",
+  );
+});
+
+test("buildWidgetView 多 run：actives 乱序仍按 startedAt 升序；actives 恰 1 条时与单 run 现状逐字节一致", () => {
+  const shuffled = twoRunSnapshot();
+  const [older, newer] = [shuffled.actives[0]!, shuffled.actives[1]!];
+  shuffled.actives = [newer, older];
+  const rows = buildWidgetView(shuffled, 65000).rows;
+  assert.equal(rows[1]!.runId, "run-a", "旧 run 的子树在前（startedAt 升序）");
+  assert.equal(rows[4]!.runId, "run-b");
+
+  const one = liveSnapshot();
+  one.actives = [one.progress!];
+  assert.deepEqual(buildWidgetView(one, 65000), {
+    collapsed: "agent-team dev-team · ↓/← 查看详情",
+    rows: LIVE_ROWS,
+  });
+});
+
+test("renderWidgetView 多 run 大团队窗口化：3 run × 多成员帧 ≤ WIDGET_MAX_LINES，选中行恒在帧内", () => {
+  const actives: RunProgress[] = [0, 1, 2].map((index) => ({
+    runId: `run-${index}`,
+    team: "dev-team",
+    task: `任务${index}`,
+    startedAtMs: index * 1000,
+    members: Array.from({ length: 5 }, (_, member) => ({ name: `m${index}-${member}`, status: "running" })),
+  }));
+  const view = buildWidgetView({ running: true, actives, records: [], progress: actives[2]!, lastRecord: null }, 65000);
+  assert.equal(view.rows.length, 1 + 3 * 6, "main + 3×(leader + 5 成员)");
+  for (const cursor of [0, 5, view.rows.length - 1]) {
+    const lines = renderWidgetView(view, { selected: true, cursor }, 80, plainStyles());
+    assert.ok(lines.length <= WIDGET_MAX_LINES, `cursor ${cursor}: 帧总行数 ≤ ${WIDGET_MAX_LINES}，实得 ${lines.length}`);
+    assert.ok(lines.some((line) => line.startsWith("▸ ")), `cursor ${cursor}: 选中行恒在帧内`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -890,7 +973,7 @@ function controllerHarness(opts: {
   load: () => RunStatusSnapshot;
   editorState?: () => { text: string };
   editorFocus?: () => boolean | undefined;
-  onConfirm?: (actor: string) => void;
+  onConfirm?: (actor: string, runId: string) => void;
 }) {
   const pushed: Array<string[] | undefined> = [];
   const handlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
@@ -1041,6 +1124,43 @@ test("controller enter：main 行不进 viewer；leader/成员行 onConfirm 对�
     assert.equal(cursorRow(lastLines(pushed)), 2);
     handlers[0]!("\r");
     assert.deepEqual(confirmed, ["_leader", "frontend"], "成员行 enter 打开该成员转录");
+  } finally {
+    controller.stop();
+  }
+});
+
+// 多 run 树 enter：leader/成员行必须把本行的 runId 一并交给 onConfirm
+// （viewer 据此钉选 run），root 行仍只收起选中。
+test("controller enter（多 run）：onConfirm 带本行 runId，root 行不回调", () => {
+  const confirmed: Array<{ actor: string; runId: string }> = [];
+  const { controller, pushed, handlers } = controllerHarness({
+    load: twoRunSnapshot,
+    editorState: () => ({ text: "" }),
+    onConfirm: (actor, runId) => confirmed.push({ actor, runId }),
+  });
+  try {
+    handlers[0]!("\x1b[B"); // 激活 main 行
+    assert.equal(handlers[0]!("\r")?.consume, true);
+    assert.deepEqual(confirmed, [], "root 行不进 viewer");
+
+    handlers[0]!("\x1b[1;3B"); // 重新激活（cursor 0）
+    handlers[0]!("j"); // leader A（run-a）
+    assert.equal(cursorRow(lastLines(pushed)), 1);
+    handlers[0]!("\r");
+    handlers[0]!("\x1b[1;3B");
+    handlers[0]!("j"); // frontend（run-a 成员）
+    assert.equal(cursorRow(lastLines(pushed)), 2);
+    handlers[0]!("\r");
+    handlers[0]!("\x1b[1;3B");
+    handlers[0]!("j");
+    handlers[0]!("j"); // leader B（run-b，cursor 4）
+    assert.equal(cursorRow(lastLines(pushed)), 4);
+    handlers[0]!("\r");
+    assert.deepEqual(confirmed, [
+      { actor: "_leader", runId: "run-a" },
+      { actor: "frontend", runId: "run-a" },
+      { actor: "_leader", runId: "run-b" },
+    ]);
   } finally {
     controller.stop();
   }
