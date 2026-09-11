@@ -757,6 +757,88 @@ test("handleViewerKey toggles tool rows with x/X/ctrl+o（fleet toggleTools 键�
 // Plain-text formatter (team_transcript tool)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 多 run 切换（v1.22.0，差异表 §3.21）：`[`/`]` 环形切 run
+// ---------------------------------------------------------------------------
+
+const runRefs = [
+  { runId: "run-a", team: "team-a", status: "running" },
+  { runId: "run-b", team: "team-b", status: "running" },
+  { runId: "run-c", team: "team-c", status: "aborted" },
+];
+
+function runCtx(overrides: { runId?: string; runIds?: string[] } = {}) {
+  return {
+    totalLines: 10,
+    actorCount: 2,
+    bodyHeight: 10,
+    runIds: runRefs.map((run) => run.runId),
+    runId: "run-b",
+    ...overrides,
+  };
+}
+
+test("handleViewerKey `[`/`]` 切 run：环形前后（prev/next），结果携带目标 runId", () => {
+  assert.deepEqual(handleViewerKey(initialViewerState(), "[", runCtx()), { type: "run-switch", runId: "run-a" }, "`[` = prevRun 环形向前");
+  assert.deepEqual(handleViewerKey(initialViewerState(), "]", runCtx()), { type: "run-switch", runId: "run-c" }, "`]` = nextRun 环形向后");
+  assert.deepEqual(
+    handleViewerKey(initialViewerState(), "[", runCtx({ runId: "run-a" })),
+    { type: "run-switch", runId: "run-c" },
+    "首个 run 再按 `[` 环到最后一个",
+  );
+  assert.deepEqual(
+    handleViewerKey(initialViewerState(), "]", runCtx({ runId: "run-c" })),
+    { type: "run-switch", runId: "run-a" },
+    "最后一个 run 再按 `]` 环到第一个",
+  );
+  assert.deepEqual(
+    handleViewerKey(initialViewerState(), "]", runCtx({ runId: "run-x" })),
+    { type: "run-switch", runId: "run-b" },
+    "钉选 run 不在列表 → 以首个为基准向后",
+  );
+});
+
+test("handleViewerKey `[`/`]`：runs≤1 或缺省时 no-op 消费（状态零变化）", () => {
+  const state = { ...initialViewerState(), scroll: 3, follow: false };
+  for (const key of ["[", "]"]) {
+    const single = handleViewerKey(state, key, runCtx({ runIds: ["run-a"], runId: "run-a" }));
+    assert.equal(single.type, "update");
+    if (single.type === "update") assert.deepEqual(single.state, state, `单 run 下 ${key} 不改状态`);
+    const none = handleViewerKey(state, key, { totalLines: 10, actorCount: 2, bodyHeight: 10 });
+    assert.equal(none.type, "update");
+    if (none.type === "update") assert.deepEqual(none.state, state, `无 runs 数据时 ${key} 不改状态`);
+  }
+});
+
+test("handleViewerKey 输入模式（m）下 `[`/`]` 进 buffer；确认态忽略", () => {
+  const typing = { ...initialViewerState(), inputMode: true, inputBuffer: "x" };
+  const open = handleViewerKey(typing, "[", runCtx());
+  assert.equal(open.type, "update");
+  if (open.type === "update") {
+    assert.equal(open.state.inputBuffer, "x[", "输入模式优先：`[` 是可打印字符");
+    assert.equal(open.state.runId, undefined, "输入模式不得切 run");
+  }
+  const close = handleViewerKey(open.type === "update" ? open.state : typing, "]", runCtx());
+  assert.equal(close.type, "update");
+  if (close.type === "update") assert.equal(close.state.inputBuffer, "x[]");
+
+  const armed = { ...initialViewerState(), stopConfirming: true };
+  const ignored = handleViewerKey(armed, "[", runCtx());
+  assert.equal(ignored.type, "update");
+  if (ignored.type === "update") assert.deepEqual(ignored.state, armed, "确认态下 `[` 被忽略");
+});
+
+test("renderViewerFrame legend：runs>1 追加 ` · [/] 切 run`，runs≤1/缺省不追加", () => {
+  const legendOf = (data: ViewerData): string => {
+    const frame = renderViewerFrame(data, initialViewerState(), 120, { styles, bodyHeight: 8 });
+    return frame[frame.length - 2] ?? "";
+  };
+  const multi = legendOf(viewerData({ runs: runRefs }));
+  assert.match(multi, /q 关闭 · \[\/\] 切 run · 成员 1\/2/, "多 run 图例追加切 run 段（成员位置在后）");
+  assert.doesNotMatch(legendOf(viewerData({ runs: [runRefs[0]!] })), /切 run/, "单 run 图例不加（零回归）");
+  assert.doesNotMatch(legendOf(viewerData()), /切 run/);
+});
+
 test("formatTranscriptText renders one actor's transcript or a helpful miss message", () => {
   const text = formatTranscriptText(viewerData(), "frontend", { styles });
   assert.match(text, /## frontend（done）· run run-42/);

@@ -265,6 +265,44 @@ test("成员行 enter 直达查看器并定位该成员（末行恒为成员，�
 });
 
 // ---------------------------------------------------------------------------
+// 多 run：折叠行 `N run 并行`、展开双子树、全部落定才卸载（设计 §6.2/§8.2）
+// ---------------------------------------------------------------------------
+
+test("多 run：折叠行 `N run 并行`、展开双子树，全部落定才卸载", async () => {
+  const host = await setupHost();
+  try {
+    await dispatch(host, "任务一");
+    await waitForChild(host.spawn, 0);
+    await dispatch(host, "任务二");
+    await waitForChild(host.spawn, 1);
+
+    assert.deepEqual(
+      lastFrame(host.capture)?.map((line) => line.trimEnd()),
+      ["agent-team · 2 run 并行 · ↓/← 查看详情"],
+      "两个活跃 run → 多 run 折叠行",
+    );
+
+    const handler = host.capture.inputHandlers[0]!;
+    assert.equal(handler("\x1b[B")?.consume, true, "空编辑器 + 编辑器焦点 → ↓ 激活");
+    const expanded = lastFrame(host.capture)!;
+    assert.equal(expanded[0]?.trimEnd(), "▸ main");
+    assert.match(expanded[1]!, /leader proj-team · 任务一/);
+    assert.match(expanded[4]!, /leader proj-team · 任务二/, "第二个 run 的子树紧随第一个之后");
+    assert.equal(expanded.length, 8, "main + 2×(leader+2 成员) + 底部提示行");
+
+    host.spawn.children[0]!.emitClose(0);
+    await sleep(30);
+    assert.ok(Array.isArray(lastFrame(host.capture)), "仅一个 run 落定：亮块仍在（另一 run 活跃）");
+
+    host.spawn.children[1]!.emitClose(0);
+    await waitFor(() => lastFrame(host.capture) === undefined);
+    assert.equal(lastFrame(host.capture), undefined, "全部落定后才卸载");
+  } finally {
+    await host.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 链式派单不闪卸载（viewer 排队消息 → run 落定 → 新 run 立即接上）
 // ---------------------------------------------------------------------------
 

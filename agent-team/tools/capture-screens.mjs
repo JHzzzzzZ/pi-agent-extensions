@@ -149,6 +149,12 @@ function entry(kind, text) {
   return { kind, text, ts: "2026-09-11T09:12:04.000Z" };
 }
 
+/** 切 run 列表（[`]`]）：第二个 run 只在 legend 的 ` · [/] 切 run` 上体现。 */
+const VIEWER_RUNS = [
+  { runId: "run-1788938207941", team: "count-duet", status: "running" },
+  { runId: "run-1788938207942", team: "nightly-audit", status: "running" },
+];
+
 /** 示例 run 数据（count-duet：leader 派单、两个成员数数）——与真机冒烟场景同形。 */
 function countDuet(elapsedSec, extraDispatch) {
   const leader = [
@@ -180,6 +186,7 @@ function countDuet(elapsedSec, extraDispatch) {
       ["front", [entry("task", "数出数字 2"), entry("assistant", "2"), entry("tool", "read count.txt → 2")]],
       ["back", [entry("task", "复核 front 的 2"), entry("assistant", "核对通过：2 在 1..10 内且为偶数。")]],
     ]),
+    runs: VIEWER_RUNS,
   };
 }
 
@@ -241,7 +248,7 @@ export function captureViewerScene({ cols = 150, rows = 40 } = {}) {
 /** 帧自检：锚点缺失说明真实渲染路径变了，截图不可信——工具必须响亮地失败。 */
 export function assertFrame(lines) {
   const text = lines.join("\n");
-  const anchors = ["agent-team viewer", "count-duet", "· _leader", "· front", "· back", "模型:"];
+  const anchors = ["agent-team viewer", "count-duet", "· _leader", "· front", "· back", "模型:", "[/] 切 run"];
   const missing = anchors.filter((a) => !text.includes(a));
   if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
   const titles = lines.filter((l) => l.includes("agent-team viewer")).length;
@@ -419,19 +426,39 @@ const WIDGET_NOW_MS = Date.parse("2026-09-11T09:12:45.000Z");
 function widgetSnapshot(nowMs) {
   return {
     running: true,
+    actives: [
+      {
+        runId: "run-1788938207941",
+        team: "count-duet",
+        task: "用 count-duet 团队从 1 数到 10；leader 数奇数，front 数偶数。",
+        startedAtMs: nowMs - 41_000,
+        leaderModel: "opencode-go/deepseek-v4-flash",
+        members: [
+          { name: "front", status: "done", note: "已数 2" },
+          { name: "back", status: "running", latest: "复核 front 的 2" },
+        ],
+      },
+    ],
+    records: [],
     lastRecord: null,
-    progress: {
-      runId: "run-1788938207941",
-      team: "count-duet",
-      task: "用 count-duet 团队从 1 数到 10；leader 数奇数，front 数偶数。",
-      startedAtMs: nowMs - 41_000,
-      leaderModel: "opencode-go/deepseek-v4-flash",
-      members: [
-        { name: "front", status: "done", note: "已数 2" },
-        { name: "back", status: "running", latest: "复核 front 的 2" },
-      ],
-    },
+    progress: null,
   };
+}
+
+/** 双 run 快照（v1.22.0 截图）：单 main 根 + 每 run 一棵 leader 子树。 */
+function widgetMultiSnapshot(nowMs) {
+  const older = widgetSnapshot(nowMs).actives[0];
+  const newer = {
+    runId: "run-1788938207942",
+    team: "nightly-audit",
+    task: "审计 agent-team 与 pwr 的夜间回归。",
+    startedAtMs: nowMs - 12_000,
+    members: [
+      { name: "audit", status: "running", latest: "扫描 widget.ts" },
+      { name: "report", status: "queued" },
+    ],
+  };
+  return { running: true, actives: [older, newer], records: [], progress: newer, lastRecord: null };
 }
 
 // 编辑器上方的主屏背景（同查看器场景的示意文本）。
@@ -450,7 +477,7 @@ const WIDGET_BASE_LINES = [
  * 空编辑器是真实语义：bare ↓/← 只在编辑器为空时激活 widget——截图即该状态。
  * `selected: false` 渲染折叠单行（默认 true = 展开态 leader 行选中）。
  */
-export function captureWidgetScene({ cols = 120, rows = 12, selected = true } = {}) {
+export function captureWidgetScene({ cols = 120, rows = 12, selected = true, multiRun = false } = {}) {
   const screen = new VtScreen(cols, rows);
   const term = { columns: cols, rows, write: (data) => screen.feed(data), hideCursor: () => {}, showCursor: () => {} };
   const tui = new TuiMainScreen(term);
@@ -459,7 +486,7 @@ export function captureWidgetScene({ cols = 120, rows = 12, selected = true } = 
   for (const line of WIDGET_BASE_LINES) root.addChild(new Text(line, 0, 0));
   root.addChild(new Spacer(1));
   root.addChild(new Editor(tui, { borderColor: styles.border, selectList: {} }, {}));
-  const view = buildWidgetView(widgetSnapshot(WIDGET_NOW_MS), WIDGET_NOW_MS);
+  const view = buildWidgetView(multiRun ? widgetMultiSnapshot(WIDGET_NOW_MS) : widgetSnapshot(WIDGET_NOW_MS), WIDGET_NOW_MS);
   const lines = renderWidgetView(view, selected ? { selected: true, cursor: 1 } : { selected: false, cursor: 0 }, cols, styles);
   const widget = new Container();
   for (const line of lines.slice(0, 10)) widget.addChild(new Text(line, 1, 0));
@@ -473,10 +500,11 @@ export function captureWidgetScene({ cols = 120, rows = 12, selected = true } = 
   }
 }
 
-/** widget 帧自检：展开态树（main/leader/成员）+ 提示行缺一即失败。 */
-export function assertWidgetFrame(lines) {
+/** widget 帧自检：展开态树（main/leader/成员）+ 提示行缺一即失败；multiRun 时另锁第二棵子树。 */
+export function assertWidgetFrame(lines, { multiRun = false } = {}) {
   const text = lines.join("\n");
   const anchors = ["main", "▸ leader count-duet", "├─ front", "╰─ back", "↑↓ 选择 · enter 查看 · esc 退出"];
+  if (multiRun) anchors.push("leader nightly-audit", "├─ audit", "╰─ report");
   const missing = anchors.filter((a) => !text.includes(a));
   if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
   const selectedRows = lines.filter((l) => l.includes("▸ leader count-duet")).length;
@@ -504,8 +532,9 @@ function capturePwr() {
 }
 
 function captureWidget() {
-  const scene = captureWidgetScene();
-  assertWidgetFrame(scene.lines);
+  // 文档截图展示多 run 树（v1.22.0；单 run 场景零回归由 capture-screens.test.ts 锁定）。
+  const scene = captureWidgetScene({ multiRun: true, rows: 16 });
+  assertWidgetFrame(scene.lines, { multiRun: true });
   return { name: "agent-team-widget.svg", svg: svgFromGrid(scene.grid) };
 }
 

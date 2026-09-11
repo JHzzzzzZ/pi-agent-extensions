@@ -231,7 +231,7 @@ test("viewer D 停止：排队消息一并丢弃，无链式派出", async () =>
     await sleep(200);
     assert.equal(host.spawn.records.length, 1, "aborted 后排队消息丢弃，不链发");
     const frame = viewer.render(100).join("\n");
-    assert.match(frame, /run 已停止（aborted/);
+    assert.match(frame, /run run-\d+ 已停止（aborted/);
     viewer.dispose();
   } finally {
     await host.cleanup();

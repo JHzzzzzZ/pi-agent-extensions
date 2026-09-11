@@ -278,6 +278,87 @@ test("/team:stop on an idle session reports nothing to stop", async () => {
   }
 });
 
+test("/team:stop without runId stops the single active run", async () => {
+  const { spawn, cmd, notifications, cleanup } = await setup();
+  try {
+    await cmd(TEAM_COMMAND_NAMES.run, "proj-team 写一个 hello");
+    const child = await waitForChild(spawn, 0);
+    const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    await cmd(TEAM_COMMAND_NAMES.stop, "");
+    assert.ok(child.killed.includes("SIGTERM"), "single active run aborted");
+    const last = notifications.at(-1);
+    assert.equal(last?.level, "warning");
+    assert.match(last?.text ?? "", /已发送中止信号/);
+    assert.match(last?.text ?? "", new RegExp(runId));
+    child.emitClose(null);
+  } finally {
+    cleanup();
+  }
+});
+
+test("/team:stop without runId warns and lists runIds while two runs run in parallel", async () => {
+  const { pi, spawn, cmd, notifications, cleanup } = await setup();
+  try {
+    await cmd(TEAM_COMMAND_NAMES.run, "proj-team 任务 A");
+    await waitForChild(spawn, 0);
+    await cmd(TEAM_COMMAND_NAMES.run, "proj-team 任务 B");
+    await waitForChild(spawn, 1);
+    const firstId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    const secondId = spawn.records[1].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+
+    await cmd(TEAM_COMMAND_NAMES.stop, "");
+    const last = notifications.at(-1);
+    assert.equal(last?.level, "warning");
+    assert.match(last?.text ?? "", /2 个 run 并行/);
+    assert.match(last?.text ?? "", new RegExp(firstId));
+    assert.match(last?.text ?? "", new RegExp(secondId));
+    assert.equal(spawn.children[0]?.killed.length, 0, "ambiguous stop signals nobody");
+    assert.equal(spawn.children[1]?.killed.length, 0);
+
+    // 显式 runId 只停目标 run（命令路径不等待 settle）。
+    await cmd(TEAM_COMMAND_NAMES.stop, secondId);
+    assert.ok(spawn.children[1]?.killed.includes("SIGTERM"));
+    assert.equal(spawn.children[0]?.killed.length, 0, "the other run is untouched");
+    spawn.children[1]?.emitClose(null);
+    spawn.children[0]?.emitClose(0);
+    await waitFor(() => pi.sentMessages.length > 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("/team:status [runId] pins one run; no args shows the multi-run header", async () => {
+  const { pi, spawn, cmd, notifications, cleanup } = await setup();
+  try {
+    await cmd(TEAM_COMMAND_NAMES.run, "proj-team 任务 A");
+    const childA = await waitForChild(spawn, 0);
+    await cmd(TEAM_COMMAND_NAMES.run, "proj-team 任务 B");
+    await waitForChild(spawn, 1);
+    const firstId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    const secondId = spawn.records[1].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+
+    await cmd(TEAM_COMMAND_NAMES.status, "");
+    const aggregate = notifications.at(-1)?.text ?? "";
+    assert.match(aggregate, /当前共 2 个 run 并行（上限 3）：/);
+    assert.match(aggregate, new RegExp(`── run ${firstId} `));
+    assert.match(aggregate, new RegExp(`── run ${secondId} `));
+
+    await cmd(TEAM_COMMAND_NAMES.status, firstId);
+    const targeted = notifications.at(-1)?.text ?? "";
+    assert.match(targeted, new RegExp(`runId: ${firstId}`));
+    assert.match(targeted, /当前 run：/);
+    assert.doesNotMatch(targeted, /── run /);
+
+    await cmd(TEAM_COMMAND_NAMES.status, "run-nope");
+    assert.match(notifications.at(-1)?.text ?? "", /没有找到 runId run-nope/);
+
+    for (const child of [childA, spawn.children[1]]) child?.emitClose(0);
+    await waitFor(() => pi.sentMessages.length >= 2);
+  } finally {
+    cleanup();
+  }
+});
+
 test("/team:view routes to the viewer branch (no run → its own hint)", async () => {
   const { cmd, notifications, cleanup } = await setup();
   try {

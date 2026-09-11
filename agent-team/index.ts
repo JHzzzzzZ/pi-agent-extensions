@@ -32,7 +32,7 @@ import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
-import { TeamRunCoordinator, failedRunRecord, formatStatusSnapshot, type ResumeContext, type UiPort } from "./cockpit.ts";
+import { TeamRunCoordinator, failedRunRecord, formatStatusSnapshot, type ResumeContext, type RunStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
 import {
   buildResumePrompt,
@@ -64,6 +64,8 @@ import {
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
   LEADER_ENV_WORKTREE_RUNID,
+  MAX_CONCURRENT_TEAM_RUNS,
+  MAX_RETAINED_RUN_RECORDS,
   MAX_RESULT_BYTES,
   RUN_ENTRY_TYPE,
   STOP_SETTLE_TIMEOUT_MS,
@@ -124,8 +126,8 @@ export const TEAM_COMMAND_NAMES = {
 export const RETIRED_TEAM_SUBCOMMANDS: Record<string, { command: string; usage: string }> = {
   list: { command: TEAM_COMMAND_NAMES.list, usage: "/team:list" },
   run: { command: TEAM_COMMAND_NAMES.run, usage: "/team:run <团队名> <任务描述>" },
-  status: { command: TEAM_COMMAND_NAMES.status, usage: "/team:status" },
-  stop: { command: TEAM_COMMAND_NAMES.stop, usage: "/team:stop" },
+  status: { command: TEAM_COMMAND_NAMES.status, usage: "/team:status [runId]" },
+  stop: { command: TEAM_COMMAND_NAMES.stop, usage: "/team:stop [runId]" },
   view: { command: TEAM_COMMAND_NAMES.view, usage: "/team:view" },
   clear: { command: TEAM_COMMAND_NAMES.clear, usage: "/team:clear" },
   doctor: { command: TEAM_COMMAND_NAMES.doctor, usage: "/team:doctor" },
@@ -138,8 +140,8 @@ export const TEAM_USAGE = [
   "  /team:list               列出全部团队",
   "  /team:run <团队> <任务>  后台派单",
   "  /team:resume <runId> [补充指示]  续跑 failed/aborted 的 run（沿用原会话与 worktree；换模型走 team_resume 工具）",
-  "  /team:status             查看当前/最近 run 状态",
-  "  /team:stop               中止当前 run",
+  "  /team:status [runId]     查看指定 run / 全部活跃 run 状态",
+  "  /team:stop [runId]       中止指定 run（恰 1 活跃时可省略）",
   "  /team:view               打开全屏会话记录查看器",
   "  /team:clear              丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏）",
   "  /team:doctor             自检报告",
@@ -178,6 +180,10 @@ export interface ViewerDialogState {
   viewerSettled?: (() => void) | undefined;
   /** viewer 最后停留的 actor（重开时恢复）。 */
   viewerActor?: string;
+  /** viewer 最近一次实际展示的 runId（openViewer 的 load 记录；重开时恢复）。 */
+  viewerLastRunId?: string;
+  /** widget-enter 预置的 run 钉选；重开前由 viewerLastRunId 回填。 */
+  viewerRunId?: string;
 }
 
 /**
@@ -227,6 +233,8 @@ export function viewerDialogHooks(
     },
     resumeViewer(): void {
       try {
+        // 多 run 位姿：重开回到收起前实际展示的 run（widget 钉选通道同一字段）。
+        state.viewerRunId = state.viewerLastRunId;
         void openViewer(state.viewerActor).catch(() => {
           /* reopening failures never break the ask */
         });
@@ -489,6 +497,35 @@ function singleLineTail(text: string, max = 160): string {
 // Cockpit mode (main pi session)
 // ---------------------------------------------------------------------------
 
+/** One entry of the viewer's run list (assembled by writer-1, consumed by the TUI line). */
+interface ViewerRunEntry {
+  runId: string;
+  team: string;
+  status: string;
+}
+
+/**
+ * Viewer data plus the run list the viewer switcher consumes. writer-1
+ * assembles it on every load; viewer.ts ignores the extra field until the
+ * TUI line adds [ / ] switching (viewer.ts owns the ViewerData type).
+ */
+type ViewerDataWithRuns = ViewerData & { runs: ViewerRunEntry[] };
+
+/** Active runs first (oldest→newest), then recent terminal records (newest→oldest). */
+function viewerRunList(snapshot: RunStatusSnapshot): ViewerRunEntry[] {
+  const runs: ViewerRunEntry[] = [];
+  const seen = new Set<string>();
+  for (const progress of snapshot.actives) {
+    runs.push({ runId: progress.runId, team: progress.team, status: "running" });
+    seen.add(progress.runId);
+  }
+  for (const record of snapshot.records) {
+    if (seen.has(record.runId)) continue;
+    runs.push({ runId: record.runId, team: record.team, status: record.status });
+  }
+  return runs;
+}
+
 function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): void {
   const state: {
     coordinator: TeamRunCoordinator;
@@ -501,6 +538,15 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     tui: unknown;
     /** True while the transcript viewer overlay is open (widget key gate). */
     viewerOpen: boolean;
+    /**
+     * widget-enter pin: the run whose viewer should open next. `onConfirm`
+     * writes the row's runId here just before calling openViewer; openViewer
+     * consumes it as the initial load pin and clears it (`/team:view` leaves
+     * it undefined → default run: newest active, else newest record).
+     */
+    viewerRunId: string | undefined;
+    /** viewer 最近一次实际展示的 runId（load 时记录；提问互斥重开时恢复位姿）。 */
+    viewerLastRunId?: string;
     /** 程序化收起入口（dispose + done），由 openTranscriptViewer 的 onOpen 记录。 */
     viewerClose?: () => void;
     /** viewer 的 custom 调用落定时 resolve（suspendViewer 的有界等待）。 */
@@ -521,6 +567,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     widget: undefined,
     tui: undefined,
     viewerOpen: false,
+    viewerRunId: undefined,
+    viewerLastRunId: undefined,
     viewerClose: undefined,
     viewerSettled: undefined,
     viewerActor: undefined,
@@ -543,31 +591,45 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
    */
   const chat = new ChatCoordinator({
     resolveTeam: (name) => resolveTeam(name),
+    // 排队门仍为「任一 run 活跃」：多个 run 并行时不允许立即派单（chat 语义不变）。
     isRunning: () => state.coordinator.isRunning(),
     startRun: (sessionCtx, team, task) => {
       const ui = uiPortFrom(sessionCtx as ExtensionContext);
       const started = startBackgroundRun(sessionCtx as ExtensionContext, ui, team, task);
       return started.ok ? { ok: true, runId: started.runId } : { ok: false, code: started.code, message: started.message };
     },
-    contextTail: (actor) => {
-      const snapshot = state.coordinator.getStatus();
-      const runId = snapshot.progress?.runId ?? snapshot.lastRecord?.runId ?? "";
+    contextTail: (runId, actor) => {
       if (!runId) return "";
       return transcriptContextTail(readTranscript(transcriptRoot(), runId, actor));
     },
-    // run 运行中且目标是 leader：RPC steer 插话（不打断任务）；失败或
+    // run 运行中且目标是 leader：RPC steer 定向插话（不打断任务）；失败或
     // 目标是成员时回退到队列/派单语义（chat.ts）。
-    steerLeader: (message) => state.coordinator.steerLeader(message),
+    steerLeader: (runId, message) => state.coordinator.steerLeader(runId, message),
   });
 
   /**
-   * Loads the viewer model for the current/most recent run: leader first,
-   * then members (status from live progress or the last record), then any
-   * extra transcript files. Transcripts are read per actor on each load —
-   * the viewer refreshes on a timer, so this stays live while a run works.
+   * Loads the viewer model for one run: leader first, then members (status
+   * from live progress or the last record), then any extra transcript files.
+   * Transcripts are read per actor on each load — the viewer refreshes on a
+   * timer, so this stays live while runs work. `targetRunId` pins a run
+   * (viewer switching); undefined = the default run (newest active, else
+   * newest record). An unknown target returns empty actor data with the
+   * requested runId preserved, so the viewer can show "not found".
    */
-  const buildViewerData = (): ViewerData => {
-    const snapshot = state.coordinator.getStatus();
+  const buildViewerData = (targetRunId?: string): ViewerDataWithRuns => {
+    const aggregate = state.coordinator.getStatus();
+    const snapshot = targetRunId !== undefined ? state.coordinator.getStatus(targetRunId) : aggregate;
+    const runs = viewerRunList(aggregate);
+    if (snapshot === null) {
+      return {
+        team: "(unknown)",
+        runId: targetRunId ?? "",
+        runStatus: "unknown",
+        actors: [],
+        entries: new Map(),
+        runs,
+      };
+    }
     const progress = snapshot.progress;
     const lastRecord = snapshot.lastRecord;
     const runId = progress?.runId ?? lastRecord?.runId ?? "";
@@ -705,6 +767,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       elapsed,
       actors,
       entries,
+      runs,
     };
   };
 
@@ -724,6 +787,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     // 提问收起后重开用同一位姿：只有显式带 actor 才覆盖（/team:view 空参
     // 保留上次停留的成员）。
     if (initialActor !== undefined) state.viewerActor = initialActor;
+    // widget enter 预置的钉选（`/team:view` 为 undefined）：viewer 打开时自身
+    // 不接收初始 runId，load 缺省时用它解析；消费后立即清掉，关闭不留残值。
+    const pinnedRunId = state.viewerRunId !== "" ? state.viewerRunId : undefined;
+    state.viewerRunId = undefined;
     try {
       state.widget?.setPaused(true);
     } catch {
@@ -731,25 +798,34 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     }
     try {
       await openTranscriptViewer(ctx.ui, {
-        load: buildViewerData,
+        load: (targetRunId) => {
+          const data = buildViewerData(targetRunId ?? pinnedRunId);
+          // 记录实际展示的 run：提问互斥收起后按同一位姿重开（多 run 不丢钉选）。
+          if (data.runId !== "") state.viewerLastRunId = data.runId;
+          return data;
+        },
         ...(initialActor !== undefined ? { initialActor } : {}),
         onOpen: (close) => {
           state.viewerClose = close;
         },
-        stop: () => viewerStopAndClearChat(),
-        onMessage: (target, message) =>
-          chatSubmitNotice(
+        // stop/onMessage 消费 viewer 传入的「当前查看 run」runId（`[`/`]`
+        // 切换后的 run），不再回退默认 run。
+        stop: (runId) => viewerStopAndClearChat(runId),
+        onMessage: (target, message) => {
+          const runId = target.runId;
+          return chatSubmitNotice(
             chat.submit(
               {
-                teamName: buildViewerData().team,
+                teamName: buildViewerData(runId || undefined).team,
                 ctx,
                 notify: (text, level) => uiPortFrom(ctx).notify(text, level),
               },
-              { actor: target.actor, label: target.label, isLeader: target.actor === LEADER_ACTOR },
+              { actor: target.actor, label: target.label, isLeader: target.actor === LEADER_ACTOR, runId },
               message,
             ),
             target.label,
-          ),
+          );
+        },
       });
     } finally {
       state.viewerOpen = false;
@@ -772,15 +848,15 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   };
 
   /**
-   * Viewer 停止动作 + 对话队列清理：停止成功（非 error notice）时丢弃队列
-   * 内排队的消息（用户变卦语义，与 team_stop / /team:stop 一致），丢弃条
-   * 数追加进 notice 文案。
+   * Viewer 停止动作 + 对话队列清理：停止指定 run 成功（非 error notice）时
+   * 丢弃队列内属于该 run 的排队消息（用户变卦语义只针对被停的 run），
+   * 丢弃条数追加进 notice 文案。
    */
-  const viewerStopAndClearChat = async (): Promise<ViewerStopResult> => {
-    const result = await viewerStopAction(state.coordinator);
+  const viewerStopAndClearChat = async (runId: string): Promise<ViewerStopResult> => {
+    const result = await viewerStopAction(state.coordinator, runId);
     if (result.kind === "error") return result;
     refreshWidget();
-    const dropped = chat.clear();
+    const dropped = chat.clearRun(runId);
     return dropped > 0 ? { ...result, text: `${result.text}；已丢弃排队的 ${dropped} 条对话消息` } : result;
   };
 
@@ -816,7 +892,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         {
           load: () => state.coordinator.getStatus(),
           styles: themeStyles(ctx.ui.theme),
-          onConfirm: (actor) => {
+          onConfirm: (actor, runId) => {
+            // 钉选 widget 行所属 run：openViewer 的初始 load 用它解析。
+            state.viewerRunId = runId;
             void openViewer(ctx, actor).catch(() => {
               /* opening failures never break the session */
             });
@@ -958,11 +1036,17 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     if (!preflight.ok) {
       return { ok: false, code: preflight.code, message: preflight.message };
     }
-    if (state.coordinator.isRunning()) {
-      return { ok: false, code: "RUN_IN_PROGRESS", message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。" };
+    const activeIds = state.coordinator.activeRunIds();
+    if (activeIds.length >= MAX_CONCURRENT_TEAM_RUNS) {
+      return {
+        ok: false,
+        code: "RUN_IN_PROGRESS",
+        message: `并发 team run 已达上限（${MAX_CONCURRENT_TEAM_RUNS}）：${activeIds.join("、")} 进行中；先 team_stop <runId> 或等任一结束。`,
+      };
     }
     // start() claims the run synchronously, so the runId is readable right
-    // after the call — the handle team_stop needs.
+    // after the call — the handle team_stop needs. With parallel runs the
+    // just-claimed run is the newest one (startedAtMs, then runId ordering).
     const runPromise = state.coordinator.start({
       team,
       task,
@@ -973,7 +1057,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       // 子进程启动，故下一行再补一帧，派单后亮块立即出现。
       onProgress: () => refreshWidget(),
     });
-    const runId = state.coordinator.activeRunId() ?? "";
+    const runId = state.coordinator.activeRunIds().at(-1) ?? "";
     // Dispatch-time identity for launch-level failures: the coordinator can
     // fail before producing a record (worktree pre-flight / leader spawn
     // error) — a minimal failed record is rebuilt from these so the failure
@@ -1004,12 +1088,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
             ui.notify(result.message, "error");
             deliverRunResult(pi as unknown as SessionPort, `team ${team.name} run 失败: ${result.message}`);
           }
-          chat.onRunFinalized("failed");
+          chat.onRunFinalized(runId, "failed");
           refreshWidget();
           return;
         }
         finalizeRun(result.value, ui, "followUp");
-        chat.onRunFinalized(result.value.status);
+        chat.onRunFinalized(runId, result.value.status);
         refreshWidget();
       })
       .catch((e: unknown) => {
@@ -1020,7 +1104,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           ui.notify(`team run 异常退出: ${message}`, "error");
           deliverRunResult(pi as unknown as SessionPort, `team ${team.name} run 异常退出: ${message}`);
         }
-        chat.onRunFinalized("failed");
+        chat.onRunFinalized(runId, "failed");
         refreshWidget();
       });
     return { ok: true, team: team.name, members: team.members.length, runId };
@@ -1080,7 +1164,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     if (!parentStatus) {
       return { ok: false, code: "RUN_NOT_FOUND", message: `没有找到 runId ${runId} 的 run 记录（status.json）。已结束的历史 run 需未落终态快照才能续跑。` };
     }
-    if (state.coordinator.activeRunId() === runId) {
+    if (state.coordinator.activeRunIds().includes(runId)) {
       return { ok: false, code: "RUN_NOT_TERMINAL", message: `run ${runId} 仍在运行中，先 /team:stop 或等它落定后再续跑。` };
     }
     const eligibility = resumeEligibility(parentStatus.status);
@@ -1168,7 +1252,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     name: "team_run",
     label: "Run Agent Team",
     description:
-      "把一个任务派给指定的 agent team：leader 会拆解任务并通过 team_dispatch 调度成员协同完成。默认后台运行、立即返回，最终报告完成后自动送达本会话（followUp），等待期间用户可继续对话；wait=true 时同步等待整个 run 结束并内联返回报告（阻塞主会话，不推荐）。同一团队可反复派单复用。",
+      "把一个任务派给指定的 agent team：leader 会拆解任务并通过 team_dispatch 调度成员协同完成。同一会话最多 3 个 run 并行。默认后台运行、立即返回，最终报告完成后自动送达本会话（followUp），等待期间用户可继续对话；wait=true 时同步等待整个 run 结束并内联返回报告（阻塞主会话，不推荐）。同一团队可反复派单复用。",
     promptGuidelines: [
       "派单前先用 team_list 确认团队存在且成员配置合适；不确定时先问用户。",
       "task 要自包含：目标、范围、验收标准。成员和 leader 都看不到这段对话。",
@@ -1270,12 +1354,20 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   pi.registerTool({
     name: "team_status",
     label: "Agent Team Status",
-    description: "查看当前/最近一次 agent team run 的状态：各成员在做什么、轮次、费用、worktree。",
-    promptGuidelines: ["用户问团队进度时调用本工具并转述结果；后台 run 进行中也可以随时调用。"],
-    parameters: Type.Object({}),
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
+    description: "查看指定 run / 全部活跃 run / 最近一次 agent team run 的状态：各成员在做什么、轮次、费用、worktree。",
+    promptGuidelines: [
+      "用户问团队进度时调用本工具并转述结果；后台 run 进行中也可以随时调用。",
+      "多个 run 并行时省略 runId 返回全部活跃 run 的分节状态；传 runId 只看那一个。",
+    ],
+    parameters: Type.Object({
+      runId: Type.Optional(
+        Type.String({ description: "要查看的 runId（省略 = 全部活跃 run + 最近终态）" }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      const runId = typeof params?.runId === "string" ? params.runId.trim() : "";
       return {
-        content: [{ type: "text" as const, text: statusText(ctx) }],
+        content: [{ type: "text" as const, text: statusText(ctx, runId || undefined) }],
         details: {},
       };
     },
@@ -1331,30 +1423,44 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     name: "team_stop",
     label: "Stop Agent Team Run",
     description:
-      "按 runId 停止正在运行的 agent team run（leader 与所有成员子进程）。runId 必填，先 team_status 查看当前/最近 runId。停止后该 run 的报告 followUp 不再送达。",
+      "按 runId 停止正在运行的 agent team run（leader 与所有成员子进程）。同一会话可并行 3 个 run；省略 runId 时恰 1 个活跃则停它、≥2 个活跃必须显式指定。停止后该 run 的报告 followUp 不再送达。",
     promptGuidelines: [
       "派单变卦/超预算/跑偏需要停止时：先 team_status 确认活动 run 与其 runId，再调本工具。",
-      "runId 必填：省略返回 RUN_ID_REQUIRED；未知返回 RUN_NOT_FOUND；已结束返回 RUN_ALREADY_FINISHED（都不抛异常）。",
+      "runId 可选：恰 1 个活跃可省略；≥2 个并行时省略返回 RUN_ID_REQUIRED 并列出活跃 runId；未知返回 RUN_NOT_FOUND；已结束返回 RUN_ALREADY_FINISHED（都不抛异常）。",
       "停止后收不到该 run 的报告 followUp，只会收到“已中止”通知；停止完成后可立即重新派单。",
     ],
     parameters: Type.Object({
-      runId: Type.String({ description: "要停止的 runId（必填；用 team_status 查看当前/最近 runId）" }),
+      runId: Type.Optional(
+        Type.String({ description: "要停止的 runId（可选；省略时恰 1 活跃则停它，≥2 并行时必填）" }),
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx: ExtensionContext) {
-      const runId = typeof params?.runId === "string" ? params.runId.trim() : "";
-      if (!runId) {
+      const requested = typeof params?.runId === "string" ? params.runId.trim() : "";
+      const activeIds = state.coordinator.activeRunIds();
+      if (!requested && activeIds.length === 0) {
         return {
-          content: [{ type: "text" as const, text: "runId 是必填参数：先用 team_status 查看当前/最近一次 run 的 runId。" }],
-          details: { code: "RUN_ID_REQUIRED" },
+          content: [{ type: "text" as const, text: "当前没有正在进行的 team run。" }],
+          details: { stopped: false, activeCount: 0 },
+        };
+      }
+      if (!requested && activeIds.length >= 2) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `有 ${activeIds.length} 个 run 并行（${activeIds.join("、")}），runId 必填以指定停止目标。`,
+            },
+          ],
+          details: { code: "RUN_ID_REQUIRED", activeRunIds: activeIds },
           isError: true,
         };
       }
-      const snapshot = state.coordinator.getStatus();
-      const activeRunId = snapshot.progress?.runId ?? null;
-      if (activeRunId === runId) {
-        const outcome = await state.coordinator.stopAndSettle();
+      const runId = requested || activeIds[0]!;
+      if (state.coordinator.isRunActive(runId)) {
+        const outcome = await state.coordinator.stopAndSettle(runId);
         refreshWidget();
-        const dropped = chat.clear();
+        // 只丢弃该 run 的排队对话（其他并行 run 的排队消息保留）。
+        const dropped = chat.clearRun(runId);
         const droppedNote = dropped > 0 ? `已丢弃排队的 ${dropped} 条 viewer 对话消息。` : "";
         if (outcome.settled) {
           const record = outcome.record;
@@ -1387,15 +1493,16 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
             stopped: true,
             settled: false,
             runId,
-            team: snapshot.progress?.team ?? "",
+            team: state.coordinator.getStatus(runId)?.progress?.team ?? "",
             status: "aborted",
           },
         };
       }
-      if (snapshot.lastRecord?.runId === runId) {
+      const terminal = state.coordinator.terminalStatus(runId);
+      if (terminal !== null) {
         return {
-          content: [{ type: "text" as const, text: `run ${runId} 已经结束（${snapshot.lastRecord.status}），无需停止。` }],
-          details: { code: "RUN_ALREADY_FINISHED", status: snapshot.lastRecord.status },
+          content: [{ type: "text" as const, text: `run ${runId} 已经结束（${terminal}），无需停止。` }],
+          details: { code: "RUN_ALREADY_FINISHED", status: terminal },
           isError: true,
         };
       }
@@ -1420,7 +1527,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     name: "team_resume",
     label: "Resume Agent Team Run",
     description:
-      "续跑一个 failed/aborted 的 agent team run：新 leader 打开父 run 的 leader 会话原地继续（完整对话上下文，无交接摘要），并复用父 run 的 worktree（含未提交改动）。可为本次续跑单独覆盖 leader/成员模型（不改团队文件，含 provider/id:level 后缀）。默认后台运行、报告自动送达；wait=true 同步等待。仅 failed/aborted 可续跑；completed 请用 team_run。",
+      "续跑一个 failed/aborted 的 agent team run：新 leader 打开父 run 的 leader 会话原地继续（完整对话上下文，无交接摘要），并复用父 run 的 worktree（含未提交改动）。可为本次续跑单独覆盖 leader/成员模型（不改团队文件，含 provider/id:level 后缀）。同一会话最多 3 个 run 并行。默认后台运行、报告自动送达；wait=true 同步等待。仅 failed/aborted 可续跑；completed 请用 team_run。",
     promptGuidelines: [
       "用户说「接着跑/续跑/换模型继续」时：先 team_status 拿 failed/aborted 的 runId，再调本工具。",
       "模型额度耗尽的典型用法：leaderModel 换成有额度的 provider/id（成员同理传 memberModels），本次续跑 run 生效，团队文件不动。",
@@ -1535,14 +1642,24 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
 
   // -- Commands -----------------------------------------------------------
 
-  const statusText = (ctx: ExtensionContext): string =>
-    formatStatusSnapshot(state.coordinator.getStatus(), Date.now(), (t) => {
-      try {
-        return ctx.hasUI ? ctx.ui.theme.fg("dim", t) : t;
-      } catch {
-        return t;
-      }
-    });
+  const statusText = (ctx: ExtensionContext, runId?: string): string => {
+    const snapshot = runId ? state.coordinator.getStatus(runId) : state.coordinator.getStatus();
+    if (snapshot === null) {
+      return `没有找到 runId ${runId} 的 run 记录（活跃/最近 ${MAX_RETAINED_RUN_RECORDS} 条终态之外）。`;
+    }
+    return formatStatusSnapshot(
+      snapshot,
+      Date.now(),
+      (t) => {
+        try {
+          return ctx.hasUI ? ctx.ui.theme.fg("dim", t) : t;
+        } catch {
+          return t;
+        }
+      },
+      runId,
+    );
+  };
 
   /** `/team` 或 `/team:list`（无参）：列出所有 agent team（团队/成员/模型）。 */
   const listTeams = (ctx: ExtensionContext): void => {
@@ -1577,21 +1694,45 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     runFromCommand(ctx, teamName, task);
   };
 
-  /** `/team:status`：当前/最近一次 run 的状态。 */
-  const showRunStatus = (ctx: ExtensionContext): void => {
-    uiPortFrom(ctx).notify(statusText(ctx), "info");
+  /** `/team:status [runId]`：指定 run / 全部活跃 run / 最近一次 run 的状态。 */
+  const showRunStatus = (ctx: ExtensionContext, args: string): void => {
+    const runId = args.trim().split(/\s+/)[0] ?? "";
+    uiPortFrom(ctx).notify(statusText(ctx, runId || undefined), "info");
   };
 
-  /** `/team:stop`：中止当前 run（leader 与所有成员）。 */
-  const stopRun = (ctx: ExtensionContext): void => {
+  /**
+   * `/team:stop [runId]`：中止指定 run（leader 与所有成员）。省略 runId 三态：
+   * 恰 1 活跃 → 停它；0 活跃 → info；≥2 活跃 → warning 列 runId。
+   */
+  const stopRun = (ctx: ExtensionContext, args: string): void => {
     const ui = uiPortFrom(ctx);
-    if (state.coordinator.stop()) {
-      refreshWidget();
-      const dropped = chat.clear();
-      ui.notify(dropped > 0 ? `已发送中止信号（SIGTERM → SIGKILL）；已丢弃排队的 ${dropped} 条 viewer 对话消息` : "已发送中止信号（SIGTERM → SIGKILL）", "warning");
-    } else {
+    const requested = args.trim().split(/\s+/)[0] ?? "";
+    const activeIds = state.coordinator.activeRunIds();
+    if (!requested && activeIds.length === 0) {
       ui.notify("当前没有正在进行的 team run", "info");
+      return;
     }
+    if (!requested && activeIds.length >= 2) {
+      ui.notify(
+        `有 ${activeIds.length} 个 run 并行（${activeIds.join("、")}）；用 /team:stop <runId> 指定停止目标。`,
+        "warning",
+      );
+      return;
+    }
+    const runId = requested || activeIds[0]!;
+    if (!state.coordinator.stopRun(runId)) {
+      const status = state.coordinator.terminalStatus(runId);
+      ui.notify(status ? `run ${runId} 已经结束（${status}），无需停止` : `没有找到 runId ${runId} 的活跃 run`, "info");
+      return;
+    }
+    refreshWidget();
+    const dropped = chat.clear();
+    ui.notify(
+      dropped > 0
+        ? `已发送中止信号（SIGTERM → SIGKILL）：run ${runId}；已丢弃排队的 ${dropped} 条 viewer 对话消息`
+        : `已发送中止信号（SIGTERM → SIGKILL）：run ${runId}`,
+      "warning",
+    );
   };
 
   /** `/team:view`：全屏查看当前/最近一次 run 的成员会话记录（实时）。 */
@@ -1704,13 +1845,13 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   });
 
   pi.registerCommand(TEAM_COMMAND_NAMES.status, {
-    description: "查看当前/最近一次 team run 的状态（成员、轮次、费用、预算）",
-    handler: async (_args, ctx) => showRunStatus(ctx),
+    description: "查看指定/全部活跃 team run 的状态（成员、轮次、费用、预算）",
+    handler: async (args, ctx) => showRunStatus(ctx, args ?? ""),
   });
 
   pi.registerCommand(TEAM_COMMAND_NAMES.stop, {
-    description: "中止当前 team run（leader 与所有成员，SIGTERM → SIGKILL）",
-    handler: async (_args, ctx) => stopRun(ctx),
+    description: "中止指定 team run（leader 与所有成员，SIGTERM → SIGKILL）；恰 1 活跃时 runId 可省略",
+    handler: async (args, ctx) => stopRun(ctx, args ?? ""),
   });
 
   pi.registerCommand(TEAM_COMMAND_NAMES.view, {
@@ -1739,14 +1880,15 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     state.widgetMounted = false;
     clearWidget(ctx);
 
-    // Hydrate the most recent run record so /team:status works after reload.
+    // Hydrate the recent run records so /team:status works after reload
+    // (dedupe by runId, newest first, bounded to MAX_RETAINED_RUN_RECORDS).
     try {
       const entries = ctx.sessionManager.getEntries() as Array<{ type?: string; customType?: string; data?: unknown }>;
       for (const entry of entries) {
         if (entry.type === "custom" && entry.customType === RUN_ENTRY_TYPE && entry.data) {
           const data = entry.data as { runId?: string; team?: string; task?: string; startedAt?: string; status?: string; members?: unknown[] };
           if (typeof data.runId === "string" && typeof data.team === "string" && typeof data.task === "string") {
-            state.coordinator.restoreLastRecord(data as unknown as TeamRunRecord);
+            state.coordinator.restoreRecord(data as unknown as TeamRunRecord);
           }
         }
       }
@@ -1762,9 +1904,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     try {
       // Runs still claimed by this coordinator (e.g. a mid-run re-bind) are
       // live and must not be reconciled away.
-      const inMemoryRunIds = new Set<string>();
-      const activeRunId = state.coordinator.activeRunId();
-      if (activeRunId) inMemoryRunIds.add(activeRunId);
+      const inMemoryRunIds = new Set<string>(state.coordinator.activeRunIds());
       const stale = reconcileStaleRuns({
         root: transcriptRoot(),
         inMemoryRunIds,
@@ -1784,7 +1924,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           totalCost: 0,
           totalTokens: 0,
         };
-        state.coordinator.restoreLastRecord(record);
+        state.coordinator.restoreRecord(record);
         // 崩溃 run 的记录可能还留在 run worktree（随后会被 git worktree remove
         // 删除）或主会话 cwd：翻 failed 后按终态语义归档到主工作区 history/。
         const archived = archiveRunRecords({
@@ -1830,6 +1970,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     state.viewerClose = undefined;
     state.viewerSettled = undefined;
     state.viewerActor = undefined;
+    state.viewerLastRunId = undefined;
     clearWidget(ctx);
   });
 
@@ -1879,34 +2020,39 @@ export function resetDoubleLoadGuardForTests(): void {
 
 /** Minimal structural view of the coordinator a viewer stop needs. */
 interface ViewerStopCoordinator {
-  getStatus(): {
-    progress: { runId: string } | null;
-    lastRecord: { status: string; runId: string } | null;
-  };
-  stopAndSettle(): Promise<{ settled: boolean; record: { durationMs?: number } | null }>;
+  /** True while the run is claimed (spawn pending or in flight). */
+  isRunActive(runId: string): boolean;
+  /** Terminal status of a recent record, or null when the runId is unknown. */
+  terminalStatus(runId: string): string | null;
+  stopAndSettle(runId: string): Promise<{ settled: boolean; record: { durationMs?: number } | null }>;
 }
 
 /**
  * Viewer 停止动作（D 确认后注入 TranscriptViewer 的 stop 回调）：与
- * team_stop 工具共用 stopAndSettle 语义，结果映射为 viewer 顶部 notice
- * 文案（settled → success、未落定 → warning、异常 → error，绝不上抛）。
- * 导出仅为测试（同 resetDoubleLoadGuardForTests 惯例）。
+ * team_stop 工具共用 stopAndSettle(runId) 语义，结果映射为 viewer 顶部
+ * notice 文案（settled → success、未落定 → warning、已结束/未知 run →
+ * error 提示且不进确认态，绝不上抛）。writer-2 的切 run 会把当前查看的
+ * runId 传进来。导出仅为测试（同 resetDoubleLoadGuardForTests 惯例）。
  */
-export async function viewerStopAction(coordinator: ViewerStopCoordinator): Promise<ViewerStopResult> {
-  const snapshot = coordinator.getStatus();
-  if (!snapshot.progress) {
+export async function viewerStopAction(coordinator: ViewerStopCoordinator, runId: string): Promise<ViewerStopResult> {
+  const target = runId.trim();
+  if (!target) {
+    return { text: "当前没有正在运行的 run，无需停止", kind: "error" };
+  }
+  if (!coordinator.isRunActive(target)) {
+    const status = coordinator.terminalStatus(target);
     return {
-      text: snapshot.lastRecord ? `run 已结束（${snapshot.lastRecord.status}），无需停止` : "当前没有正在运行的 run，无需停止",
+      text: status ? `run ${target} 已结束（${status}），无需停止` : `没有找到 runId ${target} 的 run，无需停止`,
       kind: "error",
     };
   }
   try {
-    const outcome = await coordinator.stopAndSettle();
+    const outcome = await coordinator.stopAndSettle(target);
     if (outcome.settled) {
       const secs = outcome.record?.durationMs !== undefined ? ` · ${Math.round(outcome.record.durationMs / 100) / 10}s` : "";
-      return { text: `run 已停止（aborted${secs}）；该 run 的报告不再送达`, kind: "success" };
+      return { text: `run ${target} 已停止（aborted${secs}）；该 run 的报告不再送达`, kind: "success" };
     }
-    return { text: "已发送中止信号，leader 仍在收尾；稍后用 /team:status 确认终态", kind: "warning" };
+    return { text: `已向 run ${target} 发送中止信号，leader 仍在收尾；稍后用 /team:status 确认终态`, kind: "warning" };
   } catch {
     return { text: "停止失败；稍后用 /team:stop 重试", kind: "error" };
   }

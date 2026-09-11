@@ -14,10 +14,13 @@
  * borrowed from fleet-status, not the component path.
  *
  * Default (unselected) state is a single collapsed line
- * (`agent-team <团队> · ↓/← 查看详情`); bare ↓/← (only while the editor is
+ * (`agent-team <团队> · ↓/← 查看详情`; with several parallel runs it becomes
+ * `agent-team · <N> run 并行 · ↓/← 查看详情`); bare ↓/← (only while the editor is
  * empty AND focused — aligned to fleet-status) and alt+down/up (ungated
  * second channel) expand it into the `main → leader → 成员` tree + task +
- * hint rows. 展开态窗口化（选中行恒可见、帧总行数 ≤ 宿主 string[] widget
+ * hint rows. Several parallel runs project as one `main` root plus one leader
+ * subtree per run (oldest first); each row carries its run's id so enter
+ * opens the right run's viewer. 展开态窗口化（选中行恒可见、帧总行数 ≤ 宿主 string[] widget
  * 的 10 行硬上限）——隐藏侧以 `… 上方/下方还有 N 行` 提示。↑/↓/j/k 移动行
  * 光标 (到顶再按 ↑/k 退出选中并收回折叠，
  * fleet-status 同构), enter opens the transcript viewer on the row's actor —
@@ -48,6 +51,11 @@ export interface WidgetRowSpec {
   text: string;
   actor: string;
   kind: WidgetRowKind;
+  /**
+   * runId this row belongs to; `""` on the shared `main` root row. Multi-run
+   * trees carry one runId per subtree so enter opens the right run's viewer.
+   */
+  runId: string;
 }
 
 /** 成员行状态图标：queued · / running ● / done ✓ / failed ✗ / aborted ⊘。 */
@@ -110,35 +118,62 @@ function memberRowText(member: MemberProgress, last: boolean): string {
 }
 
 /**
- * Widget view for the live run: collapsed one-liner (default, unselected)
- * plus the expanded `main → leader（含任务摘要）→ 成员…` tree. Settled runs
- * (and snapshots without live progress) project to an EMPTY view — the
- * block is unmounted, terminal rows live in /team:status and /team:view.
+ * Widget view for the live runs: collapsed one-liner (default, unselected)
+ * plus the expanded `main → leader（含任务摘要）→ 成员…` tree. Several
+ * parallel runs project as one `main` root plus one leader subtree per run
+ * (oldest first, members of each run closed by that run's last member); a
+ * single run renders byte-identically to v1.21.0. Settled runs (and
+ * snapshots without live progress) project to an EMPTY view — the block is
+ * unmounted, terminal rows live in /team:status and /team:view.
  */
 export interface WidgetView {
   /** 未选中态的单行文案；无活跃 run 时为空串（widget 整体隐藏）。 */
   collapsed: string;
-  /** 选中态的行（main + leader + 成员…；任务摘要在 leader 行内）。 */
+  /** 选中态的行（main + 每 run 的 leader + 成员…；任务摘要在 leader 行内）。 */
   rows: WidgetRowSpec[];
 }
 
 export function buildWidgetView(snapshot: RunStatusSnapshot, nowMs: number): WidgetView {
-  if (!snapshot.running || !snapshot.progress) return { collapsed: "", rows: [] };
-  const progress = snapshot.progress;
-  const rows: WidgetRowSpec[] = [
-    { text: "main", actor: LEADER_ACTOR, kind: "root" },
-    { text: leaderRowText(progress, nowMs), actor: LEADER_ACTOR, kind: "leader" },
-  ];
-  for (let index = 0; index < progress.members.length; index++) {
-    const member = progress.members[index]!;
-    // 末项判定基于本投影的行序（main → leader → 成员…）：最后一个成员行才是末项。
-    rows.push({
-      text: memberRowText(member, index === progress.members.length - 1),
-      actor: sanitizeActorName(member.name),
-      kind: "member",
-    });
+  // 兼容形状：旧 fixture/单 run 使用 progress 字段；聚合快照两字段同源。
+  const actives = snapshot.actives.length > 0 ? snapshot.actives : snapshot.progress ? [snapshot.progress] : [];
+  if (!snapshot.running || actives.length === 0) return { collapsed: "", rows: [] };
+
+  if (actives.length === 1) {
+    const progress = snapshot.progress ?? actives[0]!;
+    const rows: WidgetRowSpec[] = [
+      { text: "main", actor: LEADER_ACTOR, kind: "root", runId: "" },
+      { text: leaderRowText(progress, nowMs), actor: LEADER_ACTOR, kind: "leader", runId: progress.runId },
+    ];
+    for (let index = 0; index < progress.members.length; index++) {
+      const member = progress.members[index]!;
+      // 末项判定基于本投影的行序（main → leader → 成员…）：最后一个成员行才是末项。
+      rows.push({
+        text: memberRowText(member, index === progress.members.length - 1),
+        actor: sanitizeActorName(member.name),
+        kind: "member",
+        runId: progress.runId,
+      });
+    }
+    return { collapsed: `agent-team ${flattenText(progress.team)} · ↓/← 查看详情`, rows };
   }
-  return { collapsed: `agent-team ${flattenText(progress.team)} · ↓/← 查看详情`, rows };
+
+  // 多 run：单 main 根 + 每 run（startedAt 升序）一棵 leader 子树；成员行的
+  // 末项判定按本 run 组内（run 边界由 leader 行分隔，不加空行）。
+  const ordered = [...actives].sort((a, b) => a.startedAtMs - b.startedAtMs || a.runId.localeCompare(b.runId));
+  const rows: WidgetRowSpec[] = [{ text: "main", actor: LEADER_ACTOR, kind: "root", runId: "" }];
+  for (const progress of ordered) {
+    rows.push({ text: leaderRowText(progress, nowMs), actor: LEADER_ACTOR, kind: "leader", runId: progress.runId });
+    for (let index = 0; index < progress.members.length; index++) {
+      const member = progress.members[index]!;
+      rows.push({
+        text: memberRowText(member, index === progress.members.length - 1),
+        actor: sanitizeActorName(member.name),
+        kind: "member",
+        runId: progress.runId,
+      });
+    }
+  }
+  return { collapsed: `agent-team · ${ordered.length} run 并行 · ↓/← 查看详情`, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -384,8 +419,13 @@ export interface RunWidgetControllerOptions {
   /** Coordinator status provider (live progress or last record). */
   load: () => RunStatusSnapshot;
   styles: Styles;
-  /** Enter handler: opens the transcript viewer on the row's actor. */
-  onConfirm: (actor: string) => void;
+  /**
+   * Enter handler: opens the transcript viewer on the row's actor, pinned
+   * to the row's run (`runId` is `""` on the main root row, which never
+   * reaches this callback). Positional second argument keeps the callback
+   * compatible with callers that only consume the actor.
+   */
+  onConfirm: (actor: string, runId: string) => void;
   /** While true the widget ignores activation (viewer overlay open). */
   gate?: () => boolean;
   /**
@@ -567,7 +607,7 @@ export class RunWidgetController {
         // main 根行：enter 只退出选中（fleet main 语义），不进 viewer。
         if (result.row.kind === "root") return { consume: true };
         try {
-          this.opts.onConfirm(result.row.actor);
+          this.opts.onConfirm(result.row.actor, result.row.runId);
         } catch {
           /* opening the viewer never breaks the session */
         }

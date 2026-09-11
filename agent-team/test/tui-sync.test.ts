@@ -43,6 +43,8 @@ test("WIDGET_TICK_MS = 1000（差异表 §3.4：下方亮块有意偏离 fleet 7
 test("widget 折叠行 + main→leader→成员→任务 树字面量（§4）", () => {
   const snapshot: RunStatusSnapshot = {
     running: true,
+    actives: [],
+    records: [],
     progress: {
       runId: "r",
       team: "dev-team",
@@ -109,7 +111,69 @@ test("viewer 动作键位全面对齐 fleet DEFAULT_FLEET_KEYBINDINGS（fleet.ts
     refresh: ["r", "R"],
     stop: ["D"],
     toggleTools: ["x", "X", "ctrl+o"],
+    prevRun: ["["],
+    nextRun: ["]"],
   });
+});
+
+test("viewer 图例多 run 追加段（§4）：runs>1 → ` · [/] 切 run`，runs≤1/缺省不追加", () => {
+  // 期望值抄自 §4「viewer legend 追加段」行；切 run 段位于基础图例与
+  // 成员位置之间（成员位置仍是最后一段）。
+  const legendOf = (runs: ViewerData["runs"]): string => {
+    const frame = renderViewerFrame({ ...splitData(), runs }, initialViewerState(), 140, { styles, bodyHeight: 8 });
+    return frame[frame.length - 2] ?? "";
+  };
+  const multi = legendOf([
+    { runId: "run-42", team: "dev-team", status: "running" },
+    { runId: "run-43", team: "dev-team", status: "running" },
+  ]);
+  assert.match(multi, /q 关闭 · \[\/\] 切 run · 成员 1\/2/);
+  assert.doesNotMatch(legendOf([{ runId: "run-42", team: "dev-team", status: "running" }]), /切 run/);
+  assert.doesNotMatch(legendOf(undefined), /切 run/);
+});
+
+test("widget 多 run 折叠行与树字面量（§4）：`agent-team · <N> run 并行 · ↓/← 查看详情` + 每 run 一棵子树", () => {
+  const snapshot: RunStatusSnapshot = {
+    running: true,
+    records: [],
+    lastRecord: null,
+    progress: {
+      runId: "run-2",
+      team: "dev-team",
+      task: "补测试",
+      startedAtMs: 65000,
+      members: [{ name: "backend", status: "done" }],
+    },
+    actives: [
+      {
+        runId: "run-1",
+        team: "dev-team",
+        task: "修复登录 bug",
+        startedAtMs: 0,
+        members: [{ name: "frontend", status: "running", note: "turn 1" }],
+      },
+      {
+        runId: "run-2",
+        team: "dev-team",
+        task: "补测试",
+        startedAtMs: 65000,
+        members: [{ name: "backend", status: "running" }],
+      },
+    ],
+  };
+  const view = buildWidgetView(snapshot, 65000);
+  assert.equal(view.collapsed, "agent-team · 2 run 并行 · ↓/← 查看详情");
+  assert.deepEqual(
+    view.rows.map((row) => row.text),
+    [
+      "main",
+      "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/1 并行",
+      "╰─ frontend ● running · turn 1",
+      "leader dev-team · 补测试 ▶ running · 0s · 1/1 并行",
+      "╰─ backend ● running",
+    ],
+  );
+  assert.deepEqual(view.rows.map((row) => row.runId), ["", "run-1", "run-1", "run-2", "run-2"]);
 });
 
 test("viewer 图例为 fleet footer 风格（含成员/滚动/翻页/工具行与特有 m/D/r/q）", () => {

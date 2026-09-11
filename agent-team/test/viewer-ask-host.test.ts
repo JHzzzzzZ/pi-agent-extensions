@@ -618,3 +618,34 @@ test("收起等待上限：viewerClose 缺失时 suspendViewer 约 1.5s 内放�
   assert.ok(elapsed >= 1400, `应等满收纳上限才放行，实测 ${elapsed}ms`);
   assert.ok(elapsed < 5000, `放行时间必须有界，实测 ${elapsed}ms`);
 });
+
+// ---------------------------------------------------------------------------
+// 用例 6：多 run 位姿恢复（合并 seam）——重开时把最后查看的 run 回填给
+// openViewer；[ / ] 切到 run B 后遇提问，答完重开必须仍停在 run B。
+// ---------------------------------------------------------------------------
+
+test("重开位姿：resumeViewer 把最后查看的 run 回填为 viewerRunId（多 run 切换不丢）", async () => {
+  const seen: Array<{ actor: string | undefined; runId: string | undefined }> = [];
+  const state: ViewerDialogState = {
+    viewerOpen: true,
+    viewerActor: "alice",
+    viewerLastRunId: "run-b",
+    viewerClose: () => {
+      // 模拟真实 openViewer 的 finally：custom 落定 → 清 viewerOpen + resolve settle。
+      state.viewerOpen = false;
+      const settle = state.viewerSettled;
+      state.viewerSettled = undefined;
+      settle?.();
+    },
+  };
+  const openViewer = async (initialActor?: string): Promise<void> => {
+    seen.push({ actor: initialActor, runId: state.viewerRunId });
+    if (initialActor !== undefined) state.viewerActor = initialActor;
+    state.viewerRunId = undefined; // 与生产 openViewer 同步消费 pin 同构
+  };
+  const hooks = viewerDialogHooks(state, openViewer);
+  assert.equal(await hooks.suspendViewer(), true, "viewer 打开 → 收起并等 custom 落定");
+  hooks.resumeViewer();
+  assert.deepEqual(seen, [{ actor: "alice", runId: "run-b" }], "重开应带回最后查看的 run + actor 位姿");
+  assert.equal(state.viewerRunId, undefined, "pin 被 openViewer 消费后清空");
+});

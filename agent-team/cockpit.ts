@@ -43,7 +43,9 @@ import {
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
   LEADER_ENV_WORKTREE_RUNID,
+  MAX_CONCURRENT_TEAM_RUNS,
   MAX_RESULT_BYTES,
+  MAX_RETAINED_RUN_RECORDS,
   STOP_SETTLE_TIMEOUT_MS,
   truncateUtf8,
   resolveRunBudget,
@@ -188,11 +190,40 @@ function toolResultText(toolName: string, result: unknown): string {
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
-/** Immutable snapshot of the current/most recent run (status queries). */
+/**
+ * Immutable snapshot of the live runs plus recent terminal records (status
+ * queries, the below-editor widget and the viewer all read this shape).
+ * `running`/`progress`/`lastRecord` are the single-run compatibility fields:
+ * with at most one active run their values are exactly the v1.21.0 ones.
+ */
 export interface RunStatusSnapshot {
+  /** Compatibility field: equivalent to actives.length > 0. */
   running: boolean;
+  /** Compatibility field: newest active run's progress; null with none active. */
   progress: RunProgress | null;
+  /** Compatibility field: records[0] ?? null (newest terminal record). */
   lastRecord: TeamRunRecord | null;
+  /** Every active run's progress, oldest first (startedAtMs). */
+  actives: RunProgress[];
+  /** Recent terminal records, newest first, at most MAX_RETAINED_RUN_RECORDS. */
+  records: TeamRunRecord[];
+}
+
+/**
+ * One in-flight run's mutable state — the v1.21.0 singleton fields, per run:
+ * its abort controller, settle promise, live progress, leader RPC channel and
+ * prompt-rejection flag. Progress events never cross handles: every closure
+ * in runActive() captures the handle it was created for.
+ */
+interface RunHandle {
+  controller: AbortController;
+  /** Resolves with the terminal record; set synchronously right after claim. */
+  pending: Promise<StartRunResult> | undefined;
+  progress: RunProgress;
+  /** Leader RPC stdin (prompt/steer commands) — live only while this run runs. */
+  leaderStdin: PiChildStdin | undefined;
+  /** Set when pi rejects this run's initial prompt (no agent run, no settle event). */
+  promptError: string | undefined;
 }
 
 /** 任务行显示上限（仅任务文本本身，不含 `任务: ` 前缀）：60 显示列。 */
@@ -206,20 +237,27 @@ function statusTaskText(task: string): string {
   return truncateVisible(flattenText(task), STATUS_TASK_MAX_WIDTH);
 }
 
-/** Formats a status snapshot for /team:status and the team_status tool. */
-export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number, dim?: (t: string) => string): string {
+/**
+ * Formats a status snapshot for /team:status and the team_status tool.
+ * A live runId argument pins the single-run format (the caller already
+ * resolved the target through getStatus(runId)); without one, several
+ * active runs render as one `── run …` section per run and an idle session
+ * appends the recent-records tail. With at most one active run the output
+ * is byte-identical to v1.21.0.
+ */
+export function formatStatusSnapshot(
+  snapshot: RunStatusSnapshot,
+  nowMs: number,
+  dim?: (t: string) => string,
+  runId?: string,
+): string {
   const line = (t: string): string => (dim ? dim(t) : t);
   const icon = (status: string): string =>
     status === "done" || status === "completed" ? "✓" : status === "failed" ? "✗" : status === "aborted" ? "⊘" : status === "running" ? "▶" : "…";
 
-  if (snapshot.running && snapshot.progress) {
-    const p = snapshot.progress;
-    const lineage = p.parentRunId ? `（续跑自 ${p.parentRunId}）` : "";
-    const lines = [
-      line(`当前 run：team ${p.team} ▶ running · ${elapsedLabel(p.startedAtMs, nowMs)}`),
-      line(`runId: ${p.runId}${lineage}`),
-      line(`任务: ${statusTaskText(p.task)}`.trimEnd()),
-    ];
+  /** Task/leader/budget/member rows shared by the single- and multi-run blocks. */
+  const runningBody = (p: RunProgress): string[] => {
+    const lines: string[] = [line(`任务: ${statusTaskText(p.task)}`.trimEnd())];
     const leaderBits: string[] = [];
     const leaderModel = resolveModelCaliber(p.leaderDeclaredModel, p.leaderModel);
     if (leaderModel) leaderBits.push(leaderModel);
@@ -238,7 +276,28 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
       if (member.latest) bits.push(member.latest);
       lines.push(line(`  ${bits.join(" — ")}`));
     }
+    return lines;
+  };
+
+  const actives = snapshot.actives.length > 0 ? snapshot.actives : snapshot.progress ? [snapshot.progress] : [];
+  if (snapshot.running && snapshot.progress && runId === undefined && actives.length >= 2) {
+    const lines: string[] = [line(`当前共 ${actives.length} 个 run 并行（上限 ${MAX_CONCURRENT_TEAM_RUNS}）：`)];
+    for (const p of actives) {
+      const lineage = p.parentRunId ? `（续跑自 ${p.parentRunId}）` : "";
+      lines.push(line(`── run ${p.runId} · team ${p.team} ▶ running · ${elapsedLabel(p.startedAtMs, nowMs)}${lineage}`));
+      lines.push(...runningBody(p));
+    }
     return lines.join("\n");
+  }
+
+  if (snapshot.running && snapshot.progress) {
+    const p = snapshot.progress;
+    const lineage = p.parentRunId ? `（续跑自 ${p.parentRunId}）` : "";
+    return [
+      line(`当前 run：team ${p.team} ▶ running · ${elapsedLabel(p.startedAtMs, nowMs)}`),
+      line(`runId: ${p.runId}${lineage}`),
+      ...runningBody(p),
+    ].join("\n");
   }
 
   const record = snapshot.lastRecord;
@@ -264,6 +323,14 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     }
     if (record.worktree) {
       lines.push(line(`共享 worktree: \`${record.worktree.path}\`（分支 \`${record.worktree.branch}\`）`));
+    }
+    // Default view (no runId pinned): surface the older retained records so
+    // /team:status can point at a specific runId instead of hiding history.
+    if (runId === undefined && snapshot.records.length > 1) {
+      const recent = snapshot.records
+        .slice(1, 1 + MAX_RETAINED_RUN_RECORDS - 1)
+        .map((r) => `${r.runId} ${icon(r.status)}${r.status}`);
+      lines.push(line(`近期 run：${recent.join(" · ")}（最多再列 ${MAX_RETAINED_RUN_RECORDS - 1} 条；/team:status <runId> 查看详情）`));
     }
     return lines.join("\n");
   }
@@ -314,14 +381,10 @@ export async function runTeamTask(deps: {
 export class TeamRunCoordinator {
   private readonly deps: CoordinatorDeps;
   private readonly runStore: RunStoreWriter | undefined;
-  private active: AbortController | null = null;
-  private pending: Promise<StartRunResult> | null = null;
-  private currentProgress: RunProgress | null = null;
-  private lastRecord: TeamRunRecord | null = null;
-  /** Leader RPC stdin (prompt/steer commands) — live only while a run is active. */
-  private leaderStdin: PiChildStdin | undefined;
-  /** Set when pi rejects the initial prompt (no agent run, so no settle event). */
-  private promptError: string | undefined;
+  /** Active runs keyed by runId (claimed before any await; released in finally). */
+  private readonly runs = new Map<string, RunHandle>();
+  /** Recent terminal records, newest first, bounded by MAX_RETAINED_RUN_RECORDS. */
+  private records: TeamRunRecord[] = [];
 
   constructor(deps: CoordinatorDeps) {
     this.deps = deps;
@@ -329,49 +392,124 @@ export class TeamRunCoordinator {
   }
 
   isRunning(): boolean {
-    return this.active !== null;
+    return this.runs.size > 0;
   }
 
-  /** Current/most recent run snapshot (team_status tool + /team:status). */
-  getStatus(): RunStatusSnapshot {
-    return { running: this.active !== null, progress: this.currentProgress, lastRecord: this.lastRecord };
+  /** runIds of every active run, oldest first (startedAtMs, then runId). */
+  activeRunIds(): string[] {
+    return this.activeProgress().map((progress) => progress.runId);
   }
 
-  /** Restores the last record after a reload (session_start hydration). */
-  restoreLastRecord(record: TeamRunRecord): void {
-    if (!this.lastRecord || (record.startedAt ?? "") > (this.lastRecord.startedAt ?? "")) {
-      this.lastRecord = record;
+  /** True while the run with this runId is claimed (spawn pending or in flight). */
+  isRunActive(runId: string): boolean {
+    return this.runs.has(runId);
+  }
+
+  /** Terminal status of a recent record, or null when the runId is unknown. */
+  terminalStatus(runId: string): string | null {
+    return this.records.find((record) => record.runId === runId)?.status ?? null;
+  }
+
+  private activeProgress(): RunProgress[] {
+    return [...this.runs.values()]
+      .map((handle) => handle.progress)
+      .sort((a, b) => a.startedAtMs - b.startedAtMs || a.runId.localeCompare(b.runId));
+  }
+
+  /**
+   * Aggregated snapshot (all active runs + recent records).
+   */
+  getStatus(): RunStatusSnapshot;
+  /**
+   * Target-run projection: an active run is projected alone, a recent
+   * terminal record is looked up, and an unknown runId is null (callers
+   * answer "没有找到" themselves).
+   */
+  getStatus(runId: string): RunStatusSnapshot | null;
+  getStatus(runId?: string): RunStatusSnapshot | null {
+    if (runId !== undefined) {
+      const handle = this.runs.get(runId);
+      if (handle) {
+        return {
+          running: true,
+          progress: handle.progress,
+          lastRecord: this.records[0] ?? null,
+          actives: [handle.progress],
+          records: this.records,
+        };
+      }
+      const record = this.records.find((r) => r.runId === runId);
+      if (record) {
+        return { running: false, progress: null, lastRecord: record, actives: [], records: this.records };
+      }
+      return null;
     }
+    const actives = this.activeProgress();
+    return {
+      running: actives.length > 0,
+      progress: actives[actives.length - 1] ?? null,
+      lastRecord: this.records[0] ?? null,
+      actives,
+      records: this.records,
+    };
   }
 
-  /** Aborts the active run (leader + all member children). */
-  stop(): boolean {
-    if (!this.active) return false;
-    this.active.abort();
+  /** Restores a record after a reload / reconcile (dedupe, newest-first, cap). */
+  restoreRecord(record: TeamRunRecord): void {
+    this.pushRecord(record);
+  }
+
+  /** Dedupes by runId, orders newest-first (startedAt) and keeps the newest 5. */
+  private pushRecord(record: TeamRunRecord): void {
+    const rest = this.records.filter((r) => r.runId !== record.runId);
+    this.records = [record, ...rest]
+      .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""))
+      .slice(0, MAX_RETAINED_RUN_RECORDS);
+  }
+
+  /** Aborts every active run (session_shutdown); returns how many were stopped. */
+  stop(): number {
+    let stopped = 0;
+    for (const handle of this.runs.values()) {
+      handle.controller.abort();
+      stopped += 1;
+    }
+    return stopped;
+  }
+
+  /**
+   * Aborts one run without waiting for settle (the /team:stop command path);
+   * returns false when the runId is not active.
+   */
+  stopRun(runId: string): boolean {
+    const handle = this.runs.get(runId);
+    if (!handle) return false;
+    handle.controller.abort();
     return true;
   }
 
   /**
-   * Injects a user message into the running leader (RPC `steer`): pi hands
+   * Injects a user message into the given run's leader (RPC `steer`): pi hands
    * it to the agent at the next turn boundary — the current task is not
-   * interrupted. Returns false when no leader stdin channel is live (no
-   * active run / spawn pending / write failure) so callers fall back to
-   * queue semantics instead.
+   * interrupted. Returns false when the run is unknown or its stdin channel is
+   * not live (no active run / spawn pending / write failure) so callers fall
+   * back to queue semantics instead.
    */
-  steerLeader(message: string): boolean {
-    if (!this.active || !this.leaderStdin) return false;
+  steerLeader(runId: string, message: string): boolean {
+    const handle = this.runs.get(runId);
+    if (!handle || !handle.leaderStdin) return false;
     try {
-      this.leaderStdin.write(`${JSON.stringify({ type: "steer", message })}\n`);
+      handle.leaderStdin.write(`${JSON.stringify({ type: "steer", message })}\n`);
       return true;
     } catch {
       return false;
     }
   }
 
-  /** Ends the leader's stdin — RPC mode exits its process when stdin ends. */
-  private closeLeaderStdin(): void {
-    const stdin = this.leaderStdin;
-    this.leaderStdin = undefined;
+  /** Ends this run's leader stdin — RPC mode exits its process when stdin ends. */
+  private closeLeaderStdin(handle: RunHandle): void {
+    const stdin = handle.leaderStdin;
+    handle.leaderStdin = undefined;
     try {
       stdin?.end();
     } catch {
@@ -380,21 +518,23 @@ export class TeamRunCoordinator {
   }
 
   /**
-   * Aborts the active run and waits (bounded) for it to settle into its
+   * Aborts the targeted run and waits (bounded) for it to settle into its
    * terminal record — the same primitive the team_stop tool and the viewer
    * stop path share. settled:false means the abort signal was sent but the
    * children are still shutting down; never an error by itself, the run's
    * promise keeps resolving in the background (with the terminal record
-   * landing on lastRecord).
+   * landing on records[]). Unknown runId → wasRunning:false (nothing to do).
    */
   async stopAndSettle(
+    runId: string,
     timeoutMs: number = STOP_SETTLE_TIMEOUT_MS,
   ): Promise<{ wasRunning: boolean; settled: boolean; record: TeamRunRecord | null }> {
-    if (!this.active) {
+    const handle = this.runs.get(runId);
+    if (!handle) {
       return { wasRunning: false, settled: true, record: null };
     }
-    this.active.abort();
-    const run = this.pending;
+    handle.controller.abort();
+    const run = handle.pending;
     if (!run) {
       return { wasRunning: true, settled: false, record: null };
     }
@@ -413,9 +553,34 @@ export class TeamRunCoordinator {
     return { wasRunning: true, settled: outcome.settled, record: outcome.record };
   }
 
-  /** runId of the run currently claimed (spawn pending or in flight). */
-  activeRunId(): string | null {
-    return this.currentProgress?.runId ?? null;
+  /**
+   * Allocates a process-unique runId. `run-<ms>` repeats when two dispatches
+   * land in the same millisecond (now genuinely reachable with parallel
+   * runs), so an occupied id (another handle, a retained record, or a
+   * `runsRoot/<runId>` directory from an earlier session) falls through to
+   * `run-<ms>-2`, `-3`, … Filesystem probing is best-effort: a failing stat
+   * degrades to the in-memory check.
+   */
+  private allocateRunId(nowMs: () => number): string {
+    const base = `run-${nowMs()}`;
+    const taken = (candidate: string): boolean => {
+      if (this.runs.has(candidate)) return true;
+      if (this.records.some((record) => record.runId === candidate)) return true;
+      const root = this.deps.transcriptRoot;
+      if (root === undefined) return false;
+      try {
+        return fs.existsSync(path.join(root, candidate));
+      } catch {
+        return false;
+      }
+    };
+    if (!taken(base)) return base;
+    let candidate = base;
+    for (let n = 2; n <= 100; n++) {
+      candidate = `${base}-${n}`;
+      if (!taken(candidate)) return candidate;
+    }
+    return candidate;
   }
 
   /**
@@ -467,11 +632,12 @@ export class TeamRunCoordinator {
    * the run controller.
    */
   async start(options: StartOptions): Promise<StartRunResult> {
-    if (this.active) {
+    const activeIds = this.activeRunIds();
+    if (activeIds.length >= MAX_CONCURRENT_TEAM_RUNS) {
       return {
         ok: false,
         code: "RUN_IN_PROGRESS",
-        message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。",
+        message: `并发 team run 已达上限（${MAX_CONCURRENT_TEAM_RUNS}）：${activeIds.join("、")} 进行中；先 team_stop <runId> 或等任一结束。`,
       };
     }
     const { task } = options;
@@ -493,21 +659,16 @@ export class TeamRunCoordinator {
     const team = effective.team;
     const now = this.deps.now ?? (() => new Date().toISOString());
     const nowMs = this.deps.nowMs ?? (() => Date.now());
-    const runId = `run-${nowMs()}`;
+    const runId = this.allocateRunId(nowMs);
     const startedAtMs = nowMs();
     // One claim-time timestamp for the whole run: running snapshot, spawn
     // refresh, terminal snapshot and terminal record all reuse it, so
     // elapsed = updatedAt - startedAt stays truthful after settle.
     const startedAt = now();
-    // Claim the run BEFORE any await: two concurrent starts can no longer
-    // both pass the RUN_IN_PROGRESS gate, stopAndSettle has a stable handle
-    // (this.pending), and team_run can read the runId right after start().
+    // Claim the run BEFORE any await: concurrent starts can no longer
+    // overrun the concurrency cap, stopAndSettle has a stable handle
+    // (handle.pending), and team_run can read the runId right after start().
     const controller = new AbortController();
-    this.active = controller;
-    // Fresh RPC channel state for this run (stale handles from the previous
-    // run must never swallow a steer or a settle).
-    this.leaderStdin = undefined;
-    this.promptError = undefined;
     const leaderThinkingLevel = splitModelThinking(team.leader.model).thinkingLevel;
     const progress: RunProgress = {
       runId,
@@ -544,7 +705,16 @@ export class TeamRunCoordinator {
         };
       })(),
     };
-    this.currentProgress = progress;
+    // Fresh RPC channel state per run (stale handles from another run must
+    // never swallow a steer or a settle).
+    const handle: RunHandle = {
+      controller,
+      pending: undefined,
+      progress,
+      leaderStdin: undefined,
+      promptError: undefined,
+    };
+    this.runs.set(runId, handle);
     // Crash-recovery snapshot: a running status.json on disk means the next
     // session can reconcile this run if this session dies mid-run.
     this.persistRunStatus({
@@ -560,18 +730,19 @@ export class TeamRunCoordinator {
       if (options.signal.aborted) controller.abort();
       else options.signal.addEventListener("abort", () => controller.abort(), { once: true });
     }
-    const run = this.runActive(controller, options, { team, now, nowMs, runId, startedAt, startedAtMs, progress });
-    this.pending = run;
+    const run = this.runActive(handle, options, { team, now, nowMs, runId, startedAt, startedAtMs, progress });
+    handle.pending = run;
     return run;
   }
 
   /**
-   * The spawn-and-wait half of start(), running under the claimed
-   * controller. Resolves with the terminal record; the finally block
-   * releases the claim and drops the stale progress so status queries land
-   * on the terminal record instead of a phantom "running".
+   * The spawn-and-wait half of start(), running under the claimed handle.
+   * Resolves with the terminal record; the finally block releases the claim
+   * (runs.delete) so status queries land on the terminal record instead of a
+   * phantom "running".
    */
-  private async runActive(controller: AbortController, options: StartOptions, plan: RunPlan): Promise<StartRunResult> {
+  private async runActive(handle: RunHandle, options: StartOptions, plan: RunPlan): Promise<StartRunResult> {
+    const controller = handle.controller;
     const { task } = options;
     const { now, nowMs, runId, startedAt, startedAtMs, progress } = plan;
     const team = plan.team;
@@ -643,7 +814,7 @@ export class TeamRunCoordinator {
     // dispatch path deliver it to the main session.
     const writeFailedRecord = (error: string): TeamRunRecord => {
       const record = failedRunRecord({ runId, team: team.name, task, startedAt, error, durationMs: nowMs() - startedAtMs });
-      this.lastRecord = record;
+      this.pushRecord(record);
       return record;
     };
 
@@ -736,7 +907,7 @@ export class TeamRunCoordinator {
       // waits forever on a human.
       askChannel = new AskChannel({
         port: options.ask,
-        write: (line) => this.leaderStdin?.write(line),
+        write: (line) => handle.leaderStdin?.write(line),
         signal: controller.signal,
         backstopMarginMs: this.deps.askBackstopMarginMs,
         onQuestion: (request) => {
@@ -962,7 +1133,7 @@ export class TeamRunCoordinator {
         },
         // RPC channel: send the task once the child exists …
         onChild: (child) => {
-          this.leaderStdin = child.stdin;
+          handle.leaderStdin = child.stdin;
           try {
             child.stdin?.write(`${JSON.stringify({ type: "prompt", id: "task", message: `Task: ${task}` })}\n`);
           } catch {
@@ -976,14 +1147,14 @@ export class TeamRunCoordinator {
             // Leader is exiting: drop any in-flight question and close stdin
             // (RPC exits only on stdin end).
             askChannel?.dispose();
-            this.closeLeaderStdin();
+            this.closeLeaderStdin(handle);
             return;
           }
           if (message.command === "prompt" && message.success === false) {
-            this.promptError =
+            handle.promptError =
               typeof message.error === "string" ? message.error : "pi rejected the leader prompt";
             askChannel?.dispose();
-            this.closeLeaderStdin();
+            this.closeLeaderStdin(handle);
             return;
           }
           // Dialog requests (extension_ui_request) are bridged to the main
@@ -995,7 +1166,7 @@ export class TeamRunCoordinator {
       const aborted = controller.signal.aborted;
       const failed =
         !aborted &&
-        (outcome.exitCode !== 0 || outcome.stopReason === "error" || !!outcome.errorMessage || !!this.promptError);
+        (outcome.exitCode !== 0 || outcome.stopReason === "error" || !!outcome.errorMessage || !!handle.promptError);
 
       // Fold per-member results from every team_dispatch tool_execution_end.
       const dispatchResults = outcome.events.flatMap((event) =>
@@ -1050,7 +1221,7 @@ export class TeamRunCoordinator {
           ? {
               error: truncateUtf8(
                 outcome.errorMessage ||
-                  this.promptError ||
+                  handle.promptError ||
                   outcome.stderr ||
                   `pi exited with code ${outcome.exitCode}`,
                 2000,
@@ -1072,7 +1243,7 @@ export class TeamRunCoordinator {
       recordTranscript("system", `run ${runStatus} · ${Math.round((record.durationMs ?? 0) / 100) / 10}s · $${record.totalCost.toFixed(4)}`);
       if (record.error) recordTranscript("error", record.error);
       finish(record.status, record.error);
-      this.lastRecord = record;
+      this.pushRecord(record);
       return { ok: true, value: record };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -1082,11 +1253,9 @@ export class TeamRunCoordinator {
       return { ok: false, code: "CHILD_FAILED", message: error, record: writeFailedRecord(error) };
     } finally {
       askChannel?.dispose();
-      this.closeLeaderStdin();
-      this.promptError = undefined;
-      this.active = null;
-      this.pending = null;
-      this.currentProgress = null;
+      this.closeLeaderStdin(handle);
+      handle.promptError = undefined;
+      this.runs.delete(runId);
       if (stopTicker !== undefined) stopTicker();
     }
   }
