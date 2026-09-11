@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ f9d9a16
+> last verified @ 8127419
 
 ## 职责与边界
 
@@ -12,7 +12,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - `config.ts` — 团队发现：`~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`，同名项目优先，每次使用重扫；frontmatter `budget:` 块解析（非法值 → `INVALID_TEAM_FILE`）。
 - `runner.ts` — 子 `pi` 进程契约：**leader 走 `--mode rpc`**（stdin 发 `prompt`/`steer` JSON 行，`agent_settled` 后关 stdin 使进程退出；RPC 只在 stdin 结束时退出）；member 走 `--mode json -p`（一次性，prompt 全在 argv ⇒ stdin 默认 `ignore`）。`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn`）与 stdin（`onChild`）；`onWire` 转发每行解析后的原始 JSON（RPC 的 `response`/`agent_settled` 只在此层可见）。
 - `runstore.ts` — 每 run `status.json` 元数据快照（落 `teams/runs/<runId>/`，与 transcript 同目录同 7 天 retention）：coordinator claim 即写 running（含 leaderPid + ownerPid），每条退出路径落终态；`session_start` reconcile 只翻「非本进程 in-memory 且 ownerPid 已死/缺失」的 running（属主会话还活着的 run 不动），只报告**不杀**孤儿 leader，避免 PID 复用误杀。
-- `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
+- `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：`provider/id:level` 思考级别后缀按基础 id 查注册表（告警/报错保留原串）；解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
 - `model-caliber.ts` — 展示层模型口径归一纯函数 `resolveModelCaliber(declared, actual)`（viewer「模型:」行与 `/team:status` 共用，v1.15.4）：声明 provider 前缀 + 子进程实际上报 id 组合；runner.ts 原始上报数据不动（事实源）。
 - `doctor.ts` — `/team:doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
 - `dispatch.ts`（leader 模式工具）、`cockpit.ts`（cockpit 模式工具）、`manage.ts`（team_create/list）、`chat.ts`（viewer 发消息：task 模板 + transcript 尾部截断 + FIFO 队列/链式门控，纯逻辑层，宿主接线在 index.ts）。
@@ -76,7 +76,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（405 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（407 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
