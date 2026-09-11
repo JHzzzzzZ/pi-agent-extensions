@@ -1398,6 +1398,10 @@ export const VIEWER_OVERLAY_OPTIONS: OverlayOptions = {
  * `VIEWER_OVERLAY_OPTIONS`, verbatim from pi-subagents' fleet inspector).
  * Resolves when the user closes it (q/Esc). Host failures are the
  * caller's to guard (index.ts checks hasUI/mode and exception-isolates).
+ *
+ * `onOpen` fires once the overlay component exists, with a programmatic
+ * close (dispose + done) — used by the cockpit to withdraw the viewer while
+ * a host dialog (e.g. leader `team_ask`) needs the screen.
  */
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,
@@ -1407,12 +1411,14 @@ export async function openTranscriptViewer(
     initialActor?: string;
     stop?: (runId: string) => Promise<ViewerStopResult>;
     onMessage?: (target: { runId: string; actor: string; label: string }, message: string) => { text: string; kind: NoticeKind };
+    /** 收起入口：构造完组件即回调（宿主 done 由 close 触发，幂等）。 */
+    onOpen?: (close: () => void) => void;
   },
 ): Promise<void> {
   const renderMarkdown = markdownRenderer();
   await ui.custom<void>(
-    (tui, theme, _keybindings, done) =>
-      new TranscriptViewer({
+    (tui, theme, _keybindings, done) => {
+      const viewer = new TranscriptViewer({
         load: opts.load,
         done,
         styles: themeStyles(theme),
@@ -1435,7 +1441,24 @@ export async function openTranscriptViewer(
         },
         ...(renderMarkdown ? { renderMarkdown } : {}),
         ...(opts.refreshMs !== undefined ? { refreshMs: opts.refreshMs } : {}),
-      }),
+      });
+      if (opts.onOpen) {
+        try {
+          opts.onOpen(() => {
+            // dispose 幂等（viewer 测试锁死）；done 由宿主 guard 幂等。
+            try {
+              viewer.dispose();
+            } catch {
+              /* dispose failures never block the close */
+            }
+            done();
+          });
+        } catch {
+          /* onOpen failures never break the viewer */
+        }
+      }
+      return viewer;
+    },
     {
       overlay: true,
       overlayOptions: VIEWER_OVERLAY_OPTIONS,

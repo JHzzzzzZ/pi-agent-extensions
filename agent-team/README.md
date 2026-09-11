@@ -13,7 +13,7 @@
         │ spawn（同一 leader 会话文件原地续写 + 父 run 的 worktree）
         ▼
         Leader 子进程 pi --mode rpc --session <父会话文件> [--model <覆盖模型>]
-              │ team_dispatch { tasks: [{agent, task}] }（≤8 个/次，≤4 并发）
+              │ team_dispatch { tasks: [{agent, task}] }（≤8 个/次，≤8 并发）
               ▼
         Member 子进程 ×N：pi --mode json -p --no-session --model <member.model> [--tools ...]
                            [--append-system-prompt <member.prompt>]  "Task: <子任务>"
@@ -69,7 +69,7 @@ members:
 要点：
 - **leader.prompt 是整个功能的核心入口**——你在这里教 leader 如何完成任务（拆解策略、派发规则、验收标准）。扩展会自动追加团队花名册、`team_dispatch` 用法与最终报告格式。
 - **leader 默认拥有全部内置工具**（读写文件、bash 等）。若要限制 leader 亲自动手（例如只让它拆解派发），在团队文件里设置 `leader.tools`（如 `tools: [read, grep, find, ls]`）。实测中 leader 可能会用编辑工具自行"降级代写"或修订团队配置——不希望如此就收紧它的工具。
-- **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team-run-<runId>`，连字符形式——避免与成员分支 `team/<runId>/<member>` 构成 git ref 文件/目录冲突）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；路径被非 worktree 占用等才报 `WORKTREE_UNAVAILABLE` 并附可操作提示）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
+- **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team-run-<runId>`，连字符形式——避免与成员分支 `team/<runId>/<member>` 构成 git ref 文件/目录冲突）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；成员自建分支且工作树干净、期望分支存在且空闲时自动 `git switch` 切回，报告中标注「已从 <旧> 切回」；其余不匹配报 `WORKTREE_UNAVAILABLE` 并附非破坏可操作提示 `git -C … switch …`，不再建议 `remove --force`；路径被非 worktree 占用等才报错）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
 - **模型预检**：派单前会先对 leader + 全体成员的 `provider/id` 做一次注册表预检——引用不存在的模型直接报 `MODEL_NOT_FOUND`（不启动任何子进程，提示先调 `team_models`）；存在但未配置鉴权的模型放行并警告。成员不配 model 则用 pi 默认模型（无从预检）。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（下次派单/列表即生效，无注册缓存）。
 
@@ -86,7 +86,7 @@ members:
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
 
-**多 run 并发（v1.22.0）**：同一会话最多同时推进 **3 个 run**（`MAX_CONCURRENT_TEAM_RUNS`，协议常量不可配）。第 4 个派单同步回 `RUN_IN_PROGRESS`（非 error 内联返回），文案列出活跃 runId：`并发 team run 已达上限（3）：<runId1>、<runId2>、<runId3> 进行中；先 team_stop <runId> 或等任一结束。` 每个 run 的状态/预算/停止/RPC 插话/提问独立（registry 按 runId 归位），A run 的 dispatch 事件绝不折入 B run 的进度；同一毫秒内两次派单自动分配 `run-<ms>`、`run-<ms>-2`、`run-<ms>-3`… 后缀（内存 handle/终态记录/磁盘 run 目录三者冲突均探测）。`/team:status [runId]` 与 `team_status { runId }` 可定位单个 run（省略 = 全部活跃 run 逐节展示；无活跃时展示最近一次终态，且 records > 1 条时附「近期 run」尾注）。终态记录在内存保留最近 **5 条**（按 runId 去重、按开始时间新→旧；`/reload` 后逐条水合、超出截断）。
+**多 run 并发（v1.25.0）**：同一会话最多同时推进 **3 个 run**（`MAX_CONCURRENT_TEAM_RUNS`，协议常量不可配）。第 4 个派单同步回 `RUN_IN_PROGRESS`（非 error 内联返回），文案列出活跃 runId：`并发 team run 已达上限（3）：<runId1>、<runId2>、<runId3> 进行中；先 team_stop <runId> 或等任一结束。` 每个 run 的状态/预算/停止/RPC 插话/提问独立（registry 按 runId 归位），A run 的 dispatch 事件绝不折入 B run 的进度；同一毫秒内两次派单自动分配 `run-<ms>`、`run-<ms>-2`、`run-<ms>-3`… 后缀（内存 handle/终态记录/磁盘 run 目录三者冲突均探测）。`/team:status [runId]` 与 `team_status { runId }` 可定位单个 run（省略 = 全部活跃 run 逐节展示；无活跃时展示最近一次终态，且 records > 1 条时附「近期 run」尾注）。终态记录在内存保留最近 **5 条**（按 runId 去重、按开始时间新→旧；`/reload` 后逐条水合、超出截断）。
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
@@ -127,7 +127,7 @@ leader nightly-audit · 巡检依赖漏洞 ▶ running · 0m41s · 1/1 并行
 - 成员行：`├─ <成员名> <图标> <状态>[ · <尾注>]`（非末项）/ `╰─ …`（末项，圆角，v1.15.4）；图标 `·` queued / `●` running / `✓` done / `✗` failed / `⊘` aborted；尾注取 note，否则取最新活动，压平换行后 ≤30 字符。
 - 亮块每行带背景色（普通行取宿主主题 `userMessageBg`、选中行取更强的 `selectedBg`，v1.15.4）：按宿主内容宽（终端宽 − 2）补齐成等宽连续的背景块，取不到色名时降级为无背景；选中行用 `▸ ` 前缀 + 更强背景双重区分。
 - 任务摘要不占独立行（v1.13.1，用户真机反馈）：否则末行是任务行、`enter` 却打开 leader，像“选不中成员”的陷阱；现在 `↓`/`j` 到底就是最后一个成员，`enter` 直达该成员。
-- 多 run 并行（v1.22.0）：单 `main` 根共享，每个 run 一棵 leader 子树；成员行末项按本 run 组内判定（`╰─` 只在每个 run 的最后一个成员行）；每行带 runId，leader/成员行 `enter` 打开该行 run 的查看器（widget enter 钉选该 run）。
+- 多 run 并行（v1.25.0）：单 `main` 根共享，每个 run 一棵 leader 子树；成员行末项按本 run 组内判定（`╰─` 只在每个 run 的最后一个成员行）；每行带 runId，leader/成员行 `enter` 打开该行 run 的查看器（widget enter 钉选该 run）。
 - `esc` 或第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中，在 leader/成员行打开查看器并定位到对应 actor。
 - 大团队（成员 ≥7）展开态自动窗口化（v1.14.2）：帧总行数不超过宿主 `string[]` widget 的 10 行硬上限（超出会被宿主播成 `... (widget truncated)`），选中行永远在窗口内，隐藏侧显示 `  … 上方/下方还有 N 行`。
 
@@ -163,7 +163,7 @@ agent-team count-duet · ↓/← 查看详情
 | 按键 | 作用 |
 |---|---|
 | `↑`/`↓` 或 `j`/`k` | 切换上/下一个成员（左栏 roster 选中行移动，右栏随之切换；切换重置滚动并跟随最新；首末钳位；键位对齐 fleet selectUp/selectDown） |
-| `[` / `]` | **多 run 时切上/下一个 run**（v1.22.0）：按 `runs` 列表环形（活跃按 startedAt 升序 + 最近终态新→旧）；切换后 actor 钉选保留（新 run 无该 actor 则回 leader 首位）、滚动/跟随复位、notice 清空；单 run 无效果；输入模式（`m`）下 `[`/`]` 是可打印字符进输入 buffer；多 run 时底部图例追加 ` · [/] 切 run`（单 run 不显示） |
+| `[` / `]` | **多 run 时切上/下一个 run**（v1.25.0）：按 `runs` 列表环形（活跃按 startedAt 升序 + 最近终态新→旧）；切换后 actor 钉选保留（新 run 无该 actor 则回 leader 首位）、滚动/跟随复位、notice 清空；单 run 无效果；输入模式（`m`）下 `[`/`]` 是可打印字符进输入 buffer；多 run 时底部图例追加 ` · [/] 切 run`（单 run 不显示） |
 | `Home`/`End` | 跳到第一个 / 最后一个成员（fleet `moveSelection(±items.length)` 同构） |
 | `Shift+K`/`Shift+J` | 逐行滚动右栏转录正文（上滚自动退出跟随，滚到底自动恢复跟随最新；键位对齐 fleet scrollUp/scrollDown） |
 | `PgUp`/`PgDn` | 翻页（视口 = 右栏实际可见行数） |
@@ -173,7 +173,7 @@ agent-team count-duet · ↓/← 查看详情
 | `r` / `R` | 手动刷新：绕过 750ms 指纹门控强制重载重绘 |
 | `q` / `Esc` / `ctrl+c` | 关闭查看器（close 键集对齐 fleet） |
 
-v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）；键位全集逐字对齐 pi-subagents `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0 `fleet.ts:33-48`），仅保留 `m` 发消息与 `[`/`]` 切 run 两个特有键（后者 v1.22.0——fleet 检查器无多 run 概念），见 `docs/tui-sync.md` §3.2 + §3.21。
+v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）；键位全集逐字对齐 pi-subagents `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0 `fleet.ts:33-48`），仅保留 `m` 发消息与 `[`/`]` 切 run 两个特有键（后者 v1.25.0——fleet 检查器无多 run 概念），见 `docs/tui-sync.md` §3.2 + §3.21。
 
 实现机制（run artifacts）：每个 run 在 `~/.pi/agent/teams/runs/<runId>/` 下保留每个成员一份有界 JSONL 流水（leader 为 `_leader.jsonl`）——leader 侧事件由驾驶舱从 leader 子进程 JSON 流写入，成员侧由 leader 进程内的 dispatch 执行器实时写入，查看器与工具按需读取。单条记录封顶 4KB、单文件 2MB、目录保留 7 天（session 启动时自动清理）。全部落盘 best-effort，记录失败绝不影响 run 本身。
 
@@ -191,6 +191,7 @@ leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行�
 
 - 不传 `options` 为自由文本输入；传 `options`（2~10 项）为选项选择。默认等待 10 分钟（工具参数 `timeoutMs` 可覆盖，范围 30 秒 ~ 30 分钟）。
 - 提问以**宿主对话框**直接呈现给用户（与主 agent 其它对话框一致）；作答经 leader 的 RPC stdin 回写，leader 带着答案继续任务。
+- **与查看器互斥（viewer 盖住对话框修复）**：提问到达时若 `/team:view` 查看器正开着，先**程序化收起查看器**再弹宿主对话框（否则对话框被 overlay 盖住、按键也被选择器抢走），作答/取消/超时后自动重开并回到原成员；收起等待上限 1.5s，异常路径也不会让提问挂起。
 - 降级（全部 fail-closed，不会挂住 run）：超时 / 用户取消 / 主会话无 UI（如 headless）/ run 被停止 —— 均回「未获回答」，工具结果要求 leader 不追问、按最合理假设继续并在最终报告说明假设。
 - 问答与未答原因记入本 run 的 leader transcript（`/team:view` 中以 `❓ 提问` / `✔ 回答` 独立方块展示），等待期 `/team:status` 与亮块显示「等待人工回答…」。
 - 注意：若团队通过 `leader.tools` 限制白名单，需包含 `team_ask`（与 `team_dispatch` 同理）。
@@ -205,7 +206,7 @@ leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行�
 - **崩溃恢复**：每个 run 的元数据快照（`status.json`，含 leader PID 与属主会话 PID）落盘在 `~/.pi/agent/teams/runs/<runId>/`；主会话中断后下次启动只把**属主已死**（ownerPid 探活失败）或无 ownerPid 的残留 running 翻成 failed 记录并警告——别的活会话正在跑的 run 不会被误翻；孤儿 leader **只诊断不杀**（PID 可能复用，请人工确认后处理）；`/team:doctor` 可查看全部残留与损坏文件。
 - **终态记录自动归档（v1.20.0）**：run 落终态（completed/failed/aborted）或 `session_start` reconcile 翻 failed 时，把该 run 的工作记录复制到主工作区 `history/team-runs/<runId>/`。记录源两种形态都扫：运行项目根（`<worktreeRoot>/<runId>/` 的一层子目录——team 共享 worktree 与各成员 worktree——以及主会话 cwd）下的 `.pi/team-runs/<runId>/`（目录，其下文件平铺复制）与 `.pi/team-runs/<runId>.md`（单文件，复制进目标目录）。**为什么必须归档**：worktree 团队的 run worktree 会被 `git worktree remove` 整体删除，只有主工作区 `history/` 副本存活。目标已有同名文件且字节不同 → 保留既有，新记录改名 `<名>.conflict-<UTC 紧凑时间戳>` 另存（双方都留）；字节相同 → 幂等跳过；目标目录已存在只做文件级合并，不覆盖。源永不删除、不做任何 git 操作；归档全程异常隔离，失败只发 warning 诊断，绝不影响 run 终态。
 - **续跑（v1.21.0）**：leader 会话从 v1.21.0 起**持久化**到 `~/.pi/agent/teams/runs/<runId>/session/`（随 run 产物一起 7 天保留）。意外中断落 failed 后，`team_resume <runId>`（或 `/team:resume`）以**新 run 原地续写父 leader 会话**——pi 加载完整对话后继续，不构造任何交接摘要；并复用父 run 的 worktree（团队共享树与成员树都指向父 run 的路径/分支，含未提交改动）。**换模型**只作用于本次续跑：leader 走 `leaderModel`（`provider/id[:level]`），成员走 `memberModels`，不改团队文件。前一个 run 的终态记录原样保留 + 新 run 记录 `parentRunId`（`/team:status` 与查看器 `Run:` 行展示「续跑自 …」）。仅 `failed`/`aborted` 可续跑（completed 报 `RUN_ALREADY_FINISHED`，仍在跑报 `RUN_NOT_TERMINAL`）；无会话镜像（功能上线前的旧 run、启动即失败的 run、已过 7 天保留期）报 `RESUME_UNAVAILABLE`；父 worktree 不可恢复（路径被占/分支被别处检出）**硬失败** `WORKTREE_UNAVAILABLE`，不静默新建（避免 leader cwd 与工具执行目录漂移）。
-- **提问不会挂住 run**：`team_ask` 等待默认 10 分钟、上限 30 分钟，cockpit 侧另有 +5s backstop；超时/取消/主会话无 UI/run 停止全部回「未获回答」，leader 按合理假设继续并在报告声明（不重复追问、不空转到预算上限）。
+- **提问不会挂住 run**：`team_ask` 等待默认 10 分钟、上限 30 分钟，cockpit 侧另有 +5s backstop；超时/取消/主会话无 UI/run 停止全部回「未获回答」，leader 按合理假设继续并在报告声明（不重复追问、不空转到预算上限）。查看器开着时提问先自动收起、答完自动重开（见 §6）。
 
 ## 命令与工具一览
 
@@ -220,7 +221,7 @@ leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（550 个测试，含真实 git worktree 与真实 pi 子进程 E2E）
+npm test          # node --test test/*.test.ts（564 个测试，含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
@@ -243,6 +244,6 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 
 - 零构建 TS ESM；entry `index.ts` 默认导出工厂；通过环境变量 `PI_AGENT_TEAM_FILE` 区分 leader 模式（注册 `team_dispatch` + `team_ask`）与驾驶舱模式（注册命令/工具/Widget）——同一份代码两种形态。
 - 成员子进程与 pwr 的 `PiAgentRunner`、官方 subagent 扩展同模式：`--mode json -p --no-session`、行 JSON 事件流解析（usage/stopReason/finalText）、`team-tmp://` prompt 物化为 0600 临时文件、SIGTERM→SIGKILL 中止。本扩展自包含，不 import pwr。
-- 子进程环境与工具面显式声明（v1.17.1）：成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
+- 子进程环境与工具面显式声明（v1.17.1，leader env 语义 v1.21.1）：leader env 继承父进程环境、先剥全部 run 级键（`dispatch.ts` `stripRunScopedEnv()`：`PI_AGENT_TEAM_FILE/NAME/RUN_ID` + resume 谱系键 `PI_AGENT_TEAM_WORKTREE_RUN_ID`/`PI_AGENT_TEAM_MEMBER_MODELS`），再叠加本次 run 三键——派生新 run 不继承父进程 run 绑定，也不再丢 PATH/provider key；成员 env 经 `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
 - 结果截断：单成员结果 50KB、摘要 8KB；错误按成员隔离（单个成员失败不拖垮整次 dispatch）。
 - 已知限制（v1）：任务为纯文本（GitHub issue 输入、成员后端适配外部 CLI 如 codex/claude-code 预留后续）；worktree 不自动合并；无超时（手动 `/team:stop`）。

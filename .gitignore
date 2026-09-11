@@ -6,3 +6,4 @@ build/
 .worktrees/
 .zcode/
 todos/.todo-cli/
+history

@@ -16,7 +16,7 @@ import { startAlignedTicker } from "./aligned-ticker.ts";
 import { AskChannel, outcomeEntryText, questionEntryText, type AskPort } from "./ask.ts";
 import { splitModelThinking } from "./config.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
-import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
+import { parseDispatchMemberResults, parseDispatchTotalUsage, stripRunScopedEnv } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
 import {
@@ -1087,11 +1087,11 @@ export class TeamRunCoordinator {
       // own tick), aligned to the shared wall-clock second (status-bar contract).
       stopTicker = startAlignedTicker(render, { intervalMs: 1000 });
 
-      const leaderEnv: NodeJS.ProcessEnv = {
-        [LEADER_ENV_FILE]: team.filePath,
-        [LEADER_ENV_NAME]: team.name,
-        [LEADER_ENV_RUNID]: runId,
-      };
+      // 继承父进程环境（PATH、provider key 等），只剥 run 级键，再叠加本次 run 三键。
+      const leaderEnv: NodeJS.ProcessEnv = stripRunScopedEnv();
+      leaderEnv[LEADER_ENV_FILE] = team.filePath;
+      leaderEnv[LEADER_ENV_NAME] = team.name;
+      leaderEnv[LEADER_ENV_RUNID] = runId;
       if (resume) {
         // Member worktrees alias to the parent run (same on-disk trees) and
         // the member-model overrides travel to the leader's dispatch executor.

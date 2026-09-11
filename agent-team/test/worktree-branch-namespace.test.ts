@@ -131,8 +131,12 @@ test("legacy team worktree on the old branch survives with an actionable retry h
   });
   assert.ok(!retry.ok, "an old-named team worktree must not be silently reused");
   assert.equal(retry.code, "WORKTREE_UNAVAILABLE");
-  assert.match(retry.message, /already registered on branch "team\/run-1"/);
-  assert.match(retry.message, /git worktree remove --force/);
+  assert.match(retry.message, /is on branch "team\/run-1"/);
+  assert.match(retry.message, /but this dispatch needs "team-run-run-1"/);
+  // Non-destructive guidance only: no `remove --force` (v1.24.0).
+  assert.match(retry.message, /git -C/);
+  assert.match(retry.message, /switch/);
+  assert.doesNotMatch(retry.message, /remove --force/);
   // Nothing was deleted or silently re-pointed: legacy dir and branch survive.
   assert.equal(fs.existsSync(path.join(teamPath, ".git")), true);
   await exec("git", ["-C", repo, "rev-parse", "--verify", `refs/heads/${legacyBranch}`]);
