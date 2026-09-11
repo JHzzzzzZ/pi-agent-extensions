@@ -86,7 +86,7 @@ members:
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
 
-**多 run 并发（v1.22.0）**：同一会话最多同时推进 **3 个 run**（`MAX_CONCURRENT_TEAM_RUNS`，协议常量不可配）。第 4 个派单同步回 `RUN_IN_PROGRESS`（非 error 内联返回），文案列出活跃 runId：`并发 team run 已达上限（3）：<runId1>、<runId2>、<runId3> 进行中；先 team_stop <runId> 或等任一结束。` 每个 run 的状态/预算/停止/RPC 插话/提问独立（registry 按 runId 归位），A run 的 dispatch 事件绝不折入 B run 的进度；同一毫秒内两次派单自动分配 `run-<ms>`、`run-<ms>-2`、`run-<ms>-3`… 后缀（内存 handle/终态记录/磁盘 run 目录三者冲突均探测）。`/team:status [runId]` 与 `team_status { runId }` 可定位单个 run（省略 = 全部活跃 run 逐节展示；无活跃时展示最近一次终态，且 records > 1 条时附「近期 run」尾注）。终态记录在内存保留最近 **5 条**（按 runId 去重、按开始时间新→旧；`/reload` 后逐条水合、超出截断）。
+**多 run 并发（v1.24.0）**：同一会话最多同时推进 **3 个 run**（`MAX_CONCURRENT_TEAM_RUNS`，协议常量不可配）。第 4 个派单同步回 `RUN_IN_PROGRESS`（非 error 内联返回），文案列出活跃 runId：`并发 team run 已达上限（3）：<runId1>、<runId2>、<runId3> 进行中；先 team_stop <runId> 或等任一结束。` 每个 run 的状态/预算/停止/RPC 插话/提问独立（registry 按 runId 归位），A run 的 dispatch 事件绝不折入 B run 的进度；同一毫秒内两次派单自动分配 `run-<ms>`、`run-<ms>-2`、`run-<ms>-3`… 后缀（内存 handle/终态记录/磁盘 run 目录三者冲突均探测）。`/team:status [runId]` 与 `team_status { runId }` 可定位单个 run（省略 = 全部活跃 run 逐节展示；无活跃时展示最近一次终态，且 records > 1 条时附「近期 run」尾注）。终态记录在内存保留最近 **5 条**（按 runId 去重、按开始时间新→旧；`/reload` 后逐条水合、超出截断）。
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
@@ -127,7 +127,7 @@ leader nightly-audit · 巡检依赖漏洞 ▶ running · 0m41s · 1/1 并行
 - 成员行：`├─ <成员名> <图标> <状态>[ · <尾注>]`（非末项）/ `╰─ …`（末项，圆角，v1.15.4）；图标 `·` queued / `●` running / `✓` done / `✗` failed / `⊘` aborted；尾注取 note，否则取最新活动，压平换行后 ≤30 字符。
 - 亮块每行带背景色（普通行取宿主主题 `userMessageBg`、选中行取更强的 `selectedBg`，v1.15.4）：按宿主内容宽（终端宽 − 2）补齐成等宽连续的背景块，取不到色名时降级为无背景；选中行用 `▸ ` 前缀 + 更强背景双重区分。
 - 任务摘要不占独立行（v1.13.1，用户真机反馈）：否则末行是任务行、`enter` 却打开 leader，像“选不中成员”的陷阱；现在 `↓`/`j` 到底就是最后一个成员，`enter` 直达该成员。
-- 多 run 并行（v1.22.0）：单 `main` 根共享，每个 run 一棵 leader 子树；成员行末项按本 run 组内判定（`╰─` 只在每个 run 的最后一个成员行）；每行带 runId，leader/成员行 `enter` 打开该行 run 的查看器（widget enter 钉选该 run）。
+- 多 run 并行（v1.24.0）：单 `main` 根共享，每个 run 一棵 leader 子树；成员行末项按本 run 组内判定（`╰─` 只在每个 run 的最后一个成员行）；每行带 runId，leader/成员行 `enter` 打开该行 run 的查看器（widget enter 钉选该 run）。
 - `esc` 或第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中，在 leader/成员行打开查看器并定位到对应 actor。
 - 大团队（成员 ≥7）展开态自动窗口化（v1.14.2）：帧总行数不超过宿主 `string[]` widget 的 10 行硬上限（超出会被宿主播成 `... (widget truncated)`），选中行永远在窗口内，隐藏侧显示 `  … 上方/下方还有 N 行`。
 
@@ -163,7 +163,7 @@ agent-team count-duet · ↓/← 查看详情
 | 按键 | 作用 |
 |---|---|
 | `↑`/`↓` 或 `j`/`k` | 切换上/下一个成员（左栏 roster 选中行移动，右栏随之切换；切换重置滚动并跟随最新；首末钳位；键位对齐 fleet selectUp/selectDown） |
-| `[` / `]` | **多 run 时切上/下一个 run**（v1.22.0）：按 `runs` 列表环形（活跃按 startedAt 升序 + 最近终态新→旧）；切换后 actor 钉选保留（新 run 无该 actor 则回 leader 首位）、滚动/跟随复位、notice 清空；单 run 无效果；输入模式（`m`）下 `[`/`]` 是可打印字符进输入 buffer；多 run 时底部图例追加 ` · [/] 切 run`（单 run 不显示） |
+| `[` / `]` | **多 run 时切上/下一个 run**（v1.24.0）：按 `runs` 列表环形（活跃按 startedAt 升序 + 最近终态新→旧）；切换后 actor 钉选保留（新 run 无该 actor 则回 leader 首位）、滚动/跟随复位、notice 清空；单 run 无效果；输入模式（`m`）下 `[`/`]` 是可打印字符进输入 buffer；多 run 时底部图例追加 ` · [/] 切 run`（单 run 不显示） |
 | `Home`/`End` | 跳到第一个 / 最后一个成员（fleet `moveSelection(±items.length)` 同构） |
 | `Shift+K`/`Shift+J` | 逐行滚动右栏转录正文（上滚自动退出跟随，滚到底自动恢复跟随最新；键位对齐 fleet scrollUp/scrollDown） |
 | `PgUp`/`PgDn` | 翻页（视口 = 右栏实际可见行数） |
@@ -173,7 +173,7 @@ agent-team count-duet · ↓/← 查看详情
 | `r` / `R` | 手动刷新：绕过 750ms 指纹门控强制重载重绘 |
 | `q` / `Esc` / `ctrl+c` | 关闭查看器（close 键集对齐 fleet） |
 
-v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）；键位全集逐字对齐 pi-subagents `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0 `fleet.ts:33-48`），仅保留 `m` 发消息与 `[`/`]` 切 run 两个特有键（后者 v1.22.0——fleet 检查器无多 run 概念），见 `docs/tui-sync.md` §3.2 + §3.21。
+v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）；键位全集逐字对齐 pi-subagents `DEFAULT_FLEET_KEYBINDINGS`（v0.66.0 `fleet.ts:33-48`），仅保留 `m` 发消息与 `[`/`]` 切 run 两个特有键（后者 v1.24.0——fleet 检查器无多 run 概念），见 `docs/tui-sync.md` §3.2 + §3.21。
 
 实现机制（run artifacts）：每个 run 在 `~/.pi/agent/teams/runs/<runId>/` 下保留每个成员一份有界 JSONL 流水（leader 为 `_leader.jsonl`）——leader 侧事件由驾驶舱从 leader 子进程 JSON 流写入，成员侧由 leader 进程内的 dispatch 执行器实时写入，查看器与工具按需读取。单条记录封顶 4KB、单文件 2MB、目录保留 7 天（session 启动时自动清理）。全部落盘 best-effort，记录失败绝不影响 run 本身。
 

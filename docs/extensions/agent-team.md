@@ -1,10 +1,10 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 38451f5
+> last verified @ 67ec835
 
 ## 职责与边界
 
-Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单（同一会话最多 3 个 run 并行，v1.22.0；registry 按 runId 隔离进度/预算/停止/steer/提问）：拉起独立 leader 子进程（`--mode rpc`），leader 经 `team_dispatch` 调度成员子进程并行干活，遇需求歧义时用 `team_ask` 向主会话（用户）提问并阻塞等待答案，报告以 followUp 送回；派单变卦/超预算/跑偏时主 agent 用 `team_stop <runId>` 中止（runId 由 team_run 返回与 team_status 展示）；viewer 内 `m` 发消息与成员/leader 直接对话——**leader 运行中走 RPC steer 插话（当前回合边界送达、不打断任务），成员/已落定走派单语义**（见数据流 ⑧）。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
+Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单（同一会话最多 3 个 run 并行，v1.24.0；registry 按 runId 隔离进度/预算/停止/steer/提问）：拉起独立 leader 子进程（`--mode rpc`），leader 经 `team_dispatch` 调度成员子进程并行干活，遇需求歧义时用 `team_ask` 向主会话（用户）提问并阻塞等待答案，报告以 followUp 送回；派单变卦/超预算/跑偏时主 agent 用 `team_stop <runId>` 中止（runId 由 team_run 返回与 team_status 展示）；viewer 内 `m` 发消息与成员/leader 直接对话——**leader 运行中走 RPC steer 插话（当前回合边界送达、不打断任务），成员/已落定走派单语义**（见数据流 ⑧）。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
 
 ## 文件地图
 
@@ -53,7 +53,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - wait/后台两条路径共用 `finalizeRun`（appendRunRecord + 通知/交付单一实现）——改终态行为只改这一处。
 - **失败终态必达（v1.18.0）**：后台 run 落 `failed` 与 `completed` 走同一 followUp 通道（同一 `agent-team-result` customType）；`ui.notify` 并行保留为用户端瞬态信号（信息分工，不重复打印）。启动级异步失败（worktree 预检 / `createWorktree` 失败 / leader spawn 抛出 → `StartRunResult` `!ok`）与后台 promise `.catch` 兜底：cockpit 在 `writeTerminal` 后用 `failedRunRecord()` 补一条 `members: []` 的最小 failed 记录（经 `pushRecord` 进 `records[]`，`lastRecord` = records[0]，`/team:status` 与 viewer 可回看），`startBackgroundRun` 统一走 `finalizeRun` 送达；无 runId 时退化为纯文本送达。**设计决策**：aborted 维持不送达（`team_stop` 契约与文案不变，避免把「用户主动停」误报为失败）；同步启动拒绝（model 预检 / `RUN_IN_PROGRESS`）不补送达——`team_run` 已把错误内联返回主 agent，命令路径仍是 notify。
 - run 生命周期由 coordinator 同步 claim 保护：`start()` 在首个 await 前分配 runId、构造 progress、写入 registry 并落 running 快照，finally `runs.delete(runId)`——并发 start 竞态与终态后残留 progress 均由此拦截；aborted 终态必须补全本 run roster 成员（queued/running → aborted），否则 widget/status 少报。
-- **team_stop 省略三态（v1.22.0）**：runId 可选——活跃 → `stopAndSettle(runId)`；records 命中 → `RUN_ALREADY_FINISHED`；未知 → `RUN_NOT_FOUND`（均类型化错误，不抛异常）；省略时恰 1 活跃 → 停它、0 活跃 → 非 error 提示「当前没有正在进行的 team run。」、≥2 活跃 → `RUN_ID_REQUIRED` error 并列活跃 runId。命令 `/team:stop [runId]` 同三态（≥2 warning 列 runId、0 info；维持「发信号不等待 settle」轻量形态）。
+- **team_stop 省略三态（v1.24.0）**：runId 可选——活跃 → `stopAndSettle(runId)`；records 命中 → `RUN_ALREADY_FINISHED`；未知 → `RUN_NOT_FOUND`（均类型化错误，不抛异常）；省略时恰 1 活跃 → 停它、0 活跃 → 非 error 提示「当前没有正在进行的 team run。」、≥2 活跃 → `RUN_ID_REQUIRED` error 并列活跃 runId。命令 `/team:stop [runId]` 同三态（≥2 warning 列 runId、0 info；维持「发信号不等待 settle」轻量形态）。
 - 亮块 `setWidget` 传**纯字符串数组**（样式以 ANSI 随字符串传递：fg + 行背景由 `themeStyles` 注入，v1.15.4）——`ExtensionUIContext` 无 `theme` 字段，类型化访问 `ctx.ui.theme` 无法编译。
 - **widget 挂载不变量（v1.13.0，触发形式对齐 fleet-status）**：controller 每会话挂一次（`session_start` 无条件，TUI + 未禁用），宿主 widget 注册由数据决定——`snapshot.running` ⇒ string[] 帧，落定 ⇒ `setWidget(key, undefined)` 自动卸载（终态行不常驻）；`refresh()` 数据为空时同步复位选择态并清指纹；点击/事件与 1s tick 共用该路径。刷新双触发：coordinator `onProgress` 事件即时 + 1s tick 兜底，指纹相同跳过；终态不重挂（/reload 水合只恢复 records，不影响 widget）。`/team:clear` 不再手动卸亮块（只清排队对话），集成测试要看到帧必须走真实派单。
 - viewer 打开期间必须暂停下方 widget（`RunWidgetController.setPaused`），关闭恢复。
@@ -91,7 +91,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（550 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（559 个）+ `npm run typecheck`。
 - 真实 pi 宿主契约（opt-in，不调模型）：`node test/resume-host-smoke.mjs` —— 写 fixture 会话后 `pi --mode rpc --session <file>`，断言 `get_state` 的 `messageCount` 保留且 `sessionFile` 指向该文件，stdin 结束后干净退出（续跑功能的宿主前提）。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
