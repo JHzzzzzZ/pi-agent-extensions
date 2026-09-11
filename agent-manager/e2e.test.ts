@@ -41,7 +41,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function waitFor<T>(probe: () => T | undefined, timeoutMs: number, label: string): Promise<T> {
+async function waitFor<T>(probe: () => T | undefined, timeoutMs: number, label: string): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = probe();
@@ -133,10 +133,12 @@ test("真机 e2e：长任务见 tool 事件后 stop → stopped、pi 进程消�
   const cwd = path.join(base, "cwd");
   fs.mkdirSync(sessions);
   fs.mkdirSync(cwd);
+  // 长任务脚本 + 无 shell 元字符的提示词：win32 下默认经 cmd.exe 包装，prompt 含引号会被 cmd 解析破坏（设计 R2）。
+  fs.writeFileSync(path.join(cwd, "long-task.mjs"), "setTimeout(() => {}, 60000);\n", "utf8");
   const runner = runnerFor(sessions);
   const started = runner.start({
     cwd,
-    prompt: '请使用 bash 工具运行这条命令并等待它结束：node -e "setTimeout(() => {}, 60000)"。只做这件事，不要使用其他工具。',
+    prompt: "请使用 bash 工具运行命令 node long-task.mjs 并等待它结束。只做这件事，不要使用其他工具。",
     model: MODEL,
     name: "am-e2e-long",
     kind: "new",
@@ -149,7 +151,7 @@ test("真机 e2e：长任务见 tool 事件后 stop → stopped、pi 进程消�
     await waitFor(
       () => {
         const lines = runner.output(id)?.lines ?? [];
-        return lines.some((line) => line.kind === "tool" && line.text.includes("bash")) ? true : undefined;
+        return lines.some((line) => line.kind === "tool" && line.text.includes("long-task")) ? true : undefined;
       },
       180000,
       "tool_execution_start 出现",

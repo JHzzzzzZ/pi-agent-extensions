@@ -389,7 +389,8 @@ test("delete/trash/restore 全链路（HTTP）：dry-run 零副作用、confirm 
   ]);
   const file = path.join(root, D1, "2026-01-01T00-00-00-000Z_gone.jsonl");
   const before = fs.readFileSync(file, "utf8");
-  const ts = await launchServer({ sessionDir: root });
+  // 注入固定时钟：trashName 含 epoch ms，固定后 dry-run 计划与 confirm 实际名严格相等。
+  const ts = await launchServer({ sessionDir: root, now: () => T0 });
   try {
     const dry = await apiPost(ts, "/api/sessions/delete", { ref: "gone" });
     assert.equal(dry.status, 200);
