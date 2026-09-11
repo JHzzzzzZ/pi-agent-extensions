@@ -397,20 +397,61 @@ test("team_run background result exposes the runId (team_stop's handle)", async 
   }
 });
 
-test("team_run while a run is active returns RUN_IN_PROGRESS without spawning again", async () => {
+test("team_run keeps dispatching up to the concurrency cap; the next one returns RUN_IN_PROGRESS", async () => {
   const { pi, spawn, run, cleanup } = await setup();
   try {
     const first = await run({ team: "proj-team", task: "one" });
     assert.match(first.content[0].text, /已在后台启动/);
-    const child = await waitForChild(spawn, 0);
-
+    await waitForChild(spawn, 0);
     const second = await run({ team: "proj-team", task: "two" });
-    assert.match(second.content[0].text, /另一个 team run 正在进行中/);
-    assert.equal((second.details as { code?: string }).code, "RUN_IN_PROGRESS");
-    assert.equal(spawn.records.length, 1, "no second leader spawned");
+    assert.match(second.content[0].text, /已在后台启动/, "第二个 run 不再被拒（真正并发）");
+    await waitForChild(spawn, 1);
+    const third = await run({ team: "proj-team", task: "three" });
+    assert.match(third.content[0].text, /已在后台启动/);
+    await waitForChild(spawn, 2);
+    const activeIds = [0, 1, 2].map((i) => spawn.records[i].env?.PI_AGENT_TEAM_RUN_ID ?? "");
 
-    child.autoRespond(leaderLines(), 0, 5);
-    await waitFor(() => pi.sentMessages.length > 0);
+    const fourth = await run({ team: "proj-team", task: "four" });
+    assert.match(fourth.content[0].text, /并发 team run 已达上限（3）/);
+    for (const id of activeIds) assert.ok(fourth.content[0].text.includes(id), `message lists ${id}`);
+    assert.equal((fourth.details as { code?: string }).code, "RUN_IN_PROGRESS");
+    assert.equal(spawn.records.length, 3, "no fourth leader spawned");
+    assert.equal(fourth.isError, false, "RUN_IN_PROGRESS 不是工具错误（主 agent 可继续）");
+
+    for (const child of spawn.children) child.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length >= 3);
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_status{runId} pins one of two parallel runs; unknown runId answers not-found", async () => {
+  const { pi, spawn, run, ctx, cleanup } = await setup();
+  try {
+    await run({ team: "proj-team", task: "one" });
+    await waitForChild(spawn, 0);
+    await run({ team: "proj-team", task: "two" });
+    await waitForChild(spawn, 1);
+    const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    const otherId = spawn.records[1].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    const tool = pi.tools.get("team_status") as unknown as {
+      execute: (id: string, params: Record<string, unknown>, signal?: undefined, onUpdate?: undefined, ctx?: unknown) => Promise<{ content: Array<{ text: string }> }>;
+    };
+
+    const targeted = await tool.execute("c", { runId }, undefined, undefined, ctx);
+    assert.match(targeted.content[0].text, new RegExp(`runId: ${runId}`));
+    assert.match(targeted.content[0].text, /当前 run：/);
+    assert.doesNotMatch(targeted.content[0].text, /── run /);
+    assert.doesNotMatch(targeted.content[0].text, new RegExp(`── run ${otherId}`));
+
+    const aggregate = await tool.execute("c", {}, undefined, undefined, ctx);
+    assert.match(aggregate.content[0].text, /当前共 2 个 run 并行（上限 3）：/);
+
+    const unknown = await tool.execute("c", { runId: "run-nope" }, undefined, undefined, ctx);
+    assert.match(unknown.content[0].text, /没有找到 runId run-nope/);
+
+    for (const child of spawn.children) child.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length >= 2);
   } finally {
     cleanup();
   }
@@ -569,16 +610,19 @@ test("team_resume typed errors: missing/unknown/idle states never spawn", async 
   }
 });
 
-test("team_resume rejects running parents (RUN_NOT_TERMINAL) and active runs (RUN_IN_PROGRESS)", async () => {
+test("team_resume rejects running parents (RUN_NOT_TERMINAL) and caps parallel runs (RUN_IN_PROGRESS)", async () => {
   const { pi, spawn, run, ctx, runsDir, cleanup } = await setup();
   try {
     const parent = await seedFailedRun(run, spawn);
     writeParentSessionMirror(runsDir, parent.runId);
 
-    // A live run blocks a different resume with RUN_IN_PROGRESS.
-    const active = await run({ team: "proj-team", task: "active" });
-    assert.match(active.content[0].text, /已在后台启动/);
-    const activeChild = await waitForChild(spawn, 1);
+    // Fill the concurrency cap with live runs: resuming a failed run is blocked
+    // with RUN_IN_PROGRESS until one of them settles.
+    for (let i = 1; i <= 3; i++) {
+      const active = await run({ team: "proj-team", task: `active-${i}` });
+      assert.match(active.content[0].text, /已在后台启动/);
+      await waitForChild(spawn, i);
+    }
     const blocked = await resumeTool(pi).execute("c", { runId: parent.runId }, undefined, undefined, ctx);
     assert.equal((blocked.details as { code?: string }).code, "RUN_IN_PROGRESS");
 
@@ -587,9 +631,9 @@ test("team_resume rejects running parents (RUN_NOT_TERMINAL) and active runs (RU
     const notTerminal = await resumeTool(pi).execute("c", { runId: activeRunId }, undefined, undefined, ctx);
     assert.equal((notTerminal.details as { code?: string }).code, "RUN_NOT_TERMINAL");
 
-    activeChild.autoRespond(leaderLines(), 0, 5);
-    await waitFor(() => pi.sentMessages.length > 0);
-    assert.equal(spawn.records.length, 2, "no resume leader spawned");
+    for (const child of [spawn.children[1], spawn.children[2], spawn.children[3]]) child.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length >= 3);
+    assert.equal(spawn.records.length, 4, "no resume leader spawned");
   } finally {
     cleanup();
   }

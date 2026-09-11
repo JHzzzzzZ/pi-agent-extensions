@@ -18,7 +18,7 @@ import { serializeTeam } from "../config.ts";
 import { RUN_STATUS_VERSION } from "../runstore.ts";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { fixtureTeam } from "./fixtures.ts";
-import { makeFakeSpawn, waitForChild, type FakeSpawnHandle, isolateRunsDir } from "./helpers.ts";
+import { makeFakeSpawn, sleep, waitForChild, type FakeSpawnHandle, isolateRunsDir } from "./helpers.ts";
 
 isolateRunsDir();
 
@@ -163,6 +163,84 @@ test("session_start without stale runs stays silent", async () => {
     await pi.fire("session_start", { reason: "startup" }, ctx);
     assert.equal(notifications.filter((n) => n.level === "warning").length, 0);
   } finally {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("session_start reconciles several stale runs but never the in-memory active ones", async () => {
+  resetDoubleLoadGuardForTests();
+  const projectDir = setupProjectTeam("multi-recon-team", fixtureTeam({ name: "multi-recon-team", filePath: "" }));
+  const runsRoot = process.env.PI_AGENT_TEAM_RUNS_DIR ?? path.join(getAgentDir(), "teams", "runs");
+  const spawn = makeFakeSpawn();
+  const pi = fakePi();
+  agentTeamExtension(pi as never, { spawn: spawn.spawn });
+  const { ctx, notifications } = fakeCtx(projectDir);
+  const staleIds: string[] = [];
+  try {
+    await pi.fire("session_start", { reason: "startup" }, ctx);
+    const run = getRunTool(pi);
+    const first = await run({ team: "multi-recon-team", task: "active A" }, ctx);
+    const firstId = (first.details as { runId?: string }).runId ?? "";
+    await waitForChild(spawn, 0);
+    const second = await run({ team: "multi-recon-team", task: "active B" }, ctx);
+    const secondId = (second.details as { runId?: string }).runId ?? "";
+    await waitForChild(spawn, 1);
+
+    // Tamper with active A's status.json (dead ownerPid): only the in-memory
+    // activeRunIds() set can keep reconcile from flipping it.
+    const firstStatusPath = path.join(runsRoot, firstId, "status.json");
+    const firstStatus = JSON.parse(fs.readFileSync(firstStatusPath, "utf-8")) as Record<string, unknown>;
+    fs.writeFileSync(firstStatusPath, JSON.stringify({ ...firstStatus, ownerPid: 99999999 }), "utf-8");
+
+    // Two genuinely stale runs from a previous session.
+    staleIds.push(`run-stale-a-${Date.now()}`, `run-stale-b-${Date.now()}`);
+    for (const staleId of staleIds) {
+      const dir = path.join(runsRoot, staleId);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "status.json"),
+        JSON.stringify({
+          version: RUN_STATUS_VERSION,
+          runId: staleId,
+          team: "multi-recon-team",
+          task: "crash residue",
+          startedAt: "2026-09-09T00:00:00Z",
+          status: "running",
+          leaderPid: 4242,
+          ownerPid: 99999999,
+          updatedAt: "2026-09-09T00:00:00Z",
+        }),
+        "utf-8",
+      );
+    }
+
+    await pi.fire("session_start", { reason: "reload" }, ctx);
+    for (const staleId of staleIds) {
+      assert.ok(
+        notifications.some((n) => n.level === "warning" && n.text.includes(staleId)),
+        `${staleId} reported stale`,
+      );
+      const raw = JSON.parse(fs.readFileSync(path.join(runsRoot, staleId, "status.json"), "utf-8")) as { status: string };
+      assert.equal(raw.status, "failed", `${staleId} flipped to failed`);
+    }
+    const firstRaw = JSON.parse(fs.readFileSync(firstStatusPath, "utf-8")) as { status: string };
+    assert.equal(firstRaw.status, "running", "in-memory active run was not reconciled");
+
+    const statusTool = pi.tools.get("team_status") as { execute: () => Promise<{ content: Array<{ text: string }> }> };
+    const status = await statusTool.execute();
+    assert.match(status.content[0].text, new RegExp(`── run ${firstId} `));
+    assert.match(status.content[0].text, new RegExp(`── run ${secondId} `));
+
+    for (const child of spawn.children) child.autoRespond([JSON.stringify({ type: "agent_settled" })], 0, 5);
+    for (let i = 0; i < 200; i++) {
+      if (spawn.children.length > 0 && spawn.children.every((c) => c.ended)) break;
+      await sleep(5);
+    }
+    await sleep(20);
+  } finally {
+    for (const staleId of staleIds) {
+      fs.rmSync(path.join(runsRoot, staleId), { recursive: true, force: true });
+    }
     fs.rmSync(projectDir, { recursive: true, force: true });
   }
 });

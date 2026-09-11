@@ -43,6 +43,8 @@ test("WIDGET_TICK_MS = 1000（差异表 §3.4：下方亮块有意偏离 fleet 7
 test("widget 折叠行 + main→leader→成员→任务 树字面量（§4）", () => {
   const snapshot: RunStatusSnapshot = {
     running: true,
+    actives: [],
+    records: [],
     progress: {
       runId: "r",
       team: "dev-team",

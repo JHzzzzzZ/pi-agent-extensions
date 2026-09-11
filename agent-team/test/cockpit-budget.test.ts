@@ -93,6 +93,8 @@ test("formatStatusSnapshot renders the budget line (cost cap and unlimited)", ()
   const withCap = formatStatusSnapshot(
     {
       running: true,
+      actives: [],
+      records: [],
       progress: {
         ...base,
         budget: {
@@ -115,6 +117,8 @@ test("formatStatusSnapshot renders the budget line (cost cap and unlimited)", ()
   const unlimited = formatStatusSnapshot(
     {
       running: true,
+      actives: [],
+      records: [],
       progress: {
         ...base,
         budget: {

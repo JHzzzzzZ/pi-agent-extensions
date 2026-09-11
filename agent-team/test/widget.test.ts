@@ -37,6 +37,8 @@ const KEY_ESC = "\x1b";
 function liveSnapshot(): RunStatusSnapshot {
   return {
     running: true,
+    actives: [],
+    records: [],
     progress: {
       runId: "r",
       team: "dev-team",
@@ -57,6 +59,8 @@ function liveSnapshot(): RunStatusSnapshot {
 function doneSnapshot(): RunStatusSnapshot {
   return {
     running: false,
+    actives: [],
+    records: [],
     progress: null,
     lastRecord: {
       runId: "run-1",
@@ -192,14 +196,14 @@ test("buildWidgetView leader row: 团队 + 任务摘要 + elapsed + running/tota
 
 test("buildWidgetView 终态（running=false）：空投影（终态亮块自动卸载，行数据不进 widget）", () => {
   assert.deepEqual(buildWidgetView(doneSnapshot(), 0), { collapsed: "", rows: [] });
-  assert.deepEqual(buildWidgetView({ running: false, progress: null, lastRecord: null }, 0), {
+  assert.deepEqual(buildWidgetView({ running: false, progress: null, lastRecord: null, actives: [], records: [] }, 0), {
     collapsed: "",
     rows: [],
   });
 });
 
 test("buildWidgetView running 但 progress 为空：防御性空投影", () => {
-  assert.deepEqual(buildWidgetView({ running: true, progress: null, lastRecord: null }, 0), {
+  assert.deepEqual(buildWidgetView({ running: true, progress: null, lastRecord: null, actives: [], records: [] }, 0), {
     collapsed: "",
     rows: [],
   });
@@ -547,7 +551,7 @@ test("宿主 string[] widget 每行包装 Text(line, 1, 0)：内容可用宽 = �
 });
 
 test("renderWidgetView empty view: no lines in either mode", () => {
-  const empty = buildWidgetView({ running: false, progress: null, lastRecord: null }, 0);
+  const empty = buildWidgetView({ running: false, progress: null, lastRecord: null, actives: [], records: [] }, 0);
   assert.deepEqual(renderWidgetView(empty, { selected: false, cursor: 0 }, 80, plainStyles()), []);
   assert.deepEqual(renderWidgetView(empty, { selected: true, cursor: 0 }, 80, plainStyles()), []);
 });
@@ -649,7 +653,7 @@ function registrationHarness(load: () => RunStatusSnapshot): {
 }
 
 test("controller 空闲（无 run）：start 不注册亮块（数据驱动挂载，不再动作驱动常驻）", () => {
-  const { controller, pushed } = registrationHarness(() => ({ running: false, progress: null, lastRecord: null }));
+  const { controller, pushed } = registrationHarness(() => ({ running: false, progress: null, lastRecord: null, actives: [], records: [] }));
   try {
     assert.equal(pushed.length, 0, "无活跃 run 不得推送任何 setWidget");
   } finally {
@@ -687,7 +691,7 @@ test("controller 活跃 run：start 推折叠单行；落定 refresh 推 undefin
 });
 
 test("controller 数据驱动挂载：空闲 → 新 run refresh 出帧（事件刷新不等 tick）；再次落定再卸载", () => {
-  let snapshot: RunStatusSnapshot = { running: false, progress: null, lastRecord: null };
+  let snapshot: RunStatusSnapshot = { running: false, progress: null, lastRecord: null, actives: [], records: [] };
   const { controller, pushed } = registrationHarness(() => snapshot);
   try {
     assert.equal(pushed.length, 0);

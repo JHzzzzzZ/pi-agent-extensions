@@ -234,6 +234,73 @@ test("leader mode with an unreadable team file still registers a failing tool", 
   });
 });
 
+// 水合多条 run 记录（多 run 并发后 session 里可能有一批终态记录）：
+// 按 startedAt 新→旧排序，最多保留 5 条（/reload 后仍有历史可查）。
+test("session_start hydrates several run records, newest first", async () => {
+  resetDoubleLoadGuardForTests();
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-hydrate-"));
+  await withEnv(undefined, async () => {
+    const pi = fakePi();
+    agentTeamExtension(pi as never);
+    const entries = [1, 2, 3].map((i) => ({
+      type: "custom",
+      customType: "agent-team-run-v1",
+      data: {
+        runId: `run-h${i}`,
+        team: "t",
+        task: `任务 ${i}`,
+        startedAt: `2026-09-16T0${i}:00:00Z`,
+        status: "completed",
+        members: [],
+        totalCost: 0,
+        totalTokens: 0,
+      },
+    }));
+    const ctx = { ...fakeCtx(projectDir), sessionManager: { getEntries: () => entries } };
+    await pi.fire("session_start", { reason: "reload" }, ctx);
+    const tool = pi.tools.get("team_status") as unknown as {
+      execute: () => Promise<{ content: Array<{ text: string }> }>;
+    };
+    const text = (await tool.execute()).content[0].text;
+    assert.match(text, /runId: run-h3/, "newest record is the headline");
+    assert.match(text, /近期 run：run-h2 ✓completed · run-h1 ✓completed/);
+  });
+  fs.rmSync(projectDir, { recursive: true, force: true });
+});
+
+test("session_start hydration keeps at most five records", async () => {
+  resetDoubleLoadGuardForTests();
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-hydrate-"));
+  await withEnv(undefined, async () => {
+    const pi = fakePi();
+    agentTeamExtension(pi as never);
+    const entries = [1, 2, 3, 4, 5, 6].map((i) => ({
+      type: "custom",
+      customType: "agent-team-run-v1",
+      data: {
+        runId: `run-h${i}`,
+        team: "t",
+        task: `任务 ${i}`,
+        startedAt: `2026-09-16T0${i}:00:00Z`,
+        status: "completed",
+        members: [],
+        totalCost: 0,
+        totalTokens: 0,
+      },
+    }));
+    const ctx = { ...fakeCtx(projectDir), sessionManager: { getEntries: () => entries } };
+    await pi.fire("session_start", { reason: "reload" }, ctx);
+    const tool = pi.tools.get("team_status") as unknown as {
+      execute: () => Promise<{ content: Array<{ text: string }> }>;
+    };
+    const text = (await tool.execute()).content[0].text;
+    assert.match(text, /runId: run-h6/);
+    assert.match(text, /近期 run：run-h5 ✓completed · run-h4 ✓completed · run-h3 ✓completed · run-h2 ✓completed（/);
+    assert.doesNotMatch(text, /run-h1/, "the oldest two records were evicted at the cap");
+  });
+  fs.rmSync(projectDir, { recursive: true, force: true });
+});
+
 test("cockpit mode registers tools, commands and the entry renderer", async () => {
   resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-cockpit-"));

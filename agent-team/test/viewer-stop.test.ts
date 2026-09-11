@@ -27,71 +27,81 @@ import { makeFakeSpawn, waitForChild, type FakeSpawnHandle } from "./helpers.ts"
 // ---------------------------------------------------------------------------
 
 function fakeCoordinator(opts: {
-  progress?: { runId: string } | null;
-  lastRecord?: { status: string; runId: string } | null;
+  active?: string[];
+  records?: Record<string, string>;
   outcome?: { settled: boolean; record: { durationMs?: number } | null };
   reject?: boolean;
 }) {
-  return {
-    getStatus: () => ({ running: opts.progress !== undefined && opts.progress !== null, progress: opts.progress ?? null, lastRecord: opts.lastRecord ?? null }),
-    stopAndSettle: async () => {
+  const activeIds = opts.active ?? [];
+  const settled: string[] = [];
+  const coordinator = {
+    calls: settled,
+    isRunActive: (runId: string) => activeIds.includes(runId),
+    terminalStatus: (runId: string) => opts.records?.[runId] ?? null,
+    stopAndSettle: async (runId: string) => {
+      settled.push(runId);
       if (opts.reject) throw new Error("boom");
       return opts.outcome ?? { settled: true, record: null };
     },
   };
+  return coordinator;
 }
 
-test("viewerStopAction：settled → success 文案（含 aborted 与秒数）", async () => {
-  const result = await viewerStopAction(fakeCoordinator({
-    progress: { runId: "run-1" },
+test("viewerStopAction：settled → success 文案（含 runId 与秒数）", async () => {
+  const coordinator = fakeCoordinator({
+    active: ["run-1"],
     outcome: { settled: true, record: { durationMs: 3200 } },
-  }) as never);
+  });
+  const result = await viewerStopAction(coordinator as never, "run-1");
   assert.equal(result.kind, "success");
-  assert.equal(result.text, "run 已停止（aborted · 3.2s）；该 run 的报告不再送达");
+  assert.equal(result.text, "run run-1 已停止（aborted · 3.2s）；该 run 的报告不再送达");
+  assert.deepEqual(coordinator.calls, ["run-1"], "stopAndSettle 定向到请求的 runId");
 });
 
 test("viewerStopAction：settled 无 durationMs → success 文案不带秒数", async () => {
-  const result = await viewerStopAction(fakeCoordinator({
-    progress: { runId: "run-1" },
-    outcome: { settled: true, record: null },
-  }) as never);
+  const result = await viewerStopAction(
+    fakeCoordinator({ active: ["run-1"], outcome: { settled: true, record: null } }) as never,
+    "run-1",
+  );
   assert.equal(result.kind, "success");
-  assert.equal(result.text, "run 已停止（aborted）；该 run 的报告不再送达");
+  assert.equal(result.text, "run run-1 已停止（aborted）；该 run 的报告不再送达");
 });
 
 test("viewerStopAction：未落定 → warning 文案", async () => {
-  const result = await viewerStopAction(fakeCoordinator({
-    progress: { runId: "run-1" },
-    outcome: { settled: false, record: null },
-  }) as never);
+  const result = await viewerStopAction(
+    fakeCoordinator({ active: ["run-1"], outcome: { settled: false, record: null } }) as never,
+    "run-1",
+  );
   assert.equal(result.kind, "warning");
-  assert.equal(result.text, "已发送中止信号，leader 仍在收尾；稍后用 /team:status 确认终态");
+  assert.equal(result.text, "已向 run run-1 发送中止信号，leader 仍在收尾；稍后用 /team:status 确认终态");
 });
 
-test("viewerStopAction：无活动 run（有终态记录）→ error 提示，不调 stopAndSettle", async () => {
-  let stopCalls = 0;
-  const coordinator = fakeCoordinator({ lastRecord: { status: "failed", runId: "run-9" } });
-  const wrapped = {
-    getStatus: coordinator.getStatus,
-    stopAndSettle: async (): Promise<never> => {
-      stopCalls += 1;
-      throw new Error("should not be called");
-    },
-  };
-  void stopCalls;
-  const result = await viewerStopAction(wrapped as never);
+test("viewerStopAction：已结束 run → error 提示（带 runId），不调 stopAndSettle", async () => {
+  const coordinator = fakeCoordinator({ records: { "run-9": "failed" } });
+  const result = await viewerStopAction(coordinator as never, "run-9");
   assert.equal(result.kind, "error");
-  assert.equal(result.text, "run 已结束（failed），无需停止");
+  assert.equal(result.text, "run run-9 已结束（failed），无需停止");
+  assert.deepEqual(coordinator.calls, [], "no stop signal for a finished run");
 });
 
-test("viewerStopAction：无活动 run（无记录）→ error 提示", async () => {
-  const result = await viewerStopAction(fakeCoordinator({}) as never);
+test("viewerStopAction：未知 runId → error 提示（带 runId）", async () => {
+  const coordinator = fakeCoordinator({});
+  const result = await viewerStopAction(coordinator as never, "run-x");
+  assert.equal(result.kind, "error");
+  assert.equal(result.text, "没有找到 runId run-x 的 run，无需停止");
+  assert.deepEqual(coordinator.calls, []);
+});
+
+test("viewerStopAction：空 runId → 无活动 run 提示，不调 stopAndSettle", async () => {
+  const coordinator = fakeCoordinator({});
+  const result = await viewerStopAction(coordinator as never, "  ");
   assert.equal(result.kind, "error");
   assert.equal(result.text, "当前没有正在运行的 run，无需停止");
+  assert.deepEqual(coordinator.calls, []);
 });
 
 test("viewerStopAction：stopAndSettle 异常 → error 文案，不上抛", async () => {
-  const result = await viewerStopAction(fakeCoordinator({ progress: { runId: "run-1" }, reject: true }) as never);
+  const result = await viewerStopAction(fakeCoordinator({ active: ["run-1"], reject: true }) as never, "run-1");
   assert.equal(result.kind, "error");
   assert.equal(result.text, "停止失败；稍后用 /team:stop 重试");
 });
@@ -219,7 +229,7 @@ test("全链路：viewer D→Enter 触发真实 stopAndSettle，落定后 notice
       await new Promise((resolve) => setTimeout(resolve, 30));
 
       const frame = component.render(100).join("\n");
-      assert.match(frame, /run 已停止（aborted/, "settled notice 上屏");
+      assert.match(frame, /run run-\d+ 已停止（aborted/, "settled notice 上屏（带 runId）");
       assert.doesNotMatch(frame, /确认停止 run/, "确认横幅已撤");
       assert.doesNotMatch(frame, /停止中…/, "busy 横幅已撤");
       component.dispose();

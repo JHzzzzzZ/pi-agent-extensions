@@ -303,18 +303,22 @@ test("wait:true failed run stays inline (isError) with no followUp", async () =>
   }
 });
 
-test("synchronous rejection (RUN_IN_PROGRESS) adds no delivery", async () => {
+test("synchronous rejection (RUN_IN_PROGRESS at the concurrency cap) adds no delivery", async () => {
   const { pi, spawn, run, cleanup } = await setup();
   try {
-    await run({ team: "proj-team", task: "one" });
-    const child = await waitForChild(spawn, 0);
-    const second = await run({ team: "proj-team", task: "two" });
-    assert.equal((second.details as { code?: string }).code, "RUN_IN_PROGRESS");
+    for (let i = 0; i < 3; i++) {
+      const started = await run({ team: "proj-team", task: `task-${i}` });
+      assert.match(started.content[0].text, /已在后台启动/);
+      await waitForChild(spawn, i);
+    }
+    const rejected = await run({ team: "proj-team", task: "one-too-many" });
+    assert.equal((rejected.details as { code?: string }).code, "RUN_IN_PROGRESS");
     assert.equal(pi.sentMessages.length, 0, "synchronous rejection delivers nothing");
+    assert.equal(spawn.records.length, 3, "no extra leader spawned");
 
-    child.autoRespond(leaderLines(), 0, 5);
-    await waitFor(() => pi.sentMessages.length > 0);
-    assert.equal(pi.sentMessages.length, 1, "only the completed report arrives");
+    for (const child of spawn.children) child.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length >= 3);
+    assert.equal(pi.sentMessages.length, 3, "only the completed reports arrive");
   } finally {
     cleanup();
   }
