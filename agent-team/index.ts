@@ -35,7 +35,7 @@ import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
 import { defaultIsProcessAlive, orphanRunError, reconcileStaleRuns } from "./runstore.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
 import { RunWidgetController, probeEditorFocus } from "./widget.ts";
-import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
+import { activityFromTranscript, formatActorActivity, formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
 import {
   FileTranscriptSink,
   LEADER_ACTOR,
@@ -356,9 +356,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     const lastRecord = snapshot.lastRecord;
     const runId = progress?.runId ?? lastRecord?.runId ?? "";
     const runStatus = progress ? "running" : (lastRecord?.status ?? "unknown");
+    // 一次刷新一个时钟：elapsed 与活动行分桶同源（同一 nowMs）。
+    const nowMs = Date.now();
     const elapsed = progress
       ? (() => {
-          const totalSecs = Math.max(0, Math.round((Date.now() - progress.startedAtMs) / 1000));
+          const totalSecs = Math.max(0, Math.round((nowMs - progress.startedAtMs) / 1000));
           const mins = Math.floor(totalSecs / 60);
           return mins > 0 ? `${mins}m${totalSecs % 60}s` : `${totalSecs}s`;
         })()
@@ -367,6 +369,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     const memberStatuses = new Map<string, string>();
     const memberModels = new Map<string, string>();
     const memberThinking = new Map<string, string>();
+    // Live 成员活动（v1.17.0），按 actor id（sanitizeActorName）键控。
+    const memberActivity = new Map<
+      string,
+      { phase?: "tool" | "waiting"; toolName?: string; lastActivityAtMs?: number }
+    >();
     if (progress) {
       for (const member of progress.members) {
         memberStatuses.set(member.name, member.status);
@@ -375,6 +382,13 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         const model = resolveModelCaliber(member.model);
         if (model) memberModels.set(member.name, model);
         if (member.thinkingLevel) memberThinking.set(member.name, member.thinkingLevel);
+        if (member.phase !== undefined || member.toolName !== undefined || member.lastActivityAtMs !== undefined) {
+          memberActivity.set(sanitizeActorName(member.name), {
+            ...(member.phase !== undefined ? { phase: member.phase } : {}),
+            ...(member.toolName !== undefined ? { toolName: member.toolName } : {}),
+            ...(member.lastActivityAtMs !== undefined ? { lastActivityAtMs: member.lastActivityAtMs } : {}),
+          });
+        }
       }
     } else if (lastRecord) {
       for (const member of lastRecord.members) {
@@ -434,6 +448,36 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     const entries = new Map<string, TranscriptEntry[]>();
     if (runId) {
       for (const actor of actors) entries.set(actor.actor, readTranscript(transcriptRoot(), runId, actor.actor));
+    }
+    // 活动行烘焙（v1.17.0）：live progress 阶段优先；缺省时从 transcript 末条
+    // 推导（回放/文件-only actor）。时长经 5s 分桶后才能进 activity
+    // （fingerprint 含该文本——重影约束：时钟类文本不得超过每桶一次重绘）。
+    const running = runStatus === "running";
+    for (const actor of actors) {
+      const liveMember = memberActivity.get(actor.actor);
+      const isLeader = actor.actor === LEADER_ACTOR;
+      let phase = isLeader ? progress?.leaderPhase : liveMember?.phase;
+      let toolName = isLeader ? progress?.leaderToolName : liveMember?.toolName;
+      let lastActivityAtMs = isLeader ? progress?.leaderLastEventAtMs : liveMember?.lastActivityAtMs;
+      if (running && phase === undefined && lastActivityAtMs === undefined) {
+        const derived = activityFromTranscript(entries.get(actor.actor) ?? []);
+        if (derived.phase !== undefined) phase = derived.phase;
+        if (derived.toolName !== undefined) toolName = derived.toolName;
+        if (derived.lastActivityAtMs !== undefined) lastActivityAtMs = derived.lastActivityAtMs;
+      }
+      if (phase !== undefined) actor.phase = phase;
+      if (toolName !== undefined) actor.toolName = toolName;
+      if (lastActivityAtMs !== undefined) actor.lastActivityAtMs = lastActivityAtMs;
+      actor.activity = formatActorActivity(
+        {
+          status: actor.status,
+          ...(phase !== undefined ? { phase } : {}),
+          ...(toolName !== undefined ? { toolName } : {}),
+          ...(lastActivityAtMs !== undefined ? { lastActivityAtMs } : {}),
+        },
+        running,
+        nowMs,
+      );
     }
     return { team: progress?.team ?? lastRecord?.team ?? "(unknown)", runId, runStatus, elapsed, actors, entries };
   };

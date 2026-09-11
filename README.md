@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，大团队自动窗口化；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 407 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，大团队自动窗口化；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 427 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -275,12 +275,12 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
 - **进度可视（可选中亮块）** — 数据驱动：有活跃 run 才挂亮块，run 落定自动消失（不再常驻终态行）。默认只有一行折叠提示（`agent-team <团队> · ↓/← 查看详情`），`↓`/`←`（焦点在主编辑器且编辑器为空时）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行：`↓`/`j` 到底即最后一个成员；成员行连接符 `├─`（非末项）/ `╰─`（末项圆角）、带状态图标与最新活动尾注，多行文本先压平成单行；每行按宿主内容宽补齐并包背景，选中行用更强背景），再按 `↑`/`↓`/`j`/`k` 移动，第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中、在 leader/成员行直接打开查看器并定位该 actor、`esc`/其它键退出并放行编辑器；`/login`、`/model` 等选择器/对话框打开时焦点不在编辑器，widget 完全不介入（方向键原样让给选择器，选中态自动退出）；状态变化（leader 事件/派发起止）即时刷新，1s tick 仅兜底。`/team:clear` 用于丢弃排队的 viewer 对话消息（无内容时提示亮块随 run 结束自动隐藏）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [agent-team/docs/tui-sync.md](agent-team/docs/tui-sync.md））
 - **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team:doctor` 自检报告
-- **会话记录查看器** - `/team:view` 全屏左右分栏(fleet inspector 同款:左栏成员 roster 带选中标记与状态,右栏 Run/State/成员/模型 元信息头 + 选中成员的连续会话流--任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行;≈85% 终端高,窄于 36 列仅提示),run artifacts 落盘、run 结束后仍可查;`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；按键（v1.8.0）全面对齐 fleet：`↑↓/j/k` 切成员、`Shift+J/K` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行，仅 `m` 发消息是特有键；主 agent 可用 `team_transcript` 工具转述记录要点
+- **会话记录查看器** - `/team:view` 全屏左右分栏(fleet inspector 同款:左栏成员 roster 带选中标记与状态,右栏 Run/State/成员/模型/活动 五行元信息头 + 选中成员的连续会话流--任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行;活动行为选中 actor 当前活动（思考中 / 工具调用 <tool> / 排队中 / 已完成/失败/已中止 / run 已结束）+ 5 秒分桶的 `距上次输出` 时长（分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘）；≈85% 终端高,窄于 36 列仅提示),run artifacts 落盘、run 结束后仍可查;`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；按键（v1.8.0）全面对齐 fleet：`↑↓/j/k` 切成员、`Shift+J/K` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行，仅 `m` 发消息是特有键；主 agent 可用 `team_transcript` 工具转述记录要点
 - **查看器内直接对话（`m` 发消息）** — 选中成员/leader 后按 `m` 进入单行输入（右栏输入行），`Enter` 提交；**目标 = leader 且 run 运行中 → RPC steer 插话**（v1.15.0：leader 子进程以 `--mode rpc` 拉起，消息在当前回合边界送达、不打断任务，回复出现在本 run 的 transcript 里）；其余情况（成员目标 / run 已落定 / 通道不可用）走派单语义：消息编成新 run 的 task（附目标 actor transcript 尾部作上文），run 运行中则排队、落定后自动链式派出（failed/aborted 清空）；报告照常 followUp 送达
 
 ```bash
 cd agent-team
-npm install && npm test        # 407 个测试（含真实 git worktree 用例）
+npm install && npm test        # 427 个测试（含真实 git worktree 用例）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
 ```

@@ -386,6 +386,13 @@ export interface TeamRunRecord {
 
 export type MemberProgressStatus = "queued" | "running" | "done" | "failed" | "aborted";
 
+/**
+ * Live activity phase of an actor (leader/member): `tool` while a tool call
+ * is executing, `waiting` while the model is thinking / between events.
+ * Feeds the viewer activity line (v1.17.0).
+ */
+export type MemberPhase = "tool" | "waiting";
+
 export interface MemberProgress {
   name: string;
   status: MemberProgressStatus;
@@ -396,6 +403,12 @@ export interface MemberProgress {
   model?: string;
   /** Declared model-suffix / child-reported thinking level (absent = provider default). */
   thinkingLevel?: string;
+  /** Live activity phase (tool execution vs. waiting/thinking). */
+  phase?: MemberPhase;
+  /** Tool name while `phase === "tool"`. */
+  toolName?: string;
+  /** Epoch ms of the member's last observed child event (viewer activity age). */
+  lastActivityAtMs?: number;
 }
 
 export interface RunProgress {
@@ -411,6 +424,12 @@ export interface RunProgress {
   leaderNote?: string;
   /** Leader's latest activity tail (progress display only). */
   leaderActivity?: string;
+  /** Leader live activity phase (tool execution vs. waiting/thinking). */
+  leaderPhase?: MemberPhase;
+  /** Tool name while `leaderPhase === "tool"`. */
+  leaderToolName?: string;
+  /** Epoch ms of the leader's last observed child event (viewer activity age). */
+  leaderLastEventAtMs?: number;
   members: MemberProgress[];
   /** Live budget accounting (caps + spent) when the run tracks a budget. */
   budget?: RunBudgetSnapshot;

@@ -17,6 +17,7 @@ import { test } from "node:test";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { serializeTeam } from "../config.ts";
 import { RUN_ENTRY_TYPE } from "../types.ts";
+import { stripAnsi } from "../viewer.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { makeFakeSpawn, waitForChild, type FakeSpawnHandle, isolateRunsDir } from "./helpers.ts";
 
@@ -231,7 +232,10 @@ async function mountedSession(timeline: string[], capture?: WidgetFocusCapture):
   return { pi, child, sessionCtx, spawn, projectDir, stop };
 }
 
-type ViewerComponentLike = { handleInput: (data: string) => void };
+type ViewerComponentLike = {
+  handleInput: (data: string) => void;
+  render: (width: number) => string[];
+};
 
 /**
  * 可关闭的 /team:view ctx：custom 捕获真实 TranscriptViewer 实例 + done
@@ -266,6 +270,10 @@ function closableViewCtx(opts: { timeline?: string[]; customCalls?: unknown[][] 
     close: (): void => {
       assert.ok(viewerComponent, "关闭前应已有 viewer 组件实例");
       viewerComponent!.handleInput("\x03"); // ctrl+c 关闭（对齐 fleet close 键集）
+    },
+    render: (width: number): string[] => {
+      assert.ok(viewerComponent, "渲染前应已有 viewer 组件实例");
+      return viewerComponent!.render(width);
     },
   };
 }
@@ -370,3 +378,49 @@ const cursorRowOf = (pushed: Array<string[] | undefined>): number => {
   const lines = pushed[pushed.length - 1] ?? [];
   return lines.findIndex((line) => line.startsWith("▸ "));
 };
+
+// ---------------------------------------------------------------------------
+// Slice 10：活动行接线（真实 buildViewerData 烘焙，v1.17.0）
+// ---------------------------------------------------------------------------
+
+test("接线：running 查看器活动行由 buildViewerData 从 transcript 推导（思考中 + 分桶时长）", async () => {
+  const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
+  process.env.PI_AGENT_TEAM_WIDGET = "0";
+  const mounted = await mountedSession([]);
+  try {
+    const view = mounted.pi.commands.get("team:view");
+    assert.ok(view);
+    const closable = closableViewCtx({});
+    void view.handler("", closable.ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const frame = stripAnsi(closable.render(120).join("\n"));
+    const activityLines = frame.split("\n").filter((line) => line.includes("活动:"));
+    assert.match(
+      frame,
+      /活动: 思考中 · 距上次输出 (\d+m)?\d+s/,
+      `活动行应由 buildViewerData 烘焙：${activityLines.join(" | ")}`,
+    );
+    closable.close();
+  } finally {
+    await mounted.stop();
+    if (previousWidget === undefined) delete process.env.PI_AGENT_TEAM_WIDGET;
+    else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
+  }
+});
+
+test("接线：终态 run 查看器活动行恒 `run 已结束`（回放，不带时长）", async () => {
+  resetDoubleLoadGuardForTests();
+  const pi = fakePi();
+  agentTeamExtension(pi as never);
+  await pi.fire("session_start", hydratedSessionCtx());
+  const view = pi.commands.get("team:view");
+  assert.ok(view);
+  const closable = closableViewCtx({});
+  void view.handler("", closable.ctx as never);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const frame = stripAnsi(closable.render(120).join("\n"));
+  assert.match(frame, /活动: run 已结束/, `终态活动行恒 run 已结束：${frame.split("\n").filter((l) => l.includes("活动:")).join(" | ")}`);
+  assert.doesNotMatch(frame, /距上次输出/, "终态不带时长（零时钟重绘）");
+  closable.close();
+  resetDoubleLoadGuardForTests();
+});
