@@ -1,7 +1,10 @@
 /** Type surface for tools/capture-screens.mjs（文档工具，不进产物；测试 import 需类型）。 */
 import type { VtCell } from "./vt-screen.mjs";
 
-export declare const DARK: Record<"dim" | "border" | "accent" | "success" | "warning" | "error" | "bubble" | "text", string>;
+export declare const DARK: Record<
+  "dim" | "border" | "accent" | "success" | "warning" | "error" | "bubble" | "rowBg" | "rowSelectedBg" | "text",
+  string
+>;
 /** 真实 `Styles` 端口（ANSI 版本，headless 无需 theme 对象）。 */
 export declare function ansiStyles(): {
   dim: (text: string) => string;
@@ -11,6 +14,8 @@ export declare function ansiStyles(): {
   error: (text: string) => string;
   warning: (text: string) => string;
   bubble: (text: string) => string;
+  rowBg: (text: string) => string;
+  rowSelectedBg: (text: string) => string;
   bold: (text: string) => string;
 };
 export declare function svgFromGrid(grid: (VtCell | null)[][]): string;
@@ -33,7 +38,7 @@ export declare function capturePwrViewerScene(opts?: { cols?: number; rows?: num
 /** pwr 帧自检（标题/脚本名/结构页锚点）。 */
 export declare function assertPwrFrame(lines: string[]): true;
 /** agent-team 亮块（编辑器下方 widget）场景：真实 buildWidgetView/renderWidgetView + 真实 Editor。 */
-export declare function captureWidgetScene(opts?: { cols?: number; rows?: number }): {
+export declare function captureWidgetScene(opts?: { cols?: number; rows?: number; selected?: boolean }): {
   grid: (VtCell | null)[][];
   lines: string[];
   cols: number;

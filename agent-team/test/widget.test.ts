@@ -23,7 +23,7 @@ import {
   type WidgetRowSpec,
 } from "../widget.ts";
 import type { RunStatusSnapshot } from "../cockpit.ts";
-import { plainStyles, visibleWidth } from "../viewer.ts";
+import { plainStyles, visibleWidth, type Styles } from "../viewer.ts";
 
 const ACTIVATE_CSI = "\x1b[1;3B"; // alt+down, modified-arrow CSI encoding
 const ACTIVATE_LEGACY = "\x1b\x1b[B"; // alt+down, legacy xterm ESC-prefix encoding
@@ -378,7 +378,8 @@ test("renderWidgetView collapsed: exactly one line with the activation hint and 
   const view = buildWidgetView(liveSnapshot(), 65000);
   const lines = renderWidgetView(view, { selected: false, cursor: 0 }, 80, plainStyles());
   assert.equal(lines.length, 1, "折叠默认态恰好 1 行");
-  assert.equal(lines[0], "agent-team dev-team · ↓/← 查看详情");
+  assert.equal(lines[0]?.trimEnd(), "agent-team dev-team · ↓/← 查看详情");
+  assert.equal(visibleWidth(lines[0]!), 80 - 2, "补齐到宿主内容宽（终端宽 − Text(line,1,0) 两侧各 1 列 margin）");
   assert.doesNotMatch(lines[0], /任务:/);
 });
 
@@ -386,15 +387,81 @@ test("renderWidgetView expanded: main/leader（含任务摘要）/成员 rows + 
   const view = buildWidgetView(liveSnapshot(), 65000);
   const lines = renderWidgetView(view, { selected: true, cursor: 1 }, 80, plainStyles());
   assert.equal(lines.length, view.rows.length + 1, "展开 = rows + 底部提示行");
-  assert.match(lines[0], /^ {2}main$/);
+  assert.match(lines[0], /^ {2}main\s*$/);
   assert.match(lines[1], /^▸ leader dev-team · 修复登录 bug ▶ running/);
   assert.match(lines[2], /^ {2}├─ frontend ● running/);
-  assert.match(lines[3], /^ {2}╰─ backend ✓ done$/);
+  assert.match(lines[3], /^ {2}╰─ backend ✓ done\s*$/);
   assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
   assert.ok(
     !lines.some((line) => /上方还有|下方还有/.test(line)),
     "窗口未溢出（小团队全部行可见）时不得出现折叠提示行",
   );
+});
+
+/** 记录 Styles 端口：rowBg/rowSelectedBg 调用可观测，其余 identity（背景块测试用）。 */
+function recordingStyles(): { styles: Styles; calls: Array<{ kind: "row" | "selected"; text: string }> } {
+  const calls: Array<{ kind: "row" | "selected"; text: string }> = [];
+  const identity = (text: string): string => text;
+  const record = (kind: "row" | "selected") => (text: string): string => {
+    calls.push({ kind, text });
+    return text;
+  };
+  return { styles: { ...plainStyles(), rowBg: record("row"), rowSelectedBg: record("selected") }, calls };
+}
+
+test("renderWidgetView 背景块：每行补齐到宿主内容宽（终端宽 − 2）并用 rowBg 包裹；选中行 rowSelectedBg", () => {
+  const view = buildWidgetView(liveSnapshot(), 65000);
+  const { styles, calls } = recordingStyles();
+
+  // 折叠态：恰好 1 行、恰好补齐（背景块不参差）。
+  const collapsed = renderWidgetView(view, { selected: false, cursor: 0 }, 80, styles);
+  assert.equal(collapsed.length, 1);
+  assert.equal(calls.length, 1, "折叠行恰好一条背景包裹");
+  assert.equal(calls[0]!.kind, "row");
+  assert.equal(visibleWidth(calls[0]!.text), 78, "折叠行补齐到 80 − 2 = 78 列");
+
+  // 展开态：每一帧行（含折叠提示行/底部提示行）恰好一条背景包裹；选中行用更强背景。
+  calls.length = 0;
+  const expanded = renderWidgetView(view, { selected: true, cursor: 1 }, 80, styles);
+  assert.equal(calls.length, expanded.length, "每一帧行恰好一次背景包裹（无行漏背景）");
+  assert.ok(calls.every((call) => visibleWidth(call.text) === 78), "每行显示宽度恰好 = 可用宽 78");
+  const selected = calls.filter((call) => call.kind === "selected");
+  assert.equal(selected.length, 1, "恰好选中行一条 rowSelectedBg");
+  assert.match(selected[0]!.text, /^▸ leader dev-team/, "选中背景只包选中行（▸ gutter）");
+  assert.deepEqual(
+    calls.map((call) => call.kind),
+    expanded.map((_, index) => (index === 1 ? "selected" : "row")),
+    "只有选中行走更强背景，其余行普通背景",
+  );
+
+  // 窗口化大团队：折叠提示行与底部提示行同样带普通背景（块连续、无漏行）。
+  calls.length = 0;
+  const big = renderWidgetView(buildWidgetView(largeTeamSnapshot(12), 65000), { selected: true, cursor: 8 }, 80, styles);
+  assert.equal(calls.length, big.length);
+  assert.ok(calls.every((call) => visibleWidth(call.text) === 78));
+  for (const hint of ["上方还有", "下方还有"]) {
+    const call = calls.find((item) => item.text.includes(hint));
+    assert.ok(call && call.kind === "row", `${hint} 提示行带普通背景`);
+  }
+  assert.equal(calls.at(-1)!.kind, "row", "底部提示行带普通背景");
+  assert.ok(calls.at(-1)!.text.trimEnd().startsWith("↑↓ 选择"), "底部提示行内容不变");
+});
+
+test("renderWidgetView 背景块窄宽度：20 列两态均补齐到 18 列且不超宽", () => {
+  const view = buildWidgetView(liveSnapshot(), 65000);
+  const { styles, calls } = recordingStyles();
+  for (const selected of [false, true]) {
+    calls.length = 0;
+    const lines = renderWidgetView(view, { selected, cursor: 1 }, 20, styles);
+    assert.ok(lines.length > 0);
+    for (const line of lines) {
+      assert.equal(visibleWidth(line), 18, `selected=${selected}: 行宽恰好 20 − 2 = 18`);
+    }
+    assert.equal(calls.length, lines.length);
+    assert.ok(calls.every((call) => visibleWidth(call.text) === 18));
+    if (selected) assert.equal(calls.filter((call) => call.kind === "selected").length, 1);
+    else assert.ok(calls.every((call) => call.kind === "row"));
+  }
 });
 
 /** 大团队快照：2 根行 + count 个成员行。 */
@@ -464,6 +531,21 @@ test("WIDGET_MAX_LINES 与真实宿主 string[] widget 上限一致（宿主漂�
   );
 });
 
+test("宿主 string[] widget 每行包装 Text(line, 1, 0)：内容可用宽 = 终端宽 − 2（宿主漂移即红）", async () => {
+  const hostSource = await readFile(
+    new URL(
+      "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    hostSource,
+    /new Text\(line,\s*1,\s*0\)/,
+    "宿主对 string[] 逐行做 Text(line, 1, 0) 包装（左右各 1 列 margin）——补齐/截断预算须为 终端宽 − 2",
+  );
+});
+
 test("renderWidgetView empty view: no lines in either mode", () => {
   const empty = buildWidgetView({ running: false, progress: null, lastRecord: null }, 0);
   assert.deepEqual(renderWidgetView(empty, { selected: false, cursor: 0 }, 80, plainStyles()), []);
@@ -489,6 +571,11 @@ test("renderWidgetView truncates every line to terminal width (collapsed + expan
       const lines = renderWidgetView(view, { selected, cursor: 1 }, width, styles);
       assert.ok(lines.length > 0);
       for (const line of lines) {
+        assert.equal(
+          visibleWidth(line),
+          width - 2,
+          `selected=${selected} width=${width}: 每行恰好补齐到可用宽 ${width - 2}（宿主 Text(line,1,0) 两侧 margin 除外）`,
+        );
         assert.ok(
           visibleWidth(line) <= width,
           `selected=${selected} width=${width}: line renders ${visibleWidth(line)} > ${width}`,
@@ -583,7 +670,7 @@ test("controller 活跃 run：start 推折叠单行；落定 refresh 推 undefin
   const { controller, pushed } = registrationHarness(() => snapshot);
   try {
     assert.equal(pushed.length, 1, "活跃 run 挂载恰好一帧");
-    assert.deepEqual(pushed[0], ["agent-team dev-team · ↓/← 查看详情"]);
+    assert.deepEqual(pushed[0]?.map((line) => line.trimEnd()), ["agent-team dev-team · ↓/← 查看详情"]);
 
     snapshot = doneSnapshot(); // run 落定（coordinator 清空 progress）
     controller.refresh();
@@ -607,7 +694,7 @@ test("controller 数据驱动挂载：空闲 → 新 run refresh 出帧（事件
     snapshot = liveSnapshot();
     controller.refresh(); // 派单事件即时刷新（不依赖 1s tick）
     assert.equal(pushed.length, 1);
-    assert.deepEqual(pushed[0], ["agent-team dev-team · ↓/← 查看详情"]);
+    assert.deepEqual(pushed[0]?.map((line) => line.trimEnd()), ["agent-team dev-team · ↓/← 查看详情"]);
 
     snapshot = doneSnapshot();
     controller.refresh();
@@ -837,7 +924,7 @@ test("controller 首帧：折叠单行（无行光标、含激活提示）", () 
   try {
     const lines = lastLines(pushed);
     assert.equal(lines.length, 1, "默认态恰好 1 行");
-    assert.equal(lines[0], "agent-team dev-team · ↓/← 查看详情");
+    assert.equal(lines[0]?.trimEnd(), "agent-team dev-team · ↓/← 查看详情");
     assert.equal(cursorRow(lines), -1, "折叠态无行光标");
   } finally {
     controller.stop();

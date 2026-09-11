@@ -19,6 +19,7 @@ import {
   initialViewerState,
   plainStyles,
   renderViewerFrame,
+  visibleWidth,
   type Styles,
   type ViewerData,
 } from "../viewer.ts";
@@ -66,11 +67,16 @@ test("widget 折叠行 + main→leader→成员→任务 树字面量（§4）",
     ],
   );
   const expanded = renderWidgetView(view, { selected: true, cursor: 0 }, 120, plainStyles());
-  assert.equal(expanded[0], "▸ main");
-  assert.equal(expanded[1], "  leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行");
-  assert.equal(expanded[2], "  ├─ frontend ● running · turn 1");
-  assert.equal(expanded[3], "  ╰─ backend ✓ done");
-  assert.equal(expanded[4], "↑↓ 选择 · enter 查看 · esc 退出");
+  const text = expanded.map((line) => line.trimEnd());
+  assert.equal(text[0], "▸ main");
+  assert.equal(text[1], "  leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行");
+  assert.equal(text[2], "  ├─ frontend ● running · turn 1");
+  assert.equal(text[3], "  ╰─ backend ✓ done");
+  assert.equal(text[4], "↑↓ 选择 · enter 查看 · esc 退出");
+  assert.ok(
+    expanded.every((line) => visibleWidth(line) === 120 - 2),
+    "每行补齐到宿主内容宽（终端宽 − 2；宿主 Text(line,1,0) 两侧各 1 列 margin）",
+  );
 });
 
 test("VIEWER_OVERLAY_OPTIONS 五字段逐字对齐 fleet overlayOptions（fleet.ts:1440）", () => {

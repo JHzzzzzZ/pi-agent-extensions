@@ -124,6 +124,77 @@ test("widget 场景：宿主包装（Text(line,1,0)）与 editor 上下关系", 
   assert.ok(borderIdx >= 0 && borderIdx < mainIdx, "widget 在 editor 下边框之下（belowEditor 位置）");
 });
 
+test("widget 场景：真实宿主包装下背景块连续等宽、选中行更强背景、不折行", () => {
+  const scene = captureWidgetScene({ cols: 120, rows: 14 });
+  const { grid, cols } = scene;
+  const bgRows = grid
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.some((cell) => cell?.bg));
+  assert.equal(bgRows.length, 5, `widget 帧 5 行（main/leader/2 成员/提示）不得折行，实得背景物理行 ${bgRows.length}`);
+
+  for (const { row, index } of bgRows) {
+    const firstBg = row[1]?.bg;
+    assert.ok(firstBg, `物理行 ${index}: 内容列（1..${cols - 2}）必须带背景`);
+    assert.equal(row[0]?.bg, null, `物理行 ${index}: 左侧宿主 margin 落在背景之外`);
+    assert.equal(row[cols - 1]?.bg, null, `物理行 ${index}: 右侧宿主 margin 落在背景之外`);
+    for (let col = 1; col <= cols - 2; col++) {
+      assert.equal(row[col]?.bg, firstBg, `物理行 ${index} 列 ${col}: 背景必须连续等宽`);
+    }
+  }
+
+  const selectedRow = bgRows.find(({ row }) => row.some((cell) => cell?.ch === "▸"));
+  assert.ok(selectedRow, "展开态应有选中行（▸）");
+  const selectedBg = selectedRow!.row[1]?.bg;
+  const normalBg = bgRows.find((entry) => entry.index !== selectedRow!.index)!.row[1]?.bg;
+  assert.notEqual(selectedBg, normalBg, "选中行背景必须与普通行不同（更强）");
+  for (const { row, index } of bgRows) {
+    if (index === selectedRow!.index) continue;
+    assert.equal(row[1]?.bg, normalBg, `物理行 ${index}: 普通行共享同一背景色`);
+  }
+  assert.ok(bgRows.at(-1)!.row.some((cell) => cell?.ch === "↑"), "底部提示行在背景块内");
+
+  const text = scene.lines.join("\n");
+  assert.ok(text.includes("├─ front"), "非末项成员行在背景块内");
+  assert.ok(text.includes("╰─ back"), "末项圆角成员行在背景块内");
+});
+
+test("widget 场景折叠态（真实宿主包装）：单行背景等宽铺满内容区", () => {
+  const scene = captureWidgetScene({ cols: 120, rows: 14, selected: false });
+  const { grid, cols } = scene;
+  const bgRows = grid.filter((row) => row.some((cell) => cell?.bg));
+  assert.equal(bgRows.length, 1, "折叠态恰好 1 行且有背景");
+  const row = bgRows[0]!;
+  assert.ok(row[1]?.bg, "折叠行内容列有背景");
+  assert.equal(row[0]?.bg, null);
+  assert.equal(row[cols - 1]?.bg, null);
+  for (let col = 1; col <= cols - 2; col++) {
+    assert.equal(row[col]?.bg, row[1]?.bg, `折叠行列 ${col}: 背景连续等宽`);
+  }
+  assert.ok(
+    scene.lines.some((line) => line.includes("agent-team count-duet · ↓/← 查看详情")),
+    "折叠单行文案不变",
+  );
+});
+
+test("widget 场景窄宽度（20 列）：背景块不折行、不超宽、每行等宽", () => {
+  const scene = captureWidgetScene({ cols: 20, rows: 14 });
+  const { grid, cols } = scene;
+  const bgRows = grid
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.some((cell) => cell?.bg));
+  assert.equal(bgRows.length, 5, `20 列下依然 5 个物理行（没折行），实得 ${bgRows.length}`);
+  for (const { row, index } of bgRows) {
+    const firstBg = row[1]?.bg;
+    assert.ok(firstBg, `物理行 ${index}: 内容列必须有背景`);
+    assert.equal(row[0]?.bg, null);
+    assert.equal(row[cols - 1]?.bg, null);
+    for (let col = 1; col <= cols - 2; col++) {
+      assert.equal(row[col]?.bg, firstBg, `物理行 ${index} 列 ${col}: 背景连续等宽`);
+    }
+  }
+  assert.ok(scene.lines.some((line) => line.includes("…")), "窄宽度内容截断为 …（不溢出）");
+});
+
 test("widget 产物：确定性 + 进 captureAll", () => {
   const a = captureWidgetScene();
   const b = captureWidgetScene();

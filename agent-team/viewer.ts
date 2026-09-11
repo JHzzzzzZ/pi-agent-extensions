@@ -40,6 +40,10 @@ export interface Styles {
   warning: (text: string) => string;
   /** User-message bubble background (task entries). */
   bubble: (text: string) => string;
+  /** Bright-block row background (widget rows; host theme `userMessageBg`). */
+  rowBg: (text: string) => string;
+  /** Selected bright-block row background (stronger than `rowBg`; host theme `selectedBg`). */
+  rowSelectedBg: (text: string) => string;
   /** Bold (fleet uses it for the selected roster label + header keys). */
   bold: (text: string) => string;
 }
@@ -55,6 +59,8 @@ export function plainStyles(): Styles {
     error: identity,
     warning: identity,
     bubble: identity,
+    rowBg: identity,
+    rowSelectedBg: identity,
     bold: identity,
   };
 }
@@ -64,6 +70,13 @@ export function themeStyles(theme: Theme): Styles {
   const fg = (color: Parameters<Theme["fg"]>[0]) => (text: string): string => {
     try {
       return theme.fg(color, text);
+    } catch {
+      return text;
+    }
+  };
+  const bg = (color: Parameters<Theme["bg"]>[0]) => (text: string): string => {
+    try {
+      return theme.bg(color, text);
     } catch {
       return text;
     }
@@ -82,13 +95,9 @@ export function themeStyles(theme: Theme): Styles {
         return text;
       }
     },
-    bubble: (text: string): string => {
-      try {
-        return theme.bg("userMessageBg", text);
-      } catch {
-        return text;
-      }
-    },
+    bubble: bg("userMessageBg"),
+    rowBg: bg("userMessageBg"),
+    rowSelectedBg: bg("selectedBg"),
   };
 }
 
