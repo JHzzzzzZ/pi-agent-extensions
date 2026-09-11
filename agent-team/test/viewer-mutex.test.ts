@@ -237,16 +237,29 @@ type ViewerComponentLike = {
   render: (width: number) => string[];
 };
 
+/** 一次模拟的宿主 select 调用：测试可控解答/取消。 */
+interface SelectCallCapture {
+  title: string;
+  options: string[];
+  /** 用户作答（宿主 promise 语义：首次落定生效）。 */
+  resolve: (value: string | undefined) => void;
+  /** 模拟 Esc/取消（selector onCancel）。 */
+  cancel: () => void;
+}
+
 /**
  * 可关闭的 /team:view ctx：custom 捕获真实 TranscriptViewer 实例 + done
- * 回调；测试经 component.handleInput("\x03") 关闭 overlay，驱动 openViewer
- * 的 finally（widget 恢复）完整跑完。
+ * 回调（记 resolvedCustoms）；select 捕获标题/选项并暴露可控落定。测试经
+ * component.handleInput("\x03") 关闭 overlay，驱动 openViewer 的 finally
+ * （widget 恢复）完整跑完。
  */
-function closableViewCtx(opts: { timeline?: string[]; customCalls?: unknown[][] }) {
+function closableViewCtx(opts: { timeline?: string[]; customCalls?: unknown[][]; selectCalls?: SelectCallCapture[] }) {
   const timeline = opts.timeline ?? [];
   const customCalls = opts.customCalls ?? [];
+  const selectCalls = opts.selectCalls ?? [];
   let viewerComponent: ViewerComponentLike | undefined;
   let resolveCustom: ((v: unknown) => void) | undefined;
+  let resolvedCustoms = 0;
   const ui = {
     notify: (): void => {},
     theme: { fg: (_color: string, text: string): string => text },
@@ -259,11 +272,25 @@ function closableViewCtx(opts: { timeline?: string[]; customCalls?: unknown[][] 
         keybindings: unknown,
         done: (r: unknown) => void,
       ) => unknown;
-      viewerComponent = factory({}, { fg: (_c: string, t: string) => t }, undefined, (r) => resolveCustom?.(r)) as never;
+      viewerComponent = factory({}, { fg: (_c: string, t: string) => t }, undefined, (r) => {
+        resolvedCustoms += 1;
+        resolveCustom?.(r);
+      }) as never;
       return new Promise<unknown>((resolve) => {
         resolveCustom = resolve;
       });
     },
+    select: (title: string, options: string[], selectOpts?: { signal?: AbortSignal }): Promise<string | undefined> =>
+      new Promise<string | undefined>((resolve) => {
+        let settled = false;
+        const settle = (value: string | undefined): void => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        selectCalls.push({ title, options, resolve: settle, cancel: () => settle(undefined) });
+        selectOpts?.signal?.addEventListener("abort", () => settle(undefined), { once: true });
+      }),
   };
   return {
     ctx: { hasUI: true, mode: "tui", ui },
@@ -275,6 +302,9 @@ function closableViewCtx(opts: { timeline?: string[]; customCalls?: unknown[][] 
       assert.ok(viewerComponent, "渲染前应已有 viewer 组件实例");
       return viewerComponent!.render(width);
     },
+    /** openTranscriptViewer 的 custom promise 已落定的次数（= viewer 收起次数）。 */
+    resolvedCustoms: (): number => resolvedCustoms,
+    selectCalls,
   };
 }
 
@@ -423,4 +453,95 @@ test("接线：终态 run 查看器活动行恒 `run 已结束`（回放，不�
   assert.doesNotMatch(frame, /距上次输出/, "终态不带时长（零时钟重绘）");
   closable.close();
   resetDoubleLoadGuardForTests();
+});
+
+// ---------------------------------------------------------------------------
+// Slice 11：viewer ↔ leader 提问互斥接线（真机 bug：viewer overlay 盖住
+// team_ask 宿主对话框，且焦点被 selector 抢走）
+// ---------------------------------------------------------------------------
+
+/** leader 提问 wire 行（形状同 cockpit-ask.test.ts；select 方法带选项）。 */
+function askLine(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    type: "extension_ui_request",
+    id: "q1",
+    method: "select",
+    title: "[dev-team] 要发到哪个环境？",
+    options: ["staging", "prod"],
+    ...overrides,
+  });
+}
+
+async function waitUntil(check: () => boolean, label: string): Promise<void> {
+  for (let i = 0; i < 400; i++) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(check(), `${label}（等待 2s 超时）`);
+}
+
+function leaderResponses(child: { writes: string[] }): Array<Record<string, unknown>> {
+  return child.writes
+    .map((line) => {
+      try {
+        return JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    })
+    .filter((message): message is Record<string, unknown> => message?.type === "extension_ui_response");
+}
+
+test("接线：leader 提问到达先收起 viewer，作答/取消后自动重开（三处调用点接线）", async () => {
+  const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
+  process.env.PI_AGENT_TEAM_WIDGET = "0"; // 本用例不测 widget：跳过它的 1s 真定时器
+  const mounted = await mountedSession([]);
+  try {
+    const { pi, child, sessionCtx } = mounted;
+    const customCalls: unknown[][] = [];
+    const selectCalls: SelectCallCapture[] = [];
+    const closable = closableViewCtx({ customCalls, selectCalls });
+    // 真机里 /team:view 与提问对话框共用同一个主会话 ctx.ui；mountedSession
+    // 的会话 ctx 已持有 team_run 的 askPort（capture ctx 对象），把可观测的
+    // viewer/dialog 表面接上去，三处调用点就都在真实接线上跑。
+    Object.assign((sessionCtx as { ui: Record<string, unknown> }).ui, {
+      custom: closable.ctx.ui.custom,
+      select: closable.ctx.ui.select,
+    });
+    const view = pi.commands.get("team:view");
+    assert.ok(view, "cockpit 应注册 /team:view 命令");
+
+    void view.handler("", sessionCtx as never);
+    await waitUntil(() => customCalls.length === 1, "/team:view 应打开 viewer overlay");
+    assert.equal(closable.resolvedCustoms(), 0, "打开后 viewer 尚未收起");
+
+    child.emitLine(askLine({ id: "q1" }));
+    await waitUntil(() => selectCalls.length === 1, "提问应呈现为宿主对话框");
+    assert.equal(selectCalls[0]?.title, "[dev-team] 要发到哪个环境？");
+    assert.deepEqual(selectCalls[0]?.options, ["staging", "prod"]);
+    assert.equal(closable.resolvedCustoms(), 1, "select 呈现前 viewer 已收起（custom 已落定）");
+
+    selectCalls[0]!.resolve("staging");
+    await waitUntil(() => customCalls.length === 2, "作答后 viewer 应自动重开");
+    assert.deepEqual(
+      leaderResponses(child),
+      [{ type: "extension_ui_response", id: "q1", value: "staging" }],
+      "答案应回写 leader stdin",
+    );
+
+    child.emitLine(askLine({ id: "q2" }));
+    await waitUntil(() => selectCalls.length === 2, "第二次提问应再次呈现对话框");
+    assert.equal(closable.resolvedCustoms(), 2, "第二次提问前 viewer 再次收起");
+    selectCalls[1]!.cancel(); // Esc/取消
+    await waitUntil(() => customCalls.length === 3, "取消后 viewer 应自动重开");
+    assert.deepEqual(
+      leaderResponses(child)[1],
+      { type: "extension_ui_response", id: "q2", cancelled: true },
+      "取消应回写 cancelled",
+    );
+  } finally {
+    await mounted.stop();
+    if (previousWidget === undefined) delete process.env.PI_AGENT_TEAM_WIDGET;
+    else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
+  }
 });
