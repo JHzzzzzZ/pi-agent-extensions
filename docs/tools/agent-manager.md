@@ -1,6 +1,6 @@
 # agent-manager — 独立 agent 管理工具（非 Pi 扩展）
 
-> last verified @ ee7f29d
+> last verified @ 0180cac
 
 ## 职责与边界
 
@@ -49,7 +49,7 @@
 
 ## 改动清单
 
-- 必跑：`cd agent-manager && npm install && npm test`（37 个）+ `npm run typecheck`；真机 `npm run test:e2e`（opt-in，需 `AGENT_MANAGER_E2E_MODEL` + 鉴权 + 网络）；根 `npm run test:contract` / `test:smoke` / `test:todo` + `node tools/install-smoke.mjs`（13/13，注销后仍证明清单与期望表一致）。
+- 必跑：`cd agent-manager && npm install && npm test`（37 个）+ `npm run typecheck`；真机 `npm run test:e2e`（opt-in，需 `AGENT_MANAGER_E2E_MODEL` + 鉴权 + 网络）；根 `npm run test:contract` / `test:smoke` / `test:todo` + `node tools/install-smoke.mjs`（12/12，注销后仍证明清单与期望表一致）。
 - 改端口/路由/错误码/静态错误模板：同步本卡 + `agent-manager/README.md` + 根 README「agent-manager」章节；不改根 `EXTENSION_EXPECTATIONS`（非扩展，无命令面）。
 - 改写语义（rename/trash/restore）：先与宿主 `dist/core/session-manager.js` 复核 `session_info` 形状，再改 core + core.test + 本卡「不变量」。
 - 改设置优先级/配置文件位置：同步 `settings.ts` 头注释 + `agent-manager/README.md` 设置表 + 本卡。
