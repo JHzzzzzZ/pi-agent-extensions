@@ -491,21 +491,22 @@ node --experimental-strip-types --test solo-mode/index.test.ts   # 22 个测试
 
 ## todo-cli
 
-`todos/` 工作流的**仓库级 CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。唯一入口是仓库根的 `node tools/todo.mjs`（实现源 `todo-cli/core.ts`），`REPO_ROOT` 由脚本位置解析，任意 cwd 可用。
+`todos/` 工作流的**仓库级 CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作；并支持基于 markdown 派生 sqlite 索引的结构化组合查询（list 新 flags + `db` 子命令，索引可随时删除重建）。唯一入口是仓库根的 `node tools/todo.mjs`（实现源 `todo-cli/core.ts`），`REPO_ROOT` 由脚本位置解析，任意 cwd 可用。
 
 ```bash
 node tools/todo.mjs summary [--json]                    # 全量盘点（open / processing / done）
-node tools/todo.mjs list [--status open|processing|done] [--file <name>]   # 按状态/文件列条目
+node tools/todo.mjs list [--status open|processing|done] [--file <name>] [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]   # 按状态/文件/分支/标签/文本/领取时间组合查询（AND）
 node tools/todo.mjs add --file <name> "描述"             # 追加登记（跨文件查重，重复拒绝；--force 强制）
 node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]   # 领取并标 processing
 node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]  # 完成勾选 [x] 并去标注
 node tools/todo.mjs lint                                # 单向核对 pi.extensions 扩展 ↔ todo 文件
 node tools/todo.mjs triage [--json]                     # 只读扫描 worktree↔条目关联与遗留
+node tools/todo.mjs db status|rebuild|drop              # sqlite 索引：状态 / 从 markdown 全量重建 / 删除（markdown 恒为权威）
 node tools/todo.mjs --help                              # 打印用法
 ```
 
-- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝）、保持 CRLF 行尾、绝不自动 commit；登记（`add`）不标 processing，领取（`claim`）才标（动作显式分离）
-- **测试** — 仓库根 `npm run test:todo`（16 个，含 3 个进程边界 E2E）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝）、保持 CRLF 行尾、绝不自动 commit；登记（`add`）不标 processing，领取（`claim`）才标（动作显式分离）；结构化查询经 `todos/.todo-cli/` 派生 sqlite 索引（gitignore、可 `db drop` 回退纯 markdown）
+- **测试** — 仓库根 `npm run test:todo`（50 个，含 3 个进程边界 E2E）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
