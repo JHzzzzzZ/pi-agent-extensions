@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 99d7b11
+> last verified @ 3ef1793
 
 ## 职责与边界
 
@@ -11,7 +11,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - `types.ts` — 团队文件格式（frontmatter `leader` + `members[]`，块标量 prompt）、常量（entry / 消息类型 / 环境变量 / 上限）。**改团队文件格式必看这里。**
 - `config.ts` — 团队发现：`~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`，同名项目优先，每次使用重扫；frontmatter `budget:` 块解析（非法值 → `INVALID_TEAM_FILE`）。
 - `runner.ts` — 子 `pi` 进程契约：**leader 走 `--mode rpc`**（stdin 发 `prompt`/`steer` JSON 行，`agent_settled` 后关 stdin 使进程退出；RPC 只在 stdin 结束时退出）；member 走 `--mode json -p`（一次性，prompt 全在 argv ⇒ stdin 默认 `ignore`）。`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn`）与 stdin（`onChild`）；`onWire` 转发每行解析后的原始 JSON（RPC 的 `response`/`agent_settled` 只在此层可见）。
-- `runstore.ts` — 每 run `status.json` 元数据快照（落 `teams/runs/<runId>/`，与 transcript 同目录同 7 天 retention）：coordinator claim 即写 running（含 leaderPid），每条退出路径落终态；`session_start` reconcile 把上次会话残留的 running 翻成 failed 记录（只报告**不杀**孤儿 leader，避免 PID 复用误杀）。
+- `runstore.ts` — 每 run `status.json` 元数据快照（落 `teams/runs/<runId>/`，与 transcript 同目录同 7 天 retention）：coordinator claim 即写 running（含 leaderPid + ownerPid），每条退出路径落终态；`session_start` reconcile 只翻「非本进程 in-memory 且 ownerPid 已死/缺失」的 running（属主会话还活着的 run 不动），只报告**不杀**孤儿 leader，避免 PID 复用误杀。
 - `preflight.ts` — run 前 model 预检（纯函数 + 注入 registry lookup）：解析不了 → `MODEL_NOT_FOUND` 硬失败不 spawn；找到但无鉴权 → warning 放行；成员无 model 跳过（默认模型无从校验）。
 - `doctor.ts` — `/team:doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
 - `dispatch.ts`（leader 模式工具）、`cockpit.ts`（cockpit 模式工具）、`manage.ts`（team_create/list）、`chat.ts`（viewer 发消息：task 模板 + transcript 尾部截断 + FIFO 队列/链式门控，纯逻辑层，宿主接线在 index.ts）。
@@ -26,7 +26,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 4. cockpit 侧把 leader turn usage + 每次 dispatch 的 `details.totalUsage` 折叠进 `RunBudgetSnapshot`；费用/token 超限 → abort controller，终态 aborted + `BUDGET_EXCEEDED`。
 5. leader 汇总 → 退出码 0 → 报告经 `finalizeRun`（wait/后台单一终态路径）持久化 + 交付：后台 followUp 自动送达主会话；`wait: true` 内联返回（同步契约不变）。
 6. `team_stop <runId>` 中止：`stopAndSettle()` SIGTERM→SIGKILL 后有界等待（默认 7s）落定，返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达，可立即重新派单。viewer 内 `D` 停止共用同一停止语义：确认后经 `viewerStopAction` → `stopAndSettle()`（`index.ts` 导出仅供测试），结果映射为顶部 notice（settled → success、未落定 → warning、异常 → error，绝不上抛）；run 已结束/无活动 run 时纯渲染层 notice 拦截，不进确认态、回调不会被调。
-7. 崩溃恢复：主会话中断 ⇒ 下次 `session_start` 把残留 running `status.json` 翻成 failed 记录 + 孤儿 leader PID 警告（不杀进程）；`/team:doctor` 可看全部残留与损坏文件。
+7. 崩溃恢复：主会话中断 ⇒ 下次 `session_start` 只把**属主已死**（ownerPid 探活失败）或无 ownerPid 的残留 running `status.json` 翻成 failed 记录 + 孤儿 leader PID 警告（不杀进程）；属主会话仍在跑自己的 run，非属主会话不得翻；`/team:doctor` 可看全部残留与损坏文件。
 8. viewer 发消息（`m`，`chat.ts` + index 接线）：**目标 = leader 且 run 运行中且 leader stdin 可用 → RPC `steer` 插话**（`ChatCoordinatorDeps.steerLeader` → `cockpit.steerLeader()` 写 `{"type":"steer"}`；pi 在当前助手回合执行完工具调用后、下次 LLM 调用前送达——不打断任务；提交返回 `{kind:"steered"}`，notice 提示「已插话（steer）」）；其余情况走派单语义：消息 → `buildChatTask`（leader 直发 / 成员转派，附目标 actor transcript 尾部 ≤2000 字节，**派出时刻现读**）→ 复用 `startBackgroundRun`（含 model 预检）派新后台 run；run 运行中则 FIFO 入队，runPromise 收尾调 `chat.onRunFinalized`——completed 链式派出下一条（一次一条，链式 run 的收尾继续驱动），failed/aborted 清空队列并 notify；`team_stop`/`/team:stop`/viewer `D`（`viewerStopAndClearChat`）/`/team:clear` 显式停止也清队列并提示丢弃条数。队列驻留在 cockpit 闭包不落盘（易失交互态，/reload 丢失可接受）。
 
 ## 不变量
@@ -35,8 +35,8 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - 自包含：不引 pwr、不依赖其它扩展目录，独立可复制加载。
 - 上限：每 dispatch 8 任务、4 并发、50KB 结果、8KB 摘要（协议级常量，不可配；`TeamErrorCodes` result union）。派发/成员运行预算可配（frontmatter `budget:`，默认 12/40；费用/token 默认无限），schema 级上限不进 budget。
 - **worktree 同 run 重派复用（v1.15.3）**：`createWorktree` 先读 `git worktree list --porcelain`——路径已注册且分支匹配 ⇒ 直接复用（返回 `{path, branch}`）；已注册但分支不匹配 ⇒ 提示 `git worktree remove --force "<path>"`；已注册但目录缺失（stale）⇒ 提示 `git worktree prune`；目录存在但未注册（被普通目录占用）⇒ 提示手工清理；`git worktree add <path> -b <branch>` 失败后分类：分支存在且被其它 worktree 检出 ⇒ 真 fatal + `git worktree list` 定位提示，分支存在但空闲 ⇒ attach 复用既有分支（`worktree add <path> <branch>`）。**设计决策：选复用而非新错误码**——同 run 二次派发对 leader 语义上应成功，可自动恢复的情况不推给人工（真机事故见 `docs/incidents.md`）。错误文案统一经导出的 `worktreeError()`：跳过 git 进度行（Preparing worktree / HEAD is now at / Updating files / Checking out files）取 fatal/error 行，无非进度行才回退首行；CRLF/连续空白压单行，仍 300 字上限。
-- `status.json` 只存元数据快照（runId/team/task/startedAt/status/leaderPid/updatedAt/error）——完整 `TeamRunRecord` 仍走 session entries；写入 best-effort，读取宽松解析，损坏文件隔离不抛错（doctor/reconcile 报告）。
-- **reconcile 只报告不杀**：孤儿 leader 的 PID 仅进诊断信息（PID 复用风险）；reconcile 排除 in-memory run（同实例 re-bind 场景）。
+- `status.json` 只存元数据快照（runId/team/task/startedAt/status/leaderPid/ownerPid/updatedAt/error）——完整 `TeamRunRecord` 仍走 session entries；写入 best-effort，读取宽松解析（ownerPid 可选，v1 旧文件读为 undefined），损坏文件隔离不抛错（doctor/reconcile 报告）。**startedAt 语义**：claim 时生成一次放进 `RunPlan.startedAt`，running 快照/spawn 刷新/终态快照/终态 `TeamRunRecord` 同用该值——终态 elapsed = updatedAt − startedAt 才真实（旧缺陷：终态重写 `now()`，elapsed 恒 0）。
+- **reconcile 只报告不杀**：孤儿 leader 的 PID 仅进诊断信息（PID 复用风险）；判定顺序：非 running 跳过 → in-memory run 跳过 → `ownerPid === currentPid` 跳过（防御兜底）→ ownerPid 存在且探活（默认 `process.kill(pid, 0)`：ESRCH 死 / EPERM 活）为真 ⇒ 跳过 → ownerPid 存在但已死 ⇒ 翻 failed（孤儿诊断不变）→ 无 ownerPid（v1 旧残留）⇒ 保持旧行为翻 failed（防永久滞留）。`ownerPid` 是写快照的主 pi 进程 PID，区别于 `leaderPid`（leader 子进程）。
 - wait/后台两条路径共用 `finalizeRun`（appendRunRecord + 通知/交付单一实现）——改终态行为只改这一处。
 - run 生命周期由 coordinator 同步 claim 保护：`start()` 在首个 await 前占住 active/pending/progress，finally 清空——并发 start 竞态与终态后残留 progress 均由此拦截；aborted 终态必须补全 roster 成员（queued/running → aborted），否则 widget/status 少报。
 - `team_stop` 的 runId 必填：省略/未知/已结束分别返回 `RUN_ID_REQUIRED`/`RUN_NOT_FOUND`/`RUN_ALREADY_FINISHED`（类型化错误，不抛异常）。
@@ -73,7 +73,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（368 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（377 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
