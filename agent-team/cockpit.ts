@@ -10,7 +10,9 @@
  */
 
 import * as path from "node:path";
+import { archiveRunRecords } from "./archive.ts";
 import { startAlignedTicker } from "./aligned-ticker.ts";
+import { AskChannel, outcomeEntryText, questionEntryText, type AskPort } from "./ask.ts";
 import { splitModelThinking } from "./config.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
@@ -20,6 +22,7 @@ import { fileRunStore, RUN_STATUS_VERSION, type RunStoreWriter } from "./runstor
 import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, teamWorktreeBranch, type GitRunner } from "./worktree.ts";
 import {
+  DERIVED_AGENT_TOOL_DENYLIST,
   LEADER_ENV_FILE,
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
@@ -72,17 +75,50 @@ export interface CoordinatorDeps {
   /** Test seams. */
   now?: () => string;
   nowMs?: () => number;
+  /** Test seam: backstop margin over a leader question's timeout (default 5000ms). */
+  askBackstopMarginMs?: number;
 }
 
 export type StartRunResult =
   | { ok: true; value: TeamRunRecord }
-  | { ok: false; code: TeamErrorCode; message: string };
+  | { ok: false; code: TeamErrorCode; message: string; record?: TeamRunRecord };
+
+/**
+ * Minimal failed record for launch-level failures (worktree pre-flight,
+ * worktree creation, leader spawn error) — no member dispatch happened yet,
+ * so the record carries the error only. Written to lastRecord so
+ * /team:status and the viewer can look the failure up after the fact, and
+ * delivered to the main session by the background dispatch path.
+ */
+export function failedRunRecord(input: {
+  runId: string;
+  team: string;
+  task: string;
+  startedAt: string;
+  error: string;
+  durationMs?: number;
+}): TeamRunRecord {
+  return {
+    runId: input.runId,
+    team: input.team,
+    task: input.task,
+    startedAt: input.startedAt,
+    status: "failed",
+    error: input.error,
+    members: [],
+    totalCost: 0,
+    totalTokens: 0,
+    ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+  };
+}
 
 /** Input of one team run (spawned leader + member dispatch). */
 interface StartOptions {
   team: TeamConfig;
   task: string;
   ui: UiPort;
+  /** Main-session dialog port for leader questions (absent = fail-closed). */
+  ask?: AskPort;
   onProgress?: (progress: RunProgress) => void;
   signal?: AbortSignal;
 }
@@ -127,6 +163,9 @@ export interface RunStatusSnapshot {
 
 /** 任务行显示上限（仅任务文本本身，不含 `任务: ` 前缀）：60 显示列。 */
 const STATUS_TASK_MAX_WIDTH = 60;
+
+/** Live leader activity shown while a question waits for the human. */
+const ASK_ACTIVITY_MAX_WIDTH = 80;
 
 /** 任务文本：先压平换行，再按显示宽度截断（CJK 双宽，超宽补 `…`）。 */
 function statusTaskText(task: string): string {
@@ -192,6 +231,31 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
   }
 
   return "当前没有 team run 记录。用 /team:run <团队> <任务> 或 team_run 工具派单。";
+}
+
+/**
+ * 终态归档：把该 run 的记录复制到主工作区 `history/team-runs/<runId>/`
+ * （worktree 记录会随 run worktree 被删，见 archive.ts 根因说明）。冲突与失败
+ * 只发 warning 诊断，绝不影响终态、绝不抛异常；扫描源期间记录尚未落盘或已被
+ * 移除都只是正常空操作。
+ */
+function archiveTerminalRun(deps: CoordinatorDeps, runId: string, ui: UiPort): void {
+  try {
+    const result = archiveRunRecords({
+      runId,
+      baseCwd: deps.cwd(),
+      worktreeRunRoot: path.join(deps.worktreeRoot, runId),
+    });
+    const diagnostics = [...result.failures, ...result.conflicts];
+    if (diagnostics.length === 0) return;
+    try {
+      ui.notify(`run ${runId} 记录归档诊断：\n${diagnostics.join("\n")}`, "warning");
+    } catch {
+      /* notify failures never break the run */
+    }
+  } catch {
+    /* archiving must never break a run */
+  }
 }
 
 /**
@@ -462,8 +526,26 @@ export class TeamRunCoordinator {
     // stale "running" on disk (session_start reconcile depends on it). The
     // leader PID is carried into the terminal snapshot for orphan diagnostics.
     let leaderPid: number | undefined;
+    // Leader → human questions: created once the transcript sink exists,
+    // disposed on settle/abort (see the finally block).
+    let askChannel: AskChannel | undefined;
     const writeTerminal = (status: RunStatus, error?: string): void =>
       this.persistRunStatus({ runId, team: team.name, task, startedAt, status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
+    // 终态单一出口：先落终态快照，再归档 run 记录（归档异常绝不影响终态；
+    // 预检失败等无记录路径归档只是空操作）。
+    const finish = (status: RunStatus, error?: string): void => {
+      writeTerminal(status, error);
+      archiveTerminalRun(this.deps, runId, options.ui);
+    };
+    // Minimal failed record for launches that die before any dispatch
+    // (worktree pre-flight / createWorktree / spawn): keeps /team:status and
+    // the viewer able to look the failure up, and lets the background
+    // dispatch path deliver it to the main session.
+    const writeFailedRecord = (error: string): TeamRunRecord => {
+      const record = failedRunRecord({ runId, team: team.name, task, startedAt, error, durationMs: nowMs() - startedAtMs });
+      this.lastRecord = record;
+      return record;
+    };
 
     // Budget accounting: leader turns are cumulative (event.usage), member
     // dispatches accumulate per tool_execution_end (details.totalUsage).
@@ -503,11 +585,12 @@ export class TeamRunCoordinator {
       if (needsWorktree) {
         if (!(await isGitRepo(git, baseCwd))) {
           const message = `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`;
-          writeTerminal("failed", message);
+          finish("failed", message);
           return {
             ok: false,
             code: "WORKTREE_UNAVAILABLE",
             message,
+            record: writeFailedRecord(message),
           };
         }
         if (team.worktree) {
@@ -519,8 +602,8 @@ export class TeamRunCoordinator {
           });
           if (!created.ok) {
             const message = `预检失败：创建团队共享 worktree 失败 — ${created.message}`;
-            writeTerminal("failed", message);
-            return { ok: false, code: created.code, message };
+            finish("failed", message);
+            return { ok: false, code: created.code, message, record: writeFailedRecord(message) };
           }
           sharedWorktree = created.value;
         }
@@ -539,8 +622,34 @@ export class TeamRunCoordinator {
         }
       };
 
+      // Leader questions (RPC dialogs): presented in the main session, the
+      // answer travels back over the same stdin channel steer uses. Every
+      // failure path is bounded (timeout / abort / no UI) — the run never
+      // waits forever on a human.
+      askChannel = new AskChannel({
+        port: options.ask,
+        write: (line) => this.leaderStdin?.write(line),
+        signal: controller.signal,
+        backstopMarginMs: this.deps.askBackstopMarginMs,
+        onQuestion: (request) => {
+          recordTranscript("question", questionEntryText(request));
+          progress.leaderActivity = `等待人工回答：${truncateVisible(flattenText(request.title), ASK_ACTIVITY_MAX_WIDTH)}`;
+          render();
+        },
+        onOutcome: (_request, outcome) => {
+          const entry = outcomeEntryText(outcome);
+          recordTranscript(entry.kind, entry.text);
+          progress.leaderActivity = outcome.kind === "answer" ? "已收到回答，leader 继续" : "未获回答，leader 继续";
+          render();
+        },
+      });
+
       const onEvent = (event: ChildEvent) => {
         if (event.type === "message_end" && event.role === "assistant") {
+          // Leader 阶段：assistant 消息落地 = 思考/等待下一个事件（v1.17.0 活动行）。
+          progress.leaderPhase = "waiting";
+          delete progress.leaderToolName;
+          progress.leaderLastEventAtMs = nowMs();
           if (event.fullText) recordTranscript("assistant", event.fullText);
           if (event.usage) {
             progress.leaderNote = `turn ${event.usage.turns}`;
@@ -557,9 +666,17 @@ export class TeamRunCoordinator {
           return;
         }
         if (event.type === "tool_execution_start") {
+          // Leader 阶段：进入工具调用（工具名供 viewer 活动行显示）。
+          progress.leaderPhase = "tool";
+          progress.leaderToolName = event.toolName;
+          progress.leaderLastEventAtMs = nowMs();
           // Transcript keeps every leader tool call; progress only tracks dispatch.
           recordTranscript("tool", toolCallText(event.toolName, event.args));
-          if (event.toolName !== "team_dispatch") return;
+          if (event.toolName !== "team_dispatch") {
+            // 普通工具的起止也改变 leader 活动阶段：必须刷新观察者。
+            render();
+            return;
+          }
           const tasks = (event.args as { tasks?: Array<{ agent?: string; task?: string }> } | undefined)?.tasks;
           const b = progress.budget;
           if (b) {
@@ -579,9 +696,39 @@ export class TeamRunCoordinator {
           render();
           return;
         }
+        if (event.type === "tool_execution_update") {
+          // 工具流式输出：只刷新时间；team_dispatch 的进度载荷带成员活动，
+          // 按名字折入 progress.members（viewer 成员活动行数据源，v1.17.0）。
+          progress.leaderLastEventAtMs = nowMs();
+          if (event.toolName === "team_dispatch") {
+            const members = parseDispatchMemberResults(event.details);
+            if (members) {
+              for (const member of members) {
+                const existing = progress.members.find((m) => m.name === member.name);
+                if (!existing) continue;
+                existing.status = member.status;
+                if (member.note !== undefined) existing.note = member.note;
+                if (member.latest !== undefined) existing.latest = member.latest;
+                if (member.phase !== undefined) existing.phase = member.phase;
+                if (member.toolName !== undefined) existing.toolName = member.toolName;
+                else delete existing.toolName;
+                if (member.lastActivityAtMs !== undefined) existing.lastActivityAtMs = member.lastActivityAtMs;
+              }
+            }
+          }
+          render();
+          return;
+        }
         if (event.type === "tool_execution_end") {
+          // Leader 阶段：工具结束 = 思考中（活动行显式回 waiting）。
+          progress.leaderPhase = "waiting";
+          delete progress.leaderToolName;
+          progress.leaderLastEventAtMs = nowMs();
           recordTranscript("tool", toolResultText(event.toolName, event.text));
-          if (event.toolName !== "team_dispatch") return;
+          if (event.toolName !== "team_dispatch") {
+            render();
+            return;
+          }
           const totalUsage = parseDispatchTotalUsage(event.details);
           if (totalUsage) {
             memberCost += totalUsage.cost;
@@ -626,6 +773,7 @@ export class TeamRunCoordinator {
       if (team.leader.model) args.push("--model", team.leader.model);
       if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
       if (this.deps.extensionEntryPath) args.push("-e", this.deps.extensionEntryPath);
+      args.push("--exclude-tools", DERIVED_AGENT_TOOL_DENYLIST.join(","));
       args.push("--append-system-prompt", `team-tmp://${leaderPrompt}`);
 
       const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
@@ -671,14 +819,22 @@ export class TeamRunCoordinator {
         // process exits — it only ever returns on stdin end.
         onWire: (message) => {
           if (message.type === "agent_settled") {
+            // Leader is exiting: drop any in-flight question and close stdin
+            // (RPC exits only on stdin end).
+            askChannel?.dispose();
             this.closeLeaderStdin();
             return;
           }
           if (message.command === "prompt" && message.success === false) {
             this.promptError =
               typeof message.error === "string" ? message.error : "pi rejected the leader prompt";
+            askChannel?.dispose();
             this.closeLeaderStdin();
+            return;
           }
+          // Dialog requests (extension_ui_request) are bridged to the main
+          // session; everything else stays tolerated-and-ignored.
+          askChannel?.handle(message);
         },
       });
 
@@ -754,15 +910,17 @@ export class TeamRunCoordinator {
       const runStatus = aborted ? "aborted" : failed ? "failed" : "completed";
       recordTranscript("system", `run ${runStatus} · ${Math.round((record.durationMs ?? 0) / 100) / 10}s · $${record.totalCost.toFixed(4)}`);
       if (record.error) recordTranscript("error", record.error);
-      writeTerminal(record.status, record.error);
+      finish(record.status, record.error);
       this.lastRecord = record;
       return { ok: true, value: record };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      recordTranscript("error", `CHILD_FAILED: failed to start leader process: ${message}`);
-      writeTerminal("failed", `failed to start leader process: ${message}`);
-      return { ok: false, code: "CHILD_FAILED", message: `failed to start leader process: ${message}` };
+      const error = `failed to start leader process: ${message}`;
+      recordTranscript("error", `CHILD_FAILED: ${error}`);
+      finish("failed", error);
+      return { ok: false, code: "CHILD_FAILED", message: error, record: writeFailedRecord(error) };
     } finally {
+      askChannel?.dispose();
       this.closeLeaderStdin();
       this.promptError = undefined;
       this.active = null;

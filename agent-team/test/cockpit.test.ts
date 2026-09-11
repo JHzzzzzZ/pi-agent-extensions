@@ -8,16 +8,17 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
-import type { RunProgress } from "../types.ts";
+import { failedRunRecord, formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
+import { DERIVED_AGENT_TOOL_DENYLIST, type RunProgress } from "../types.ts";
 import { visibleWidth } from "../viewer.ts";
 import { teamWorktreeBranch } from "../worktree.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import {
   makeFakeSpawn,
   messageEndLine,
-  toolExecutionStartLine,
   toolExecutionEndLine,
+  toolExecutionStartLine,
+  toolExecutionUpdateLine,
   waitForChild,
 } from "./helpers.ts";
 
@@ -79,6 +80,13 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   assert.equal(record.args[record.args.indexOf("--model") + 1], "anthropic/claude-opus-4-5");
   const extIndex = record.args.indexOf("-e");
   assert.equal(record.args[extIndex + 1], "/ext/agent-team/index.ts");
+  // The leader may not start nested teams/subagents either: the same
+  // single-source denylist travels as --exclude-tools (host: exclude wins
+  // over --tools allowlists).
+  const denyIndex = record.args.indexOf("--exclude-tools");
+  assert.ok(denyIndex >= 0, "leader argv carries --exclude-tools");
+  assert.equal(record.args[denyIndex + 1], DERIVED_AGENT_TOOL_DENYLIST.join(","));
+  assert.ok(denyIndex < record.args.indexOf("--append-system-prompt"));
   const promptIndex = record.args.indexOf("--append-system-prompt");
   const promptPath = record.args[promptIndex + 1];
   assert.ok(!promptPath.startsWith("team-tmp://"), "prompt materialized to a temp file before spawn");
@@ -231,6 +239,32 @@ test("pre-flight: worktree members without a git repo fail fast without spawning
   assert.equal(result.code, "WORKTREE_UNAVAILABLE");
   assert.match(result.message, /预检失败/);
   assert.equal(spawn.records.length, 0, "no leader spawned");
+  assert.equal(result.record?.status, "failed", "launch-level failure carries a minimal record");
+  assert.deepEqual(result.record?.members, []);
+  assert.match(result.record?.error ?? "", /预检失败/);
+  assert.equal(coordinator.getStatus().lastRecord?.status, "failed", "failed record visible to /team:status");
+});
+
+test("failedRunRecord builds the minimal failed record shape", () => {
+  const record = failedRunRecord({
+    runId: "run-7",
+    team: "dev-team",
+    task: "修复登录 bug",
+    startedAt: "2026-09-05T12:00:00Z",
+    error: "CHILD_FAILED: boom",
+    durationMs: 1234,
+  });
+  assert.equal(record.status, "failed");
+  assert.equal(record.runId, "run-7");
+  assert.equal(record.error, "CHILD_FAILED: boom");
+  assert.deepEqual(record.members, []);
+  assert.equal(record.totalCost, 0);
+  assert.equal(record.totalTokens, 0);
+  assert.equal(record.durationMs, 1234);
+  assert.equal(record.report, undefined);
+
+  const noDuration = failedRunRecord({ runId: "run-8", team: "t", task: "x", startedAt: "2026-09-05T12:00:00Z", error: "e" });
+  assert.equal(noDuration.durationMs, undefined);
 });
 
 test("formatStatusSnapshot renders a running snapshot and the last record", () => {
@@ -714,4 +748,101 @@ test("formatStatusSnapshot running 成员行在状态后带模型（与终态成
     0,
   );
   assert.match(running, /▶ frontend running — gpt-5\.6 — turn 2 — 在写样式/);
+});
+
+// ---------------------------------------------------------------------------
+// v1.17.0 活动阶段（viewer 活动行的 live 数据源）
+// ---------------------------------------------------------------------------
+
+// leader 的 tool/message 事件驱动阶段，时间戳取注入时钟（确定性）。
+test("leader live 阶段：tool start→tool+名字、update 只刷新时间、end/message_end→waiting", async () => {
+  const spawn = makeFakeSpawn();
+  const snapshots: Array<{ phase?: string; toolName?: string; at?: number }> = [];
+  let t = 5_000;
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+    nowMs: () => t,
+  });
+  const promise = coordinator.start({
+    team: fixtureTeam(),
+    task: "t",
+    ui: fakeUi(),
+    onProgress: (p) =>
+      snapshots.push({
+        ...(p.leaderPhase !== undefined ? { phase: p.leaderPhase } : {}),
+        ...(p.leaderToolName !== undefined ? { toolName: p.leaderToolName } : {}),
+        ...(p.leaderLastEventAtMs !== undefined ? { at: p.leaderLastEventAtMs } : {}),
+      }),
+  });
+  const child = await waitForChild(spawn, 0);
+
+  child.emitLine(toolExecutionStartLine("read", { path: "x.ts" }));
+  assert.deepEqual(snapshots.at(-1), { phase: "tool", toolName: "read", at: 5_000 });
+
+  t = 6_000;
+  child.emitLine(toolExecutionUpdateLine("read", { content: [{ type: "text", text: "reading" }] }));
+  assert.deepEqual(snapshots.at(-1), { phase: "tool", toolName: "read", at: 6_000 }, "update 刷新时间、阶段保持");
+
+  t = 7_000;
+  child.emitLine(toolExecutionEndLine("read", { content: [{ type: "text", text: "ok" }] }));
+  assert.deepEqual(snapshots.at(-1), { phase: "waiting", at: 7_000 }, "tool end 清工具名回 waiting");
+
+  t = 8_000;
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "收到" }] }));
+  assert.deepEqual(snapshots.at(-1), { phase: "waiting", at: 8_000 });
+
+  child.emitClose(0);
+  await promise;
+});
+
+// cockpit 侧新增 tool_execution_update 分支：把 dispatch 进度载荷里的成员活动
+// 折入 progress.members（viewer 的成员活动行数据源）。
+test("team_dispatch tool_execution_update：details.members 活动字段按名字折入 progress.members", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+    nowMs: () => 9_000,
+  });
+  const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+  child.emitLine(toolExecutionStartLine("team_dispatch", { tasks: [{ agent: "frontend", task: "a" }] }));
+  child.emitLine(
+    toolExecutionUpdateLine("team_dispatch", {
+      content: [{ type: "text", text: "…" }],
+      details: {
+        members: [
+          {
+            name: "frontend",
+            status: "running",
+            phase: "tool",
+            toolName: "read",
+            lastActivityAtMs: 8_900,
+            note: "turn 2",
+            latest: "在读登录页",
+          },
+        ],
+        totalUsage: { input: 1, output: 1, cost: 0, turns: 1 },
+      },
+    }),
+  );
+
+  const progress = coordinator.getStatus().progress!;
+  const frontend = progress.members.find((m) => m.name === "frontend")!;
+  assert.equal(frontend.phase, "tool");
+  assert.equal(frontend.toolName, "read");
+  assert.equal(frontend.lastActivityAtMs, 8_900);
+  assert.equal(frontend.note, "turn 2");
+  assert.equal(frontend.latest, "在读登录页");
+  assert.equal(frontend.status, "running");
+  assert.equal(progress.leaderPhase, "tool", "leader 仍在执行 team_dispatch");
+  assert.equal(progress.leaderLastEventAtMs, 9_000, "update 刷新 leader 时间");
+
+  child.emitClose(0);
+  await promise;
 });

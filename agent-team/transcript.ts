@@ -22,7 +22,7 @@ import { truncateUtf8 } from "./types.ts";
 export const LEADER_ACTOR = "_leader";
 
 /** Kinds of transcript entries (viewer renders each differently). */
-export const TRANSCRIPT_ENTRY_KINDS = ["task", "assistant", "tool", "error", "system"] as const;
+export const TRANSCRIPT_ENTRY_KINDS = ["task", "assistant", "tool", "error", "system", "question", "answer"] as const;
 export type TranscriptEntryKind = (typeof TRANSCRIPT_ENTRY_KINDS)[number];
 
 /** One bounded transcript line inside a run artifact file. */

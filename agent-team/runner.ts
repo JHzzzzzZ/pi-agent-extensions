@@ -106,7 +106,10 @@ export interface RunChildOptions {
   command: string;
   args: string[];
   cwd?: string;
-  /** Extra environment variables merged over process.env for the child. */
+  /**
+   * Child environment: when set it REPLACES process.env entirely (node
+   * spawn semantics); omitted ⇒ the child inherits process.env.
+   */
   env?: NodeJS.ProcessEnv;
   /**
    * stdin wiring for the child (default `ignore`). Members pass their prompt

@@ -133,3 +133,10 @@
 - 根因：① `reconcileStaleRuns` 只排除**本进程** in-memory run——对另一活会话的 running 文件毫无判据，session_start 一律翻 failed；② `cockpit.ts` 终态 persist 与终态 `TeamRunRecord` 都重写 `startedAt: now()`，claim 时的开始时刻被丢掉。
 - 处置（v1.15.6）：① `status.json` 加可选 `ownerPid`（写快照的主 pi 进程，cockpit 默认 `process.pid`，可注入），`reconcileStaleRuns` 签名加必填 `currentPid` + 注入探活 `isProcessAlive`（默认 `process.kill(pid, 0)`：ESRCH 死 / EPERM 活），判定序：非 running → in-memory → ownerPid===currentPid → 属主活着跳过 → 属主已死/无 ownerPid 照旧翻 failed（旧格式防永久滞留）；② claim 时生成一次 `RunPlan.startedAt`，running 快照/spawn 刷新/终态快照/终态 record 四处同值。
 - 教训：① **进程级共享落盘资源必须带属主身份**——「重启后清理残留」这类 reconcile 若无属主判据，在多进程/多会话场景就是误杀；② 同一 run 的稳定时间戳要像 runId 一样在 claim 时定一次，任何「再取 now()」的写法都会让派生量（elapsed）失真；③ 两会话场景是独立测试类别（活属主不翻 / 本进程兜底不探活 / 已死翻 failed / 旧格式照旧），只测单会话路径跑不出这类缺陷。
+
+## 成员子进程继承 leader 环境变量 + 嵌套派生未禁用（agent-team v1.17.1，真机 run-1789104483761）
+
+- 症状：成员会话里跑被测扩展的测试/子进程命令时，agent-team 扩展以 leader 模式加载（`PI_AGENT_TEAM_FILE/NAME/RUN_ID` 三键从 cockpit → leader → 成员一路继承），109 个用例假红，必须手写 `env -u` 才绿，浪费 3.5 分钟；同一泄漏也让成员拿到可再派生 agent 的工具（`subagent`、成员以 cockpit 模式加载后注册的 `team_run`），可绕过 run 预算与记录开嵌套派单/嵌套团队。
+- 根因：`dispatch.ts` 派生成员子进程时未显式声明 env（node spawn 缺省继承父进程环境 = leader 环境），而 leader 与成员共用一份扩展代码、靠环境变量分叉模式；工具面同理——子进程默认拿到全量工具。
+- 处置（v1.17.1）：成员 env 经 `stripLeaderEnv()` 剥离三键（其余变量原样保留，含哨兵/凭据）；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`DERIVED_AGENT_TOOL_DENYLIST` 单一来源；宿主 `isAllowedTool` 中 exclude 优先于 `--tools` 白名单）——真实 node 子进程边界测试锁定 env 剥离，fake spawn 锁定 args。
+- 教训：① 子进程环境是契约的一部分——派生方要显式列出「传什么/不传什么」，默认继承会把父进程的模式标记泄漏成子进程的行为开关；② 同一份代码多模式宿主，模式判据（env）绝不能让派生进程隐式继承；③ 「禁止子进程再派生」要在进程边界用 `--exclude-tools` 声明（工具名 denylist），只改 prompt 约束不住模型行为。

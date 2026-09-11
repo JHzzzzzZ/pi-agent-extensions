@@ -89,6 +89,21 @@ test("readTranscript drops malformed lines and missing files read as empty", () 
   }
 });
 
+test("question and answer entries round-trip through the sink and reader", () => {
+  const root = tmpRoot();
+  try {
+    const sink = new FileTranscriptSink(root, "run-1", () => "2026-09-06T12:00:00.000Z");
+    sink.append(LEADER_ACTOR, "question", "提问：要发到哪个环境？\n选项：staging / prod");
+    sink.append(LEADER_ACTOR, "answer", "回答：staging");
+    const entries = readTranscript(root, "run-1", LEADER_ACTOR);
+    assert.deepEqual(entries.map((e) => e.kind), ["question", "answer"]);
+    assert.equal(entries[0].text, "提问：要发到哪个环境？\n选项：staging / prod");
+    assert.equal(entries[1].text, "回答：staging");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("FileTranscriptSink stops appending after the file cap and records the truncation notice once", () => {
   const root = tmpRoot();
   try {

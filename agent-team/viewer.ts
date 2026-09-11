@@ -127,6 +127,25 @@ export interface ViewerActor {
    * (rendered as `思考 （默认）` next to a known model).
    */
   thinkingLevel?: string;
+  /**
+   * Live activity phase (v1.17.0): `tool` while a tool call executes,
+   * `waiting` otherwise (thinking/between events). Absent = unknown.
+   */
+  phase?: "tool" | "waiting";
+  /** Tool name while `phase === "tool"` (absent when unknown). */
+  toolName?: string;
+  /**
+   * Epoch ms of the actor's last observed event. Live runs take the child
+   * event clock; replay falls back to the last transcript entry's `ts`.
+   */
+  lastActivityAtMs?: number;
+  /**
+   * Baked activity-line text (`思考中`/`工具调用 <tool>`/终态词 + 5s 分桶的
+   * `距上次输出 <age>`), assembled by `buildViewerData`. Unlike `elapsed`,
+   * the clock part is 5s-bucketed, so it may enter the refresh fingerprint
+   * (repaints at most once per bucket; terminal text is static).
+   */
+  activity?: string;
 }
 
 /** Everything the viewer needs to render one frame (reloaded on refresh). */
@@ -210,6 +229,77 @@ function statusDisplay(status: string | undefined): { icon: string; style: Statu
 
 function applyStyle(styles: Styles, name: StatusStyle, text: string): string {
   return styles[name](text);
+}
+
+// ---------------------------------------------------------------------------
+// Activity line (v1.17.0): what the selected actor is doing right now
+// ---------------------------------------------------------------------------
+
+/** 活动时长的 5s 分桶宽度（防重影：时钟文本每次变化都会重绘 overlay）。 */
+export const ACTIVITY_BUCKET_MS = 5000;
+
+/** 距上次输出的分桶时长文案：<60s 用 `Xs`，≥60s 用 `XmYs`（elapsedLabel 风格）。 */
+export function activityAgeLabel(lastActivityAtMs: number, nowMs: number): string {
+  const ageMs = Math.max(0, nowMs - lastActivityAtMs);
+  const bucketSec = Math.floor(ageMs / ACTIVITY_BUCKET_MS) * (ACTIVITY_BUCKET_MS / 1000);
+  const mins = Math.floor(bucketSec / 60);
+  return mins > 0 ? `${mins}m${bucketSec % 60}s` : `${bucketSec}s`;
+}
+
+/**
+ * Renders one actor's activity line text. Terminal run → `run 已结束`;
+ * terminal member status → 排队中/已完成/失败/已中止; live phase →
+ * `工具调用 <tool>` / `思考中`. `lastActivityAtMs` adds the bucketed
+ * `· 距上次输出 <age>` segment (absent when unknown).
+ */
+export function formatActorActivity(
+  actor: { status?: string; phase?: "tool" | "waiting"; toolName?: string; lastActivityAtMs?: number },
+  runRunning: boolean,
+  nowMs: number,
+): string {
+  if (!runRunning) return "run 已结束";
+  switch (actor.status) {
+    case "queued":
+      return "排队中";
+    case "done":
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "aborted":
+      return "已中止";
+    default:
+      break;
+  }
+  const age =
+    actor.lastActivityAtMs !== undefined ? ` · 距上次输出 ${activityAgeLabel(actor.lastActivityAtMs, nowMs)}` : "";
+  if (actor.phase === "tool") return `${actor.toolName ? `工具调用 ${actor.toolName}` : "工具调用"}${age}`;
+  return `思考中${age}`;
+}
+
+/**
+ * Derives an actor's activity fields from its transcript tail (replay /
+ * no live progress): last entry `tool` → 工具调用 + 首 token 工具名
+ * (`/^([^\s{→]+)/`；取不到不带名), any other entry → 思考中; the entry's ISO
+ * `ts` supplies the age clock (invalid ts → no age).
+ */
+export function activityFromTranscript(entries: TranscriptEntry[]): {
+  phase?: "tool" | "waiting";
+  toolName?: string;
+  lastActivityAtMs?: number;
+} {
+  const last = entries[entries.length - 1];
+  if (!last) return {};
+  const derived: { phase?: "tool" | "waiting"; toolName?: string; lastActivityAtMs?: number } = {
+    phase: last.kind === "tool" ? "tool" : "waiting",
+  };
+  if (last.kind === "tool") {
+    const name = stripLegacyToolPrefix(last.text).match(/^([^\s{→]+)/)?.[1];
+    if (name) derived.toolName = name;
+  }
+  const ts = Date.parse(last.ts);
+  if (Number.isFinite(ts)) derived.lastActivityAtMs = ts;
+  return derived;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +401,8 @@ type Block =
   | { kind: "assistant"; text: string; ts: string }
   | { kind: "tools"; lines: string[] }
   | { kind: "error"; text: string; ts: string }
+  | { kind: "question"; text: string; ts: string }
+  | { kind: "answer"; text: string; ts: string }
   | { kind: "system"; text: string; ts: string };
 
 /** Old artifacts baked ▶/✓ icons into tool text; strip them for uniform styling. */
@@ -342,6 +434,10 @@ export function buildBlocks(entries: TranscriptEntry[], showTools: boolean): Blo
       blocks.push({ kind: "task", text: entry.text });
     } else if (entry.kind === "error") {
       blocks.push({ kind: "error", text: entry.text, ts: timestampOf(entry) });
+    } else if (entry.kind === "question") {
+      blocks.push({ kind: "question", text: entry.text, ts: timestampOf(entry) });
+    } else if (entry.kind === "answer") {
+      blocks.push({ kind: "answer", text: entry.text, ts: timestampOf(entry) });
     } else if (entry.kind === "system") {
       blocks.push({ kind: "system", text: entry.text, ts: timestampOf(entry) });
     }
@@ -386,6 +482,14 @@ export function blockLines(
       });
     case "error":
       return wrapText(`✗ ${block.text}`, width).map((line) => styles.error(line));
+    case "question": {
+      const label = styles.accent(`❓ 提问${block.ts ? ` · ${block.ts}` : ""}`);
+      return [label, ...wrapText(block.text, width)];
+    }
+    case "answer": {
+      const label = styles.success(`✔ 回答${block.ts ? ` · ${block.ts}` : ""}`);
+      return [label, ...wrapText(block.text, width)];
+    }
     case "system":
       return wrapText(`ℹ ${block.text}`, width).map((line) => styles.dim(line));
   }
@@ -546,11 +650,18 @@ function detailHeaderLines(data: ViewerData, state: ViewerState, styles: Styles)
     ? `${selected.actor.label}（${selected.actor.status ?? "unknown"}）· ${selected.index + 1}/${data.actors.length}`
     : "（无成员）";
   const model = modelHeaderText(selected?.actor);
+  // 活动行优先用 buildViewerData 烘焙文本（分桶时长已进指纹）；直构数据
+  // （测试/旧快照）缺 activity 时从 actor 原始阶段现算。
+  const activity = selected
+    ? (selected.actor.activity ??
+      formatActorActivity(selected.actor, data.runStatus === "running", Date.now()))
+    : "（无成员）";
   return [
     `${styles.bold("Run:")} ${data.runId || "(no run)"}`,
     `${styles.bold("State:")} ${data.runStatus}`,
     `${styles.bold("成员:")} ${member}`,
     `${styles.bold("模型:")} ${model}`,
+    `${styles.bold("活动:")} ${activity}`,
   ];
 }
 
@@ -898,7 +1009,12 @@ export function withResolvedActor(data: ViewerData, state: ViewerState): ViewerS
  * still refreshes on every content-driven repaint.
  */
 export function viewerDataFingerprint(data: ViewerData): string {
-  const actors = data.actors.map((a) => `${a.actor}=${a.label}=${a.status ?? ""}`).join(",");
+  const actors = data.actors
+    .map(
+      (a) =>
+        `${a.actor}=${a.label}=${a.status ?? ""}=${a.phase ?? ""}=${a.toolName ?? ""}=${a.lastActivityAtMs ?? ""}=${a.activity ?? ""}`,
+    )
+    .join(",");
   const entries = data.actors
     .map((a) => {
       const list = data.entries.get(a.actor) ?? [];
