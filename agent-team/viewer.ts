@@ -40,6 +40,10 @@ export interface Styles {
   warning: (text: string) => string;
   /** User-message bubble background (task entries). */
   bubble: (text: string) => string;
+  /** Bright-block row background (widget rows; host theme `userMessageBg`). */
+  rowBg: (text: string) => string;
+  /** Selected bright-block row background (stronger than `rowBg`; host theme `selectedBg`). */
+  rowSelectedBg: (text: string) => string;
   /** Bold (fleet uses it for the selected roster label + header keys). */
   bold: (text: string) => string;
 }
@@ -55,6 +59,8 @@ export function plainStyles(): Styles {
     error: identity,
     warning: identity,
     bubble: identity,
+    rowBg: identity,
+    rowSelectedBg: identity,
     bold: identity,
   };
 }
@@ -64,6 +70,13 @@ export function themeStyles(theme: Theme): Styles {
   const fg = (color: Parameters<Theme["fg"]>[0]) => (text: string): string => {
     try {
       return theme.fg(color, text);
+    } catch {
+      return text;
+    }
+  };
+  const bg = (color: Parameters<Theme["bg"]>[0]) => (text: string): string => {
+    try {
+      return theme.bg(color, text);
     } catch {
       return text;
     }
@@ -82,13 +95,9 @@ export function themeStyles(theme: Theme): Styles {
         return text;
       }
     },
-    bubble: (text: string): string => {
-      try {
-        return theme.bg("userMessageBg", text);
-      } catch {
-        return text;
-      }
-    },
+    bubble: bg("userMessageBg"),
+    rowBg: bg("userMessageBg"),
+    rowSelectedBg: bg("selectedBg"),
   };
 }
 
@@ -105,9 +114,11 @@ export interface ViewerActor {
   /** Latest known run status (queued/running/done/failed/aborted/…). */
   status?: string;
   /**
-   * Backend model for this actor: the leader's live/reported model, or a
-   * member's declared `provider/id` from the team file. Absent = the child
-   * pi process runs its own default (rendered as `（默认）`).
+   * Backend model for this actor in the unified `provider/id` display
+   * caliber (declared provider prefix + the child's actually reported id
+   * segment; see `model-caliber.ts`). Assembled by `buildViewerData`.
+   * Absent = the child pi process runs its own default (rendered as
+   * `（默认）`).
    */
   model?: string;
 }
@@ -505,9 +516,9 @@ function rosterLines(data: ViewerData, state: ViewerState, width: number, bodyHe
  * Fixed detail-pane meta header (the agent-team counterpart of fleet's
  * `structuredHeader`): Run / State / 成员 / 模型. Key names bold like
  * fleet's `^(Run|State|…):` rule; the header never scrolls with the
- * transcript. 模型 shows the selected actor's backend (leader = actual
- * model reported by the child, member = declared team model; `（默认）`
- * when the child runs pi's default).
+ * transcript. 模型 shows the selected actor's backend in the unified
+ * `provider/id` caliber (declared provider prefix + the child's actually
+ * reported id; `（默认）` when the child runs pi's default).
  */
 function detailHeaderLines(data: ViewerData, state: ViewerState, styles: Styles): string[] {
   const selected = selectedActor(data, state);

@@ -37,7 +37,7 @@ import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import { startAlignedTicker } from "./aligned-ticker.ts";
 import { elapsedLabel, type RunStatusSnapshot } from "./cockpit.ts";
 import { LEADER_ACTOR, sanitizeActorName } from "./transcript.ts";
-import { flattenText, truncateVisible, type Styles } from "./viewer.ts";
+import { flattenText, padLine, truncateVisible, type Styles } from "./viewer.ts";
 import { WIDGET_TICK_MS, type MemberProgress, type RunProgress } from "./types.ts";
 
 /** Row role in the `main → leader → member` tree (viewer-open semantics). */
@@ -96,11 +96,17 @@ function leaderRowText(progress: RunProgress, nowMs: number): string {
   return `leader ${flattenText(progress.team)}${summary} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`;
 }
 
-/** 成员行：`|- <成员名> <图标> <状态>[ · <尾部>]`（尾部 note 优先，否则 latest）。 */
-function memberRowText(member: MemberProgress): string {
+/** 成员行连接符：非末项 `├─ `、末项 `╰─ `（box-drawing；圆角，上游 fleet-status 用方角 `└─`——差异表 §3.15）。
+ *  前缀显示宽度恒为 3 列（与旧 `|- ` 等宽，truncateVisible 预算不变）。 */
+function memberBranch(last: boolean): string {
+  return last ? "╰─ " : "├─ ";
+}
+
+/** 成员行：`<连接符> <成员名> <图标> <状态>[ · <尾部>]`（尾部 note 优先，否则 latest）。 */
+function memberRowText(member: MemberProgress, last: boolean): string {
   const tail = member.note ?? member.latest;
   const suffix = tail !== undefined && flattenText(tail).length > 0 ? ` · ${truncateMemberTail(tail)}` : "";
-  return `|- ${flattenText(member.name)} ${memberIcon(member.status)} ${member.status}${suffix}`;
+  return `${memberBranch(last)}${flattenText(member.name)} ${memberIcon(member.status)} ${member.status}${suffix}`;
 }
 
 /**
@@ -123,8 +129,14 @@ export function buildWidgetView(snapshot: RunStatusSnapshot, nowMs: number): Wid
     { text: "main", actor: LEADER_ACTOR, kind: "root" },
     { text: leaderRowText(progress, nowMs), actor: LEADER_ACTOR, kind: "leader" },
   ];
-  for (const member of progress.members) {
-    rows.push({ text: memberRowText(member), actor: sanitizeActorName(member.name), kind: "member" });
+  for (let index = 0; index < progress.members.length; index++) {
+    const member = progress.members[index]!;
+    // 末项判定基于本投影的行序（main → leader → 成员…）：最后一个成员行才是末项。
+    rows.push({
+      text: memberRowText(member, index === progress.members.length - 1),
+      actor: sanitizeActorName(member.name),
+      kind: "member",
+    });
   }
   return { collapsed: `agent-team ${flattenText(progress.team)} · ↓/← 查看详情`, rows };
 }
@@ -281,6 +293,15 @@ export function probeEditorFocus(tui: unknown): boolean | undefined {
  */
 export const WIDGET_MAX_LINES = 10;
 
+/**
+ * 宿主 `setExtensionWidget` 对 `string[]` 的逐行包装：`new Text(line, 1, 0)`
+ * （`interactive-mode.js` setExtensionWidget；测试直读宿主源码锁定）——左右
+ * 各 1 列 margin 由宿主持有、落在背景带之外，内容可用宽 = 终端宽 − 2；
+ * 超出即折行成额外物理行（背景块断续 + 几何漂移，见 docs/incidents.md）。
+ * 所有截断/补齐都按该内容宽计算，绝不超出。
+ */
+export const WIDGET_HOST_INSET = 2;
+
 /** 展开态底部键位提示（窗口化预算里固定占 1 行）。 */
 const WIDGET_HINT_TEXT = "↑↓ 选择 · enter 查看 · esc 退出";
 
@@ -313,8 +334,10 @@ function widgetRowWindow(rows: readonly WidgetRowSpec[], cursor: number): { star
  * before styling (ANSI codes would break width measurement); the host TUI
  * crashes on component lines wider than the terminal, and row texts are
  * bounded by char count only — CJK-heavy rows render up to 2× wider.
+ * 每行补齐到宿主内容宽（`width - WIDGET_HOST_INSET`，CJK 双宽口径）再包背景：
+ * 亮块每行等宽连续、无参差；选中行用更强的 `rowSelectedBg`。
  * 展开态窗口化（见 `WIDGET_MAX_LINES`）：大团队不再撞宿主截断，隐藏侧以
- * `… 上方/下方还有 N 行` 明示。
+ * `… 上方/下方还有 N 行` 明示；折叠提示行与底部提示行同属亮块、带普通背景。
  */
 export function renderWidgetView(
   view: WidgetView,
@@ -323,29 +346,33 @@ export function renderWidgetView(
   styles: Styles,
 ): string[] {
   if (view.rows.length === 0) return [];
-  const usable = Math.max(8, width);
+  const usable = Math.max(1, width - WIDGET_HOST_INSET);
+  const line = (text: string, selected = false): string => {
+    const padded = padLine(text, usable);
+    return selected ? styles.rowSelectedBg(padded) : styles.rowBg(padded);
+  };
   if (!state.selected) {
     // 折叠默认态：恰好一行，不逐行输出 rows（状态/耗时收进展开态）。
-    return [styles.dim(truncateVisible(view.collapsed, usable))];
+    return [line(styles.dim(truncateVisible(view.collapsed, usable)))];
   }
-  const inner = Math.max(8, usable - 2); // "▸ " / "  " gutter
+  const inner = Math.max(1, usable - 2); // "▸ " / "  " gutter
   const cursor = Math.min(Math.max(0, state.cursor), view.rows.length - 1);
   const window = widgetRowWindow(view.rows, cursor);
   const lines: string[] = [];
   if (window.start > 0) {
-    lines.push(styles.dim(truncateVisible(foldHintText("上", window.start), usable)));
+    lines.push(line(styles.dim(truncateVisible(foldHintText("上", window.start), usable))));
   }
   for (let index = window.start; index < window.start + window.size; index++) {
     const row = view.rows[index];
     if (!row) continue;
     const text = truncateVisible(row.text, inner);
-    lines.push(index === cursor ? styles.accent(`▸ ${text}`) : styles.dim(`  ${text}`));
+    lines.push(index === cursor ? line(styles.accent(`▸ ${text}`), true) : line(styles.dim(`  ${text}`)));
   }
   const hiddenBelow = view.rows.length - (window.start + window.size);
   if (hiddenBelow > 0) {
-    lines.push(styles.dim(truncateVisible(foldHintText("下", hiddenBelow), usable)));
+    lines.push(line(styles.dim(truncateVisible(foldHintText("下", hiddenBelow), usable))));
   }
-  lines.push(styles.dim(truncateVisible(WIDGET_HINT_TEXT, usable)));
+  lines.push(line(styles.dim(truncateVisible(WIDGET_HINT_TEXT, usable))));
   return lines;
 }
 

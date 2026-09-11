@@ -14,6 +14,7 @@ import { startAlignedTicker } from "./aligned-ticker.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
+import { resolveModelCaliber } from "./model-caliber.ts";
 import { fileRunStore, RUN_STATUS_VERSION, type RunStoreWriter } from "./runstore.ts";
 import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, type GitRunner } from "./worktree.ts";
@@ -138,7 +139,8 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
       line(`任务: ${statusTaskText(p.task)}`.trimEnd()),
     ];
     const leaderBits: string[] = [];
-    if (p.leaderModel) leaderBits.push(p.leaderModel);
+    const leaderModel = resolveModelCaliber(p.leaderDeclaredModel, p.leaderModel);
+    if (leaderModel) leaderBits.push(leaderModel);
     if (p.leaderNote) leaderBits.push(p.leaderNote);
     lines.push(line(`leader: ${leaderBits.length > 0 ? leaderBits.join(" · ") : "thinking"}`));
     if (p.leaderActivity) lines.push(line(`  ↳ ${p.leaderActivity}`));
@@ -168,7 +170,8 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     if (record.error) lines.push(line(`错误: ${record.error}`));
     for (const member of record.members) {
       const bits = [`${icon(member.status)} ${member.name} ${member.status}`];
-      if (member.model) bits.push(member.model);
+      const model = resolveModelCaliber(member.model, member.usage?.model);
+      if (model) bits.push(model);
       if (member.usage) bits.push(`$${member.usage.cost.toFixed(4)}`);
       if (member.summary) bits.push(member.summary.length > 80 ? `${member.summary.slice(0, 80)}…` : member.summary);
       lines.push(line(`  ${bits.join(" — ")}`));
@@ -372,6 +375,9 @@ export class TeamRunCoordinator {
       team: team.name,
       task,
       startedAtMs,
+      // 声明值进 progress：live leader 的展示口径需要 provider 前缀与
+      // 子进程实际上报的裸 id 组合（viewer/status 归一在展示层做）。
+      ...(team.leader.model ? { leaderDeclaredModel: team.leader.model } : {}),
       members: team.members.map((m) => ({
         name: m.name,
         status: "queued" as const,
@@ -711,6 +717,7 @@ export class TeamRunCoordinator {
         report: outcome.finalText ? truncateUtf8(outcome.finalText, MAX_RESULT_BYTES) : undefined,
         members,
         leaderUsage: outcome.usage,
+        ...(team.leader.model ? { leaderDeclaredModel: team.leader.model } : {}),
         totalCost: outcome.usage.cost,
         totalTokens: outcome.usage.input + outcome.usage.output,
         durationMs: nowMs() - startedAtMs,

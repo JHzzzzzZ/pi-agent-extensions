@@ -62,6 +62,8 @@ export const DARK = {
   warning: "#e5c07b",
   error: "#e06c75",
   bubble: "#2c313a",
+  rowBg: "#2c313a",
+  rowSelectedBg: "#3b4252",
   text: DEFAULT_FG,
 };
 
@@ -75,6 +77,8 @@ export function ansiStyles() {
     error: fgStyle(DARK.error),
     warning: fgStyle(DARK.warning),
     bubble: bgStyle(DARK.bubble),
+    rowBg: bgStyle(DARK.rowBg),
+    rowSelectedBg: bgStyle(DARK.rowSelectedBg),
     bold: (text) => `\x1b[1m${text}\x1b[22m`,
   };
 }
@@ -444,8 +448,9 @@ const WIDGET_BASE_LINES = [
  * 照抄宿主 `setExtensionWidget` 对 string[] 的确切代码路径
  * （Container + Text(line, 1, 0)，见 interactive-mode setExtensionWidget）。
  * 空编辑器是真实语义：bare ↓/← 只在编辑器为空时激活 widget——截图即该状态。
+ * `selected: false` 渲染折叠单行（默认 true = 展开态 leader 行选中）。
  */
-export function captureWidgetScene({ cols = 120, rows = 12 } = {}) {
+export function captureWidgetScene({ cols = 120, rows = 12, selected = true } = {}) {
   const screen = new VtScreen(cols, rows);
   const term = { columns: cols, rows, write: (data) => screen.feed(data), hideCursor: () => {}, showCursor: () => {} };
   const tui = new TuiMainScreen(term);
@@ -455,7 +460,7 @@ export function captureWidgetScene({ cols = 120, rows = 12 } = {}) {
   root.addChild(new Spacer(1));
   root.addChild(new Editor(tui, { borderColor: styles.border, selectList: {} }, {}));
   const view = buildWidgetView(widgetSnapshot(WIDGET_NOW_MS), WIDGET_NOW_MS);
-  const lines = renderWidgetView(view, { selected: true, cursor: 1 }, cols, styles);
+  const lines = renderWidgetView(view, selected ? { selected: true, cursor: 1 } : { selected: false, cursor: 0 }, cols, styles);
   const widget = new Container();
   for (const line of lines.slice(0, 10)) widget.addChild(new Text(line, 1, 0));
   root.addChild(widget);
@@ -471,7 +476,7 @@ export function captureWidgetScene({ cols = 120, rows = 12 } = {}) {
 /** widget 帧自检：展开态树（main/leader/成员）+ 提示行缺一即失败。 */
 export function assertWidgetFrame(lines) {
   const text = lines.join("\n");
-  const anchors = ["main", "▸ leader count-duet", "|- front", "|- back", "↑↓ 选择 · enter 查看 · esc 退出"];
+  const anchors = ["main", "▸ leader count-duet", "├─ front", "╰─ back", "↑↓ 选择 · enter 查看 · esc 退出"];
   const missing = anchors.filter((a) => !text.includes(a));
   if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
   const selectedRows = lines.filter((l) => l.includes("▸ leader count-duet")).length;

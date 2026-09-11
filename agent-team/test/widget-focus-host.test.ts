@@ -130,9 +130,9 @@ test("真实宿主：焦点在主编辑器（CustomEditor）→ 裸 ↓ 被 widg
     assert.equal(cursorRow(after), 0, "编辑器焦点时裸 ↓ 照常激活");
     // 树行：main + leader + 1 成员 + 任务 = 4 行，加底部提示行。
     assert.equal(after.length, 4, "真实 ↓ 分发后展开为树行（main/leader/1 成员）+ 提示行");
-    assert.equal(after[0], "▸ main");
+    assert.equal(after[0]?.trimEnd(), "▸ main");
     assert.match(after[1], /^ {2}leader dev-team · 修复登录 bug ▶ running/);
-    assert.match(after[2], /^ {2}\|- frontend ● running/);
+    assert.match(after[2], /^ {2}╰─ frontend ● running/, "单一成员即末项 → 圆角 ╰─");
     assert.match(after[after.length - 1]!, /↑↓ 选择/);
   } finally {
     controller.stop();

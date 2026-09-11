@@ -34,8 +34,42 @@ import {
   type ViewerState,
 } from "../viewer.ts";
 import type { TranscriptEntry } from "../transcript.ts";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { themeStyles } from "../viewer.ts";
 
 const styles: Styles = plainStyles();
+
+test("themeStyles 背景端口：bubble/rowBg → userMessageBg、rowSelectedBg → selectedBg；缺失/抛错 → 无背景降级", () => {
+  const calls: string[] = [];
+  const styles = themeStyles({
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+    bg: (color: string, text: string) => {
+      calls.push(color);
+      return `[${color}]${text}`;
+    },
+  } as unknown as Theme);
+  assert.equal(styles.rowBg("x"), "[userMessageBg]x");
+  assert.equal(styles.rowSelectedBg("y"), "[selectedBg]y", "选中行用更强的 selectedBg");
+  assert.equal(styles.bubble("z"), "[userMessageBg]z");
+  assert.deepEqual(calls, ["userMessageBg", "selectedBg", "userMessageBg"]);
+
+  // 色名取不到（宿主 Theme.bg 抛错）→ 原样返回（亮块无背景但可读，绝不弄崩渲染）。
+  const throwing = themeStyles({
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+    bg: () => {
+      throw new Error("Unknown theme background color: selectedBg");
+    },
+  } as unknown as Theme);
+  assert.equal(throwing.rowBg("x"), "x");
+  assert.equal(throwing.rowSelectedBg("y"), "y");
+
+  // 宿主题无 bg 方法（旧接口/降级主题）：同样无背景降级。
+  const noBg = themeStyles({ fg: (_c: string, t: string) => t, bold: (t: string) => t } as unknown as Theme);
+  assert.equal(noBg.rowBg("x"), "x");
+  assert.equal(noBg.rowSelectedBg("y"), "y");
+});
 
 function entry(kind: TranscriptEntry["kind"], text: string, ts = "2026-09-06T12:34:56.000Z"): TranscriptEntry {
   return { kind, text, ts };

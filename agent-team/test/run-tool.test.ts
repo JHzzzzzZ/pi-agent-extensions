@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { serializeTeam } from "../config.ts";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
+import type { TeamConfig } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import {
   makeFakeSpawn,
@@ -75,7 +76,7 @@ type RunTool = (params: Record<string, unknown>) => Promise<{
   isError?: boolean;
 }>;
 
-async function setup(): Promise<{
+async function setup(teamOverrides: Partial<TeamConfig> = {}): Promise<{
   pi: ReturnType<typeof fakePi>;
   spawn: FakeSpawnHandle;
   run: RunTool;
@@ -86,7 +87,7 @@ async function setup(): Promise<{
   resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-runtool-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
-  const team = fixtureTeam({ name: "proj-team", description: "项目团队", filePath: "", notes: undefined });
+  const team = fixtureTeam({ name: "proj-team", description: "项目团队", filePath: "", notes: undefined, ...teamOverrides });
   fs.writeFileSync(path.join(projectDir, ".pi", "teams", "proj-team.md"), serializeTeam(team));
   const spawn = makeFakeSpawn();
   const pi = fakePi();
@@ -110,6 +111,23 @@ function dispatchDetails(members: Array<Record<string, unknown>>): string {
     content: [{ type: "text", text: "report" }],
     details: { members, totalUsage: { input: 1, output: 1, cost: 0.02, turns: 2 } },
   });
+}
+
+async function readTranscriptActors(
+  pi: ReturnType<typeof fakePi>,
+  ctx: ReturnType<typeof fakeCtx>,
+): Promise<Array<{ actor: string; model?: string }>> {
+  const tool = pi.tools.get("team_transcript") as unknown as {
+    execute: (
+      id: string,
+      params: Record<string, unknown>,
+      signal?: undefined,
+      onUpdate?: undefined,
+      ctx?: unknown,
+    ) => Promise<{ content: Array<{ text: string }>; details?: unknown }>;
+  };
+  const result = await tool.execute("call-1", {}, undefined, undefined, ctx);
+  return (result.details as { actors: Array<{ actor: string; model?: string }> }).actors;
 }
 
 function leaderLines(): string[] {
@@ -183,37 +201,114 @@ test("team_run wait:true keeps the synchronous contract: inline report, no follo
   }
 });
 
-// Viewer / team_transcript 展示每个 actor 的后端模型：成员用团队配置声明值，
-// leader 用子进程实际报告值（runner 把 message_end 的 model 折进 usage）。
-test("team_transcript details expose each actor's backend model (member declared + leader actual)", async () => {
-  const { pi, spawn, run, ctx, cleanup } = await setup();
+// Viewer / team_transcript 的模型口径统一为 `provider/id`（v1.15.4）：声明含 provider
+// 前缀时用「声明 provider + 子进程实际上报 id」组合（leader 与成员同规则），实际值自带
+// 前缀/无声明/无实际各有明确规则（见 model-caliber.ts）。
+test("team_transcript details unify each actor's model to the provider/id caliber", async () => {
+  const { pi, spawn, run, ctx, cleanup } = await setup({
+    // 四种口径输入：声明+实际不同 id 段、无实际、无声明、实际自带前缀。
+    members: [
+      { name: "frontend", model: "chatanywhere/gpt-5.6", prompt: "p" },
+      { name: "backend", model: "anthropic/claude-sonnet-4-5", prompt: "p" },
+      { name: "db", prompt: "p" },
+      { name: "ops", model: "chatanywhere/gpt-5.6", prompt: "p" },
+    ],
+  });
   try {
+    const usageOf = (model?: string): Record<string, unknown> => ({
+      input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1,
+      ...(model ? { model } : {}),
+    });
     const promise = run({ team: "proj-team", task: "修复登录 bug", wait: true });
     const child = await waitForChild(spawn, 0);
-    child.autoRespond(leaderLines(), 0, 5);
+    child.autoRespond([
+      messageEndLine("assistant", {
+        content: [{ type: "text", text: "开始拆解" }],
+        usage: { input: 10, output: 5, cost: { total: 0.001 }, totalTokens: 15 },
+        model: "claude-opus-4-5",
+      }),
+      toolExecutionStartLine("team_dispatch", {
+        tasks: ["frontend", "backend", "db", "ops"].map((agent) => ({ agent, task: "t" })),
+      }),
+      dispatchDetails([
+        { name: "frontend", ok: true, status: "done", summary: "f", usage: usageOf("gpt-5.7") },
+        { name: "backend", ok: true, status: "done", summary: "b", usage: usageOf() },
+        { name: "db", ok: true, status: "done", summary: "d", usage: usageOf("deepseek-flash") },
+        { name: "ops", ok: true, status: "done", summary: "o", usage: usageOf("anthropic/claude-sonnet-4-5") },
+      ]),
+      messageEndLine("assistant", {
+        content: [{ type: "text", text: "FINAL REPORT" }],
+        usage: { input: 50, output: 20, cost: { total: 0.05 }, totalTokens: 300 },
+        model: "claude-opus-4-5",
+      }),
+    ], 0, 5);
     await promise;
 
-    const tool = pi.tools.get("team_transcript") as unknown as {
-      execute: (
-        id: string,
-        params: Record<string, unknown>,
-        signal?: undefined,
-        onUpdate?: undefined,
-        ctx?: unknown,
-      ) => Promise<{ content: Array<{ text: string }>; details?: unknown }>;
-    };
-    const result = await tool.execute("call-1", {}, undefined, undefined, ctx);
-    const actors = (result.details as { actors: Array<{ actor: string; model?: string }> }).actors;
+    const actors = await readTranscriptActors(pi, ctx);
     assert.equal(
       actors.find((a) => a.actor === "_leader")?.model,
-      "claude-opus-4-5",
-      "leader model comes from the scripted child's message_end model",
+      "anthropic/claude-opus-4-5",
+      "leader: declared provider prefix + actually reported id segment",
+    );
+    assert.equal(
+      actors.find((a) => a.actor === "frontend")?.model,
+      "chatanywhere/gpt-5.7",
+      "member: declared provider prefix + actual id segment (runtime model differs from the declaration)",
+    );
+    assert.equal(
+      actors.find((a) => a.actor === "backend")?.model,
+      "anthropic/claude-sonnet-4-5",
+      "member: no actual report → declared value as-is",
+    );
+    assert.equal(
+      actors.find((a) => a.actor === "db")?.model,
+      "deepseek-flash",
+      "member: no declaration → bare actual id kept (no invented prefix)",
+    );
+    assert.equal(
+      actors.find((a) => a.actor === "ops")?.model,
+      "anthropic/claude-sonnet-4-5",
+      "member: actual already carries a provider prefix → used as-is",
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+// live 态同样走归一：leader 的声明前缀在 coordinator 启动时进 progress，
+// 子进程实际上报的裸 id 到达后组合；成员 live 只有声明值（原样）。
+test("team_transcript live view composes the leader's declared provider with the reported id", async () => {
+  const { pi, spawn, run, ctx, cleanup } = await setup();
+  try {
+    const started = await run({ team: "proj-team", task: "修复登录 bug" });
+    assert.match(started.content[0].text, /已在后台启动/);
+    const child = await waitForChild(spawn, 0);
+    child.emitLine(
+      messageEndLine("assistant", {
+        content: [{ type: "text", text: "开始拆解" }],
+        usage: { input: 10, output: 5, cost: { total: 0.001 }, totalTokens: 15 },
+        model: "claude-opus-4-5",
+      }),
+    );
+
+    let actors: Array<{ actor: string; model?: string }> = [];
+    for (let i = 0; i < 100 && !actors.find((a) => a.actor === "_leader")?.model; i++) {
+      actors = await readTranscriptActors(pi, ctx);
+      if (!actors.find((a) => a.actor === "_leader")?.model) await sleep(5);
+    }
+    assert.equal(
+      actors.find((a) => a.actor === "_leader")?.model,
+      "anthropic/claude-opus-4-5",
+      "live leader: declared provider prefix + the bare id reported mid-run",
     );
     assert.equal(
       actors.find((a) => a.actor === "frontend")?.model,
       "chatanywhere/gpt-5.6",
-      "member model comes from the team config",
+      "live member: declared caliber shown as-is until it reports",
     );
+
+    child.autoRespond(leaderLines().slice(1), 0, 5);
+    await waitFor(() => pi.sentMessages.length > 0);
   } finally {
     cleanup();
   }

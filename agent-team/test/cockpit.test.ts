@@ -240,7 +240,9 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
         team: "dev-team",
         task: "修复 bug",
         startedAtMs: 0,
-        leaderModel: "m1",
+        // 模型口径（v1.15.4）：声明 provider 前缀 + 子进程实际上报 id。
+        leaderDeclaredModel: "opencode-go/deepseek-flash",
+        leaderModel: "deepseek-v3",
         leaderNote: "turn 3",
         leaderActivity: "正在汇总报告",
         members: [{ name: "frontend", status: "running", note: "turn 2", latest: "在写样式" }],
@@ -251,7 +253,7 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
   );
   assert.match(running, /当前 run：team dev-team ▶ running · 5s/);
   assert.match(running, /runId: r/);
-  assert.match(running, /leader: m1 · turn 3/);
+  assert.match(running, /leader: opencode-go\/deepseek-v3 · turn 3/);
   assert.match(running, /↳ 正在汇总报告/);
   assert.match(running, /▶ frontend running — turn 2 — 在写样式/);
 
@@ -266,7 +268,16 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
         startedAt: "2026-09-05T12:00:00Z",
         status: "completed",
         report: "done",
-        members: [{ name: "frontend", model: "m", status: "done", summary: "做完了" }],
+        members: [
+          {
+            name: "frontend",
+            model: "chatanywhere/gpt-5.6",
+            status: "done",
+            summary: "做完了",
+            usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, model: "gpt-5.7" },
+          },
+          { name: "db", model: "opencode-go/deepseek-flash", status: "done", summary: "无实际上报" },
+        ],
         totalCost: 0.05,
         totalTokens: 100,
         durationMs: 12000,
@@ -277,7 +288,8 @@ test("formatStatusSnapshot renders a running snapshot and the last record", () =
   );
   assert.match(done, /最近一次 run：team dev-team ✓ completed · 12s · \$0\.0500/);
   assert.match(done, /runId: run-1/);
-  assert.match(done, /✓ frontend done — m/);
+  assert.match(done, /✓ frontend done — chatanywhere\/gpt-5\.7/, "record member: declared prefix + actual id segment");
+  assert.match(done, /✓ db done — opencode-go\/deepseek-flash/, "record member: no actual report → declared as-is");
   assert.match(done, /共享 worktree: `\/wt\/team`/);
 
   const empty = formatStatusSnapshot({ running: false, progress: null, lastRecord: null }, 0);

@@ -112,3 +112,9 @@
 - 根因：① `worktree.ts` `createWorktree` 无条件 `git worktree add <path> -b <branch>`，同 run 重派时分支与路径都已存在 ⇒ git 非零退出；② `worktreeError()` 取 stderr 首行，而 git 在 fatal 前先打印进度行 `Preparing worktree (…)`，真因在第二行被丢弃。
 - 处置（v1.15.2）：`createWorktree` 先读 `git worktree list --porcelain`——已注册且分支匹配的 worktree 直接复用、分支存在但空闲时 attach 复用、路径被普通目录占用/注册不匹配则给出可操作提示；`worktreeError` 跳过 git 进度行只取 fatal/error 行（无非进度行才回退首行），并导出供单测。
 - 教训：① **错误信息必须穿透进度噪声取真因**——"首行 stderr"这类廉价启发式在 git 这种混排进度的输出上就是把真因丢掉；② **创建已存在资源这类幂等场景应设计重入语义**，而不是靠提示词/报告禁止重试（leader 视角"再派一次"是合理动作，扩展应让它成功）；③ 真机 stderr 原文要当测试输入（新单测直接锁定 `Preparing worktree…` + `fatal: …` 两行样本）。
+
+## widget 行按终端宽补齐被宿主 Text margin 折行（agent-team v1.15.4 外观改造）
+
+- 症状：亮块背景改造时发现——`renderWidgetView` 一直以终端宽为截断预算，而宿主 `setExtensionWidget` 对 `string[]` 每行包 `Text(line, 1, 0)`（左右各 1 列 margin，内容可用宽 = 终端宽 − 2）：CJK 满宽行（截图场景的 leader 行）在真实渲染里折成两个物理行，背景块随之断续；若行宽继续按终端宽补齐，每一行都会折行。此前无背景、文本多短于终端宽，所以问题潜伏。
+- 根因：字符串数组的「行宽预算」不等于终端宽——宿主在内容两侧各留 1 列 margin；`Text` 用 `contentWidth = width − 2 × paddingX` 做换行判断，超出即 wrap（不是截断）。
+- 教训：① 写入 `string[]` widget 的每一行必须按**宿主内容宽（终端宽 − 2）**做 CJK 感知截断+补齐，绝不能按终端宽补齐（超宽会折成额外物理行，甚至触发 `doRender` 超宽断言）；② 宿主包装常量与 `MAX_WIDGET_LINES` 一样直读宿主 dist 源码由测试锁定（漂移即红）；③ 背景块的连续性只有在真实渲染路径（`capture-screens` 的 `Container + Text(line,1,0)` + VT 仿真屏）上才能验证——纯函数断言看不到折行。

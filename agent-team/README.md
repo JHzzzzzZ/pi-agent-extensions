@@ -97,14 +97,15 @@ agent-team dev-team · ↓/← 查看详情
 ```text
 main
 leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3 并行
-  |- frontend ● running · 正在改 login.tsx
-  |- backend ✓ done
-  |- reviewer · queued
+  ├─ frontend ● running · 正在改 login.tsx
+  ├─ backend ✓ done
+  ╰─ reviewer · queued
 ↑↓ 选择 · enter 查看 · esc 退出
 ```
 
 - leader 行：`leader <团队> · <任务摘要> ▶ running · 耗时 · N/M 并行`（配了费用上限且未超限时附 ` · 剩 $X.XX`）；任务摘要 44 字符截断，多行文本先压平。
-- 成员行：`|- <成员名> <图标> <状态>[ · <尾注>]`；图标 `·` queued / `●` running / `✓` done / `✗` failed / `⊘` aborted；尾注取 note，否则取最新活动，压平换行后 ≤30 字符。
+- 成员行：`├─ <成员名> <图标> <状态>[ · <尾注>]`（非末项）/ `╰─ …`（末项，圆角，v1.15.4）；图标 `·` queued / `●` running / `✓` done / `✗` failed / `⊘` aborted；尾注取 note，否则取最新活动，压平换行后 ≤30 字符。
+- 亮块每行带背景色（普通行取宿主主题 `userMessageBg`、选中行取更强的 `selectedBg`，v1.15.4）：按宿主内容宽（终端宽 − 2）补齐成等宽连续的背景块，取不到色名时降级为无背景；选中行用 `▸ ` 前缀 + 更强背景双重区分。
 - 任务摘要不占独立行（v1.13.1，用户真机反馈）：否则末行是任务行、`enter` 却打开 leader，像“选不中成员”的陷阱；现在 `↓`/`j` 到底就是最后一个成员，`enter` 直达该成员。
 - `esc` 或第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中，在 leader/成员行打开查看器并定位到对应 actor。
 - 大团队（成员 ≥7）展开态自动窗口化（v1.14.2）：帧总行数不超过宿主 `string[]` widget 的 10 行硬上限（超出会被宿主播成 `... (widget truncated)`），选中行永远在窗口内，隐藏侧显示 `  … 上方/下方还有 N 行`。
@@ -136,7 +137,7 @@ agent-team count-duet · ↓/← 查看详情
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的四行元信息头（`Run:` / `State:` / `成员:` / `模型:`——模型为选中 actor 的后端：leader 显示子进程实际上报值、成员显示团队文件声明值，未声明时显示 `（默认）`），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的四行元信息头（`Run:` / `State:` / `成员:` / `模型:`——模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
@@ -179,7 +180,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（368 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（384 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

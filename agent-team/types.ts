@@ -365,6 +365,8 @@ export interface TeamRunRecord {
     worktree?: { path: string; branch: string };
   }>;
   leaderUsage?: AgentUsage;
+  /** Declared leader model from the team file (viewer/status caliber composition). */
+  leaderDeclaredModel?: string;
   totalCost: number;
   totalTokens: number;
   durationMs?: number;
@@ -394,6 +396,8 @@ export interface RunProgress {
   task: string;
   startedAtMs: number;
   leaderModel?: string;
+  /** Declared leader model from the team file (provider prefix for the display caliber). */
+  leaderDeclaredModel?: string;
   leaderNote?: string;
   /** Leader's latest activity tail (progress display only). */
   leaderActivity?: string;
