@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流仓库 CLI
 
-> last verified @ 24acbad
+> last verified @ a44c102
 
 ## 职责与边界
 
@@ -66,7 +66,7 @@ argv → `parseArgs` → `main(argv, deps)`（`repoRoot`/`log`/`writeFile`/`exec
 
 ## 改动清单
 
-- 必跑：`npm run test:todo`（glob = `test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`；50 个，2026-09-11 实测全绿）+ `node tools/todo.mjs lint`（exit 0）。环境剥离前缀 `env -u PI_AGENT_TEAM_FILE -u PI_AGENT_TEAM_NAME -u PI_AGENT_TEAM_RUN_ID`。
+- 必跑：`npm run test:todo`（glob = `test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`；50 个，2026-09-11 实测全绿）+ `node tools/todo.mjs lint`（exit 0）。
 - 改行为：同步根 `test/todo-cli.test.ts` + 本卡；改命令面：同步 `core.ts` 的 `USAGE` + 本卡。
 - 改路径规则/查重口径：本卡「不变量」与 `todos/todo-cli-todo.md` 同步。
 - 新增子命令/flags：先补根测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变。
