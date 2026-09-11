@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 5c41e1c
+> last verified @ 5d73480
 
 ## 职责与边界
 
@@ -20,7 +20,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - `doctor.ts` — `/team:doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
 - `dispatch.ts`（leader 模式工具）、`cockpit.ts`（cockpit 模式工具）、`manage.ts`（team_create/list）、`chat.ts`（viewer 发消息：task 模板 + transcript 尾部截断 + FIFO 队列/链式门控，纯逻辑层，宿主接线在 index.ts）。
 - `widget.ts` — 输入栏下方可选中亮块（`setWidget(key, string[], { placement: "belowEditor" })`）——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件，v1.13.0），宿主 widget 由 `RunStatusSnapshot.running` 决定注册（running ⇒ string[] 帧，落定 ⇒ `undefined` 自动卸载，终态不常驻；`running` 但无 progress 同样隐藏）；**刷新双触发** = coordinator `onProgress` 状态变化点事件即时（leader 事件/派发起止 → `refreshWidget()`，不等 tick）+ 1s 对齐秒节拍兜底（`aligned-ticker.ts`）+ 渲染串指纹相同跳过（`renderKey`）；默认（未选中）为折叠单行 `agent-team <团队> · ↓/← 查看详情`（不含状态/耗时/并行数，未展开时不逐秒 churn），选中态展开 `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（`buildWidgetView`/`renderWidgetView` 纯函数；成员行 `├─ <名> <图标> <状态>[ · ≤30 字尾注]`（非末项）/ `╰─ …`（末项，圆角，v1.15.4），图标 queued `·`/running `●`/done `✓`/failed `✗`/aborted `⊘`；任务摘要/尾注文本先 `\s+` 压平再截断，任务摘要 44 字截断内嵌 leader 行、末行恒为成员行；每行按宿主内容宽（终端宽 − 2）CJK 补齐后包背景（普通行 `rowBg`/选中行 `rowSelectedBg`，缺失降级，v1.15.4）；`main` 行 enter 只收起选中，leader/成员行按 actor 进查看器）；激活门控 = 焦点在主编辑器（`editorFocus` 端口 + `probeEditorFocus` 结构判定，宿主无焦点信息降级）× 编辑器为空（`editorState` 端口）；选中态到顶再按 `↑`/`k` 退出选中并收回折叠）；`aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，widget 与 cockpit 进度 ticker 共用，契约见 `docs/cross/status-bar.md`）；`viewer.ts` — `/team:view` 全屏左右分栏查看器（左 roster/右 detail，fleet inspector 布局，v1.8.0 起动作键位全集对齐 fleet；detail 头五行含活动行，v1.17.0）；`transcript.ts` — 成员转写物化；`tools/capture-screens.mjs` + `tools/vt-screen.mjs` — 文档截图（真实 TuiMainScreen + 真实 viewer + headless 终端 → `docs/assets/*.svg`，帧锚点自检、确定性输出；见 README「文档截图」）；`docs/tui-sync.md` — TUI 行为对照 pi-subagents 的同步矩阵（**TUI 期望值唯一事实来源**）。
-- 两种模式一套代码，以 `PI_AGENT_TEAM_FILE` 环境变量区分；leader 模式只注册 `team_dispatch`。`PI_AGENT_TEAM_RUNS_DIR` 可重定向 run artifacts 根（测试隔离用）。成员子进程 env 剥这些键（`dispatch.ts` `stripLeaderEnv()`，其余变量保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一 `--exclude-tools subagent,team_run`（`DERIVED_AGENT_TOOL_DENYLIST`，防嵌套派生绕过预算/记录；exclude 优先于 `--tools`）。
+- 两种模式一套代码，以 `PI_AGENT_TEAM_FILE` 环境变量区分；leader 模式只注册 `team_dispatch`。`PI_AGENT_TEAM_RUNS_DIR` 可重定向 run artifacts 根（测试隔离用）。leader 子进程 env 继承父进程环境、先剥全部 run 级键（`dispatch.ts` `stripRunScopedEnv()`：3 个 leader 键 + resume 谱系键 `WORKTREE_RUN_ID`/`MEMBER_MODELS`），再叠加本次 run 三键（v1.21.1）——派生新 run 不继承父进程任何 run 绑定，也不再丢 PATH/provider key；成员子进程 env 剥 leader 三键（`stripLeaderEnv()`，其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一 `--exclude-tools subagent,team_run`（`DERIVED_AGENT_TOOL_DENYLIST`，防嵌套派生绕过预算/记录；exclude 优先于 `--tools`）。
 
 ## 核心数据流
 

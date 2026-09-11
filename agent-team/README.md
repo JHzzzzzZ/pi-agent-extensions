@@ -227,6 +227,6 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 
 - 零构建 TS ESM；entry `index.ts` 默认导出工厂；通过环境变量 `PI_AGENT_TEAM_FILE` 区分 leader 模式（注册 `team_dispatch` + `team_ask`）与驾驶舱模式（注册命令/工具/Widget）——同一份代码两种形态。
 - 成员子进程与 pwr 的 `PiAgentRunner`、官方 subagent 扩展同模式：`--mode json -p --no-session`、行 JSON 事件流解析（usage/stopReason/finalText）、`team-tmp://` prompt 物化为 0600 临时文件、SIGTERM→SIGKILL 中止。本扩展自包含，不 import pwr。
-- 子进程环境与工具面显式声明（v1.17.1）：成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
+- 子进程环境与工具面显式声明（v1.17.1，leader env 语义 v1.21.1）：leader env 继承父进程环境、先剥全部 run 级键（`dispatch.ts` `stripRunScopedEnv()`：`PI_AGENT_TEAM_FILE/NAME/RUN_ID` + resume 谱系键 `PI_AGENT_TEAM_WORKTREE_RUN_ID`/`PI_AGENT_TEAM_MEMBER_MODELS`），再叠加本次 run 三键——派生新 run 不继承父进程 run 绑定，也不再丢 PATH/provider key；成员 env 经 `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
 - 结果截断：单成员结果 50KB、摘要 8KB；错误按成员隔离（单个成员失败不拖垮整次 dispatch）。
 - 已知限制（v1）：任务为纯文本（GitHub issue 输入、成员后端适配外部 CLI 如 codex/claude-code 预留后续）；worktree 不自动合并；无超时（手动 `/team:stop`）。
