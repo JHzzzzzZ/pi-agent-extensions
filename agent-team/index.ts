@@ -29,6 +29,7 @@ import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
+import { resolveModelCaliber } from "./model-caliber.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
 import { orphanRunError, reconcileStaleRuns } from "./runstore.ts";
@@ -368,17 +369,23 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     if (progress) {
       for (const member of progress.members) {
         memberStatuses.set(member.name, member.status);
-        if (member.model) memberModels.set(member.name, member.model);
+        // live 成员只有声明值（实际值要等 dispatch 结果），归一后原样展示。
+        const model = resolveModelCaliber(member.model);
+        if (model) memberModels.set(member.name, model);
       }
     } else if (lastRecord) {
       for (const member of lastRecord.members) {
         memberStatuses.set(member.name, member.status);
-        // 实际跑过的模型（子进程 message_end 上报）优先于声明值。
-        const model = member.usage?.model ?? member.model;
+        // 声明 provider 前缀 + 子进程实际上报 id（无声明/无实际各有规则）。
+        const model = resolveModelCaliber(member.model, member.usage?.model);
         if (model) memberModels.set(member.name, model);
       }
     }
-    const leaderModel = progress?.leaderModel ?? lastRecord?.leaderUsage?.model;
+    // live leader：声明值（启动时进 progress）+ 实际上报裸 id 组合；
+    // 终态回退：record 的声明值 + leaderUsage 实际上报值。
+    const leaderModel = progress
+      ? resolveModelCaliber(progress.leaderDeclaredModel, progress.leaderModel)
+      : resolveModelCaliber(lastRecord?.leaderDeclaredModel, lastRecord?.leaderUsage?.model);
 
     const actors: ViewerActor[] = [
       {
