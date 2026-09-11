@@ -28,7 +28,9 @@ import * as path from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import {
   err,
+  EXTERNAL_BACKENDS,
   ok,
+  type ExternalBackend,
   type Result,
   type RunBudgetConfig,
   type TeamConfig,
@@ -81,6 +83,21 @@ function normalizeTools(value: unknown): string[] | undefined {
 
 function invalid(message: string): Result<never> {
   return err(TeamErrorCodes.INVALID_TEAM_FILE, message);
+}
+
+/**
+ * Validates an optional `backend:` value against the v1 external CLI list.
+ * Exact string match (no trimming); a present-but-invalid value (unknown
+ * name, number, empty string, null) is INVALID_TEAM_FILE and the message
+ * names every legal value.
+ */
+function normalizeBackend(value: unknown, owner: string): Result<ExternalBackend | undefined> {
+  if (value === undefined) return ok(undefined);
+  if (typeof value === "string" && EXTERNAL_BACKENDS.some((backend) => backend === value)) {
+    return ok(value as ExternalBackend);
+  }
+  const shown = typeof value === "string" ? `"${value}"` : String(value);
+  return invalid(`invalid ${owner}.backend ${shown}: expected one of ${EXTERNAL_BACKENDS.join(", ")}`);
 }
 
 /** Recognized budget cap keys (unknown keys are rejected — typo protection). */
@@ -142,6 +159,8 @@ export function validateTeam(
   if (typeof leaderMap.prompt !== "string" || leaderMap.prompt.trim().length === 0) {
     return invalid("leader.prompt is required and must not be empty");
   }
+  const leaderBackend = normalizeBackend(leaderMap.backend, "leader");
+  if (!leaderBackend.ok) return leaderBackend;
   const leaderModel =
     typeof leaderMap.model === "string" && leaderMap.model.trim().length > 0 ? leaderMap.model.trim() : undefined;
   if (leaderModel && /\s/.test(leaderModel)) {
@@ -181,6 +200,8 @@ export function validateTeam(
     if (typeof memberMap.prompt !== "string" || memberMap.prompt.trim().length === 0) {
       return invalid(`members.${memberName}.prompt is required and must not be empty`);
     }
+    const memberBackend = normalizeBackend(memberMap.backend, `members.${memberName}`);
+    if (!memberBackend.ok) return memberBackend;
     const model =
       typeof memberMap.model === "string" && memberMap.model.trim().length > 0 ? memberMap.model.trim() : undefined;
     if (model && /\s/.test(model)) {
@@ -188,6 +209,7 @@ export function validateTeam(
     }
     members.push({
       name: memberName,
+      ...(memberBackend.value ? { backend: memberBackend.value } : {}),
       description: typeof memberMap.description === "string" ? memberMap.description.trim() : undefined,
       model,
       tools: normalizeTools(memberMap.tools),
@@ -200,6 +222,7 @@ export function validateTeam(
     name,
     description,
     leader: {
+      ...(leaderBackend.value ? { backend: leaderBackend.value } : {}),
       model: leaderModel,
       tools: normalizeTools(leaderMap.tools),
       prompt: leaderMap.prompt,
@@ -371,6 +394,7 @@ export function serializeTeam(team: Omit<TeamConfig, "filePath" | "source" | "no
     }
   }
   lines.push("leader:");
+  if (team.leader.backend) lines.push(`  backend: ${team.leader.backend}`);
   if (team.leader.model) lines.push(`  model: ${yamlScalar(team.leader.model)}`);
   if (team.leader.tools && team.leader.tools.length > 0) {
     lines.push(yamlStringList("tools", team.leader.tools, "  "));
@@ -379,6 +403,7 @@ export function serializeTeam(team: Omit<TeamConfig, "filePath" | "source" | "no
   lines.push("members:");
   for (const member of team.members) {
     lines.push(`  - name: ${yamlScalar(member.name)}`);
+    if (member.backend) lines.push(`    backend: ${member.backend}`);
     if (member.description) lines.push(`    description: ${yamlScalar(member.description)}`);
     if (member.model) lines.push(`    model: ${yamlScalar(member.model)}`);
     if (member.tools && member.tools.length > 0) lines.push(yamlStringList("tools", member.tools, "    "));
@@ -415,10 +440,11 @@ export function buildTeamFromToolInput(input: {
   name: string;
   description?: string;
   worktree?: boolean;
-  leader: { model?: string; tools?: string[]; prompt: string };
+  leader: { backend?: ExternalBackend; model?: string; tools?: string[]; prompt: string };
   members: Array<{
     name: string;
     description?: string;
+    backend?: ExternalBackend;
     model?: string;
     tools?: string[];
     worktree?: boolean;
@@ -431,7 +457,7 @@ export function buildTeamFromToolInput(input: {
     name: input.name,
     description: input.description ?? "",
     ...(input.worktree ? { worktree: true } : {}),
-    leader: { model: input.leader.model, tools: input.leader.tools, prompt: input.leader.prompt },
+    leader: { backend: input.leader.backend, model: input.leader.model, tools: input.leader.tools, prompt: input.leader.prompt },
     members: input.members,
   };
   return validateTeam(raw, { filePath: input.filePath, source: input.scope });
