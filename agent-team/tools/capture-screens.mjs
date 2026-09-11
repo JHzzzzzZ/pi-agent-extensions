@@ -471,7 +471,7 @@ export function captureWidgetScene({ cols = 120, rows = 12 } = {}) {
 /** widget 帧自检：展开态树（main/leader/成员）+ 提示行缺一即失败。 */
 export function assertWidgetFrame(lines) {
   const text = lines.join("\n");
-  const anchors = ["main", "▸ leader count-duet", "|- front", "|- back", "↑↓ 选择 · enter 查看 · esc 退出"];
+  const anchors = ["main", "▸ leader count-duet", "├─ front", "╰─ back", "↑↓ 选择 · enter 查看 · esc 退出"];
   const missing = anchors.filter((a) => !text.includes(a));
   if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
   const selectedRows = lines.filter((l) => l.includes("▸ leader count-duet")).length;

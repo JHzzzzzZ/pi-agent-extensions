@@ -79,8 +79,8 @@ function doneSnapshot(): RunStatusSnapshot {
 const LIVE_ROWS: WidgetRowSpec[] = [
   { text: "main", actor: "_leader", kind: "root" },
   { text: "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行", actor: "_leader", kind: "leader" },
-  { text: "|- frontend ● running · turn 1", actor: "frontend", kind: "member" },
-  { text: "|- backend ✓ done", actor: "backend", kind: "member" },
+  { text: "├─ frontend ● running · turn 1", actor: "frontend", kind: "member" },
+  { text: "╰─ backend ✓ done", actor: "backend", kind: "member" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ test("buildWidgetView member rows: 五种状态图标 queued · / running ● / 
   const view = buildWidgetView(snapshot, 0);
   assert.deepEqual(
     view.rows.slice(2, 7).map((row) => row.text),
-    ["|- a · queued", "|- b ● running", "|- c ✓ done", "|- d ✗ failed", "|- e ⊘ aborted"],
+    ["├─ a · queued", "├─ b ● running", "├─ c ✓ done", "├─ d ✗ failed", "╰─ e ⊘ aborted"],
   );
   assert.deepEqual(
     view.rows.slice(2, 7).map((row) => row.actor),
@@ -114,6 +114,28 @@ test("buildWidgetView member rows: 五种状态图标 queued · / running ● / 
     "成员行 actor = sanitizeActorName(成员名)",
   );
   assert.ok(view.rows.slice(2, 7).every((row) => row.kind === "member"));
+});
+
+test("buildWidgetView 成员连接符：非末项 ├─、末项 ╰─（圆角，非方角 └─）；前缀 3 列与旧 |- 等宽", () => {
+  const two = buildWidgetView(liveSnapshot(), 65000);
+  assert.equal(two.rows[2].text, "├─ frontend ● running · turn 1", "非末项成员用 ├─（box-drawing）");
+  assert.equal(two.rows[3].text, "╰─ backend ✓ done", "末项成员用圆角 ╰─");
+  assert.ok(
+    !two.rows.some((row) => row.text.includes("└─")),
+    "本仓库取圆角 ╰─（上游 fleet-status 用方角 └─，差异登记 tui-sync §3）",
+  );
+
+  const single = liveSnapshot();
+  single.progress!.members = [{ name: "solo", status: "running" }];
+  assert.equal(buildWidgetView(single, 65000).rows[2].text, "╰─ solo ● running", "单一成员即末项 → ╰─");
+
+  for (const prefix of ["├─ ", "╰─ "]) {
+    assert.equal(
+      visibleWidth(prefix),
+      3,
+      `连接符前缀 ${JSON.stringify(prefix)} 显示宽度 = 3（与旧 |- 等宽，truncateVisible 预算不变）`,
+    );
+  }
 });
 
 test("buildWidgetView member tail: note 优先、否则 latest；压平换行且 ≤30 字符", () => {
@@ -125,12 +147,12 @@ test("buildWidgetView member tail: note 优先、否则 latest；压平换行且
     { name: "blank", status: "running", note: "   \n  " },
   ];
   const rows = buildWidgetView(snapshot, 0).rows;
-  assert.equal(rows[2].text, "|- frontend ● running · turn 1", "note 优先于 latest");
-  assert.equal(rows[3].text, "|- backend ✗ failed · 第一行 第二行 第三行", "换行压平");
-  const longTail = rows[4].text.replace(/^\|- long ● running · /, "");
+  assert.equal(rows[2].text, "├─ frontend ● running · turn 1", "note 优先于 latest");
+  assert.equal(rows[3].text, "├─ backend ✗ failed · 第一行 第二行 第三行", "换行压平");
+  const longTail = rows[4].text.replace(/^├─ long ● running · /, "");
   assert.ok(longTail.length <= 30, `尾部 ≤30 字符，实得 ${longTail.length}`);
   assert.match(longTail, /…$/, "超长尾部截断加省略号");
-  assert.equal(rows[5].text, "|- blank ● running", "空白尾注不加 · 段");
+  assert.equal(rows[5].text, "╰─ blank ● running", "空白尾注不加 · 段（末项圆角连接符）");
   for (const row of rows) assert.doesNotMatch(row.text, /\n/, "任何 row 文本不得含换行（宿主要把残行渲染成额外行）");
 });
 
@@ -275,7 +297,7 @@ test("key reducer selected: arrows move and clamp；enter 返回命中行（含 
   state = { selected: true, cursor: 2 };
   const confirm = handleWidgetKey(state, KEY_ENTER, rows);
   assert.ok(confirm.type === "confirm");
-  assert.ok(confirm.type === "confirm" && confirm.row.text === "|- frontend ● running · turn 1");
+  assert.ok(confirm.type === "confirm" && confirm.row.text === "├─ frontend ● running · turn 1");
   assert.ok(confirm.type === "confirm" && confirm.row.actor === "frontend");
   assert.ok(confirm.type === "confirm" && confirm.row.kind === "member");
   assert.ok(confirm.state.selected === false, "confirm leaves selection mode");
@@ -366,8 +388,8 @@ test("renderWidgetView expanded: main/leader（含任务摘要）/成员 rows + 
   assert.equal(lines.length, view.rows.length + 1, "展开 = rows + 底部提示行");
   assert.match(lines[0], /^ {2}main$/);
   assert.match(lines[1], /^▸ leader dev-team · 修复登录 bug ▶ running/);
-  assert.match(lines[2], /^ {2}\|- frontend ● running/);
-  assert.match(lines[3], /^ {2}\|- backend ✓ done$/);
+  assert.match(lines[2], /^ {2}├─ frontend ● running/);
+  assert.match(lines[3], /^ {2}╰─ backend ✓ done$/);
   assert.match(lines[lines.length - 1], /↑↓ 选择 · enter 查看 · esc 退出/);
   assert.ok(
     !lines.some((line) => /上方还有|下方还有/.test(line)),

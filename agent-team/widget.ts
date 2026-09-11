@@ -101,11 +101,17 @@ function leaderRowText(progress: RunProgress, nowMs: number): string {
   return `leader ${flatten(progress.team)}${summary} ▶ running · ${elapsedLabel(progress.startedAtMs, nowMs)}${counts}${budgetHint}`;
 }
 
-/** 成员行：`|- <成员名> <图标> <状态>[ · <尾部>]`（尾部 note 优先，否则 latest）。 */
-function memberRowText(member: MemberProgress): string {
+/** 成员行连接符：非末项 `├─ `、末项 `╰─ `（box-drawing；圆角，上游 fleet-status 用方角 `└─`——差异表 §3.15）。
+ *  前缀显示宽度恒为 3 列（与旧 `|- ` 等宽，truncateVisible 预算不变）。 */
+function memberBranch(last: boolean): string {
+  return last ? "╰─ " : "├─ ";
+}
+
+/** 成员行：`<连接符> <成员名> <图标> <状态>[ · <尾部>]`（尾部 note 优先，否则 latest）。 */
+function memberRowText(member: MemberProgress, last: boolean): string {
   const tail = member.note ?? member.latest;
   const suffix = tail !== undefined && flatten(tail).length > 0 ? ` · ${truncateMemberTail(tail)}` : "";
-  return `|- ${flatten(member.name)} ${memberIcon(member.status)} ${member.status}${suffix}`;
+  return `${memberBranch(last)}${flatten(member.name)} ${memberIcon(member.status)} ${member.status}${suffix}`;
 }
 
 /**
@@ -128,8 +134,14 @@ export function buildWidgetView(snapshot: RunStatusSnapshot, nowMs: number): Wid
     { text: "main", actor: LEADER_ACTOR, kind: "root" },
     { text: leaderRowText(progress, nowMs), actor: LEADER_ACTOR, kind: "leader" },
   ];
-  for (const member of progress.members) {
-    rows.push({ text: memberRowText(member), actor: sanitizeActorName(member.name), kind: "member" });
+  for (let index = 0; index < progress.members.length; index++) {
+    const member = progress.members[index]!;
+    // 末项判定基于本投影的行序（main → leader → 成员…）：最后一个成员行才是末项。
+    rows.push({
+      text: memberRowText(member, index === progress.members.length - 1),
+      actor: sanitizeActorName(member.name),
+      kind: "member",
+    });
   }
   return { collapsed: `agent-team ${flatten(progress.team)} · ↓/← 查看详情`, rows };
 }

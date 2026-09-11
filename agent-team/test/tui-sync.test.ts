@@ -61,15 +61,15 @@ test("widget 折叠行 + main→leader→成员→任务 树字面量（§4）",
     [
       "main",
       "leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行",
-      "|- frontend ● running · turn 1",
-      "|- backend ✓ done",
+      "├─ frontend ● running · turn 1",
+      "╰─ backend ✓ done",
     ],
   );
   const expanded = renderWidgetView(view, { selected: true, cursor: 0 }, 120, plainStyles());
   assert.equal(expanded[0], "▸ main");
   assert.equal(expanded[1], "  leader dev-team · 修复登录 bug ▶ running · 1m5s · 1/2 并行");
-  assert.equal(expanded[2], "  |- frontend ● running · turn 1");
-  assert.equal(expanded[3], "  |- backend ✓ done");
+  assert.equal(expanded[2], "  ├─ frontend ● running · turn 1");
+  assert.equal(expanded[3], "  ╰─ backend ✓ done");
   assert.equal(expanded[4], "↑↓ 选择 · enter 查看 · esc 退出");
 });
 

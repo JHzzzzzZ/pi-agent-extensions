@@ -102,7 +102,8 @@ test("widget 场景：真实 buildWidgetView/renderWidgetView 帧含锚点", () 
   assert.throws(() => assertWidgetFrame(["nothing here"]), /缺少锚点/);
   const text = scene.lines.join("\n");
   assert.ok(text.includes("▸ leader count-duet"), "展开态 leader 行必须有选中高亮");
-  assert.ok(text.includes("|- front"), "成员行在帧内");
+  assert.ok(text.includes("├─ front"), "非末项成员行用 ├─ 连接符");
+  assert.ok(text.includes("╰─ back"), "末项成员行用圆角 ╰─ 连接符");
   assert.equal(scene.lines.filter((l) => l.includes("↑↓ 选择")).length, 1, "提示行恰一行");
 });
 
@@ -117,7 +118,8 @@ test("widget 场景：宿主包装（Text(line,1,0)）与 editor 上下关系", 
   const mainIdx = scene.lines.findIndex((l) => l.trimEnd() === "   main");
   let borderIdx = -1;
   scene.lines.forEach((l, i) => {
-    if (l.includes("─")) borderIdx = i;
+    // editor 下边框 = 整行纯 ─（成员行连接符 ├─/╰─ 也含 ─，不能只用 includes 判定）。
+    if (i < mainIdx && /^─+$/.test(l.trim())) borderIdx = i;
   });
   assert.ok(borderIdx >= 0 && borderIdx < mainIdx, "widget 在 editor 下边框之下（belowEditor 位置）");
 });

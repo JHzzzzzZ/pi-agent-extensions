@@ -197,16 +197,16 @@ test("派单立即推折叠帧；展开后 leader 事件同步刷新成员树（
     const expanded = lastFrame(host.capture)!;
     assert.equal(expanded[0], "▸ main");
     assert.match(expanded[1]!, /leader proj-team · 修复登录 bug ▶ running/);
-    assert.match(expanded[2]!, /^\s+\|- frontend · queued$/);
-    assert.match(expanded[3]!, /^\s+\|- backend · queued$/);
+    assert.match(expanded[2]!, /^\s+├─ frontend · queued$/);
+    assert.match(expanded[3]!, /^\s+╰─ backend · queued$/);
     assert.equal(expanded.length, 5, "树行 4（main/leader/2 成员）+ 底部提示行 1；任务摘要已在 leader 行");
 
     // leader 派发事件 → coordinator render → refreshWidget 同步推帧（无 1s 等待）。
     child.emitLine(JSON.stringify({ type: "tool_execution_start", toolName: "team_dispatch", args: { tasks: [{ agent: "frontend", task: "a" }, { agent: "backend", task: "b" }] } }));
     const afterEvent = lastFrame(host.capture)!;
     assert.equal(afterEvent[0], "▸ main");
-    assert.match(afterEvent[2]!, /^\s+\|- frontend ● running$/);
-    assert.match(afterEvent[3]!, /^\s+\|- backend ● running$/);
+    assert.match(afterEvent[2]!, /^\s+├─ frontend ● running$/);
+    assert.match(afterEvent[3]!, /^\s+╰─ backend ● running$/);
   } finally {
     await host.cleanup();
   }
