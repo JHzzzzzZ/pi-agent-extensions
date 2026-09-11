@@ -10,7 +10,8 @@
 
 import { Box, Text, type Component } from "@earendil-works/pi-tui";
 import type { EntryRenderer } from "@earendil-works/pi-coding-agent";
-import { RUN_ENTRY_TYPE, RUN_RESULT_MESSAGE_TYPE, type TeamRunRecord } from "./types.ts";
+import { MAX_FAILURE_NOTICE_BYTES, RUN_ENTRY_TYPE, RUN_RESULT_MESSAGE_TYPE, truncateUtf8, type TeamRunRecord } from "./types.ts";
+import { flattenText } from "./viewer.ts";
 
 /** Structural surface of ExtensionAPI used here (keeps tests host-free). */
 export interface SessionPort {
@@ -74,6 +75,38 @@ export function runDetailText(record: TeamRunRecord): string {
     lines.push("", "报告:", record.report.length > 4000 ? `${record.report.slice(0, 4000)}…` : record.report);
   }
   return lines.join("\n");
+}
+
+/**
+ * Failure summary delivered to the main session as a followUp message when
+ * a background run lands `failed` (leader non-zero exit / error stopReason /
+ * promptError) or fails at launch (no record path builds one via
+ * failedRunRecord). Mirrors the completed report channel: the caller's
+ * agent can retry, change strategy, or tell the user truthfully instead of
+ * waiting forever. aborted is intentionally not delivered (team_stop
+ * contract).
+ *
+ * Dynamic fields are newline-flattened (host renders residual line feeds as
+ * extra rows); the partial report is kept verbatim and placed last so the
+ * whole-notice byte cap truncates it before status/error/member rows.
+ */
+export function formatFailureNotice(record: TeamRunRecord): string {
+  const secs = record.durationMs !== undefined ? ` · ${Math.round(record.durationMs / 100) / 10}s` : "";
+  const cost = record.totalCost > 0 ? ` · $${record.totalCost.toFixed(4)}` : "";
+  const lines = [`team ${record.team} run 失败（runId ${record.runId}${secs}${cost}）`];
+  if (record.error) lines.push(`错误: ${flattenText(record.error)}`);
+  const task = flattenText(record.task);
+  lines.push(`任务: ${task.length > 200 ? `${task.slice(0, 200)}…` : task}`);
+  if (record.members.length > 0) {
+    lines.push("成员:");
+    for (const member of record.members) {
+      const summary = member.summary !== undefined ? flattenText(member.summary) : "";
+      const tail = summary.length === 0 ? "" : ` — ${summary.length > 160 ? `${summary.slice(0, 160)}…` : summary}`;
+      lines.push(`  - ${member.name}: ${member.status}${tail}`);
+    }
+  }
+  if (record.report) lines.push("部分报告:", record.report);
+  return truncateUtf8(lines.join("\n"), MAX_FAILURE_NOTICE_BYTES);
 }
 
 /** Entry renderer for agent-team-run-v1 records (collapsed/expanded card). */

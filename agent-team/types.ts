@@ -15,6 +15,14 @@ export const MAX_RESULT_BYTES = 50 * 1024;
 /** Maximum per-member summary embedded in run records (bytes, UTF-8). */
 export const MAX_SUMMARY_BYTES = 8 * 1024;
 
+/**
+ * Maximum failure notice delivered to the main session (bytes, UTF-8).
+ * Bounds the followUp payload for a failed run (status + error + member
+ * rows + partial report); the report is placed last so truncation eats it
+ * first.
+ */
+export const MAX_FAILURE_NOTICE_BYTES = 8 * 1024;
+
 /** Maximum tasks accepted in a single team_dispatch call. */
 export const MAX_TASKS_PER_DISPATCH = 8;
 

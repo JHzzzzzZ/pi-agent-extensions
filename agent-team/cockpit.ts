@@ -76,7 +76,36 @@ export interface CoordinatorDeps {
 
 export type StartRunResult =
   | { ok: true; value: TeamRunRecord }
-  | { ok: false; code: TeamErrorCode; message: string };
+  | { ok: false; code: TeamErrorCode; message: string; record?: TeamRunRecord };
+
+/**
+ * Minimal failed record for launch-level failures (worktree pre-flight,
+ * worktree creation, leader spawn error) — no member dispatch happened yet,
+ * so the record carries the error only. Written to lastRecord so
+ * /team:status and the viewer can look the failure up after the fact, and
+ * delivered to the main session by the background dispatch path.
+ */
+export function failedRunRecord(input: {
+  runId: string;
+  team: string;
+  task: string;
+  startedAt: string;
+  error: string;
+  durationMs?: number;
+}): TeamRunRecord {
+  return {
+    runId: input.runId,
+    team: input.team,
+    task: input.task,
+    startedAt: input.startedAt,
+    status: "failed",
+    error: input.error,
+    members: [],
+    totalCost: 0,
+    totalTokens: 0,
+    ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+  };
+}
 
 /** Input of one team run (spawned leader + member dispatch). */
 interface StartOptions {
@@ -464,6 +493,15 @@ export class TeamRunCoordinator {
     let leaderPid: number | undefined;
     const writeTerminal = (status: RunStatus, error?: string): void =>
       this.persistRunStatus({ runId, team: team.name, task, startedAt, status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
+    // Minimal failed record for launches that die before any dispatch
+    // (worktree pre-flight / createWorktree / spawn): keeps /team:status and
+    // the viewer able to look the failure up, and lets the background
+    // dispatch path deliver it to the main session.
+    const writeFailedRecord = (error: string): TeamRunRecord => {
+      const record = failedRunRecord({ runId, team: team.name, task, startedAt, error, durationMs: nowMs() - startedAtMs });
+      this.lastRecord = record;
+      return record;
+    };
 
     // Budget accounting: leader turns are cumulative (event.usage), member
     // dispatches accumulate per tool_execution_end (details.totalUsage).
@@ -508,6 +546,7 @@ export class TeamRunCoordinator {
             ok: false,
             code: "WORKTREE_UNAVAILABLE",
             message,
+            record: writeFailedRecord(message),
           };
         }
         if (team.worktree) {
@@ -520,7 +559,7 @@ export class TeamRunCoordinator {
           if (!created.ok) {
             const message = `预检失败：创建团队共享 worktree 失败 — ${created.message}`;
             writeTerminal("failed", message);
-            return { ok: false, code: created.code, message };
+            return { ok: false, code: created.code, message, record: writeFailedRecord(message) };
           }
           sharedWorktree = created.value;
         }
@@ -759,9 +798,10 @@ export class TeamRunCoordinator {
       return { ok: true, value: record };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      recordTranscript("error", `CHILD_FAILED: failed to start leader process: ${message}`);
-      writeTerminal("failed", `failed to start leader process: ${message}`);
-      return { ok: false, code: "CHILD_FAILED", message: `failed to start leader process: ${message}` };
+      const error = `failed to start leader process: ${message}`;
+      recordTranscript("error", `CHILD_FAILED: ${error}`);
+      writeTerminal("failed", error);
+      return { ok: false, code: "CHILD_FAILED", message: error, record: writeFailedRecord(error) };
     } finally {
       this.closeLeaderStdin();
       this.promptError = undefined;

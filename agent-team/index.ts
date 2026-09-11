@@ -30,10 +30,10 @@ import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
-import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
+import { TeamRunCoordinator, failedRunRecord, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
 import { defaultIsProcessAlive, orphanRunError, reconcileStaleRuns } from "./runstore.ts";
-import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
+import { appendRunRecord, createRunEntryRenderer, deliverRunResult, formatFailureNotice, type SessionPort } from "./session.ts";
 import { RunWidgetController, probeEditorFocus } from "./widget.ts";
 import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
 import {
@@ -634,6 +634,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           `team ${record.team} ${record.status}: ${record.error ?? "已中止"}`,
           record.status === "aborted" ? "warning" : "error",
         );
+        // 失败必达：failed 与 completed 走同一 followUp 通道（派单主 agent
+        // 需要状态/错误/成员结果/部分报告才能重试或如实转告用户）；aborted
+        // 维持 team_stop 契约（不送达）。
+        if (record.status === "failed") {
+          deliverRunResult(pi as unknown as SessionPort, formatFailureNotice(record));
+        }
       }
       return { text: "", isError: false };
     }
@@ -674,18 +680,33 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       onProgress: () => refreshWidget(),
     });
     const runId = state.coordinator.activeRunId() ?? "";
+    // Dispatch-time identity for launch-level failures: the coordinator can
+    // fail before producing a record (worktree pre-flight / leader spawn
+    // error) — a minimal failed record is rebuilt from these so the failure
+    // reaches the main session and /team:status like any terminal state.
+    const dispatchStartedAt = new Date().toISOString();
+    const failureRecord = (error: string): TeamRunRecord | undefined =>
+      runId !== "" ? failedRunRecord({ runId, team: team.name, task, startedAt: dispatchStartedAt, error }) : undefined;
     refreshWidget();
     ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
     // Completion still persists the record and wakes the session with the
     // report (followUp turn), then drives the viewer chat queue: completed
     // → chain-dispatch the next queued message; failed/aborted → drop it.
+    // The startup notice promises a report when the run is done — failures
+    // must honor that too (status/error/member rows/partial report through
+    // the same channel), not only completion.
     // refreshWidget AFTER onRunFinalized: a chained dispatch claims the next
     // run synchronously, so the widget re-registers in the same frame
     // instead of flickering unmounted between runs.
     void runPromise
       .then((result) => {
         if (!result.ok) {
-          ui.notify(result.message, "error");
+          const record = result.record ?? failureRecord(result.message);
+          if (record) finalizeRun(record, ui, "followUp");
+          else {
+            ui.notify(result.message, "error");
+            deliverRunResult(pi as unknown as SessionPort, `team ${team.name} run 失败: ${result.message}`);
+          }
           chat.onRunFinalized("failed");
           refreshWidget();
           return;
@@ -695,7 +716,13 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         refreshWidget();
       })
       .catch((e: unknown) => {
-        ui.notify(`team run 异常退出: ${e instanceof Error ? e.message : String(e)}`, "error");
+        const message = e instanceof Error ? e.message : String(e);
+        const record = failureRecord(message);
+        if (record) finalizeRun(record, ui, "followUp");
+        else {
+          ui.notify(`team run 异常退出: ${message}`, "error");
+          deliverRunResult(pi as unknown as SessionPort, `team ${team.name} run 异常退出: ${message}`);
+        }
         chat.onRunFinalized("failed");
         refreshWidget();
       });
