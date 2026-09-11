@@ -50,6 +50,7 @@ test("coordinator writes a running snapshot on claim and the terminal status at 
   assert.equal(running.entries[0].task, "修复 bug");
   assert.equal(running.entries[0].runId, spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID);
   assert.equal(running.entries[0].leaderPid, undefined);
+  assert.equal(running.entries[0].ownerPid, process.pid, "claimer pid recorded by default");
   assert.equal(running.corrupt.length, 0);
 
   child.autoRespond(leaderDone());
@@ -59,6 +60,66 @@ test("coordinator writes a running snapshot on claim and the terminal status at 
   assert.equal(terminal.entries.length, 1, "same file overwritten, not duplicated");
   assert.equal(terminal.entries[0].status, "completed");
   assert.equal(terminal.entries[0].runId, running.entries[0].runId);
+  assert.equal(terminal.entries[0].ownerPid, process.pid, "terminal rewrite keeps the owner pid");
+});
+
+test("ownerPid is injectable and lands in both the running and terminal snapshots", async () => {
+  const transcriptRoot = tmpRoot();
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+    transcriptRoot,
+    ownerPid: 777,
+  });
+  const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+  assert.equal(readRunStatuses(transcriptRoot).entries[0].ownerPid, 777);
+  child.autoRespond(leaderDone());
+  const result = await promise;
+  assert.ok(result.ok);
+  assert.equal(readRunStatuses(transcriptRoot).entries[0].ownerPid, 777);
+});
+
+test("terminal snapshots reuse the claim-time startedAt instead of the finish time", async () => {
+  const transcriptRoot = tmpRoot();
+  const spawn = makeFakeSpawn();
+  spawn.nextPid = () => 5000;
+  const claim = "2026-09-11T05:28:06Z";
+  const finish = "2026-09-11T06:06:10Z";
+  let clock = claim;
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+    transcriptRoot,
+    now: () => clock,
+  });
+  const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+
+  // Claim-time snapshot plus the spawn-time refresh (leaderPid) both carry
+  // the claim timestamp.
+  const running = readRunStatuses(transcriptRoot);
+  assert.equal(running.entries[0].status, "running");
+  assert.equal(running.entries[0].leaderPid, 5000);
+  assert.equal(running.entries[0].startedAt, claim);
+  assert.equal(running.entries[0].updatedAt, claim);
+
+  // 38 minutes later the leader finishes: the terminal snapshot must keep
+  // the claim-time startedAt so elapsed = updatedAt - startedAt stays true.
+  clock = finish;
+  child.autoRespond(leaderDone());
+  const result = await promise;
+  assert.ok(result.ok);
+  const terminal = readRunStatuses(transcriptRoot);
+  assert.equal(terminal.entries[0].status, "completed");
+  assert.equal(terminal.entries[0].updatedAt, finish);
+  assert.equal(terminal.entries[0].startedAt, claim, "terminal startedAt = claim time, not finish time");
+  assert.equal(result.value?.startedAt, claim, "terminal record carries the claim time too");
 });
 
 test("the leader PID lands in the running snapshot after spawn", async () => {

@@ -33,6 +33,12 @@ export interface RunStatusFile {
   status: RunStatus;
   /** Leader child PID (diagnostics for orphaned leaders; never auto-killed). */
   leaderPid?: number;
+  /**
+   * PID of the main pi session that owns this run (the writer process — not
+   * the leader child). Optional: files written before this field existed
+   * read back as undefined (schema stays v1).
+   */
+  ownerPid?: number;
   updatedAt: string;
   /** Terminal-state error detail (failed/aborted runs). */
   error?: string;
@@ -79,6 +85,7 @@ function parseStatusFile(raw: unknown): RunStatusFile | null {
   if (typeof s.startedAt !== "string" || typeof s.updatedAt !== "string") return null;
   if (typeof s.status !== "string" || !RUN_STATUSES.has(s.status)) return null;
   if (s.leaderPid !== undefined && typeof s.leaderPid !== "number") return null;
+  if (s.ownerPid !== undefined && typeof s.ownerPid !== "number") return null;
   if (s.error !== undefined && typeof s.error !== "string") return null;
   return {
     version: RUN_STATUS_VERSION,
@@ -89,6 +96,7 @@ function parseStatusFile(raw: unknown): RunStatusFile | null {
     status: s.status as RunStatus,
     updatedAt: s.updatedAt,
     ...(typeof s.leaderPid === "number" ? { leaderPid: s.leaderPid } : {}),
+    ...(typeof s.ownerPid === "number" ? { ownerPid: s.ownerPid } : {}),
     ...(typeof s.error === "string" ? { error: s.error } : {}),
   };
 }
@@ -142,15 +150,38 @@ export function orphanRunError(leaderPid?: number): string {
 }
 
 /**
- * Reconciles stale `running` status files after a session restart: every
- * snapshot whose run is not in `inMemoryRunIds` was orphaned by a crashed
- * main session — rewritten to `failed` with an orphan-leader diagnostic.
- * The leader process is NEVER killed here (PID reuse risk; the diagnostic
- * tells the user what to check). Terminal or in-memory runs are untouched.
+ * Default liveness probe: signal 0 delivers nothing, it only asks the OS
+ * whether the pid exists. ESRCH → gone; EPERM → alive (exists, owned by
+ * another user); any other error → treated as gone, so a failed probe can
+ * never block orphan reconciliation.
+ */
+export function defaultIsProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Reconciles stale `running` status files after a session restart. A run is
+ * only orphaned when it is not claimed by this session (in-memory) AND the
+ * session that wrote it (ownerPid) is no longer alive — another live
+ * session's `running` file is its own business and must never be flipped.
+ * Legacy files without ownerPid carry no liveness info and keep the old
+ * behavior (flipped) so stale snapshots cannot linger forever. Orphans are
+ * rewritten to `failed` with an orphan-leader diagnostic. The leader
+ * process is NEVER killed here (PID reuse risk; the diagnostic tells the
+ * user what to check). Terminal or in-memory runs are untouched.
  */
 export function reconcileStaleRuns(options: {
   root: string;
   inMemoryRunIds: Set<string>;
+  /** PID of the reconciling (current) pi session. */
+  currentPid: number;
+  /** Liveness probe for ownerPid (injected for tests). */
+  isProcessAlive: (pid: number) => boolean;
   now: () => string;
 }): ReconciledRun[] {
   let read: RunStatusesRead;
@@ -163,6 +194,8 @@ export function reconcileStaleRuns(options: {
   for (const entry of read.entries) {
     if (entry.status !== "running") continue;
     if (options.inMemoryRunIds.has(entry.runId)) continue;
+    if (entry.ownerPid === options.currentPid) continue;
+    if (entry.ownerPid !== undefined && options.isProcessAlive(entry.ownerPid)) continue;
     const error = orphanRunError(entry.leaderPid);
     writeRunStatus(options.root, {
       ...entry,

@@ -31,7 +31,7 @@ import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { TeamRunCoordinator, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
-import { orphanRunError, reconcileStaleRuns } from "./runstore.ts";
+import { defaultIsProcessAlive, orphanRunError, reconcileStaleRuns } from "./runstore.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, type SessionPort } from "./session.ts";
 import { RunWidgetController, probeEditorFocus } from "./widget.ts";
 import { formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
@@ -1173,6 +1173,8 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       const stale = reconcileStaleRuns({
         root: transcriptRoot(),
         inMemoryRunIds,
+        currentPid: process.pid,
+        isProcessAlive: defaultIsProcessAlive,
         now: () => new Date().toISOString(),
       });
       for (const run of stale) {
