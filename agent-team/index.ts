@@ -24,6 +24,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { archiveRunRecords } from "./archive.ts";
 import { discoverTeams, findTeam, parseTeamFile, splitModelThinking } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
@@ -1214,6 +1215,17 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
           totalTokens: 0,
         };
         state.coordinator.restoreLastRecord(record);
+        // 崩溃 run 的记录可能还留在 run worktree（随后会被 git worktree remove
+        // 删除）或主会话 cwd：翻 failed 后按终态语义归档到主工作区 history/。
+        const archived = archiveRunRecords({
+          runId: run.runId,
+          baseCwd: ctx.cwd,
+          worktreeRunRoot: path.join(worktreeRoot(), run.runId),
+        });
+        const archiveDiagnostics = [...archived.failures, ...archived.conflicts];
+        if (archiveDiagnostics.length > 0) {
+          uiPortFrom(ctx).notify(`run ${run.runId} 记录归档诊断：\n${archiveDiagnostics.join("\n")}`, "warning");
+        }
         uiPortFrom(ctx).notify(
           `发现上次会话残留的未终态 run：team ${run.team}（runId ${run.runId}）已标记为 failed。${record.error}`,
           "warning",
