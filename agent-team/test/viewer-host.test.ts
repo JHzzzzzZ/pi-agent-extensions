@@ -523,7 +523,7 @@ function activityData(activity: string, fields: { phase?: "tool" | "waiting"; to
 }
 
 /** 真实宿主脚手架：真 TuiMainScreen + 假终端 + 真 TranscriptViewer（load 可换）。 */
-function mountActivityHost(load: () => ViewerData): {
+function mountActivityHost(load: (runId: string | undefined) => ViewerData): {
   term: { columns: number; rows: number };
   tui: TuiMainScreen;
   baseLines: string[];
@@ -597,7 +597,65 @@ test("真实宿主：活动行随阶段变化（思考中 ↔ 工具调用 <tool
   }
 });
 
-// 验收 2：长时间无输出时时长文本按 5s 桶推进、可辨认（同桶不跳字）。
+// ---------------------------------------------------------------------------
+// Slice 9：多 run 切 run（v1.22.0）——真实宿主 `[` 切帧的宿主边界证明
+// ---------------------------------------------------------------------------
+
+function dualHostData(runId: string | undefined): ViewerData {
+  const runs = [
+    { runId: "run-A", team: "count-duet", status: "running" },
+    { runId: "run-B", team: "nightly-audit", status: "running" },
+  ];
+  if (runId === "run-B") {
+    return {
+      team: "nightly-audit",
+      runId: "run-B",
+      runStatus: "running",
+      elapsed: "3s",
+      actors: [
+        { actor: "_leader", label: "leader", status: "running", model: "m" },
+        { actor: "audit", label: "audit", status: "running" },
+      ],
+      entries: new Map<string, TranscriptEntry[]>([
+        ["_leader", [entry("task", "审计 agent-team")]],
+        ["audit", [entry("assistant", "扫描完成")]],
+      ]),
+      runs,
+    };
+  }
+  const base = scenarioData(53, 2);
+  return { ...base, team: "count-duet", runId: "run-A", runs };
+}
+
+// 纯 reducer 测不出宿主渲染的真实结果（AGENTS 测试与 QA 教训条款）：本用例
+// 实例化真实 TuiMainScreen + 假终端，锁 `[` 切 run 后屏上帧完整重建且无重影。
+test("真实宿主：`[` 切 run——帧重建（roster/Run: 行换 run）、actor 丢弃回 leader、帧高不变、无重影", () => {
+  const { tui, viewer, screen } = mountActivityHost((runId) => dualHostData(runId));
+  try {
+    tui.renderNow();
+    assert.ok(screen.text().some((line) => line.includes("Run: run-A")), "初始为默认 run-A");
+    assert.ok(screen.text().some((line) => line.includes("· front")), "run-A roster 含 front");
+    assert.ok(screen.text().some((line) => line.includes("[/] 切 run")), "多 run legend 出现切 run 段");
+
+    // 钉选 front（roster 索引 1）后切 run：run-B 无 front → 回 leader 首位。
+    viewer.handleInput("j");
+    tui.renderNow();
+    assert.ok(screen.text().some((line) => line.includes("成员: front（running）· 2/2")), "切换前钉选 front");
+
+    viewer.handleInput("[");
+    tui.renderNow();
+    assert.ok(screen.text().some((line) => line.includes("Run: run-B")), "Run: 行换到 run-B");
+    assert.ok(screen.text().some((line) => line.includes("· audit")), "roster 换成 run-B 的成员");
+    assert.ok(!screen.text().some((line) => line.includes("· front")), "旧 run 的 roster 不再出现");
+    assert.ok(screen.text().some((line) => line.includes("成员: leader（running）· 1/2")), "actor 钉选丢失回 leader");
+    assert.equal(viewer.render(160).length, computeFrameHeight(40) + VIEWER_CHROME_ROWS, "帧总行数不变");
+    assert.equal(screen.text().filter(isTitleRow).length, 1, "像素屏标题行应恰 1（无重影）");
+    assert.equal(screen.text().filter(isRosterRow).length, 1, "像素屏 roster 行应恰 1（无重影）");
+  } finally {
+    viewer.dispose();
+  }
+});
+
 test("真实宿主：时长 5s 分桶推进（0s → 5s → 2m5s）可辨认", () => {
   const lastActivityAtMs = 1_000_000;
   let nowMs = lastActivityAtMs;

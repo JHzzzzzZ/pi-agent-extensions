@@ -10,6 +10,13 @@
  * view, not per-message timestamp blocks). A key-legend row sits above the
  * bottom border.
  *
+ * With several parallel runs the viewer pins one run (`ViewerState.runId`)
+ * and `[`/`]` cycle `ViewerData.runs` (agent-team-specific keys, tui-sync
+ * §3.21); switching reloads the target run, keeps the actor pin when the
+ * actor exists there (else leader first) and forces a repaint past the
+ * fingerprint gate. `stop(runId)`/`onMessage` targets carry the displayed
+ * run id; the legend gains ` · [/] 切 run` only while runs.length > 1.
+ *
  * The frame is a complete box sized from the live terminal height (fleet's
  * 85%−6 formula), so it reads as a clearly separated surface over the main
  * agent UI. Assistant text is rendered with the same Markdown component +
@@ -148,6 +155,13 @@ export interface ViewerActor {
   activity?: string;
 }
 
+/** One entry of the viewer's run list (the `[`/`]` switcher cycles it). */
+export interface ViewerRunEntry {
+  runId: string;
+  team: string;
+  status: string;
+}
+
 /** Everything the viewer needs to render one frame (reloaded on refresh). */
 export interface ViewerData {
   team: string;
@@ -160,6 +174,13 @@ export interface ViewerData {
   actors: ViewerActor[];
   /** Transcript entries per actor id. */
   entries: Map<string, TranscriptEntry[]>;
+  /**
+   * Runs the switcher cycles: active runs oldest→newest, then recent terminal
+   * records newest→oldest (assembled by `buildViewerData`). Absent (or a
+   * single entry) = no switcher: `[`/`]` are consumed as no-ops and the
+   * legend gains no hint (` · [/] 切 run`).
+   */
+  runs?: ViewerRunEntry[];
 }
 
 /** Interactive viewer state. */
@@ -174,6 +195,13 @@ export interface ViewerState {
    * from this id on every refresh. Absent = follow the index.
    */
   actor?: string;
+  /**
+   * Pinned run id while switching between parallel runs (`[`/`]`). Absent =
+   * follow the default run (newest active, else newest record). Re-resolved
+   * against `data.runs` on every refresh; a vanished run falls back to the
+   * default run.
+   */
+  runId?: string;
   /** Row offset into the rendered transcript body (0 = top). */
   scroll: number;
   /** Stick to the bottom while new rows arrive. */
@@ -548,6 +576,9 @@ export const VIEWER_ACTION_KEYS = {
   refresh: ["r", "R"],
   stop: ["D"],
   toggleTools: ["x", "X", "ctrl+o"],
+  /** agent-team 特有：多 run 列表环形上/下一个（fleet 检查器无多 run 概念，差异表 §3.21）。 */
+  prevRun: ["["],
+  nextRun: ["]"],
 } as const;
 
 /** fleet 的 `matchesFleetBinding`（fleet.ts:59-61）：大写绑定 → shift+小写。 */
@@ -683,7 +714,9 @@ function titleRow(data: ViewerData, state: ViewerState, innerWidth: number, styl
 function legendRow(data: ViewerData, state: ViewerState, styles: Styles): string {
   const count = data.actors.length;
   const position = count > 0 ? `成员 ${Math.min(state.actorIndex + 1, count)}/${count}` : "";
-  const text = position ? `${VIEWER_LEGEND} · ${position}` : VIEWER_LEGEND;
+  // 多 run 才追加切 run 提示（单 run 图例逐字节零回归，差异表 §3.21）。
+  const runHint = (data.runs?.length ?? 0) > 1 ? " · [/] 切 run" : "";
+  const text = `${VIEWER_LEGEND}${runHint}${position ? ` · ${position}` : ""}`;
   return styles.dim(text);
 }
 
@@ -838,6 +871,10 @@ export interface ViewerKeyContext {
   runRunning?: boolean;
   /** Latest known run status (used for the D-on-finished notice copy). */
   runStatus?: string;
+  /** Known run ids in switcher order (`data.runs`); absent/≤1 → `[`/`]` no-op. */
+  runIds?: string[];
+  /** Currently displayed run id (`state.runId ?? data.runId`); the cycle anchor. */
+  runId?: string;
 }
 
 export type ViewerKeyResult =
@@ -845,6 +882,7 @@ export type ViewerKeyResult =
   | { type: "close" }
   | { type: "refresh" }
   | { type: "stop-confirm" }
+  | { type: "run-switch"; runId: string }
   | { type: "chat-submit"; text: string; state: ViewerState };
 
 /** 可打印输入判定：非转义序列、无控制字符（含 CJK 多字节字符与粘贴串）。 */
@@ -962,6 +1000,17 @@ export function handleViewerKey(state: ViewerState, data: string, ctx: ViewerKey
     }
   } else if (matchesViewerAction(data, "toggleTools")) {
     next.showTools = !state.showTools;
+  } else if (matchesViewerAction(data, "prevRun") || matchesViewerAction(data, "nextRun")) {
+    // 多 run 切 run（agent-team 特有，差异表 §3.21）：按 data.runs 顺序环形。
+    // runs ≤ 1（或数据缺 runs）→ 消费为 no-op，状态零变化。输入模式/确认态
+    // 已在前面分支返回，不会到达这里。
+    const runIds = ctx.runIds ?? [];
+    if (runIds.length <= 1) return { type: "update", state };
+    const current = ctx.runId !== undefined ? runIds.indexOf(ctx.runId) : -1;
+    const base = current >= 0 ? current : 0;
+    const delta = matchesViewerAction(data, "prevRun") ? -1 : 1;
+    const target = runIds[(base + delta + runIds.length) % runIds.length]!;
+    return { type: "run-switch", runId: target };
   } else if (data === "m") {
     next.inputMode = true;
     next.inputBuffer = "";
@@ -1025,7 +1074,9 @@ export function viewerDataFingerprint(data: ViewerData): string {
       return `${a.actor}:${list.length}:${tail}`;
     })
     .join(",");
-  return `${data.team}|${data.runId}|${data.runStatus}|${actors}|${entries}`;
+  // runs 决定 legend 的切 run 段——列表变化（新 run 开始/记录挤出）必须重绘。
+  const runs = data.runs?.map((run) => run.runId).join(",") ?? "";
+  return `${data.team}|${data.runId}|${data.runStatus}|${runs}|${actors}|${entries}`;
 }
 
 /**
@@ -1045,8 +1096,8 @@ export interface ViewerStopResult {
 }
 
 export interface TranscriptViewerOptions {
-  /** Reloads viewer data (run snapshot + transcripts) on each refresh tick. */
-  load: () => ViewerData;
+  /** Reloads viewer data for the given run on each refresh (`undefined` = default run). */
+  load: (runId: string | undefined) => ViewerData;
   /** Closes the overlay (ctx.ui.custom's done callback). */
   done: () => void;
   styles: Styles;
@@ -1060,19 +1111,21 @@ export interface TranscriptViewerOptions {
   renderMarkdown?: (text: string, width: number) => string[];
   refreshMs?: number;
   /**
-   * Stops the whole run (leader + all members) after the two-step D
-   * confirmation. Wired by the cockpit (`viewerStopAction`); maps the
-   * outcome to a top banner notice. Exceptions never escape (busy guard
-   * swallows repeats; rejections render an error notice).
+   * Stops one run (leader + all members) after the two-step D
+   * confirmation — the run currently displayed in the viewer. Wired by the
+   * cockpit (`viewerStopAction`); maps the outcome to a top banner notice.
+   * Exceptions never escape (busy guard swallows repeats; rejections
+   * render an error notice).
    */
-  stop?: () => Promise<ViewerStopResult>;
+  stop?: (runId: string) => Promise<ViewerStopResult>;
   /**
    * Delivers a message typed in the viewer (m → input line → Enter) to the
-   * selected actor (leader or member). Wired by the cockpit; dispatches a
-   * new background run (or queues it) and returns the banner notice.
-   * Exceptions never escape (mapped to an error notice).
+   * selected actor (leader or member) of the run currently displayed.
+   * Wired by the cockpit; dispatches a new background run (or queues it)
+   * and returns the banner notice. Exceptions never escape (mapped to an
+   * error notice).
    */
-  onMessage?: (target: { actor: string; label: string }, message: string) => { text: string; kind: NoticeKind };
+  onMessage?: (target: { runId: string; actor: string; label: string }, message: string) => { text: string; kind: NoticeKind };
 }
 
 /** pi-tui component wrapper: gated refresh timer + key handling + rendering. */
@@ -1089,7 +1142,7 @@ export class TranscriptViewer implements Component {
 
   constructor(opts: TranscriptViewerOptions) {
     this.opts = opts;
-    this.data = opts.load();
+    this.data = this.loadData();
     if (opts.initialActor !== undefined) {
       const index = this.data.actors.findIndex((a) => a.actor === opts.initialActor);
       if (index >= 0) {
@@ -1110,7 +1163,7 @@ export class TranscriptViewer implements Component {
     this.timer = setInterval(() => {
       if (this.disposed) return;
       try {
-        const next = this.opts.load();
+        const next = this.loadData();
         let bodyHeight = this.lastBodyHeight;
         try {
           const rows = this.opts.rows?.() ?? 30;
@@ -1132,6 +1185,41 @@ export class TranscriptViewer implements Component {
     if (typeof this.timer.unref === "function") this.timer.unref();
   }
 
+  /**
+   * Loads data for the pinned run (`state.runId`), falling back to the
+   * default run when the run list no longer contains it (record evicted /
+   * run gone). The fallback is resolved against `data.runs` when present.
+   */
+  private loadData(): ViewerData {
+    let data = this.opts.load(this.state.runId);
+    const runs = data.runs;
+    if (this.state.runId !== undefined && runs !== undefined && !runs.some((run) => run.runId === this.state.runId)) {
+      this.state = { ...this.state, runId: undefined };
+      data = this.opts.load(undefined);
+    }
+    return data;
+  }
+
+  /**
+   * `[`/`]` switch: load the target run, keep the pinned actor when it
+   * exists there (else leader first), reset scroll/follow, clear the
+   * notice and force the next frame past the fingerprint gate.
+   */
+  private switchRun(runId: string): void {
+    const data = this.opts.load(runId);
+    this.data = data;
+    const pinned = this.state.actor !== undefined ? data.actors.findIndex((a) => a.actor === this.state.actor) : -1;
+    const actorIndex = pinned >= 0 ? pinned : 0;
+    const actor = data.actors[actorIndex]?.actor;
+    const next: ViewerState = { ...this.state, runId, actorIndex, scroll: 0, follow: true };
+    delete next.notice;
+    if (actor !== undefined) next.actor = actor;
+    else delete next.actor;
+    this.state = next;
+    this.lastFingerprint = null;
+    this.requestRender();
+  }
+
   private requestRender(): void {
     if (!this.opts.requestRender) return;
     try {
@@ -1146,7 +1234,7 @@ export class TranscriptViewer implements Component {
     const rows = this.opts.rows?.() ?? 30;
     const bodyHeight = stabilizeBodyHeight(this.lastBodyHeight, computeFrameHeight(rows));
     this.lastBodyHeight = bodyHeight;
-    this.data = this.opts.load();
+    this.data = this.loadData();
     this.state = withResolvedActor(this.data, this.state);
     this.lastFingerprint = viewerDataFingerprint(this.data);
     const { detailWidth } = computeViewerLayout(width);
@@ -1176,6 +1264,8 @@ export class TranscriptViewer implements Component {
       actorIds: this.data.actors.map((a) => a.actor),
       runRunning: this.data.runStatus === "running",
       runStatus: this.data.runStatus,
+      runIds: (this.data.runs ?? []).map((run) => run.runId),
+      runId: this.state.runId ?? this.data.runId,
     });
     if (result.type === "close") {
       this.dispose();
@@ -1189,6 +1279,10 @@ export class TranscriptViewer implements Component {
     }
     if (result.type === "stop-confirm") {
       this.beginStop();
+      return;
+    }
+    if (result.type === "run-switch") {
+      this.switchRun(result.runId);
       return;
     }
     if (result.type === "chat-submit") {
@@ -1215,7 +1309,7 @@ export class TranscriptViewer implements Component {
     }
     let notice: { text: string; kind: NoticeKind };
     try {
-      notice = onMessage({ actor: actor.actor, label: actor.label }, text);
+      notice = onMessage({ runId: this.data.runId, actor: actor.actor, label: actor.label }, text);
     } catch {
       notice = { text: "发送失败：消息处理异常，请重试", kind: "error" };
     }
@@ -1245,7 +1339,7 @@ export class TranscriptViewer implements Component {
     void (async () => {
       let result: ViewerStopResult;
       try {
-        result = await stop();
+        result = await stop(this.data.runId);
       } catch {
         result = { text: "停止失败；稍后用 /team:stop 重试", kind: "error" };
       }
@@ -1308,11 +1402,11 @@ export const VIEWER_OVERLAY_OPTIONS: OverlayOptions = {
 export async function openTranscriptViewer(
   ui: Pick<ExtensionUIContext, "custom">,
   opts: {
-    load: () => ViewerData;
+    load: (runId: string | undefined) => ViewerData;
     refreshMs?: number;
     initialActor?: string;
-    stop?: () => Promise<ViewerStopResult>;
-    onMessage?: (target: { actor: string; label: string }, message: string) => { text: string; kind: NoticeKind };
+    stop?: (runId: string) => Promise<ViewerStopResult>;
+    onMessage?: (target: { runId: string; actor: string; label: string }, message: string) => { text: string; kind: NoticeKind };
   },
 ): Promise<void> {
   const renderMarkdown = markdownRenderer();

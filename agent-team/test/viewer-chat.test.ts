@@ -234,7 +234,7 @@ function makeViewer(opts: { onMessage?: (target: { actor: string; label: string 
 test("viewer 提交：onMessage 收到选中 actor 与文本，notice 上屏并退出输入模式", () => {
   const viewer = makeViewer({
     onMessage: (target, message) => {
-      assert.deepEqual(target, { actor: "_leader", label: "leader" });
+      assert.deepEqual(target, { runId: "run-1", actor: "_leader", label: "leader" });
       assert.equal(message, "直接消息");
       return { text: "已发送给 leader", kind: "success" };
     },

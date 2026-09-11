@@ -18,7 +18,7 @@ import { test } from "node:test";
 import agentTeamExtension, { resetDoubleLoadGuardForTests, viewerStopAction } from "../index.ts";
 import { serializeTeam } from "../config.ts";
 import { RUN_ENTRY_TYPE } from "../types.ts";
-import { TranscriptViewer, plainStyles } from "../viewer.ts";
+import { TranscriptViewer, plainStyles, stripAnsi, type ViewerData } from "../viewer.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { makeFakeSpawn, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
 
@@ -184,6 +184,101 @@ function closableViewCtx() {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// ③ 多 run：stop/onMessage 回调携带当前查看 run 的 runId（设计 §6.1）
+// ---------------------------------------------------------------------------
+
+function dualRunLoad(runId: string | undefined): ViewerData {
+  const runs = [
+    { runId: "run-A", team: "a-team", status: "running" },
+    { runId: "run-B", team: "b-team", status: "running" },
+  ];
+  const viewingB = runId === "run-B";
+  return {
+    team: viewingB ? "b-team" : "a-team",
+    runId: viewingB ? "run-B" : "run-A",
+    runStatus: "running",
+    actors: [
+      { actor: "_leader", label: "leader", status: "running" },
+      { actor: "front", label: "front", status: "running" },
+    ],
+    entries: new Map(),
+    runs,
+  };
+}
+
+test("viewer 多 run：`[` 切到 run-B 后 stop(runId) 与确认横幅都指向当前查看 run", async () => {
+  const stopped: string[] = [];
+  const viewer = new TranscriptViewer({
+    load: dualRunLoad,
+    done: () => {},
+    styles: plainStyles(),
+    rows: () => 40,
+    refreshMs: 60_000,
+    stop: async (runId) => {
+      stopped.push(runId);
+      return { text: `run ${runId} 已停止`, kind: "success" };
+    },
+  });
+  try {
+    viewer.handleInput("[");
+    assert.match(stripAnsi(viewer.render(100).join("\n")), /Run: run-B/, "`[` 切到 run-B");
+    viewer.handleInput("D");
+    assert.match(stripAnsi(viewer.render(100).join("\n")), /确认停止 run run-B？/, "确认横幅带当前 runId");
+    viewer.handleInput("\r");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(stopped, ["run-B"], "stop 回调收到当前查看 run 的 runId");
+  } finally {
+    viewer.dispose();
+  }
+});
+
+test("viewer 多 run：钉选 run 从列表消失→刷新时回退默认 run", () => {
+  let gone = false;
+  const viewer = new TranscriptViewer({
+    load: (runId) => {
+      const data = dualRunLoad(runId);
+      return gone ? { ...data, runs: [{ runId: "run-A", team: "a-team", status: "running" }] } : data;
+    },
+    done: () => {},
+    styles: plainStyles(),
+    rows: () => 40,
+    refreshMs: 60_000,
+  });
+  try {
+    viewer.handleInput("[");
+    assert.match(stripAnsi(viewer.render(100).join("\n")), /Run: run-B/, "先钉选 run-B");
+    gone = true; // run-B 从 runs 列表消失（记录被挤出/会话变更）
+    assert.match(stripAnsi(viewer.render(100).join("\n")), /Run: run-A/, "列表变化后回退默认 run");
+  } finally {
+    viewer.dispose();
+  }
+});
+
+test("viewer 多 run：`[` 切到 run-B 后 onMessage target 带当前 runId", () => {
+  const targets: Array<{ runId: string; actor: string; label: string }> = [];
+  const viewer = new TranscriptViewer({
+    load: dualRunLoad,
+    done: () => {},
+    styles: plainStyles(),
+    rows: () => 40,
+    refreshMs: 60_000,
+    onMessage: (target, message) => {
+      targets.push(target);
+      return { text: `已发送 ${message}`, kind: "success" };
+    },
+  });
+  try {
+    viewer.handleInput("[");
+    viewer.handleInput("m");
+    viewer.handleInput("hi");
+    viewer.handleInput("\r");
+    assert.deepEqual(targets, [{ runId: "run-B", actor: "_leader", label: "leader" }], "target 带当前 runId");
+  } finally {
+    viewer.dispose();
+  }
+});
 
 test("全链路：viewer D→Enter 触发真实 stopAndSettle，落定后 notice 显示 aborted 终态", async () => {
   resetDoubleLoadGuardForTests();
