@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流仓库 CLI
 
-> last verified @ bcb6fbd
+> last verified @ 24acbad
 
 ## 职责与边界
 
@@ -16,7 +16,7 @@
 - `todo-cli/query.ts` — 纯函数查询引擎（`statusMark`/`parseBranchRef`/`parseTags`/`deriveQueryEntries`/`applyEntryFilter`/`sortQueryEntries`/`serializeEntries`/`parseFilterOptions`），零 import（不碰 fs/db/store）。
 - `tools/todo.mjs` — 唯一 CLI 入口（薄壳）：`export * from "../todo-cli/core.ts"` + 直接运行时转发 `main`；根测试 import 此路径。
 - 根 `test/todo-cli.test.ts` — 23 个测试：13 个 in-process（临时 fixture 上跑 `main(deps)`）+ 3 个进程边界 E2E + 7 条 L14/L15 接线（组合查询/降级注入/db 子命令/对照测试，即 10-design §6 清单 24–30）。
-- `todo-cli/test/` — 单元与真实边界：`store.test.ts`（7）、`migrate.test.ts`（5）、`query.test.ts`（6）、`concurrency.test.ts`（3 个真实子进程并发）、`interrupt.test.ts`（2，SIGKILL/漂移自愈）、`migrate-roundtrip.test.ts`（2，可逆/时间戳迁移）。
+- `todo-cli/test/` — 单元与真实边界：`store.test.ts`（9）、`migrate.test.ts`（5）、`query.test.ts`（6）、`concurrency.test.ts`（3 个真实子进程并发）、`interrupt.test.ts`（2，SIGKILL/漂移自愈）、`migrate-roundtrip.test.ts`（2，可逆/时间戳迁移）。
 
 ## 核心数据流
 
@@ -66,7 +66,7 @@ argv → `parseArgs` → `main(argv, deps)`（`repoRoot`/`log`/`writeFile`/`exec
 
 ## 改动清单
 
-- 必跑（W5 前直跑；W5 把 glob 接进 `npm run test:todo`）：`node --test test/todo-cli.test.ts "todo-cli/test/*.test.ts"`（48 个，2026-09-11 实测全绿）+ `node tools/todo.mjs lint`（exit 0）。环境剥离前缀 `env -u PI_AGENT_TEAM_FILE -u PI_AGENT_TEAM_NAME -u PI_AGENT_TEAM_RUN_ID`。
+- 必跑：`npm run test:todo`（glob = `test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`；50 个，2026-09-11 实测全绿）+ `node tools/todo.mjs lint`（exit 0）。环境剥离前缀 `env -u PI_AGENT_TEAM_FILE -u PI_AGENT_TEAM_NAME -u PI_AGENT_TEAM_RUN_ID`。
 - 改行为：同步根 `test/todo-cli.test.ts` + 本卡；改命令面：同步 `core.ts` 的 `USAGE` + 本卡。
 - 改路径规则/查重口径：本卡「不变量」与 `todos/todo-cli-todo.md` 同步。
 - 新增子命令/flags：先补根测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变。
