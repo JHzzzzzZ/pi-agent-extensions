@@ -118,3 +118,11 @@
 - 症状：亮块背景改造时发现——`renderWidgetView` 一直以终端宽为截断预算，而宿主 `setExtensionWidget` 对 `string[]` 每行包 `Text(line, 1, 0)`（左右各 1 列 margin，内容可用宽 = 终端宽 − 2）：CJK 满宽行（截图场景的 leader 行）在真实渲染里折成两个物理行，背景块随之断续；若行宽继续按终端宽补齐，每一行都会折行。此前无背景、文本多短于终端宽，所以问题潜伏。
 - 根因：字符串数组的「行宽预算」不等于终端宽——宿主在内容两侧各留 1 列 margin；`Text` 用 `contentWidth = width − 2 × paddingX` 做换行判断，超出即 wrap（不是截断）。
 - 教训：① 写入 `string[]` widget 的每一行必须按**宿主内容宽（终端宽 − 2）**做 CJK 感知截断+补齐，绝不能按终端宽补齐（超宽会折成额外物理行，甚至触发 `doRender` 超宽断言）；② 宿主包装常量与 `MAX_WIDGET_LINES` 一样直读宿主 dist 源码由测试锁定（漂移即红）；③ 背景块的连续性只有在真实渲染路径（`capture-screens` 的 `Container + Text(line,1,0)` + VT 仿真屏）上才能验证——纯函数断言看不到折行。
+
+## worktree 分支 ref 文件/目录互斥：团队分支挡住成员分支（agent-team v1.15.4，真机 run-1789108491578）
+
+- 症状：团队 `worktree: true` + 成员 `worktree: true` 的组合下，首个成员派发必失败 `WORKTREE_UNAVAILABLE`，错误为 `fatal: cannot lock ref 'refs/heads/team/run-X/<member>': 'refs/heads/team/run-X' exists`。真机 run-1789108491578 上 leader 手工把团队分支从 `team/<runId>` 改名为 `team-run-<runId>` 后派发恢复（历史成功 run 的团队分支均为连字符形式）。
+- 根因：`cockpit.ts` 团队共享 worktree 用分支 `team/<runId>`，`dispatch.ts` 成员用 `team/<runId>/<member>`——git ref 不允许同时是文件与目录：`refs/heads/team/run-X` 一旦存在，`refs/heads/team/run-X/...` 的创建被 lock 拒绝。两条模板分属独立代码路径、各自单测全绿，只有组合才炸。
+- 为何既有单测没抓到：`worktree.test.ts` 只创建单分支 worktree、`worktree-reuse.test.ts` 只覆盖「同一成员分支」的重派复用，没有「团队级 + 成员级同 run」的组合用例；且这是 git ref 树语义（真实仓库的文件/目录互斥），纯函数/fake git 都测不出来——必须真实临时仓库按 cockpit→dispatch 顺序组合建树。
+- 处置（v1.15.4）：团队共享分支改连字符 `team-run-<runId>`（成员分支 `team/<runId>/<member>` 不变）；两处模板收敛为 `worktree.ts` 单一来源 `teamWorktreeBranch()` / `memberWorktreeBranch()`；新增真实临时 git 仓库组合测试（团队+成员共存、dispatch 级首次派发成功、模板纯断言）与旧命名兼容测试（存量 `team/<runId>` worktree 重派走「已注册但分支不匹配 ⇒ `git worktree remove --force` 提示」，不崩溃、不静默删除）。
+- 教训：① 命名空间类缺陷要在**真实资源树**上做组合测试（谁占用前缀、谁挂在下面），不能只测单点创建；② 同一实体的命名模板应收敛到单一来源，避免两条路径各自演进再次撞车；③ 改命名默认考虑存量——旧资源重派必须走已有的可操作提示路径，绝不清删。

@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
 import { visibleWidth } from "../viewer.ts";
+import { teamWorktreeBranch } from "../worktree.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import {
   makeFakeSpawn,
@@ -198,7 +199,7 @@ test("team-level shared worktree: leader runs inside it and the record carries i
   const runId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
   assert.deepEqual(add.args.slice(0, 3), ["worktree", "add", path.join("/tmp/worktrees", runId, "team")]);
   assert.equal(add.args[3], "-b");
-  assert.equal(add.args[4], `team/${runId}`);
+  assert.equal(add.args[4], teamWorktreeBranch(runId));
   assert.equal(spawn.records[0].cwd, path.join("/tmp/worktrees", runId, "team"));
 
   child.autoRespond(leaderLines(), 0, 5);
@@ -206,7 +207,7 @@ test("team-level shared worktree: leader runs inside it and the record carries i
   assert.ok(result.ok, result.ok ? "" : result.message);
   assert.deepEqual(result.value?.worktree, {
     path: path.join("/tmp/worktrees", runId, "team"),
-    branch: `team/${runId}`,
+    branch: teamWorktreeBranch(runId),
   });
 });
 

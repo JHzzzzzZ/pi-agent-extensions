@@ -17,7 +17,7 @@ import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
 import { fileRunStore, RUN_STATUS_VERSION, type RunStoreWriter } from "./runstore.ts";
 import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
-import { createWorktree, defaultGitRunner, isGitRepo, type GitRunner } from "./worktree.ts";
+import { createWorktree, defaultGitRunner, isGitRepo, teamWorktreeBranch, type GitRunner } from "./worktree.ts";
 import {
   LEADER_ENV_FILE,
   LEADER_ENV_NAME,
@@ -495,7 +495,7 @@ export class TeamRunCoordinator {
             git,
             repoCwd: baseCwd,
             worktreePath: path.join(this.deps.worktreeRoot, runId, "team"),
-            branch: `team/${runId}`,
+            branch: teamWorktreeBranch(runId),
           });
           if (!created.ok) {
             const message = `预检失败：创建团队共享 worktree 失败 — ${created.message}`;

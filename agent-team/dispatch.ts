@@ -15,7 +15,7 @@
 import * as path from "node:path";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { type TranscriptEntryKind, type TranscriptSink } from "./transcript.ts";
-import { createWorktree, defaultGitRunner, type GitRunner } from "./worktree.ts";
+import { createWorktree, defaultGitRunner, memberWorktreeBranch, type GitRunner } from "./worktree.ts";
 import {
   MAX_PARALLEL_MEMBERS,
   MAX_RESULT_BYTES,
@@ -315,7 +315,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       if (!plan.member?.worktree || plan.preError) continue;
       setProgress(plan.member.name, "running", "创建 worktree…");
       const worktreePath = path.join(deps.worktreeRoot, deps.runId, plan.member.name);
-      const branch = `team/${deps.runId}/${plan.member.name}`;
+      const branch = memberWorktreeBranch(deps.runId, plan.member.name);
       const created = await createWorktree({ git, repoCwd: deps.cwd, worktreePath, branch });
       if (created.ok) {
         plan.worktree = created.value;
