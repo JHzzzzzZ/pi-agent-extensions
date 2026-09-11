@@ -159,6 +159,20 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 
 对话内查看：主 agent 可调用 `team_transcript` 工具（`member` 参数指定成员名或 `leader`）读取同样的记录并转述要点；`team_status` 之外想深入某个成员"到底做了什么"时用它。统一路由下不存在动态命令覆盖问题：首 token 是保留词即子命令，否则才是团队名。
 
+### 6. 向用户提问（team_ask，人工澄清）
+
+leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行判断时，可调用 `team_ask` 向用户提问：
+
+```json
+{ "question": "本次改动是否需要兼容旧版 Node？", "options": ["必须兼容", "可以放弃"] }
+```
+
+- 不传 `options` 为自由文本输入；传 `options`（2~10 项）为选项选择。默认等待 10 分钟（工具参数 `timeoutMs` 可覆盖，范围 30 秒 ~ 30 分钟）。
+- 提问以**宿主对话框**直接呈现给用户（与主 agent 其它对话框一致）；作答经 leader 的 RPC stdin 回写，leader 带着答案继续任务。
+- 降级（全部 fail-closed，不会挂住 run）：超时 / 用户取消 / 主会话无 UI（如 headless）/ run 被停止 —— 均回「未获回答」，工具结果要求 leader 不追问、按最合理假设继续并在最终报告说明假设。
+- 问答与未答原因记入本 run 的 leader transcript（`/team:view` 中以 `❓ 提问` / `✔ 回答` 独立方块展示），等待期 `/team:status` 与亮块显示「等待人工回答…」。
+- 注意：若团队通过 `leader.tools` 限制白名单，需包含 `team_ask`（与 `team_dispatch` 同理）。
+
 ### 防失控与失败可见性
 
 - 每个成员的失败会显示**具体原因**（不只错误码），Widget、进度流和派发报告中都可见。
@@ -166,11 +180,12 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 - **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行（可用团队文件 `budget:` 块调整）；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
 - **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块展开头行在设了费用上限时显示余额提示（折叠行不含）。
 - **崩溃恢复**：每个 run 的元数据快照（`status.json`，含 leader PID 与属主会话 PID）落盘在 `~/.pi/agent/teams/runs/<runId>/`；主会话中断后下次启动只把**属主已死**（ownerPid 探活失败）或无 ownerPid 的残留 running 翻成 failed 记录并警告——别的活会话正在跑的 run 不会被误翻；孤儿 leader **只诊断不杀**（PID 可能复用，请人工确认后处理）；`/team:doctor` 可查看全部残留与损坏文件。
+- **提问不会挂住 run**：`team_ask` 等待默认 10 分钟、上限 30 分钟，cockpit 侧另有 +5s backstop；超时/取消/主会话无 UI/run 停止全部回「未获回答」，leader 按合理假设继续并在报告声明（不重复追问、不空转到预算上限）。
 
 ## 命令与工具一览
 
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_status`（查运行状态，含 runId 与预算）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
-- leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）
+- leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）、`team_ask`（向用户提问并等待回答；超时/取消/无 UI 自动降级）
 - 命令：裸 `/team`（无参=列团队；带参=用法）+ 独立冒号命令 `/team:list`/`:run`/`:status`/`:stop`/`:view`（内含 `m` 发消息直接对话）/`:clear`/`:doctor`；派单统一 `/team:run <团队名> <任务>`（团队名可与子命令同名，v1.12.0 保留词概念退役）
 - Widget：输入栏下方可选中亮块（数据驱动：有活跃 run 才挂帧、落定自动卸载；默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员` 树，末行恒为成员行）——`main` 行 `enter` 只收起选中，leader/成员行 `enter` 直达查看器对应 actor（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏分栏会话记录查看器——左栏成员 roster、右栏成员对话/工具调用/错误实时可读（仅交互式 TUI）
@@ -180,7 +195,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（431 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（464 个测试，含真实 git worktree 与真实 pi 子进程 E2E）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
@@ -200,7 +215,7 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 
 ## 设计说明
 
-- 零构建 TS ESM；entry `index.ts` 默认导出工厂；通过环境变量 `PI_AGENT_TEAM_FILE` 区分 leader 模式（只注册 `team_dispatch`）与驾驶舱模式（注册命令/工具/Widget）——同一份代码两种形态。
+- 零构建 TS ESM；entry `index.ts` 默认导出工厂；通过环境变量 `PI_AGENT_TEAM_FILE` 区分 leader 模式（注册 `team_dispatch` + `team_ask`）与驾驶舱模式（注册命令/工具/Widget）——同一份代码两种形态。
 - 成员子进程与 pwr 的 `PiAgentRunner`、官方 subagent 扩展同模式：`--mode json -p --no-session`、行 JSON 事件流解析（usage/stopReason/finalText）、`team-tmp://` prompt 物化为 0600 临时文件、SIGTERM→SIGKILL 中止。本扩展自包含，不 import pwr。
 - 子进程环境与工具面显式声明（v1.17.1）：成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
 - 结果截断：单成员结果 50KB、摘要 8KB；错误按成员隔离（单个成员失败不拖垮整次 dispatch）。
