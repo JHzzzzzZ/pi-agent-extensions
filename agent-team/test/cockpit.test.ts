@@ -8,7 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
+import { failedRunRecord, formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
 import { DERIVED_AGENT_TOOL_DENYLIST, type RunProgress } from "../types.ts";
 import { visibleWidth } from "../viewer.ts";
 import { teamWorktreeBranch } from "../worktree.ts";
@@ -239,6 +239,32 @@ test("pre-flight: worktree members without a git repo fail fast without spawning
   assert.equal(result.code, "WORKTREE_UNAVAILABLE");
   assert.match(result.message, /预检失败/);
   assert.equal(spawn.records.length, 0, "no leader spawned");
+  assert.equal(result.record?.status, "failed", "launch-level failure carries a minimal record");
+  assert.deepEqual(result.record?.members, []);
+  assert.match(result.record?.error ?? "", /预检失败/);
+  assert.equal(coordinator.getStatus().lastRecord?.status, "failed", "failed record visible to /team:status");
+});
+
+test("failedRunRecord builds the minimal failed record shape", () => {
+  const record = failedRunRecord({
+    runId: "run-7",
+    team: "dev-team",
+    task: "修复登录 bug",
+    startedAt: "2026-09-05T12:00:00Z",
+    error: "CHILD_FAILED: boom",
+    durationMs: 1234,
+  });
+  assert.equal(record.status, "failed");
+  assert.equal(record.runId, "run-7");
+  assert.equal(record.error, "CHILD_FAILED: boom");
+  assert.deepEqual(record.members, []);
+  assert.equal(record.totalCost, 0);
+  assert.equal(record.totalTokens, 0);
+  assert.equal(record.durationMs, 1234);
+  assert.equal(record.report, undefined);
+
+  const noDuration = failedRunRecord({ runId: "run-8", team: "t", task: "x", startedAt: "2026-09-05T12:00:00Z", error: "e" });
+  assert.equal(noDuration.durationMs, undefined);
 });
 
 test("formatStatusSnapshot renders a running snapshot and the last record", () => {

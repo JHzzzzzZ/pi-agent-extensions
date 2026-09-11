@@ -73,9 +73,9 @@ members:
 
 | 方式 | 说明 |
 |---|---|
-| `/team:run <团队名> <任务>` | **后台运行**（唯一派单命令）：命令立即返回，主会话可继续对话；输入栏下方亮块实时显示进度（见 §4），完成后报告自动送入会话；团队增删即时生效（无注册缓存），团队名可与子命令同名（保留词概念已退役） |
+| `/team:run <团队名> <任务>` | **后台运行**（唯一派单命令）：命令立即返回，主会话可继续对话；输入栏下方亮块实时显示进度（见 §4），完成后报告自动送入会话（失败的失败摘要同样送达）；团队增删即时生效（无注册缓存），团队名可与子命令同名（保留词概念已退役） |
 | `/team` · `/team:list` | 无参 `/team`（或 `/team:list`）列出全部团队（含无效文件警告） |
-| `team_run` 工具 | 让主 agent 自主派单——**默认后台**：立即返回（含 runId，`team_stop` 的中止句柄），报告完成后自动送达会话（followUp）；`wait: true` 同步等待整个 run 并内联返回报告（阻塞主会话，不推荐） |
+| `team_run` 工具 | 让主 agent 自主派单——**默认后台**：立即返回（含 runId，`team_stop` 的中止句柄），报告完成后自动送达会话（followUp）；**failed 也必达**：失败摘要（状态/错误/成员结果/部分报告）走同一 followUp 通道，主 agent 可据此重试或如实转告用户；`wait: true` 同步等待整个 run 并内联返回报告（失败内联 `isError`；阻塞主会话，不推荐） |
 | `team_stop` 工具 | 让主 agent 按 runId 中止后台 run（与 `/team:stop` 同一停止原语 + **settle-aware**：有界等待 leader 落定后返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达；可立即重新派单）。runId 必填：省略 `RUN_ID_REQUIRED`、未知 `RUN_NOT_FOUND`、已结束 `RUN_ALREADY_FINISHED`（均类型化错误，不抛异常） |
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
@@ -162,6 +162,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ### 防失控与失败可见性
 
 - 每个成员的失败会显示**具体原因**（不只错误码），Widget、进度流和派发报告中都可见。
+- **失败终态必达主 agent（v1.18.0）**：后台 run 落 `failed` 时，除用户端 `ui.notify` 外，主会话还会收到一条失败摘要 followUp（`agent-team-result`，与完成报告同通道）——头行含状态/runId/耗时/费用，随后是错误、任务、各成员结果行（`done/failed/aborted` + 摘要）与部分报告（leader 失败前已产出的内容）；总量 8KB 上限，超长先截报告。启动级失败（worktree 预检、创建 worktree 失败、leader 进程拉起异常）同样送达，并补落一条最小 failed 记录（`members: []`），`/team:status` 与查看器可回看。**中止（stop/D）不送达**——那是用户主动叫停，`team_stop` 返回 aborted 终态记录；model 预检 / `RUN_IN_PROGRESS` 等同步拒绝也不补送达（`team_run` 已内联报错）。
 - 派发报告对环境级失败（worktree/git 不可用、成员/模型不存在）附带指令：重试无效，不要再次派发同一成员。
 - **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行（可用团队文件 `budget:` 块调整）；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
 - **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块展开头行在设了费用上限时显示余额提示（折叠行不含）。
@@ -180,7 +181,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（431 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（442 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 
