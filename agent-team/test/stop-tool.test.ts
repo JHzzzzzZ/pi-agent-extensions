@@ -22,6 +22,7 @@ import {
   toolExecutionEndLine,
   toolExecutionStartLine,
   waitForChild,
+  waitForChildByRunId,
   type FakeSpawnHandle,
   isolateRunsDir,
 } from "./helpers.ts";
@@ -250,8 +251,11 @@ test("team_stop without runId errors with RUN_ID_REQUIRED while two runs run in 
     const second = await run({ team: "proj-team", task: "two" });
     const firstId = (first.details as { runId?: string }).runId ?? "";
     const secondId = (second.details as { runId?: string }).runId ?? "";
-    const childA = await waitForChild(spawn, 0);
-    const childB = await waitForChild(spawn, 1);
+    // 两个 start 在 spawn 前的真实异步工作让 spawn 完成序可与调用序翻转；
+    // 按索引取 child 会在翻转时把被停的 run 判到另一个 child 上（本用例
+    // 负载下实测过一次该假红）。
+    const childA = await waitForChildByRunId(spawn, firstId);
+    const childB = await waitForChildByRunId(spawn, secondId);
 
     const result = await stop({});
     assert.equal(result.isError, true);
@@ -263,7 +267,10 @@ test("team_stop without runId errors with RUN_ID_REQUIRED while two runs run in 
 
     // An explicit runId still stops only that run.
     const targeted = stop({ runId: secondId });
-    assert.ok(childB.killed.includes("SIGTERM"));
+    // 不能 await targeted（stopAndSettle 会等 settle 死锁）；SIGTERM 是否
+    // 与 stop() 调用同步可见不作契约，改有界轮询后显式断言。
+    await waitFor(() => childB.killed.includes("SIGTERM"));
+    assert.ok(childB.killed.includes("SIGTERM"), "targeted stop signals its leader");
     assert.equal(childA.killed.length, 0, "the other run is untouched");
     childB.emitClose(null);
     const targetedResult = await targeted;

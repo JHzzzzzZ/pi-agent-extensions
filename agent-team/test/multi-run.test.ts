@@ -26,7 +26,7 @@ import { defaultSpawn } from "../runner.ts";
 import { MAX_CONCURRENT_TEAM_RUNS, MAX_RETAINED_RUN_RECORDS, type PiSpawn, type RunProgress } from "../types.ts";
 import { stripAnsi } from "../viewer.ts";
 import { fixtureTeam } from "./fixtures.ts";
-import { isolateRunsDir, makeFakeSpawn, messageEndLine, sleep, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
+import { isolateRunsDir, makeFakeSpawn, messageEndLine, sleep, waitForChild, waitForChildByRunId, type FakeSpawnHandle } from "./helpers.ts";
 
 function fakeUi(): UiPort {
   return { notify: () => {}, dim: (text) => text };
@@ -207,8 +207,13 @@ test("runIds in the same millisecond get distinct -n suffixes", async () => {
     assert.ok(fs.existsSync(path.join(root, "runs", "run-1000", "status.json")));
     assert.ok(fs.existsSync(path.join(root, "runs", "run-1000-2", "status.json")));
 
-    const childA = await waitForChild(spawn, 0);
-    const childB = await waitForChild(spawn, 1);
+    // 并发 start() 在 spawn 前有真实异步工作（状态落盘、临时提示词落盘、
+    // 可选 git 预检），spawn 完成序可与 start 调用序不一致（实测翻转）；
+    // 按 children 索引配对会在翻转时把 A 的事件喂给 B 的 child → 后者先
+    // 落定、`await first` 永挂。按 spawn env 里的 runId 配对（makeFakeSpawn
+    // 已记录），任意 spawn 序都稳定。
+    const childA = await waitForChildByRunId(spawn, "run-1000");
+    const childB = await waitForChildByRunId(spawn, "run-1000-2");
     // 同毫秒 startedAt 下 records 的先后由落定序决定（pushRecord 稳定排序：
     // 后落定者在前）。两个 5ms 定时器的回调顺序在机器满载时会翻转（本用例
     // 曾在全量中偶发抖红），故串行落定 A→B，把「后完成者在前」锁死。
