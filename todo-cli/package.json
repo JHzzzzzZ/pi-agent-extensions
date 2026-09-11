@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-todo-cli",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "todo-cli — Pi 扩展：todos/ 工作流工具（agent 直接调用登记/领取/完成/盘点/交接扫描；人类冒号命令 /todo、/todo:list|add|claim|complete|triage|lint）",
   "engines": {

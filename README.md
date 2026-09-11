@@ -16,7 +16,7 @@
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
-| [`todo-cli/`](#todo-cli) | `todos/` 工作流原子操作：agent 工具 `todo`（登记查重/领取标注/完成收口/交接扫描）+ 人类命令 `/todo`、`/todo:list|add|claim|complete|triage|lint` | 5 个（node:test） |
+| [`todo-cli/`](#todo-cli) | `todos/` 工作流原子操作：agent 工具 `todos`（登记查重/领取标注/完成收口/交接扫描）+ 人类命令 `/todo`、`/todo:list|add|claim|complete|triage|lint` | 5 个（node:test） |
 | [`session-manager/`](#session-manager) | 落盘会话只读浏览/检索：agent 工具 `session`（list/search/preview）+ 人类命令 `/session-manager`、`/session-manager:list|search|preview`；接续/分支交给宿主 `pi --session/--fork` | 10 个（node:test） |
 
 ## 安装
@@ -495,7 +495,7 @@ node --experimental-strip-types --test solo-mode/index.test.ts   # 22 个测试
 
 把 `todos/` 工作流（登记 / 领取 / 完成 / 盘点 / 交接扫描）从「agent 手写 grep + edit」升级为有测试锁定的原子操作。同一套实现（`todo-cli/core.ts`）供 Pi 扩展与仓库 CLI `node tools/todo.mjs` 共用——扩展目录自包含，整目录复制即可安装。
 
-- **agent 工具 `todo`** — `action="summary|list|add|claim|complete|triage|lint"`：登记自带跨全部文件查重（重复拒绝且不写入）、领取标注 `（processing @ feat/x）`、完成勾选 `[x]` 并去标注、triage 只读扫描 worktree↔条目关联（活跃/可清理/孤儿目录/引用已消失）
+- **agent 工具 `todos`**（复数名，避开第三方同名工具 `todo`） — `action="summary|list|add|claim|complete|triage|lint"`：登记自带跨全部文件查重（重复拒绝且不写入）、领取标注 `（processing @ feat/x）`、完成勾选 `[x]` 并去标注、triage 只读扫描 worktree↔条目关联（活跃/可清理/孤儿目录/引用已消失）
 - **人类命令** — 裸 `/todo` 盘点摘要；`/todo:list [open|processing|done]`、`/todo:add <文件> <描述>`、`/todo:claim <文件> <子串> [--branch feat/x]`、`/todo:complete <文件> <子串> [--note 说明]`、`/todo:triage`、`/todo:lint`（旧空格写法只提示改名）
 - **边界** — 只读写工作目录 `todos/` 下文件（路径穿越拒绝）、保持 CRLF 行尾、绝不自动 commit；登记不标 processing，领取才标（动作显式分离）
 
