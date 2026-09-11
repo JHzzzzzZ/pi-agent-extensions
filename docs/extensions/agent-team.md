@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 0c7365f
+> last verified @ 638eb0f
 
 ## 职责与边界
 
@@ -17,13 +17,13 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - `doctor.ts` — `/team:doctor` 自检（纯函数 `buildDoctorReport`，deps 注入发现/状态读取/lookup/fs 探测）：运行模式、团队发现、逐团队模型预检、运行目录（残留 running/损坏 status）、逐团队预算与来源、worktree、widget 开关、registry error。
 - `dispatch.ts`（leader 模式工具）、`cockpit.ts`（cockpit 模式工具）、`manage.ts`（team_create/list）、`chat.ts`（viewer 发消息：task 模板 + transcript 尾部截断 + FIFO 队列/链式门控，纯逻辑层，宿主接线在 index.ts）。
 - `widget.ts` — 输入栏下方可选中亮块（`setWidget(key, string[], { placement: "belowEditor" })`）——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件，v1.13.0），宿主 widget 由 `RunStatusSnapshot.running` 决定注册（running ⇒ string[] 帧，落定 ⇒ `undefined` 自动卸载，终态不常驻；`running` 但无 progress 同样隐藏）；**刷新双触发** = coordinator `onProgress` 状态变化点事件即时（leader 事件/派发起止 → `refreshWidget()`，不等 tick）+ 1s 对齐秒节拍兜底（`aligned-ticker.ts`）+ 渲染串指纹相同跳过（`renderKey`）；默认（未选中）为折叠单行 `agent-team <团队> · ↓/← 查看详情`（不含状态/耗时/并行数，未展开时不逐秒 churn），选中态展开 `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（`buildWidgetView`/`renderWidgetView` 纯函数；成员行 `├─ <名> <图标> <状态>[ · ≤30 字尾注]`（非末项）/ `╰─ …`（末项，圆角，v1.15.4），图标 queued `·`/running `●`/done `✓`/failed `✗`/aborted `⊘`；任务摘要/尾注文本先 `\s+` 压平再截断，任务摘要 44 字截断内嵌 leader 行、末行恒为成员行；每行按宿主内容宽（终端宽 − 2）CJK 补齐后包背景（普通行 `rowBg`/选中行 `rowSelectedBg`，缺失降级，v1.15.4）；`main` 行 enter 只收起选中，leader/成员行按 actor 进查看器）；激活门控 = 焦点在主编辑器（`editorFocus` 端口 + `probeEditorFocus` 结构判定，宿主无焦点信息降级）× 编辑器为空（`editorState` 端口）；选中态到顶再按 `↑`/`k` 退出选中并收回折叠）；`aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，widget 与 cockpit 进度 ticker 共用，契约见 `docs/cross/status-bar.md`）；`viewer.ts` — `/team:view` 全屏左右分栏查看器（左 roster/右 detail，fleet inspector 布局，v1.8.0 起动作键位全集对齐 fleet；detail 头五行含活动行，v1.17.0）；`transcript.ts` — 成员转写物化；`tools/capture-screens.mjs` + `tools/vt-screen.mjs` — 文档截图（真实 TuiMainScreen + 真实 viewer + headless 终端 → `docs/assets/*.svg`，帧锚点自检、确定性输出；见 README「文档截图」）；`docs/tui-sync.md` — TUI 行为对照 pi-subagents 的同步矩阵（**TUI 期望值唯一事实来源**）。
-- 两种模式一套代码，以 `PI_AGENT_TEAM_FILE` 环境变量区分；leader 模式只注册 `team_dispatch`。`PI_AGENT_TEAM_RUNS_DIR` 可重定向 run artifacts 根（测试隔离用）。
+- 两种模式一套代码，以 `PI_AGENT_TEAM_FILE` 环境变量区分；leader 模式只注册 `team_dispatch`。`PI_AGENT_TEAM_RUNS_DIR` 可重定向 run artifacts 根（测试隔离用）。成员子进程 env 剥这些键（`dispatch.ts` `stripLeaderEnv()`，其余变量保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一 `--exclude-tools subagent,team_run`（`DERIVED_AGENT_TOOL_DENYLIST`，防嵌套派生绕过预算/记录；exclude 优先于 `--tools`）。
 
 ## 核心数据流
 
 1. `team_run`/`/team:run` → **model 预检**（`preflightTeamModels`，坏引用即 `MODEL_NOT_FOUND` 不 spawn）→ 默认后台派单（立即返回，含 runId）→ 拉起 leader 子进程（注入 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`），coordinator claim 即落 `status.json` running 快照。
 2. leader 解释团队 prompt → 调 `team_dispatch`（每 dispatch ≤8 任务、≤4 并发成员；预算来自团队 frontmatter `budget:`，默认 12/40）。
-3. 每任务物化 `team-tmp://` prompt → member 子 pi 执行 → 结果 ≤50KB / 摘要 ≤8KB 回 leader。
+3. 每任务物化 `team-tmp://` prompt → member 子 pi 执行（env 剥 leader 三键、args 带 `--exclude-tools subagent,team_run`）→ 结果 ≤50KB / 摘要 ≤8KB 回 leader。
 4. cockpit 侧把 leader turn usage + 每次 dispatch 的 `details.totalUsage` 折叠进 `RunBudgetSnapshot`；费用/token 超限 → abort controller，终态 aborted + `BUDGET_EXCEEDED`。
 5. leader 汇总 → 终态记录经 `finalizeRun`（wait/后台单一终态路径）持久化 + 交付：后台 followUp 自动送达主会话——**completed 送报告，failed 送失败摘要**（`formatFailureNotice`：状态/runId/耗时/费用 + 错误 + 任务 + 成员结果行 + 部分报告；动态字段压平换行；整体 8KB `truncateUtf8` 上限，报告最后放所以先被截），aborted 不送达；`wait: true` 内联返回（同步契约不变，failed 带 `isError`）。
 6. `team_stop <runId>` 中止：`stopAndSettle()` SIGTERM→SIGKILL 后有界等待（默认 7s）落定，返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达，可立即重新派单。viewer 内 `D` 停止共用同一停止语义：确认后经 `viewerStopAction` → `stopAndSettle()`（`index.ts` 导出仅供测试），结果映射为顶部 notice（settled → success、未落定 → warning、异常 → error，绝不上抛）；run 已结束/无活动 run 时纯渲染层 notice 拦截，不进确认态、回调不会被调。
@@ -77,7 +77,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（427 个）+ `npm run typecheck`。
+- 必跑：`cd agent-team && npm install && npm test`（431 个）+ `npm run typecheck`。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
