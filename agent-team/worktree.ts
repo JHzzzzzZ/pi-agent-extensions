@@ -3,15 +3,34 @@
  *
  * Members flagged `worktree: true` run in their own git worktree under
  * `~/.pi/agent/teams/worktrees/<runId>/<member>` on a dedicated branch
- * `team/<runId>/<member>`. Worktrees are kept after the run (no auto-merge
- * in v1); the dispatch result reports path + branch so the leader (or the
- * user) decides how to integrate the changes.
+ * `team/<runId>/<member>`. A team-level `worktree: true` puts the whole run in
+ * a shared worktree under `<...>/<runId>/team` on branch `team-run-<runId>`
+ * (hyphenated: a `team/<runId>` branch would block member branches — git refs
+ * cannot be both file and directory, v1.15.4). Worktrees are kept after the
+ * run (no auto-merge in v1); the dispatch result reports path + branch so the
+ * leader (or the user) decides how to integrate the changes.
  */
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { err, ok, type Result, TeamErrorCodes } from "./types.ts";
+
+/**
+ * Branch contract — the single source for both call sites (cockpit team-level
+ * shared worktree, dispatch member worktrees). The team branch is hyphenated
+ * on purpose: `team/<runId>` would occupy the very ref directory that
+ * `team/<runId>/<member>` needs, and git refs cannot be both file and
+ * directory (v1.15.4 incident, see docs/incidents.md).
+ */
+export function teamWorktreeBranch(runId: string): string {
+  return `team-run-${runId}`;
+}
+
+/** Member worktree branch — stays under `team/<runId>/` (runs on its own path). */
+export function memberWorktreeBranch(runId: string, member: string): string {
+  return `team/${runId}/${member}`;
+}
 
 /** Injectable git runner (tests use a fake or a real temp repo). */
 export type GitRunner = (

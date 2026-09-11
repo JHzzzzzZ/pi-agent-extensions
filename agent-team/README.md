@@ -65,7 +65,7 @@ members:
 要点：
 - **leader.prompt 是整个功能的核心入口**——你在这里教 leader 如何完成任务（拆解策略、派发规则、验收标准）。扩展会自动追加团队花名册、`team_dispatch` 用法与最终报告格式。
 - **leader 默认拥有全部内置工具**（读写文件、bash 等）。若要限制 leader 亲自动手（例如只让它拆解派发），在团队文件里设置 `leader.tools`（如 `tools: [read, grep, find, ls]`）。实测中 leader 可能会用编辑工具自行"降级代写"或修订团队配置——不希望如此就收紧它的工具。
-- **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team/<runId>`）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；路径被非 worktree 占用等才报 `WORKTREE_UNAVAILABLE` 并附可操作提示）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
+- **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team-run-<runId>`，连字符形式——避免与成员分支 `team/<runId>/<member>` 构成 git ref 文件/目录冲突）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；路径被非 worktree 占用等才报 `WORKTREE_UNAVAILABLE` 并附可操作提示）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
 - **模型预检**：派单前会先对 leader + 全体成员的 `provider/id` 做一次注册表预检——引用不存在的模型直接报 `MODEL_NOT_FOUND`（不启动任何子进程，提示先调 `team_models`）；存在但未配置鉴权的模型放行并警告。成员不配 model 则用 pi 默认模型（无从预检）。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（下次派单/列表即生效，无注册缓存）。
 
@@ -179,7 +179,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（368 个测试，含真实 git worktree 测试）
+npm test          # node --test test/*.test.ts（372 个测试，含真实 git worktree 测试）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

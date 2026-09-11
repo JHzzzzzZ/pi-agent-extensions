@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 99d7b11
+> last verified @ d3ba6f2
 
 ## 职责与边界
 
@@ -35,6 +35,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - 自包含：不引 pwr、不依赖其它扩展目录，独立可复制加载。
 - 上限：每 dispatch 8 任务、4 并发、50KB 结果、8KB 摘要（协议级常量，不可配；`TeamErrorCodes` result union）。派发/成员运行预算可配（frontmatter `budget:`，默认 12/40；费用/token 默认无限），schema 级上限不进 budget。
 - **worktree 同 run 重派复用（v1.15.3）**：`createWorktree` 先读 `git worktree list --porcelain`——路径已注册且分支匹配 ⇒ 直接复用（返回 `{path, branch}`）；已注册但分支不匹配 ⇒ 提示 `git worktree remove --force "<path>"`；已注册但目录缺失（stale）⇒ 提示 `git worktree prune`；目录存在但未注册（被普通目录占用）⇒ 提示手工清理；`git worktree add <path> -b <branch>` 失败后分类：分支存在且被其它 worktree 检出 ⇒ 真 fatal + `git worktree list` 定位提示，分支存在但空闲 ⇒ attach 复用既有分支（`worktree add <path> <branch>`）。**设计决策：选复用而非新错误码**——同 run 二次派发对 leader 语义上应成功，可自动恢复的情况不推给人工（真机事故见 `docs/incidents.md`）。错误文案统一经导出的 `worktreeError()`：跳过 git 进度行（Preparing worktree / HEAD is now at / Updating files / Checking out files）取 fatal/error 行，无非进度行才回退首行；CRLF/连续空白压单行，仍 300 字上限。
+- **worktree 分支契约（v1.15.4）**：模板收敛到 `worktree.ts` 单一来源——团队共享 `teamWorktreeBranch(runId)` = `team-run-<runId>`（连字符：`team/<runId>` 会占据成员分支 `team/<runId>/<member>` 的 ref 目录，git ref 不能既是文件又是目录，先建团队 worktree 后首个成员 worktree add 必 `cannot lock ref` → `WORKTREE_UNAVAILABLE`，真机 run-1789108491578 见 `docs/incidents.md`）；成员 `memberWorktreeBranch(runId, member)` = `team/<runId>/<member>`。旧命名（`team/<runId>`）的存量团队 worktree 重派时走「已注册但分支不匹配」路径：可操作提示（`git worktree remove --force`），不崩溃、不静默删除。
 - `status.json` 只存元数据快照（runId/team/task/startedAt/status/leaderPid/updatedAt/error）——完整 `TeamRunRecord` 仍走 session entries；写入 best-effort，读取宽松解析，损坏文件隔离不抛错（doctor/reconcile 报告）。
 - **reconcile 只报告不杀**：孤儿 leader 的 PID 仅进诊断信息（PID 复用风险）；reconcile 排除 in-memory run（同实例 re-bind 场景）。
 - wait/后台两条路径共用 `finalizeRun`（appendRunRecord + 通知/交付单一实现）——改终态行为只改这一处。
