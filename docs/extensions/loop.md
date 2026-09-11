@@ -1,6 +1,6 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ 134a3d6
+> last verified @ f3a93c2
 
 ## 职责与边界
 
@@ -20,7 +20,7 @@
 1. `/loop …` 或 `loop_create` → 解析为 CreateSpec → `createTask` 校验上限 → 全量快照写 `loop-tasks-v1` 自定义条目（不进 LLM 上下文）。
 2. index.ts 按对齐秒节拍扫到期任务 → 到期推进 `nextDueAt`（错过的时间点不补跑，只触发一次）。widget 倒计时文本指纹未变时跳过 `setWidget`（>1h 时 formatCountdown 只到分钟，每秒若无变化就不重绘）。
 3. 前台：任务文本以 `loop-task-due` 自定义类型经 `pi.sendMessage(deliverAs: "followUp")` 送达——空闲开新 turn，agent 正在响应则排队到当前 turn 结束。
-4. 后台：`runner.ts` 拉起 `pi --mode json -p --name loop-<id>`（**不带 --no-session**）；JSON stdout 首行 session 头捕获会话 id 记入任务，最后一条 assistant 文本截断为摘要。
+4. 后台：`runner.ts` 拉起 `pi --mode json -p --name loop-<id>`（**不带 --no-session**；任务带 model 时附 `--model <provider/id>`）；JSON stdout 首行 session 头捕获会话 id 记入任务，最后一条 assistant 文本截断为摘要。
 5. 会话恢复时从快照水合任务（暂停任务恢复后错过的间隔直接跳过）；关闭时终止在途子进程并标记 interrupted。
 
 ## 不变量
@@ -30,6 +30,7 @@
 - daily/window 的时刻均为"距本地午夜的毫秒数"，跨天推进用本地 Date rollover（parse.ts）——不得改成 UTC 或 epoch 直算。
 - window 是闭区间 [start, end]；推进语义是"now 之后**严格大于**的下一个触发点"（tasks.ts 头注释），改比较符会产生边界重复触发。
 - 后台任务绝不带 `--no-session`（runner.ts 头注释）：与 PWR runner 唯一关键差异，丢了会话就无法 resume。
+- 任务 model 必须从任务一路透传到 spawn：`startBgRun` → `runBg` → runner 的 `--model`（index.ts）。v1.4.0 曾只接通解析 / 任务存储 / 列表展示三段，调度调用漏传 `t.model`——`--bg --model` 静默失效、子 pi 落回默认模型（2026-09-11 真机定时任务 13 轮实测，v1.6.1 修复）。改 `startBgRun` 时这是回归红线。
 - 自包含：只依赖 pi SDK，不引其它扩展目录；快照格式对旧快照向后兼容（schedule 字段缺省即固定间隔模式，tasks.ts）。
 - 命令面为冒号式（v1.6.0）：裸 `/loop` 只管创建与用法（无子命令）；管理走独立静态命令 `/loop:list|:pause|:resume|:delete|:clear`，旧空格管理词只提示改名（parse.ts 只解析 create/usage，看不得命令词）。2026-09 曾以「空格子命令式为全仓基准」同步过文档口径，v1.12.0 全仓改回冒号后本条恢复本插件自身的冒号面。
 - 调度不依赖 UI：session_start 无论 `hasUI` 都启动计时器；widget 走 `hasUI` 守卫且传纯无样式字符串（`ExtensionUIContext` 无 theme 字段）。
@@ -45,7 +46,7 @@
 
 ## 改动清单
 
-- 必跑：`cd loop && npm install && npm test`（193 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.6.0 → 根 2.20.0 模式）。
+- 必跑：`cd loop && npm install && npm test`（196 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.6.1 → 根 2.30.0 模式）。
 - 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台跳过/interrupted）、test/tasks.test.ts（调度推进与 7 天过期边界）、test/runner.test.ts（子进程契约）、test/parse.test.ts（语法与闭区间窗口）。
 - fake 模式：进程边界手写 fake child + fake spawn（runner.test.ts，参照 deps-ports.md fake 选型规则 1）；时钟经 nowMs 注入手动推进，不引 mock 库。
 - 改调度语义：parse.ts 与 tasks.ts 的推进逻辑两端同看，并补 parse.test.ts 边界用例（午夜 / 窗口端点 / 已过时刻排明天）。

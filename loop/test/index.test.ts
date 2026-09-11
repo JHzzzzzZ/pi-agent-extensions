@@ -841,7 +841,7 @@ describe("loop_list / loop_delete 工具", () => {
 
 // ---------- 后台模式（v1.3） ----------
 
-type RunBgCall = { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal };
+type RunBgCall = { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal; model?: string };
 // 用 installMocks 捕获的真实 setTimeout：测试内全局 setTimeout 已被节拍器 mock。
 const flush = () => new Promise((r) => (origSetTimeout ?? globalThis.setTimeout)(r, 0));
 const bgDone: BgRunOutcome = { status: "done", exitCode: 0, summary: "全部通过", stderr: "" };
@@ -1058,6 +1058,47 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     assert.match(note.message, /调度器崩溃/);
     const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
     assert.equal(last.tasks[0]!.lastRun!.status, "failed");
+  });
+});
+
+describe("后台模式（v1.3）— 模型透传（调度路径丢模型修复）", () => {
+  it("loop_create mode=background + model：到期拉起时 runBg 收据带该 model", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runTool("loop_create", { task: "用指定模型巡检", schedule: "1m", mode: "background", model: "zai-coding-cn/glm-5.3-flash" });
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    assert.equal(bg.calls.length, 1);
+    assert.equal(bg.calls[0]!.model, "zai-coding-cn/glm-5.3-flash");
+  });
+
+  it("/loop --bg --model：到期拉起时 runBg 收据带该 model（命令路径同源）", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg --model zai-coding-cn/glm-5.3-flash in 1s 用指定模型跑");
+
+    fakeNow = BASE + 2_000;
+    fireTick();
+    assert.equal(bg.calls.length, 1);
+    assert.equal(bg.calls[0]!.model, "zai-coding-cn/glm-5.3-flash");
+  });
+
+  it("未指定 model：runBg 收据 model 为 undefined（不空拼 --model）", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runTool("loop_create", { task: "默认模型巡检", schedule: "1m", mode: "background" });
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    assert.equal(bg.calls.length, 1);
+    assert.equal(bg.calls[0]!.model, undefined);
   });
 });
 
