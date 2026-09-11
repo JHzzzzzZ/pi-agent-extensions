@@ -91,6 +91,12 @@ export interface DispatchDeps {
   /** Root directory for per-run worktrees. */
   worktreeRoot: string;
   runId: string;
+  /**
+   * Run id used for member worktree paths/branches. Defaults to `runId`;
+   * a resumed run passes the parent run id so members keep working in the
+   * parent's on-disk worktrees (uncommitted changes included).
+   */
+  worktreeRunId?: string;
   spawn?: PiSpawn;
   piCommand?: string;
   gitRunner?: GitRunner;
@@ -353,11 +359,12 @@ export function createDispatchExecutor(deps: DispatchDeps) {
     }
 
     // Worktree setup (sequential — cheap git ops, avoids racing git index).
+    const worktreeRunId = deps.worktreeRunId ?? deps.runId;
     for (const plan of planned) {
       if (!plan.member?.worktree || plan.preError) continue;
       setProgress(plan.member.name, "running", "创建 worktree…");
-      const worktreePath = path.join(deps.worktreeRoot, deps.runId, plan.member.name);
-      const branch = memberWorktreeBranch(deps.runId, plan.member.name);
+      const worktreePath = path.join(deps.worktreeRoot, worktreeRunId, plan.member.name);
+      const branch = memberWorktreeBranch(worktreeRunId, plan.member.name);
       const created = await createWorktree({ git, repoCwd: deps.cwd, worktreePath, branch });
       if (created.ok) {
         plan.worktree = created.value;

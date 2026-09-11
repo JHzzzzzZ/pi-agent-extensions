@@ -189,6 +189,30 @@ test("worktree members run in their isolated worktree path and branch", async ()
   assert.ok(outcome.text.includes(`worktree: \`${expectedPath}\``));
 });
 
+test("worktreeRunId aliases member worktree paths/branches to the resumed parent run", async () => {
+  const gitCalls: Array<{ args: string[]; cwd?: string }> = [];
+  const fakeGit = async (args: string[], cwd?: string) => {
+    gitCalls.push({ args, cwd });
+    return { code: 0, stdout: args[0] === "rev-parse" ? "true\n" : "", stderr: "" };
+  };
+  const { deps, spawn } = baseDeps();
+  const worktreeTeam = fixtureTeam({
+    members: [{ name: "backend", model: "anthropic/claude-sonnet-4-5", worktree: true, prompt: "你是后端工程师。" }],
+  });
+  const executor = createDispatchExecutor({ ...deps, team: worktreeTeam, gitRunner: fakeGit, worktreeRunId: "run-parent" });
+  const promise = executor({ tasks: [{ agent: "backend", task: "接着改" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  child.autoRespond([assistantLine("完成")]);
+  const outcome = await unwrap(promise);
+
+  const expectedPath = path.join("/tmp/worktrees", "run-parent", "backend");
+  const add = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "add");
+  assert.ok(add, "git worktree add invoked");
+  assert.deepEqual(add.args, ["worktree", "add", expectedPath, "-b", "team/run-parent/backend"]);
+  assert.equal(spawn.records[0].cwd, expectedPath, "member reuses the parent run's worktree path");
+  assert.deepEqual(outcome.results[0].worktree, { path: expectedPath, branch: "team/run-parent/backend" });
+});
+
 test("worktree creation failure fails that member with a visible reason", async () => {
   const fakeGit = async (args: string[]) =>
     args[0] === "rev-parse" ? { code: 1, stdout: "false\n", stderr: "" } : { code: 0, stdout: "", stderr: "" };

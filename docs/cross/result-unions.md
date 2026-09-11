@@ -21,7 +21,7 @@
 
 ## pwr 之外
 
-- `agent-team/types.ts` — `TeamErrorCodes`（result union，上限同款：8 任务 / 4 并发 / 50KB / 8KB）。
+- `agent-team/types.ts` — `TeamErrorCodes`（result union，上限同款：8 任务 / 4 并发 / 50KB / 8KB）；v1.21.0 新增 `RUN_NOT_TERMINAL`（续跑请求时父 run 仍在跑）与 `RESUME_UNAVAILABLE`（父 run 无 leader 会话镜像）。
 - 卫星扩展（loop / goal / opencode-bridge / deep-init / human-notify）走 `{ ok }` 联合或 deps 注入失败路径，各自 test 文件内锁定契约；没有独立 errors.ts 的（单文件扩展）直接在文件内 `as const` 码对象。
 
 ## 规则

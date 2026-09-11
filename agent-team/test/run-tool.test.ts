@@ -81,9 +81,10 @@ async function setup(teamOverrides: Partial<TeamConfig> = {}): Promise<{
   spawn: FakeSpawnHandle;
   run: RunTool;
   ctx: ReturnType<typeof fakeCtx>;
+  runsDir: string;
   cleanup: () => void;
 }> {
-  isolateRunsDir();
+  const runsDir = isolateRunsDir();
   resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-runtool-"));
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
@@ -101,6 +102,7 @@ async function setup(teamOverrides: Partial<TeamConfig> = {}): Promise<{
     pi,
     spawn,
     ctx,
+    runsDir,
     run: (params) => tool.execute("call-1", params, undefined, undefined, ctx),
     cleanup: () => fs.rmSync(projectDir, { recursive: true, force: true }),
   };
@@ -413,3 +415,210 @@ test("team_run while a run is active returns RUN_IN_PROGRESS without spawning ag
     cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// team_resume: resume a failed/aborted run (parent session + worktree reuse,
+// model overrides) with typed errors for every ineligible case.
+// ---------------------------------------------------------------------------
+
+interface AnyTool {
+  execute: (
+    id: string,
+    params: Record<string, unknown>,
+    signal?: undefined,
+    onUpdate?: undefined,
+    ctx?: unknown,
+  ) => Promise<{ content: Array<{ text: string }>; details?: unknown; isError?: boolean }>;
+}
+
+function resumeTool(pi: ReturnType<typeof fakePi>): AnyTool {
+  const tool = pi.tools.get("team_resume") as unknown as AnyTool | undefined;
+  assert.ok(tool, "team_resume must be registered in cockpit mode");
+  return tool;
+}
+
+function writeParentSessionMirror(runsDir: string, runId: string): string {
+  const sessionDir = path.join(runsDir, runId, "session");
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const file = path.join(sessionDir, "20260911_000000_aaa.jsonl");
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({ type: "session", version: 3, id: "aaa", timestamp: "2026-09-11T05:00:00Z", cwd: "/tmp" })}\n`,
+  );
+  return file;
+}
+
+/** Runs a wait:true team_run that fails on the leader child (quota-style). */
+async function seedFailedRun(
+  run: RunTool,
+  spawn: FakeSpawnHandle,
+): Promise<{ runId: string; text: string }> {
+  const index = spawn.children.length;
+  const promise = run({ team: "proj-team", task: "原始任务", wait: true });
+  const child = await waitForChild(spawn, index);
+  child.autoRespond(
+    [messageEndLine("assistant", { content: [{ type: "text", text: "partial" }], errorMessage: "quota exhausted", stopReason: "error" })],
+    1,
+    5,
+  );
+  const result = await promise;
+  assert.equal(result.isError, true, "seed run must be a failed run");
+  const runId = spawn.records[spawn.records.length - 1]?.env?.PI_AGENT_TEAM_RUN_ID ?? "";
+  return { runId, text: result.content[0].text };
+}
+
+test("team_resume resumes a failed parent: same session, override models, lineage in the record", async () => {
+  const { pi, spawn, run, ctx, runsDir, cleanup } = await setup();
+  try {
+    const parent = await seedFailedRun(run, spawn);
+    const mirror = writeParentSessionMirror(runsDir, parent.runId);
+
+    const started = await resumeTool(pi).execute(
+      "call-resume",
+      { runId: parent.runId, instructions: "换用有额度的模型继续", leaderModel: "opencode-go/deepseek-v4:max" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    assert.notEqual(started.isError, true);
+    assert.match(started.content[0].text, /已续跑/);
+    assert.match(started.content[0].text, new RegExp(parent.runId));
+    assert.equal((started.details as { background?: boolean }).background, true);
+    assert.equal((started.details as { parentRunId?: string }).parentRunId, parent.runId);
+
+    const child = await waitForChild(spawn, 1);
+    const resumeArgs = spawn.records[1].args;
+    assert.equal(resumeArgs[resumeArgs.indexOf("--session")], "--session");
+    assert.equal(resumeArgs[resumeArgs.indexOf("--session") + 1], path.resolve(mirror));
+    assert.ok(!resumeArgs.includes("--no-session"), "resume never disables session persistence");
+    assert.ok(!resumeArgs.includes("--session-dir"), "resume opens the parent file directly");
+    assert.equal(resumeArgs[resumeArgs.indexOf("--model") + 1], "opencode-go/deepseek-v4:max");
+    assert.equal(spawn.records[1].env?.PI_AGENT_TEAM_WORKTREE_RUN_ID, parent.runId);
+    assert.deepEqual(JSON.parse(child.writes[0] ?? "{}"), {
+      type: "prompt",
+      id: "task",
+      message: "Task: 继续上次未完成的任务。补充指示：\n换用有额度的模型继续\n完成后按团队约定的最终报告格式输出报告。",
+    });
+
+    child.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length > 0);
+    const records = pi.appendedEntries.filter((entry) => entry.type === "agent-team-run-v1");
+    assert.equal(records.length, 2, "parent + resume records persisted");
+    const resumed = records[records.length - 1].data as { runId: string; parentRunId?: string; leaderSessionFile?: string };
+    assert.notEqual(resumed.runId, parent.runId);
+    assert.equal(resumed.parentRunId, parent.runId);
+    assert.equal(resumed.leaderSessionFile, path.resolve(mirror));
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_resume defaults to background and reports the resumed runId", async () => {
+  const { pi, spawn, run, ctx, runsDir, cleanup } = await setup();
+  try {
+    const parent = await seedFailedRun(run, spawn);
+    writeParentSessionMirror(runsDir, parent.runId);
+    const started = await resumeTool(pi).execute("call-resume", { runId: parent.runId }, undefined, undefined, ctx);
+    assert.match(started.content[0].text, /已续跑/);
+    assert.match(started.content[0].text, new RegExp(parent.runId));
+    const details = started.details as { runId?: string; parentRunId?: string };
+    assert.ok(details.runId && details.runId !== parent.runId);
+    assert.equal(details.parentRunId, parent.runId);
+    const child = await waitForChild(spawn, 1);
+    child.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length > 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_resume typed errors: missing/unknown/idle states never spawn", async () => {
+  const { pi, spawn, run, ctx, runsDir, cleanup } = await setup();
+  try {
+    const tool = resumeTool(pi);
+    const missing = await tool.execute("c", {}, undefined, undefined, ctx);
+    assert.equal(missing.isError, true);
+    assert.equal((missing.details as { code?: string }).code, "RUN_ID_REQUIRED");
+
+    const unknown = await tool.execute("c", { runId: "run-nope" }, undefined, undefined, ctx);
+    assert.equal((unknown.details as { code?: string }).code, "RUN_NOT_FOUND");
+
+    // completed runs are not resumable.
+    const completedPromise = run({ team: "proj-team", task: "done", wait: true });
+    const completedChild = await waitForChild(spawn, 0);
+    completedChild.autoRespond(leaderLines(), 0, 5);
+    await completedPromise;
+    const completedRunId = spawn.records[0].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    const completed = await tool.execute("c", { runId: completedRunId }, undefined, undefined, ctx);
+    assert.equal((completed.details as { code?: string }).code, "RUN_ALREADY_FINISHED");
+    assert.match(completed.content[0].text, /team_run/);
+
+    // failed parent without a session mirror.
+    const parent = await seedFailedRun(run, spawn);
+    const unavailable = await tool.execute("c", { runId: parent.runId }, undefined, undefined, ctx);
+    assert.equal((unavailable.details as { code?: string }).code, "RESUME_UNAVAILABLE");
+    assert.equal(spawn.records.length, 2, "no leader spawned for ineligible resumes");
+
+    // A deleted team definition is a typed failure too.
+    writeParentSessionMirror(runsDir, parent.runId);
+    fs.rmSync(path.join(ctx.cwd, ".pi", "teams", "proj-team.md"));
+    const gone = await tool.execute("c", { runId: parent.runId }, undefined, undefined, ctx);
+    assert.equal((gone.details as { code?: string }).code, "TEAM_NOT_FOUND");
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_resume rejects running parents (RUN_NOT_TERMINAL) and active runs (RUN_IN_PROGRESS)", async () => {
+  const { pi, spawn, run, ctx, runsDir, cleanup } = await setup();
+  try {
+    const parent = await seedFailedRun(run, spawn);
+    writeParentSessionMirror(runsDir, parent.runId);
+
+    // A live run blocks a different resume with RUN_IN_PROGRESS.
+    const active = await run({ team: "proj-team", task: "active" });
+    assert.match(active.content[0].text, /已在后台启动/);
+    const activeChild = await waitForChild(spawn, 1);
+    const blocked = await resumeTool(pi).execute("c", { runId: parent.runId }, undefined, undefined, ctx);
+    assert.equal((blocked.details as { code?: string }).code, "RUN_IN_PROGRESS");
+
+    // Resuming the running run itself is RUN_NOT_TERMINAL.
+    const activeRunId = spawn.records[1].env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    const notTerminal = await resumeTool(pi).execute("c", { runId: activeRunId }, undefined, undefined, ctx);
+    assert.equal((notTerminal.details as { code?: string }).code, "RUN_NOT_TERMINAL");
+
+    activeChild.autoRespond(leaderLines(), 0, 5);
+    await waitFor(() => pi.sentMessages.length > 0);
+    assert.equal(spawn.records.length, 2, "no resume leader spawned");
+  } finally {
+    cleanup();
+  }
+});
+
+test("team_resume preflights the effective (override) models: bad override → MODEL_NOT_FOUND", async () => {
+  const { pi, spawn, run, ctx, runsDir, cleanup } = await setup();
+  try {
+    const parent = await seedFailedRun(run, spawn);
+    writeParentSessionMirror(runsDir, parent.runId);
+    const registryCtx = {
+      ...ctx,
+      modelRegistry: {
+        find: (_provider: string, _modelId: string) => undefined as unknown,
+        hasConfiguredAuth: () => true,
+      },
+    };
+    const result = await resumeTool(pi).execute(
+      "c",
+      { runId: parent.runId, leaderModel: "nope/nope" },
+      undefined,
+      undefined,
+      registryCtx,
+    );
+    assert.equal(result.isError, true);
+    assert.equal((result.details as { code?: string }).code, "MODEL_NOT_FOUND");
+    assert.equal(spawn.records.length, 1, "preflight failure never spawns the resume leader");
+  } finally {
+    cleanup();
+  }
+});
+

@@ -32,9 +32,18 @@ import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
-import { TeamRunCoordinator, failedRunRecord, formatStatusSnapshot, type UiPort } from "./cockpit.ts";
+import { TeamRunCoordinator, failedRunRecord, formatStatusSnapshot, type ResumeContext, type UiPort } from "./cockpit.ts";
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
-import { defaultIsProcessAlive, orphanRunError, reconcileStaleRuns } from "./runstore.ts";
+import {
+  buildResumePrompt,
+  findRunStatus,
+  parseMemberModelEnv,
+  resolveEffectiveTeam,
+  resolveResumeSessionFile,
+  resumeEligibility,
+  type ModelOverrides,
+} from "./resume.ts";
+import { defaultIsProcessAlive, orphanRunError, reconcileStaleRuns, type RunStatusFile } from "./runstore.ts";
 import { appendRunRecord, createRunEntryRenderer, deliverRunResult, formatFailureNotice, type SessionPort } from "./session.ts";
 import { RunWidgetController, probeEditorFocus } from "./widget.ts";
 import { activityFromTranscript, formatActorActivity, formatTranscriptText, openTranscriptViewer, themeStyles, type ViewerActor, type ViewerData, type ViewerStopResult } from "./viewer.ts";
@@ -51,8 +60,10 @@ import {
   ASK_TIMEOUT_DEFAULT_MS,
   ASK_TOOL_NAME,
   LEADER_ENV_FILE,
+  LEADER_ENV_MEMBER_MODELS,
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
+  LEADER_ENV_WORKTREE_RUNID,
   MAX_RESULT_BYTES,
   RUN_ENTRY_TYPE,
   STOP_SETTLE_TIMEOUT_MS,
@@ -61,6 +72,7 @@ import {
   truncateUtf8,
   type PiSpawn,
   type TeamConfig,
+  type TeamErrorCode,
   type TeamRunRecord,
 } from "./types.ts";
 import { defaultGitRunner, isGitRepo } from "./worktree.ts";
@@ -96,6 +108,7 @@ const TRANSCRIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEAM_COMMAND_NAMES = {
   list: "team:list",
   run: "team:run",
+  resume: "team:resume",
   status: "team:status",
   stop: "team:stop",
   view: "team:view",
@@ -123,6 +136,7 @@ export const TEAM_USAGE = [
   "  /team                    列出全部团队",
   "  /team:list               列出全部团队",
   "  /team:run <团队> <任务>  后台派单",
+  "  /team:resume <runId> [补充指示]  续跑 failed/aborted 的 run（沿用原会话与 worktree；换模型走 team_resume 工具）",
   "  /team:status             查看当前/最近 run 状态",
   "  /team:stop               中止当前 run",
   "  /team:view               打开全屏会话记录查看器",
@@ -203,7 +217,7 @@ function clearWidget(ctx: ExtensionContext): void {
 // Leader mode (inside the leader child pi process)
 // ---------------------------------------------------------------------------
 
-function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
+function registerLeaderMode(pi: ExtensionAPI, teamFile: string, opts: { spawn?: PiSpawn } = {}): void {
   let content: string | null = null;
   try {
     content = fs.readFileSync(teamFile, "utf-8");
@@ -212,6 +226,10 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
   }
   const parsed = content !== null ? parseTeamFile(content, { filePath: teamFile, source: "global" }) : undefined;
   const runId = process.env[LEADER_ENV_RUNID] || `run-${Date.now()}`;
+  // 续跑：成员树别名到父 run，成员模型覆盖来自 cockpit 注入的 env（JSON）。
+  // 坏 JSON 不是错误——声明模型照常生效（parseMemberModelEnv 内部隔离）。
+  const worktreeRunId = process.env[LEADER_ENV_WORKTREE_RUNID] || undefined;
+  const memberOverrides = parseMemberModelEnv(process.env[LEADER_ENV_MEMBER_MODELS]);
 
   // One executor per leader process: it carries the per-run dispatch budget
   // across calls. The leader child's process cwd IS the run cwd (the
@@ -219,13 +237,15 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string): void {
   const executor =
     parsed && parsed.ok
       ? createDispatchExecutor({
-          team: parsed.value,
+          team: resolveEffectiveTeam(parsed.value, { memberModels: memberOverrides }).team,
           cwd: process.cwd(),
           worktreeRoot: worktreeRoot(),
           runId,
+          ...(worktreeRunId !== undefined ? { worktreeRunId } : {}),
           killGraceMs: 5000,
           budget: resolveRunBudget(parsed.value.budget),
           transcript: new FileTranscriptSink(transcriptRoot(), runId),
+          ...(opts.spawn ? { spawn: opts.spawn } : {}),
         })
       : undefined;
 
@@ -573,7 +593,17 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         nowMs,
       );
     }
-    return { team: progress?.team ?? lastRecord?.team ?? "(unknown)", runId, runStatus, elapsed, actors, entries };
+    // 续跑 lineage（v1.21.0）：viewer 右栏 Run: 行展示「续跑自 …」。
+    const parentRunId = progress?.parentRunId ?? lastRecord?.parentRunId;
+    return {
+      team: progress?.team ?? lastRecord?.team ?? "(unknown)",
+      runId,
+      ...(parentRunId ? { parentRunId } : {}),
+      runStatus,
+      elapsed,
+      actors,
+      entries,
+    };
   };
 
   /**
@@ -768,8 +798,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         ui.notify(`team ${record.team} 完成 ✓（${secs}s，$${record.totalCost.toFixed(4)}）`, "info");
         deliverRunResult(pi as unknown as SessionPort, record.report ?? "(leader 未返回报告)");
       } else {
+        const resumeHint =
+          record.leaderSessionFile !== undefined
+            ? `；可用 team_resume ${record.runId} 续跑（可换模型）`
+            : "";
         ui.notify(
-          `team ${record.team} ${record.status}: ${record.error ?? "已中止"}`,
+          `team ${record.team} ${record.status}: ${record.error ?? "已中止"}${resumeHint}`,
           record.status === "aborted" ? "warning" : "error",
         );
         // 失败必达：failed 与 completed 走同一 followUp 通道（派单主 agent
@@ -792,12 +826,14 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
    * forget — persists the record and delivers the final report as a
    * followUp turn so the user can keep talking to the main agent while the
    * team works. Returns immediately; RUN_IN_PROGRESS surfaces right away.
+   * `resume` carries the team_resume lineage (parent session + worktree).
    */
   const startBackgroundRun = (
     ctx: ExtensionContext,
     ui: UiPort,
     team: TeamConfig,
     task: string,
+    resume?: ResumeContext,
   ): { ok: false; code: string; message: string } | { ok: true; team: string; members: number; runId: string } => {
     ensureRunWidget(ctx);
     const preflight = runModelPreflight(ctx, ui, team);
@@ -813,6 +849,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
       team,
       task,
       ui,
+      ...(resume !== undefined ? { resume } : {}),
       ask: askPortFrom(ctx),
       // 状态变化点事件即时重绘（不必等 1s tick）：首个事件通常要等 leader
       // 子进程启动，故下一行再补一帧，派单后亮块立即出现。
@@ -827,7 +864,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     const failureRecord = (error: string): TeamRunRecord | undefined =>
       runId !== "" ? failedRunRecord({ runId, team: team.name, task, startedAt: dispatchStartedAt, error }) : undefined;
     refreshWidget();
-    ui.notify(`team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`, "info");
+    const startupText = resume
+      ? `team ${team.name} 已续跑（续跑自 ${resume.parentRunId}，${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`
+      : `team ${team.name} 已在后台启动（${team.members.length} 成员）。runId: ${runId}。完成后报告自动送达；期间可继续对话，/team:status 或 team_status 查进度`;
+    ui.notify(startupText, "info");
     // Completion still persists the record and wakes the session with the
     // report (followUp turn), then drives the viewer chat queue: completed
     // → chain-dispatch the next queued message; failed/aborted → drop it.
@@ -880,6 +920,126 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     if (!started.ok) {
       ui.notify(started.message, "error");
     }
+  };
+
+  // -- Resume (team_resume tool + /team:resume) -----------------------------
+
+  /** Validated resume request: everything a resume run needs to spawn. */
+  type ResumePreparation =
+    | {
+        ok: true;
+        parentRunId: string;
+        parentStatus: RunStatusFile;
+        sessionFile: string;
+        task: string;
+        team: TeamConfig;
+        overrides: ModelOverrides | undefined;
+      }
+    | { ok: false; code: TeamErrorCode; message: string };
+
+  /**
+   * Validates a resume request against the parent run's status snapshot:
+   * only failed/aborted runs with a leader session mirror are resumable; the
+   * team definition is re-resolved (it may have changed since the parent),
+   * model overrides are applied to a copy for preflight/prompt/record, and
+   * the fixed resume task is built. Never spawns anything.
+   */
+  const prepareResume = (
+    ui: UiPort,
+    request: {
+      runId: string;
+      instructions?: string;
+      leaderModel?: string;
+      memberModels?: Array<{ name?: unknown; model?: unknown }>;
+    },
+  ): ResumePreparation => {
+    const runId = request.runId.trim();
+    if (!runId) {
+      return { ok: false, code: "RUN_ID_REQUIRED", message: "runId 是必填参数：先用 team_status 查看 failed/aborted 的 runId。" };
+    }
+    const runsRoot = transcriptRoot();
+    const parentStatus = findRunStatus(runsRoot, runId);
+    if (!parentStatus) {
+      return { ok: false, code: "RUN_NOT_FOUND", message: `没有找到 runId ${runId} 的 run 记录（status.json）。已结束的历史 run 需未落终态快照才能续跑。` };
+    }
+    if (state.coordinator.activeRunId() === runId) {
+      return { ok: false, code: "RUN_NOT_TERMINAL", message: `run ${runId} 仍在运行中，先 /team:stop 或等它落定后再续跑。` };
+    }
+    const eligibility = resumeEligibility(parentStatus.status);
+    if (!eligibility.ok) return { ok: false, code: eligibility.code, message: eligibility.message };
+    const sessionFile = resolveResumeSessionFile({ runsRoot, parentStatus });
+    if (!sessionFile) {
+      return {
+        ok: false,
+        code: "RESUME_UNAVAILABLE",
+        message: `run ${runId} 没有 leader 会话镜像（功能上线前的 run、启动即失败的 run，或已过 7 天保留期被清理）；无法续跑，请用 team_run 重新派单。`,
+      };
+    }
+    const found = resolveTeam(parentStatus.team);
+    if (!found.ok) {
+      return { ok: false, code: "TEAM_NOT_FOUND", message: `团队定义 ${parentStatus.team} 已不可用：${found.message}` };
+    }
+    // Model overrides: leader + known members only (unknown names warn + ignored).
+    const leaderModel =
+      typeof request.leaderModel === "string" && request.leaderModel.trim().length > 0
+        ? request.leaderModel.trim()
+        : undefined;
+    const memberModels: Record<string, string> = {};
+    for (const item of request.memberModels ?? []) {
+      const name = typeof item?.name === "string" ? item.name.trim() : "";
+      const model = typeof item?.model === "string" ? item.model.trim() : "";
+      if (name && model) memberModels[name] = model;
+    }
+    const effective = resolveEffectiveTeam(found.value, {
+      ...(leaderModel !== undefined ? { leaderModel } : {}),
+      ...(Object.keys(memberModels).length > 0 ? { memberModels } : {}),
+    });
+    if (effective.unknownMembers.length > 0) {
+      ui.notify(`续跑模型覆盖忽略未知成员：${effective.unknownMembers.join("、")}（团队花名册里没有这些成员）`, "warning");
+    }
+    const knownMembers = Object.fromEntries(
+      Object.entries(memberModels).filter(([name]) => found.value.members.some((member) => member.name === name)),
+    );
+    const overrides: ModelOverrides | undefined =
+      leaderModel === undefined && Object.keys(knownMembers).length === 0
+        ? undefined
+        : { ...(leaderModel !== undefined ? { leaderModel } : {}), ...(Object.keys(knownMembers).length > 0 ? { memberModels: knownMembers } : {}) };
+    return {
+      ok: true,
+      parentRunId: runId,
+      parentStatus,
+      sessionFile,
+      task: buildResumePrompt(request.instructions),
+      team: effective.team,
+      overrides,
+    };
+  };
+
+  const resumeContextFrom = (prepared: Extract<ResumePreparation, { ok: true }>): ResumeContext => ({
+    parentRunId: prepared.parentRunId,
+    parentStatus: prepared.parentStatus,
+    sessionFile: prepared.sessionFile,
+    ...(prepared.overrides !== undefined ? { modelOverrides: prepared.overrides } : {}),
+  });
+
+  /** `/team:resume <runId> [补充指示]`：后台续跑入口（不带模型 flag）。 */
+  const resumeFromCommand = (ctx: ExtensionContext, args: string): void => {
+    const ui = uiPortFrom(ctx);
+    const trimmed = args.trim();
+    if (!trimmed) {
+      ui.notify("用法：/team:resume <runId> [补充指示]（续跑 failed/aborted 的 run，沿用原会话与 worktree；换模型用 team_resume 工具）", "warning");
+      return;
+    }
+    const spaceIndex = trimmed.indexOf(" ");
+    const runId = spaceIndex > 0 ? trimmed.slice(0, spaceIndex) : trimmed;
+    const instructions = spaceIndex > 0 ? trimmed.slice(spaceIndex + 1).trim() : undefined;
+    const prepared = prepareResume(ui, { runId, ...(instructions ? { instructions } : {}) });
+    if (!prepared.ok) {
+      ui.notify(prepared.message, "error");
+      return;
+    }
+    const started = startBackgroundRun(ctx, ui, prepared.team, prepared.task, resumeContextFrom(prepared));
+    if (!started.ok) ui.notify(started.message, "error");
   };
 
   // -- Conversation tools -------------------------------------------------
@@ -1134,6 +1294,127 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     },
   });
 
+  // Resume tool: the MAIN agent continues a failed/aborted run — the new
+  // leader opens the parent's session file (full conversation as context) and
+  // reuses its worktrees; models can be overridden for this run only. Only
+  // the cockpit registers it — no child process ever sees team_resume.
+  pi.registerTool({
+    name: "team_resume",
+    label: "Resume Agent Team Run",
+    description:
+      "续跑一个 failed/aborted 的 agent team run：新 leader 打开父 run 的 leader 会话原地继续（完整对话上下文，无交接摘要），并复用父 run 的 worktree（含未提交改动）。可为本次续跑单独覆盖 leader/成员模型（不改团队文件，含 provider/id:level 后缀）。默认后台运行、报告自动送达；wait=true 同步等待。仅 failed/aborted 可续跑；completed 请用 team_run。",
+    promptGuidelines: [
+      "用户说「接着跑/续跑/换模型继续」时：先 team_status 拿 failed/aborted 的 runId，再调本工具。",
+      "模型额度耗尽的典型用法：leaderModel 换成有额度的 provider/id（成员同理传 memberModels），本次续跑 run 生效，团队文件不动。",
+      "runId 必填：省略 RUN_ID_REQUIRED；未知 RUN_NOT_FOUND；仍在跑 RUN_NOT_TERMINAL；已完成 RUN_ALREADY_FINISHED；无会话镜像 RESUME_UNAVAILABLE；团队已删 TEAM_NOT_FOUND（均不抛异常）。",
+      "默认（wait 省略）立即返回，报告稍后自动送达；等待期间正常回应用户其它消息。",
+    ],
+    parameters: Type.Object({
+      runId: Type.String({ description: "要续跑的 runId（failed/aborted；用 team_status 查看）" }),
+      instructions: Type.Optional(
+        Type.String({ description: "本次续跑给 leader 的补充指示（可选；leader 已有完整上下文，通常只在换模型/换策略时用）" }),
+      ),
+      leaderModel: Type.Optional(
+        Type.String({ description: "本次续跑的 leader 模型覆盖，provider/id[:level]（可选；不改团队文件）" }),
+      ),
+      memberModels: Type.Optional(
+        Type.Array(
+          Type.Object({
+            name: Type.String({ description: "成员名（见 team_list / 团队定义）" }),
+            model: Type.String({ description: "成员模型 provider/id[:level]" }),
+          }),
+          { description: "本次续跑的成员模型覆盖列表（可选；未知成员名忽略并警告）" },
+        ),
+      ),
+      wait: Type.Optional(
+        Type.Boolean({ description: "同步等待续跑 run 结束并内联返回报告。默认 false=后台运行", default: false }),
+      ),
+    }),
+    async execute(_toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
+      const ui = uiPortFrom(ctx);
+      const prepared = prepareResume(ui, {
+        runId: typeof params?.runId === "string" ? params.runId : "",
+        ...(typeof params?.instructions === "string" ? { instructions: params.instructions } : {}),
+        ...(typeof params?.leaderModel === "string" ? { leaderModel: params.leaderModel } : {}),
+        ...(Array.isArray(params?.memberModels) ? { memberModels: params.memberModels } : {}),
+      });
+      if (!prepared.ok) {
+        return {
+          content: [{ type: "text" as const, text: prepared.message }],
+          details: { code: prepared.code },
+          isError: true,
+        };
+      }
+      const preflight = runModelPreflight(ctx, ui, prepared.team);
+      if (!preflight.ok) {
+        return {
+          content: [{ type: "text" as const, text: preflight.message }],
+          details: { code: preflight.code },
+          isError: true,
+        };
+      }
+      const resume = resumeContextFrom(prepared);
+      if (params.wait !== true) {
+        const started = startBackgroundRun(ctx, ui, prepared.team, prepared.task, resume);
+        if (!started.ok) {
+          return {
+            content: [{ type: "text" as const, text: started.message }],
+            details: { code: started.code },
+            isError: started.code === "RUN_IN_PROGRESS" ? false : true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `run ${prepared.parentRunId} 已续跑（新 runId: ${started.runId}，team ${started.team}，${started.members} 成员）。报告完成后会自动送达本会话；期间可继续对话。team_status 可查进度。`,
+            },
+          ],
+          details: {
+            started: true,
+            background: true,
+            runId: started.runId,
+            parentRunId: prepared.parentRunId,
+            team: started.team,
+            members: started.members,
+          },
+        };
+      }
+      const result = await state.coordinator.start({
+        team: prepared.team,
+        task: prepared.task,
+        ui,
+        resume,
+        ask: askPortFrom(ctx),
+        signal,
+        onProgress: () => {
+          refreshWidget();
+          if (!onUpdate) return;
+          try {
+            onUpdate({ content: [{ type: "text" as const, text: `team ${prepared.team.name} 续跑中（来自 ${prepared.parentRunId}）` }], details: {} });
+          } catch {
+            /* progress failures never break the run */
+          }
+        },
+      });
+      refreshWidget();
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: result.message }],
+          details: { code: result.code },
+          isError: true,
+        };
+      }
+      const record = result.value;
+      const outcome = finalizeRun(record, ui, "inline");
+      return {
+        content: [{ type: "text" as const, text: outcome.text }],
+        details: record,
+        ...(outcome.isError ? { isError: true } : {}),
+      };
+    },
+  });
+
   // -- Commands -----------------------------------------------------------
 
   const statusText = (ctx: ExtensionContext): string =>
@@ -1299,6 +1580,11 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     handler: async (args, ctx) => startRunFromArgs(ctx, args ?? ""),
   });
 
+  pi.registerCommand(TEAM_COMMAND_NAMES.resume, {
+    description: "续跑 failed/aborted 的 run：/team:resume <runId> [补充指示]（沿用父会话与 worktree；换模型用 team_resume 工具）",
+    handler: async (args, ctx) => resumeFromCommand(ctx, args ?? ""),
+  });
+
   pi.registerCommand(TEAM_COMMAND_NAMES.status, {
     description: "查看当前/最近一次 team run 的状态（成员、轮次、费用、预算）",
     handler: async (_args, ctx) => showRunStatus(ctx),
@@ -1459,7 +1745,7 @@ export default function agentTeamExtension(pi: ExtensionAPI, opts?: { spawn?: Pi
 
   const teamFile = process.env[LEADER_ENV_FILE];
   if (teamFile) {
-    registerLeaderMode(pi, teamFile);
+    registerLeaderMode(pi, teamFile, opts);
     return;
   }
   registerCockpitMode(pi, opts);

@@ -9,6 +9,7 @@
  * produces the final TeamRunRecord.
  */
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { archiveRunRecords } from "./archive.ts";
 import { startAlignedTicker } from "./aligned-ticker.ts";
@@ -18,14 +19,30 @@ import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { parseDispatchMemberResults, parseDispatchTotalUsage } from "./dispatch.ts";
 import { buildLeaderSystemPrompt } from "./leader-prompt.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
-import { fileRunStore, RUN_STATUS_VERSION, type RunStoreWriter } from "./runstore.ts";
-import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
-import { createWorktree, defaultGitRunner, isGitRepo, teamWorktreeBranch, type GitRunner } from "./worktree.ts";
+import {
+  parentWorktreeSpec,
+  readSessionHeaderCwd,
+  resolveEffectiveTeam,
+  resolveLeaderSessionFile,
+  type ModelOverrides,
+} from "./resume.ts";
+import { fileRunStore, RUN_STATUS_VERSION, type RunStatusFile, type RunStoreWriter } from "./runstore.ts";
+import { FileTranscriptSink, LEADER_ACTOR, transcriptRunDir, type TranscriptEntryKind } from "./transcript.ts";
+import {
+  createWorktree,
+  defaultGitRunner,
+  isGitRepo,
+  restoreWorktree,
+  teamWorktreeBranch,
+  type GitRunner,
+} from "./worktree.ts";
 import {
   DERIVED_AGENT_TOOL_DENYLIST,
   LEADER_ENV_FILE,
+  LEADER_ENV_MEMBER_MODELS,
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
+  LEADER_ENV_WORKTREE_RUNID,
   MAX_RESULT_BYTES,
   STOP_SETTLE_TIMEOUT_MS,
   truncateUtf8,
@@ -121,10 +138,27 @@ interface StartOptions {
   ask?: AskPort;
   onProgress?: (progress: RunProgress) => void;
   signal?: AbortSignal;
+  /** Resume context (`team_resume`): open the parent leader session. */
+  resume?: ResumeContext;
+}
+
+/**
+ * Resume wiring: which parent run to continue, where its leader session
+ * lives, and the per-run model overrides to apply (leader + members). The
+ * conversation itself is the context — no summary is handed to the leader.
+ */
+export interface ResumeContext {
+  parentRunId: string;
+  parentStatus: RunStatusFile;
+  /** Absolute path of the parent leader session file to open. */
+  sessionFile: string;
+  modelOverrides?: ModelOverrides;
 }
 
 /** Pre-computed run identity handed from start() to runActive(). */
 interface RunPlan {
+  /** Effective team for this run (resume model overrides already applied). */
+  team: TeamConfig;
   now: () => string;
   nowMs: () => number;
   runId: string;
@@ -180,9 +214,10 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
 
   if (snapshot.running && snapshot.progress) {
     const p = snapshot.progress;
+    const lineage = p.parentRunId ? `（续跑自 ${p.parentRunId}）` : "";
     const lines = [
       line(`当前 run：team ${p.team} ▶ running · ${elapsedLabel(p.startedAtMs, nowMs)}`),
-      line(`runId: ${p.runId}`),
+      line(`runId: ${p.runId}${lineage}`),
       line(`任务: ${statusTaskText(p.task)}`.trimEnd()),
     ];
     const leaderBits: string[] = [];
@@ -212,10 +247,13 @@ export function formatStatusSnapshot(snapshot: RunStatusSnapshot, nowMs: number,
     const cost = record.totalCost > 0 ? ` · $${record.totalCost.toFixed(4)}` : "";
     const lines = [
       line(`最近一次 run：team ${record.team} ${icon(record.status)} ${record.status}${secs}${cost}`),
-      line(`runId: ${record.runId}`),
+      line(`runId: ${record.runId}${record.parentRunId ? `（续跑自 ${record.parentRunId}）` : ""}`),
       line(`任务: ${statusTaskText(record.task)}`.trimEnd()),
     ];
     if (record.error) lines.push(line(`错误: ${record.error}`));
+    if ((record.status === "failed" || record.status === "aborted") && record.leaderSessionFile) {
+      lines.push(line(`可用 team_resume ${record.runId} 续跑（可换模型）`));
+    }
     for (const member of record.members) {
       const bits = [`${icon(member.status)} ${member.name} ${member.status}`];
       const model = resolveModelCaliber(member.model, member.usage?.model);
@@ -392,6 +430,9 @@ export class TeamRunCoordinator {
     status: RunStatus;
     leaderPid?: number;
     error?: string;
+    parentRunId?: string;
+    leaderSessionFile?: string;
+    worktree?: { path: string; branch: string };
     now: () => string;
   }): void {
     const store = this.runStore;
@@ -407,6 +448,9 @@ export class TeamRunCoordinator {
         ...(input.leaderPid !== undefined ? { leaderPid: input.leaderPid } : {}),
         ownerPid: this.deps.ownerPid ?? process.pid,
         ...(input.error !== undefined ? { error: input.error } : {}),
+        ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),
+        ...(input.leaderSessionFile !== undefined ? { leaderSessionFile: input.leaderSessionFile } : {}),
+        ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
         updatedAt: input.now(),
       });
     } catch {
@@ -430,7 +474,23 @@ export class TeamRunCoordinator {
         message: "另一个 team run 正在进行中；先 /team:stop 或等它结束。",
       };
     }
-    const { team, task } = options;
+    const { task } = options;
+    // 续跑：把本次 run 的模型覆盖应用到团队副本（不改团队文件；不污染后续
+    // team_run）。未知成员名忽略 + 告警——团队文件可能在失败后被改过。
+    const effective = options.resume?.modelOverrides
+      ? resolveEffectiveTeam(options.team, options.resume.modelOverrides)
+      : { team: options.team, unknownMembers: [] };
+    if (effective.unknownMembers.length > 0) {
+      try {
+        options.ui.notify(
+          `续跑模型覆盖忽略未知成员：${effective.unknownMembers.join("、")}（团队花名册里没有这些成员）`,
+          "warning",
+        );
+      } catch {
+        /* observer failures never break the run */
+      }
+    }
+    const team = effective.team;
     const now = this.deps.now ?? (() => new Date().toISOString());
     const nowMs = this.deps.nowMs ?? (() => Date.now());
     const runId = `run-${nowMs()}`;
@@ -454,6 +514,7 @@ export class TeamRunCoordinator {
       team: team.name,
       task,
       startedAtMs,
+      ...(options.resume ? { parentRunId: options.resume.parentRunId } : {}),
       // 声明值进 progress：live leader 的展示口径需要 provider 前缀与
       // 子进程实际上报的裸 id 组合（viewer/status 归一在展示层做）。
       ...(team.leader.model ? { leaderDeclaredModel: team.leader.model } : {}),
@@ -486,12 +547,20 @@ export class TeamRunCoordinator {
     this.currentProgress = progress;
     // Crash-recovery snapshot: a running status.json on disk means the next
     // session can reconcile this run if this session dies mid-run.
-    this.persistRunStatus({ runId, team: team.name, task, startedAt, status: "running", now });
+    this.persistRunStatus({
+      runId,
+      team: team.name,
+      task,
+      startedAt,
+      status: "running",
+      ...(options.resume ? { parentRunId: options.resume.parentRunId, leaderSessionFile: path.resolve(options.resume.sessionFile) } : {}),
+      now,
+    });
     if (options.signal) {
       if (options.signal.aborted) controller.abort();
       else options.signal.addEventListener("abort", () => controller.abort(), { once: true });
     }
-    const run = this.runActive(controller, options, { now, nowMs, runId, startedAt, startedAtMs, progress });
+    const run = this.runActive(controller, options, { team, now, nowMs, runId, startedAt, startedAtMs, progress });
     this.pending = run;
     return run;
   }
@@ -503,10 +572,21 @@ export class TeamRunCoordinator {
    * on the terminal record instead of a phantom "running".
    */
   private async runActive(controller: AbortController, options: StartOptions, plan: RunPlan): Promise<StartRunResult> {
-    const { team, task } = options;
+    const { task } = options;
     const { now, nowMs, runId, startedAt, startedAtMs, progress } = plan;
+    const team = plan.team;
+    const resume = options.resume;
     const git = this.deps.gitRunner ?? defaultGitRunner();
     const baseCwd = this.deps.cwd();
+    const parentRunId = resume?.parentRunId;
+    /** Session dir of this run's own leader mirror (first runs only). */
+    const ownSessionDir =
+      this.deps.transcriptRoot !== undefined ? path.join(transcriptRunDir(this.deps.transcriptRoot, runId), "session") : undefined;
+    // Resume inherits the opened file; a first run resolves its own mirror
+    // from its session dir once the leader exited (best-effort).
+    let leaderSessionFile = resume !== undefined ? path.resolve(resume.sessionFile) : undefined;
+    // Team-level shared worktree, hoisted for every status snapshot/record.
+    let sharedWorktree: { path: string; branch: string } | undefined;
 
     // Leader transcript artifacts (best-effort; read back by /team:view and
     // the team_transcript tool). Member transcripts are written by the
@@ -524,13 +604,33 @@ export class TeamRunCoordinator {
     };
     // Terminal status.json rewrite on every exit path — no exit may leave a
     // stale "running" on disk (session_start reconcile depends on it). The
-    // leader PID is carried into the terminal snapshot for orphan diagnostics.
+    // leader PID is carried into the terminal snapshot for orphan diagnostics;
+    // the resume lineage fields ride along on every write.
     let leaderPid: number | undefined;
+    const lineageFields = (): {
+      parentRunId?: string;
+      leaderSessionFile?: string;
+      worktree?: { path: string; branch: string };
+    } => ({
+      ...(parentRunId !== undefined ? { parentRunId } : {}),
+      ...(leaderSessionFile !== undefined ? { leaderSessionFile } : {}),
+      ...(sharedWorktree !== undefined ? { worktree: sharedWorktree } : {}),
+    });
     // Leader → human questions: created once the transcript sink exists,
     // disposed on settle/abort (see the finally block).
     let askChannel: AskChannel | undefined;
     const writeTerminal = (status: RunStatus, error?: string): void =>
-      this.persistRunStatus({ runId, team: team.name, task, startedAt, status, ...(error !== undefined ? { error } : {}), ...(leaderPid !== undefined ? { leaderPid } : {}), now });
+      this.persistRunStatus({
+        runId,
+        team: team.name,
+        task,
+        startedAt,
+        status,
+        ...(error !== undefined ? { error } : {}),
+        ...(leaderPid !== undefined ? { leaderPid } : {}),
+        ...lineageFields(),
+        now,
+      });
     // 终态单一出口：先落终态快照，再归档 run 记录（归档异常绝不影响终态；
     // 预检失败等无记录路径归档只是空操作）。
     const finish = (status: RunStatus, error?: string): void => {
@@ -581,7 +681,6 @@ export class TeamRunCoordinator {
       // Pre-flight: worktree requirements must be satisfiable BEFORE spawning
       // anything (environmental errors are otherwise invisible mid-run).
       const needsWorktree = team.worktree === true || team.members.some((m) => m.worktree === true);
-      let sharedWorktree: { path: string; branch: string } | undefined;
       if (needsWorktree) {
         if (!(await isGitRepo(git, baseCwd))) {
           const message = `预检失败：团队或成员配置了 worktree 隔离，但 "${baseCwd}" 不是 git 仓库。请在 git 仓库中运行，或去掉团队/成员的 worktree 配置。`;
@@ -594,14 +693,23 @@ export class TeamRunCoordinator {
           };
         }
         if (team.worktree) {
-          const created = await createWorktree({
-            git,
-            repoCwd: baseCwd,
-            worktreePath: path.join(this.deps.worktreeRoot, runId, "team"),
-            branch: teamWorktreeBranch(runId),
-          });
+          // 续跑复用父 run 的共享树（记录字段优先，旧记录回退约定路径），
+          // 不可恢复即硬失败——绝不静默新建，否则新 leader 会话的 cwd
+          // 会与父会话记录的工作目录漂移。首跑行为不变（新建）。
+          const spec = resume
+            ? parentWorktreeSpec({
+                status: resume.parentStatus,
+                worktreeRoot: this.deps.worktreeRoot,
+                runId: resume.parentRunId,
+              })
+            : { path: path.join(this.deps.worktreeRoot, runId, "team"), branch: teamWorktreeBranch(runId) };
+          const created = resume
+            ? await restoreWorktree({ git, repoCwd: baseCwd, worktreePath: spec.path, branch: spec.branch })
+            : await createWorktree({ git, repoCwd: baseCwd, worktreePath: spec.path, branch: spec.branch });
           if (!created.ok) {
-            const message = `预检失败：创建团队共享 worktree 失败 — ${created.message}`;
+            const message = resume
+              ? `续跑失败：无法恢复父 run 的共享 worktree — ${created.message}`
+              : `预检失败：创建团队共享 worktree 失败 — ${created.message}`;
             finish("failed", message);
             return { ok: false, code: created.code, message, record: writeFailedRecord(message) };
           }
@@ -769,7 +877,18 @@ export class TeamRunCoordinator {
       // runs, which is the channel steering (viewer mid-run messages) and
       // clean shutdown use. The task travels as the initial `prompt` command
       // (not argv) and the run ends when `agent_settled` closes stdin.
-      const args: string[] = ["--mode", "rpc", "--no-session"];
+      //
+      // Session persistence: every leader run keeps its conversation on disk.
+      // A first run opens a fresh session in the run dir; a resume opens the
+      // parent leader session file directly (pi appends to it — no fork).
+      const args: string[] = ["--mode", "rpc"];
+      if (resume) {
+        args.push("--session", path.resolve(resume.sessionFile));
+      } else if (ownSessionDir) {
+        args.push("--session-dir", ownSessionDir);
+      } else {
+        args.push("--no-session");
+      }
       if (team.leader.model) args.push("--model", team.leader.model);
       if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
       if (this.deps.extensionEntryPath) args.push("-e", this.deps.extensionEntryPath);
@@ -777,21 +896,47 @@ export class TeamRunCoordinator {
       args.push("--append-system-prompt", `team-tmp://${leaderPrompt}`);
 
       const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);
-      const leaderCwd = sharedWorktree?.path ?? baseCwd;
+      // Resume without a shared worktree: run where the parent leader ran
+      // (its session header cwd) so member dispatch directories never drift.
+      const leaderCwd = sharedWorktree?.path ?? (resume ? (readSessionHeaderCwd(resume.sessionFile) ?? baseCwd) : baseCwd);
+
+      // Keep the resumed lineage's session dir fresh so the 7-day run-artifact
+      // retention cannot prune a session that is being continued right now.
+      if (resume) {
+        try {
+          const sessionDir = path.dirname(path.resolve(resume.sessionFile));
+          const touched = new Date(nowMs());
+          fs.utimesSync(sessionDir, touched, touched);
+        } catch {
+          /* retention refresh is best-effort */
+        }
+      }
 
       // 1s progress ticker (onProgress observers; the widget repaints on its
       // own tick), aligned to the shared wall-clock second (status-bar contract).
       stopTicker = startAlignedTicker(render, { intervalMs: 1000 });
 
+      const leaderEnv: NodeJS.ProcessEnv = {
+        [LEADER_ENV_FILE]: team.filePath,
+        [LEADER_ENV_NAME]: team.name,
+        [LEADER_ENV_RUNID]: runId,
+      };
+      if (resume) {
+        // Member worktrees alias to the parent run (same on-disk trees) and
+        // the member-model overrides travel to the leader's dispatch executor.
+        leaderEnv[LEADER_ENV_WORKTREE_RUNID] = resume.parentRunId;
+        const overrides = resume.modelOverrides?.memberModels ?? {};
+        const known = Object.fromEntries(
+          Object.entries(overrides).filter(([name]) => team.members.some((member) => member.name === name)),
+        );
+        if (Object.keys(known).length > 0) leaderEnv[LEADER_ENV_MEMBER_MODELS] = JSON.stringify(known);
+      }
+
       const outcome = await runChildPi({
         command: invocation.command,
         args: invocation.args,
         cwd: leaderCwd,
-        env: {
-          [LEADER_ENV_FILE]: team.filePath,
-          [LEADER_ENV_NAME]: team.name,
-          [LEADER_ENV_RUNID]: runId,
-        },
+        env: leaderEnv,
         spawn: this.deps.spawn ?? defaultSpawn(),
         // The leader's RPC channel needs a live stdin pipe (prompt below,
         // closed at settle) — members never do, so they keep the default.
@@ -804,7 +949,16 @@ export class TeamRunCoordinator {
         onSpawn: (pid) => {
           if (pid === undefined) return;
           leaderPid = pid;
-          this.persistRunStatus({ runId, team: team.name, task, startedAt, status: "running", leaderPid: pid, now });
+          this.persistRunStatus({
+            runId,
+            team: team.name,
+            task,
+            startedAt,
+            status: "running",
+            leaderPid: pid,
+            ...lineageFields(),
+            now,
+          });
         },
         // RPC channel: send the task once the child exists …
         onChild: (child) => {
@@ -879,12 +1033,19 @@ export class TeamRunCoordinator {
 
       // 终态 leader 思考级别：实际事件最后值优先，无实际上报时回退声明后缀。
       const terminalLeaderThinking = progress.leaderThinkingLevel ?? splitModelThinking(team.leader.model).thinkingLevel;
+      // 首跑：leader 退出后从自己的 session 目录解析会话镜像（唯一/最新一个；
+      // 解析失败只跳过——不能因此毁掉 run）。续跑直接沿用打开的文件。
+      if (leaderSessionFile === undefined && ownSessionDir !== undefined) {
+        leaderSessionFile = resolveLeaderSessionFile(ownSessionDir) ?? undefined;
+      }
       const record: TeamRunRecord = {
         runId,
         team: team.name,
         task,
         startedAt,
         status: aborted ? "aborted" : failed ? "failed" : "completed",
+        ...(parentRunId !== undefined ? { parentRunId } : {}),
+        ...(leaderSessionFile !== undefined ? { leaderSessionFile } : {}),
         ...(failed
           ? {
               error: truncateUtf8(

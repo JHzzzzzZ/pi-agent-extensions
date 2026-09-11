@@ -103,6 +103,17 @@ export const LEADER_ENV_NAME = "PI_AGENT_TEAM_NAME";
 export const LEADER_ENV_RUNID = "PI_AGENT_TEAM_RUN_ID";
 
 /**
+/**
+ * Env var aliasing member worktree paths/branches to the resumed parent run
+ * (a resume run keeps the new runId for its own artifacts but reuses the
+ * parent's member worktrees on disk).
+ */
+export const LEADER_ENV_WORKTREE_RUNID = "PI_AGENT_TEAM_WORKTREE_RUN_ID";
+
+/** Env var carrying per-member model overrides (JSON `{name: provider/id}`) for one run. */
+export const LEADER_ENV_MEMBER_MODELS = "PI_AGENT_TEAM_MEMBER_MODELS";
+
+/**
  * Tools every derived-agent child (leader + members) must not expose.
  * `subagent` would open a nested sub-agent hierarchy and `team_run` would
  * start a nested team run from inside a run — both defeat the bounded
@@ -179,6 +190,10 @@ export const TeamErrorCodes = {
   RUN_ID_REQUIRED: "RUN_ID_REQUIRED",
   RUN_NOT_FOUND: "RUN_NOT_FOUND",
   RUN_ALREADY_FINISHED: "RUN_ALREADY_FINISHED",
+  /** Resume requested while the parent run is still live. */
+  RUN_NOT_TERMINAL: "RUN_NOT_TERMINAL",
+  /** Resume requested but the parent has no leader session mirror. */
+  RESUME_UNAVAILABLE: "RESUME_UNAVAILABLE",
   BUDGET_EXCEEDED: "BUDGET_EXCEEDED",
   MODEL_NOT_FOUND: "MODEL_NOT_FOUND",
 } as const;
@@ -394,6 +409,10 @@ export interface TeamRunRecord {
   startedAt: string;
   finishedAt?: string;
   status: RunStatus;
+  /** Run this one resumed from (`team_resume` lineage), when applicable. */
+  parentRunId?: string;
+  /** Leader session mirror opened/appended by this run (resume entry point). */
+  leaderSessionFile?: string;
   /** Leader's final report text (truncated). */
   report?: string;
   error?: string;
@@ -453,6 +472,8 @@ export interface RunProgress {
   team: string;
   task: string;
   startedAtMs: number;
+  /** Parent run id when this run is a resume (`/team:status` lineage). */
+  parentRunId?: string;
   leaderModel?: string;
   /** Declared leader model from the team file (provider prefix for the display caliber). */
   leaderDeclaredModel?: string;

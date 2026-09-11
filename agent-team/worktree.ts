@@ -207,6 +207,29 @@ export async function createWorktree(options: {
   return ok({ path: worktreePath, branch });
 }
 
+/**
+ * Restores a worktree for a resumed run. `createWorktree` is re-entrant for
+ * live registrations; the one case it cannot recover by itself is a stale
+ * registration whose directory was deleted (it reports "run git worktree
+ * prune and retry"). A resume must not surface that as an error, so prune
+ * once and retry — `git worktree prune` is a no-op unless a registration is
+ * actually stale. Every other failure (path occupied by a plain directory,
+ * branch checked out elsewhere) comes back unchanged: never a silent fresh
+ * tree, because the resumed leader session's cwd must not drift.
+ */
+export async function restoreWorktree(options: {
+  git: GitRunner;
+  repoCwd: string;
+  worktreePath: string;
+  branch: string;
+}): Promise<Result<{ path: string; branch: string }>> {
+  const first = await createWorktree(options);
+  if (first.ok) return first;
+  const pruned = await options.git(["worktree", "prune"], options.repoCwd);
+  if (pruned.code !== 0) return first;
+  return createWorktree(options);
+}
+
 /** Removes a worktree (force). Missing worktrees count as removed. */
 export async function removeWorktree(options: {
   git: GitRunner;

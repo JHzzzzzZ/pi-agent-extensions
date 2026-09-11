@@ -5,15 +5,19 @@
 ```text
 主 pi 会话（驾驶舱）
   ├─ 对话建团：主 agent 调 team_create / team_list 工具 → 写团队定义文件
-  └─ 派单：/team:run <team> <task> 或 team_run 工具
-        │ spawn（leader 专属 prompt + PI_AGENT_TEAM_FILE 环境变量）
+  ├─ 派单：/team:run <team> <task> 或 team_run 工具
+  │     │ spawn（leader 专属 prompt + PI_AGENT_TEAM_FILE 环境变量）
+  │     ▼
+  │   Leader 子进程 pi --mode rpc --session-dir <runs>/<runId>/session --model <leader.model> -e <本扩展>
+  └─ 续跑：/team:resume <runId> 或 team_resume 工具（仅 failed/aborted）
+        │ spawn（同一 leader 会话文件原地续写 + 父 run 的 worktree）
         ▼
-Leader 子进程 pi --mode json -p --no-session --model <leader.model> -e <本扩展>
-        │ team_dispatch { tasks: [{agent, task}] }（≤8 个/次，≤4 并发）
-        ▼
-Member 子进程 ×N：pi --mode json -p --no-session --model <member.model> [--tools ...]
-                   [--append-system-prompt <member.prompt>]  "Task: <子任务>"
-                   （worktree 成员 cd 到独立 git worktree）
+        Leader 子进程 pi --mode rpc --session <父会话文件> [--model <覆盖模型>]
+              │ team_dispatch { tasks: [{agent, task}] }（≤8 个/次，≤4 并发）
+              ▼
+        Member 子进程 ×N：pi --mode json -p --no-session --model <member.model> [--tools ...]
+                           [--append-system-prompt <member.prompt>]  "Task: <子任务>"
+                           （worktree 成员 cd 到独立 git worktree）
 ```
 
 ## 安装
@@ -77,12 +81,14 @@ members:
 | `/team` · `/team:list` | 无参 `/team`（或 `/team:list`）列出全部团队（含无效文件警告） |
 | `team_run` 工具 | 让主 agent 自主派单——**默认后台**：立即返回（含 runId，`team_stop` 的中止句柄），报告完成后自动送达会话（followUp）；**failed 也必达**：失败摘要（状态/错误/成员结果/部分报告）走同一 followUp 通道，主 agent 可据此重试或如实转告用户；`wait: true` 同步等待整个 run 并内联返回报告（失败内联 `isError`；阻塞主会话，不推荐） |
 | `team_stop` 工具 | 让主 agent 按 runId 中止后台 run（与 `/team:stop` 同一停止原语 + **settle-aware**：有界等待 leader 落定后返回 aborted 终态记录；停止后该 run 的报告 followUp 不再送达；可立即重新派单）。runId 必填：省略 `RUN_ID_REQUIRED`、未知 `RUN_NOT_FOUND`、已结束 `RUN_ALREADY_FINISHED`（均类型化错误，不抛异常） |
+| `/team:resume <runId> [补充指示]` | **续跑** failed/aborted 的 run（后台）：新 leader 打开父 run 的 leader 会话原地续写（完整对话上下文，不构造交接摘要）并复用父 run 的 worktree；只有 failed/aborted 可续，completed 请用 `/team:run` 重新派单 |
+| `team_resume` 工具 | 让主 agent 续跑并**换模型**：`leaderModel` / `memberModels` 只作用于本次续跑 run（不改团队文件，`provider/id:level` 后缀原样透传）；`instructions` 给 leader 补充本次指示（可选，不该重述任务——上下文在会话里）；默认后台 + followUp（失败同样必达），`wait: true` 内联返回 |
 
 同一团队可反复派单复用。运行记录以 `agent-team-run-v1` entry 持久化（含各成员结果摘要、token/费用统计）。
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
-其它命令（冒号命令面，v1.12.0）：`/team`（无参列团队；带参显示用法）与 `/team:list`；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、模型、轮次、费用、worktree、预算消耗；任务行先压平换行（连续空白 → 单空格）再按显示宽度截断到 60 列（CJK 双宽，超宽补 `…`，整行 ≤66 列），`team_status` 工具共用同一口径）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏，见 §4）；`/team:doctor` **自检报告**（运行模式/团队发现/逐团队模型预检/运行目录残留/逐团队预算/worktree 可用性）。旧空格写法（`/team run` 等）只提示改名、不再执行。
+其它命令（冒号命令面，v1.12.0）：`/team`（无参列团队；带参显示用法）与 `/team:list`；`/team:status` 查看当前/最近一次 run 的详细快照（含 runId，每个成员在做什么、模型、轮次、费用、worktree、预算消耗；续跑 run 的 runId 行标注 `（续跑自 <parentRunId>）`，failed/aborted 且有会话镜像时附 `可用 team_resume <runId> 续跑（可换模型）`；任务行先压平换行（连续空白 → 单空格）再按显示宽度截断到 60 列（CJK 双宽，超宽补 `…`，整行 ≤66 列），`team_status` 工具共用同一口径）；`/team:stop` 中止当前 run（SIGTERM → SIGKILL 逐级终止 leader 与成员）；`/team:resume <runId> [补充指示]` 后台续跑 failed/aborted 的 run（换模型走 `team_resume` 工具）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏，见 §4）；`/team:doctor` **自检报告**（运行模式/团队发现/逐团队模型预检/运行目录残留/逐团队预算/worktree 可用性）。旧空格写法（`/team run` 等）只提示改名、不再执行。
 
 ### 4. 进度亮块（输入栏下方，可键盘选中）
 
@@ -137,7 +143,7 @@ agent-team count-duet · ↓/← 查看详情
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的五行元信息头（`Run:` / `State:` / `成员:` / `模型:` / `活动:`——模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`；活动行为选中 actor 的当前活动（v1.17.0）：`思考中` / `工具调用 <tool>` / `排队中` / `已完成`/`失败`/`已中止` / `run 已结束`，活动已知时附 ` · 距上次输出 <age>`（age 5 秒分桶：`0s`/`5s`…，≥60s 如 `2m5s`；分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘），live 阶段由 leader/member 子进程事件驱动（tool start/update/end、assistant message_end），无 live progress 时从 transcript 末条推导），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的五行元信息头（`Run:` / `State:` / `成员:` / `模型:` / `活动:`——续跑 run 的 `Run:` 行追加 `（续跑自 <parentRunId>）`（v1.21.0），行数不变；模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`；活动行为选中 actor 的当前活动（v1.17.0）：`思考中` / `工具调用 <tool>` / `排队中` / `已完成`/`失败`/`已中止` / `run 已结束`，活动已知时附 ` · 距上次输出 <age>`（age 5 秒分桶：`0s`/`5s`…，≥60s 如 `2m5s`；分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘），live 阶段由 leader/member 子进程事件驱动（tool start/update/end、assistant message_end），无 live progress 时从 transcript 末条推导），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
@@ -182,13 +188,14 @@ leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行�
 - **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块展开头行在设了费用上限时显示余额提示（折叠行不含）。
 - **崩溃恢复**：每个 run 的元数据快照（`status.json`，含 leader PID 与属主会话 PID）落盘在 `~/.pi/agent/teams/runs/<runId>/`；主会话中断后下次启动只把**属主已死**（ownerPid 探活失败）或无 ownerPid 的残留 running 翻成 failed 记录并警告——别的活会话正在跑的 run 不会被误翻；孤儿 leader **只诊断不杀**（PID 可能复用，请人工确认后处理）；`/team:doctor` 可查看全部残留与损坏文件。
 - **终态记录自动归档（v1.20.0）**：run 落终态（completed/failed/aborted）或 `session_start` reconcile 翻 failed 时，把该 run 的工作记录复制到主工作区 `history/team-runs/<runId>/`。记录源两种形态都扫：运行项目根（`<worktreeRoot>/<runId>/` 的一层子目录——team 共享 worktree 与各成员 worktree——以及主会话 cwd）下的 `.pi/team-runs/<runId>/`（目录，其下文件平铺复制）与 `.pi/team-runs/<runId>.md`（单文件，复制进目标目录）。**为什么必须归档**：worktree 团队的 run worktree 会被 `git worktree remove` 整体删除，只有主工作区 `history/` 副本存活。目标已有同名文件且字节不同 → 保留既有，新记录改名 `<名>.conflict-<UTC 紧凑时间戳>` 另存（双方都留）；字节相同 → 幂等跳过；目标目录已存在只做文件级合并，不覆盖。源永不删除、不做任何 git 操作；归档全程异常隔离，失败只发 warning 诊断，绝不影响 run 终态。
+- **续跑（v1.21.0）**：leader 会话从 v1.21.0 起**持久化**到 `~/.pi/agent/teams/runs/<runId>/session/`（随 run 产物一起 7 天保留）。意外中断落 failed 后，`team_resume <runId>`（或 `/team:resume`）以**新 run 原地续写父 leader 会话**——pi 加载完整对话后继续，不构造任何交接摘要；并复用父 run 的 worktree（团队共享树与成员树都指向父 run 的路径/分支，含未提交改动）。**换模型**只作用于本次续跑：leader 走 `leaderModel`（`provider/id[:level]`），成员走 `memberModels`，不改团队文件。前一个 run 的终态记录原样保留 + 新 run 记录 `parentRunId`（`/team:status` 与查看器 `Run:` 行展示「续跑自 …」）。仅 `failed`/`aborted` 可续跑（completed 报 `RUN_ALREADY_FINISHED`，仍在跑报 `RUN_NOT_TERMINAL`）；无会话镜像（功能上线前的旧 run、启动即失败的 run、已过 7 天保留期）报 `RESUME_UNAVAILABLE`；父 worktree 不可恢复（路径被占/分支被别处检出）**硬失败** `WORKTREE_UNAVAILABLE`，不静默新建（避免 leader cwd 与工具执行目录漂移）。
 - **提问不会挂住 run**：`team_ask` 等待默认 10 分钟、上限 30 分钟，cockpit 侧另有 +5s backstop；超时/取消/主会话无 UI/run 停止全部回「未获回答」，leader 按合理假设继续并在报告声明（不重复追问、不空转到预算上限）。
 
 ## 命令与工具一览
 
-- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_status`（查运行状态，含 runId 与预算）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
+- 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_resume`（续跑 failed/aborted 的 run + 换模型）、`team_status`（查运行状态，含 runId 与预算）、`team_stop`（按 runId 中止）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）、`team_ask`（向用户提问并等待回答；超时/取消/无 UI 自动降级）
-- 命令：裸 `/team`（无参=列团队；带参=用法）+ 独立冒号命令 `/team:list`/`:run`/`:status`/`:stop`/`:view`（内含 `m` 发消息直接对话）/`:clear`/`:doctor`；派单统一 `/team:run <团队名> <任务>`（团队名可与子命令同名，v1.12.0 保留词概念退役）
+- 命令：裸 `/team`（无参=列团队；带参=用法）+ 独立冒号命令 `/team:list`/`:run`/`:resume`/`:status`/`:stop`/`:view`（内含 `m` 发消息直接对话）/`:clear`/`:doctor`；派单统一 `/team:run <团队名> <任务>`，续跑统一 `/team:resume <runId> [补充指示]`（团队名可与子命令同名，v1.12.0 保留词概念退役）
 - Widget：输入栏下方可选中亮块（数据驱动：有活跃 run 才挂帧、落定自动卸载；默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员` 树，末行恒为成员行）——`main` 行 `enter` 只收起选中，leader/成员行 `enter` 直达查看器对应 actor（仅 TUI 模式，详见 §4）
 - `/team:view`：全屏分栏会话记录查看器——左栏成员 roster、右栏成员对话/工具调用/错误实时可读（仅交互式 TUI）
 
@@ -197,7 +204,8 @@ leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行�
 ```bash
 cd agent-team
 npm install
-npm test          # node --test test/*.test.ts（481 个测试，含真实 git worktree 与真实 pi 子进程 E2E）
+npm test          # node --test test/*.test.ts（512 个测试，含真实 git worktree 与真实 pi 子进程 E2E）
+node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
 

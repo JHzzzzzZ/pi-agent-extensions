@@ -65,6 +65,7 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
     extensionEntryPath: "/ext/agent-team/index.ts",
     spawn: spawn.spawn,
     piCommand: "pi",
+    transcriptRoot: "/tmp/runs",
   });
   const promise = coordinator.start({
     team: fixtureTeam(),
@@ -75,7 +76,11 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   const child = await waitForChild(spawn, 0);
   const record = spawn.records[0];
 
-  assert.deepEqual(record.args.slice(0, 3), ["--mode", "rpc", "--no-session"]);
+  assert.deepEqual(record.args.slice(0, 2), ["--mode", "rpc"]);
+  // 首跑：leader 会话落盘到本 run 的产物目录（不再 --no-session）
+  assert.equal(record.args[2], "--session-dir");
+  assert.equal(record.args[3], path.join("/tmp/runs", record.env?.PI_AGENT_TEAM_RUN_ID ?? "", "session"));
+  assert.ok(!record.args.includes("--no-session"), "leader session is persisted");
   assert.equal(record.stdin, "pipe", "RPC leader keeps a live stdin channel");
   assert.equal(record.args[record.args.indexOf("--model") + 1], "anthropic/claude-opus-4-5");
   const extIndex = record.args.indexOf("-e");
@@ -265,6 +270,61 @@ test("failedRunRecord builds the minimal failed record shape", () => {
 
   const noDuration = failedRunRecord({ runId: "run-8", team: "t", task: "x", startedAt: "2026-09-05T12:00:00Z", error: "e" });
   assert.equal(noDuration.durationMs, undefined);
+});
+
+test("formatStatusSnapshot 标注续跑来源并在可续 run 上提示 team_resume", () => {
+  const running = formatStatusSnapshot(
+    {
+      running: true,
+      progress: { runId: "run-new", parentRunId: "run-old", team: "dev-team", task: "继续", startedAtMs: 0, members: [] },
+      lastRecord: null,
+    },
+    0,
+  );
+  assert.match(running, /runId: run-new（续跑自 run-old）/);
+
+  const failed = formatStatusSnapshot(
+    {
+      running: false,
+      progress: null,
+      lastRecord: {
+        runId: "run-old",
+        team: "dev-team",
+        task: "修复 bug",
+        startedAt: "2026-09-05T12:00:00Z",
+        status: "failed",
+        error: "配额耗尽",
+        leaderSessionFile: "/runs/run-old/session/a.jsonl",
+        members: [],
+        totalCost: 0,
+        totalTokens: 0,
+      },
+    },
+    0,
+  );
+  assert.match(failed, /runId: run-old\n/);
+  assert.match(failed, /可用 team_resume run-old 续跑（可换模型）/);
+
+  // completed runs have nothing to resume: no hint line.
+  const completed = formatStatusSnapshot(
+    {
+      running: false,
+      progress: null,
+      lastRecord: {
+        runId: "run-done",
+        team: "dev-team",
+        task: "t",
+        startedAt: "2026-09-05T12:00:00Z",
+        status: "completed",
+        leaderSessionFile: "/runs/run-done/session/a.jsonl",
+        members: [],
+        totalCost: 0,
+        totalTokens: 0,
+      },
+    },
+    0,
+  );
+  assert.doesNotMatch(completed, /team_resume/);
 });
 
 test("formatStatusSnapshot renders a running snapshot and the last record", () => {

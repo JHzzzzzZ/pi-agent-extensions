@@ -9,8 +9,9 @@
 |---|---|
 | 团队文件格式 | `~/.pi/agent/teams/*.md` 或受信项目 `.pi/teams/`（项目优先），frontmatter `leader` + `members[]` |
 | 成员字段 | 每成员 `provider/model` + `tools` + `worktree` + 块标量 `prompt`，见 `examples/dev-team.example.md` |
-| 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（`team_dispatch` + `team_ask`），无则 cockpit 模式（`team_create/list/run/status/stop` + `/team*`） |
+| 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（`team_dispatch` + `team_ask`），无则 cockpit 模式（`team_create/list/run/resume/status/stop` + `/team*`） |
 | leader 提问（人工澄清） | leader 侧 `ask.ts` `askLeaderQuestion`（team_ask 工具）；cockpit 侧 `AskChannel` + `index.ts` `askPortFrom(ctx)` 宿主对话框；RPC 协议 = pi stdout `extension_ui_request` ↔ stdin `extension_ui_response` |
+| 续跑/换模型 | `resume.ts`（父 status/会话镜像/cwd/override 纯函数 + `restoreWorktree` 在 `worktree.ts`）+ `cockpit.ts` `start({resume})`（`--session <父文件>` 原地续写 + 父 worktree 恢复）+ `team_resume` 工具//`/team:resume`；leader 会话落盘 `<runsRoot>/<runId>/session/`（v1.21.0） |
 | 停止/终态 | `cockpit.ts` `TeamRunCoordinator.stop()`（同步 abort）/`stopAndSettle()`（有界等待落定返回终态记录）+ `team_stop` 工具（runId 必填；aborted 记录补全 roster 成员） |
 | 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，4 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
@@ -44,6 +45,7 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 475 测试（node --test test/*.test.ts）
+cd agent-team && npm install && npm test   # 512 测试（node --test test/*.test.ts）
+node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```
