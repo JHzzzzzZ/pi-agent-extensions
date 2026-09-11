@@ -10,6 +10,7 @@
 
 | 问题类型 | 读这个 |
 | --- | --- |
+| `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径 | `tools/todo-cli.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
@@ -36,12 +37,20 @@
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
 | run-timer | 会话/任务/回合计时 widget |
 | solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启 |
-| todo-cli | `todos/` 工作流原子操作：agent 工具 `todos` + 冒号命令面；`core.ts` 与仓库 CLI 共用，triage 只读扫描 worktree↔条目 |
 | [session-manager](extensions/session-manager.md) | 落盘会话只读浏览/检索：`session` 工具 list/search/preview + `/session-manager:*`；接续/分支只输出宿主 `pi --session/--fork` 命令 |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
+
+## 工具卡（非插件）
+
+仓库级 CLI / 开发工具（非 Pi 插件）各一张卡。收录规则：新增仓库级工具 → 同变更在 `docs/tools/<名>.md` 建卡并在此登记。
+
+| 卡 | 一句话 |
+| --- | --- |
+| [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI：单入口 `node tools/todo.mjs`（七子命令，triage 只读扫描 worktree↔条目），只读写 `todos/`、CLI-only 无 pi 依赖 |
 
 ## 收录与淘汰
 
 - 新增插件：同变更内建卡 + 本表登记（见 AGENTS.md 规则红线·交付四处同步）。
+- 新增仓库级工具（非插件）：同变更在 `docs/tools/<名>.md` 建卡 + 本文件「工具卡（非插件）」节登记。
 - 卡片超过 100 行 → 说明在抄代码，砍掉；有价值的长内容放扩展自身 README 并从卡里链过去。
 - 发现卡片与代码不符：先改代码或改卡对齐，再更新 last verified 行，不留矛盾。

@@ -39,7 +39,7 @@
 - **`sessionRootOf` 是启发式**：默认会话目录名 `--x--` 取父目录；自定义 `--session-dir` 非该形态时原样使用（此时列的是该目录内的 jsonl）。
 - **工具输出搜不到**：bash/read 的输出不进检索（避免「命令回显」噪音）；要找相关内容搜对话文本里的关键词。
 - **性能**：list/search 会读全部 jsonl 全文（真实 173 个会话/100MB ≈ 0.6s）；超大目录的索引化留给需要时再做。
-- **无 typecheck 门**：本目录只有 `npm test`（10 个），无 tsconfig（与 todo-cli/goal 等一致）。
+- **无 typecheck 门**：本目录只有 `npm test`（10 个），无 tsconfig（与 goal 等一致）。
 
 ## 改动清单
 
