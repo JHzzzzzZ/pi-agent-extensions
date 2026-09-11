@@ -1,0 +1,7 @@
+# 真机样例：codex-cli 0.145.0（Windows / npm 全局）`codex exec --json` 成功路径，exit=0，6.7s。
+# 来源：history/team-runs/run-1789134203331/probes/codex-run2.stdout.jsonl（探测 2026-09-11）。
+# 三禁：禁 shell:true；禁 team-tmp:// scheme；任务文本只进 argv 末位位置参数。
+{"type":"thread.started","thread_id":"01a090c0-a516-7d21-8127-5307097f8eb0"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":17704,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
