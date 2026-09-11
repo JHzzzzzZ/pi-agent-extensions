@@ -1,11 +1,11 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十二个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、会话管理器）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：一个主项目 **PWR**（本地工作流编排）加十一个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`pwr/`](#pwr--pi-workflow-runtime-主项目) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，大团队自动窗口化；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 368 个 |
+| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，大团队自动窗口化；冒号命令面 `/team:list|:run|:status|:stop|:view|:clear|:doctor`） | 388 个 |
 | [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
 | [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -16,7 +16,6 @@
 | [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
-| [`session-manager/`](#session-manager) | 落盘会话只读浏览/检索：agent 工具 `session`（list/search/preview）+ 人类命令 `/session-manager`、`/session-manager:list|search|preview`；接续/分支交给宿主 `pi --session/--fork` | 10 个（node:test） |
 
 ## 安装
 
@@ -26,7 +25,7 @@
 
 ### 方式一：pi install（推荐）
 
-> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（13 个扩展）。不带 ref 的安装会装到 master 旧包。
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（12 个扩展）。不带 ref 的安装会装到 master 旧包。
 
 ```bash
 # 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
@@ -66,10 +65,10 @@ pi install ./pi-agent-extensions
 
 ### 安装自检（可选）
 
-不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 13 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 12 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
 
 ```bash
-node tools/install-smoke.mjs        # ✓ = 13/13 扩展在干净目录下加载成功；✗ 时打印问题清单
+node tools/install-smoke.mjs        # ✓ = 12/12 扩展在干净目录下加载成功；✗ 时打印问题清单
 node tools/install-smoke.mjs --task # 加跑一条真实模型任务：让模型调用全新安装的 loop_list 工具
 node tools/install-smoke.mjs --install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
                                     # 真跑一遍上面「方式一」的 pi install（联网）：核对装到的包版本/扩展清单/全部命令
@@ -510,17 +509,20 @@ node tools/todo.mjs --help                              # 打印用法
 
 ---
 
-## session-manager
+## agent-manager — 独立 agent 管理工具（非扩展）
 
-把 `~/.pi/agent/sessions/` 里落盘的 Pi 会话（按工作目录组织、v3 JSONL 树）变成可查询的资产：以前想找「上次那个任务聊到哪了」只能靠宿主 `/resume` 翻列表或手写 grep，现在 agent 与人都能一条命令列出/检索/预览。
+把 `~/.pi/agent/sessions/` 里落盘的 Pi 会话（v3 JSONL）和本机 pi agent 进程放进一个浏览器页面管理。**独立于 Pi 运行**：一个 Node HTTP 进程 + 浏览器页面，pi 未运行也能启动与浏览；agent 不感知它（不注册任何 Pi 扩展点、不 import 宿主 SDK、根 `pi.extensions` 不含此项）。
 
-- **agent 工具 `session`** — `action="list"` 列会话（id/时间/大小/模型/标题/目录，按最近修改排序）；`action="search"` 在用户/助手文本与会话名上大小写不敏感全文检索（工具输出不搜，避免命令回显噪音）；`action="preview"` 看单条详情 + 最近 6 条消息 + 宿主接续命令。`scope="current"` 只看当前项目。
-- **人类命令** — 裸 `/session-manager` 列当前项目会话；`/session-manager:list [current|all]`、`/session-manager:search <检索词>`、`/session-manager:preview <id 前缀>`（旧空格写法只提示改名）。
-- **接续/分支交给宿主** — preview 输出 `pi --session <id>` 与 `pi --fork <id>`（宿主支持 id 前缀），本扩展不 spawn 进程、不写会话文件、不做「第二个主界面」。
-- **边界** — 只读扫描；一个坏文件（无 header / JSON 损坏 / 读失败）不影响整次扫描；目录缺失与检索词为空都给可读错误。写操作（重命名 / 打标签 / 清理归档）留待后续增量，默认 dry-run。
+- **启动** — 从仓库根 `node agent-manager/server.ts`（默认端口 8787，自动开浏览器），或 `cd agent-manager && npm start -- --port 9000 --sessions <dir> --pi <path> --no-open`。要求 Node ≥ 22.18（原生 type-stripping 直接运行 `.ts`）。
+- **能力（会话）** — 列出 / 检索（用户+助手文本与会话名，大小写不敏感）/ 预览；重命名 = 向会话文件末尾追加宿主语义的 `session_info`（不改文件名/header）；删除 = 移入工具回收站（可恢复）。重命名/删除/恢复都是**两段式**：先 dry-run 返回计划，页面确认后带 `confirm:true` 执行。
+- **能力（Agents）** — 以 `pi --mode json -p` 启动子进程（新建 / `--session` 接续 / `--fork` 分支），实时查看状态、pid、最后输出与逐行输出（列表 2s / 详情 1s 轮询，页面隐藏时暂停）；停止按钮二次确认后杀**整个进程树**（win32 `taskkill /T /F`，posix 进程组）。
+- **设置** — 改 sessionDir / piPath / port 并持久化（`<home>/.pi/agent/agent-manager/config.json`）；优先级 CLI flag > 环境变量 > 配置文件 > 默认值。`--pi` 推荐指向 `cli.js`：Node 直启，绕开 Windows 上 `.cmd` 必须经 `cmd.exe` 包装的引号问题。
+- **边界** — 仅监听 `127.0.0.1`（页面无鉴权，**勿做端口转发/反向代理**）；不做外部终端 pi 进程发现（只管理本工具启动的 agent）；不给运行中 agent 发消息（接续 = 停止后在会话页用 `pi --session <id>` 或本工具「接续」启动）；install-smoke 只覆盖 `pi.extensions` 的 12 个扩展，本工具不在其中。
 
 ```bash
-cd session-manager && npm install && npm test   # 10 个测试
+cd agent-manager && npm install && npm test   # 37 个测试（14 core + 10 runner + 13 server）
+npm run typecheck                              # tsc -p tsconfig.json --noEmit
+npm run test:e2e                               # opt-in 真机 e2e（4 个；需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
 ```
 
 ---
@@ -528,6 +530,6 @@ cd session-manager && npm install && npm test   # 10 个测试
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/`、`todo-cli/`、`session-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/`、`todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`pwr/vendor/acorn.mjs` 为生成文件，勿修改

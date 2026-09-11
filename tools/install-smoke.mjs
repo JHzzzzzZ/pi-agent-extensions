@@ -107,10 +107,6 @@ export const EXTENSION_EXPECTATIONS = {
     uiKeys: [],
   },
   "deep-init": { commands: ["deep-init"], uiKeys: [] },
-  "session-manager": {
-    commands: ["session-manager", "session-manager:list", "session-manager:preview", "session-manager:search"],
-    uiKeys: [],
-  },
   "provider-quota": { commands: ["quota"], uiKeys: ["20:provider-quota"] },
   "solo-mode": { commands: ["solo", "solo:off", "solo:on", "solo:status"], uiKeys: ["40:solo-mode"] },
   // 无命令扩展：只能以启动期 TUI 写入或"加载不抛错"证明。

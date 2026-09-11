@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 86608e2
+> last verified @ a3cf8f5
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -21,6 +21,7 @@
 | 历史事故与教训（渲染堆叠、误杀进程、编码坑） | `incidents.md` |
 | PWR DSL 白名单 / 上限 / 脚本版本权威定义 | `pwr/engine/spec.ts`（代码即真相）+ `extensions/pwr.md` |
 | PWR 完整架构 / 安全不变量 / 版本历史 | `pwr/DELIVERY.md`（pwr 卡从薄，不重复它） |
+| agent-manager 独立工具（会话/agent 进程管理，非扩展）的边界、数据流、不变量、坑 | `tools/agent-manager.md` |
 
 ## 扩展卡一览（一行摘要）
 
@@ -37,7 +38,6 @@
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
 | run-timer | 会话/任务/回合计时 widget |
 | solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启 |
-| [session-manager](extensions/session-manager.md) | 落盘会话只读浏览/检索：`session` 工具 list/search/preview + `/session-manager:*`；接续/分支只输出宿主 `pi --session/--fork` 命令 |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 
 ## 工具卡（非插件）
@@ -47,10 +47,11 @@
 | 卡 | 一句话 |
 | --- | --- |
 | [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI：单入口 `node tools/todo.mjs`（七子命令，triage 只读扫描 worktree↔条目），只读写 `todos/`、CLI-only 无 pi 依赖 |
+| [agent-manager](tools/agent-manager.md) | 独立 agent 管理工具（零依赖、非 Pi 扩展）：会话浏览/检索/重命名/可恢复删除 + pi 子进程启动/停止 + 浏览器前端；`node agent-manager/server.ts` |
 
 ## 收录与淘汰
 
 - 新增插件：同变更内建卡 + 本表登记（见 AGENTS.md 规则红线·交付四处同步）。
-- 新增仓库级工具（非插件）：同变更在 `docs/tools/<名>.md` 建卡 + 本文件「工具卡（非插件）」节登记。
+- 新增仓库级工具（非插件）：同变更在 `docs/tools/<名>.md` 建卡 + 本文件「工具卡（非插件）」节登记；不计入「扩展卡一览」。
 - 卡片超过 100 行 → 说明在抄代码，砍掉；有价值的长内容放扩展自身 README 并从卡里链过去。
 - 发现卡片与代码不符：先改代码或改卡对齐，再更新 last verified 行，不留矛盾。
