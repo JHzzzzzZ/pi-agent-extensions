@@ -440,9 +440,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     /** True while the transcript viewer overlay is open (widget key gate). */
     viewerOpen: boolean;
     /**
-     * run the viewer is pinned to while switching between parallel runs
-     * (writer-2 wires the [ / ] keys); undefined = default run (newest
-     * active, else newest record).
+     * widget-enter pin: the run whose viewer should open next. `onConfirm`
+     * writes the row's runId here just before calling openViewer; openViewer
+     * consumes it as the initial load pin and clears it (`/team:view` leaves
+     * it undefined → default run: newest active, else newest record).
      */
     viewerRunId: string | undefined;
   } = {
@@ -660,17 +661,6 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
   };
 
   /**
-   * runId the viewer currently targets: the pinned run (writer-2 wires the
-   * [ / ] keys through state.viewerRunId) or the default run (newest active,
-   * else newest record).
-   */
-  const currentViewerRunId = (): string => {
-    if (state.viewerRunId !== undefined) return state.viewerRunId;
-    const snapshot = state.coordinator.getStatus();
-    return snapshot.progress?.runId ?? snapshot.lastRecord?.runId ?? "";
-  };
-
-  /**
    * Opens the transcript viewer overlay: gates the widget's key handling
    * AND pauses its 1s repaint loop (hiding the below-editor block) so the
    * open overlay repaints against a still main screen. Restores both on
@@ -683,7 +673,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     // 检查器同样只认单实例（`fleetInspectorOpen`），这里直接 early-return。
     if (state.viewerOpen) return;
     state.viewerOpen = true;
-    // 每次打开重置钉选：默认跟随最新活跃 run（writer-2 的切 run 动作写入此字段）。
+    // widget enter 预置的钉选（`/team:view` 为 undefined）：viewer 打开时自身
+    // 不接收初始 runId，load 缺省时用它解析；消费后立即清掉，关闭不留残值。
+    const pinnedRunId = state.viewerRunId !== "" ? state.viewerRunId : undefined;
     state.viewerRunId = undefined;
     try {
       state.widget?.setPaused(true);
@@ -692,11 +684,13 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     }
     try {
       await openTranscriptViewer(ctx.ui, {
-        load: buildViewerData,
+        load: (targetRunId) => buildViewerData(targetRunId ?? pinnedRunId),
         ...(initialActor !== undefined ? { initialActor } : {}),
-        stop: () => viewerStopAndClearChat(currentViewerRunId()),
+        // stop/onMessage 消费 viewer 传入的「当前查看 run」runId（`[`/`]`
+        // 切换后的 run），不再回退默认 run。
+        stop: (runId) => viewerStopAndClearChat(runId),
         onMessage: (target, message) => {
-          const runId = currentViewerRunId();
+          const runId = target.runId;
           return chatSubmitNotice(
             chat.submit(
               {
@@ -766,7 +760,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
         {
           load: () => state.coordinator.getStatus(),
           styles: themeStyles(ctx.ui.theme),
-          onConfirm: (actor) => {
+          onConfirm: (actor, runId) => {
+            // 钉选 widget 行所属 run：openViewer 的初始 load 用它解析。
+            state.viewerRunId = runId;
             void openViewer(ctx, actor).catch(() => {
               /* opening failures never break the session */
             });

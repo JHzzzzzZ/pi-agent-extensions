@@ -19,11 +19,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
+import { serializeTeam } from "../config.ts";
 import { defaultSpawn } from "../runner.ts";
 import { MAX_CONCURRENT_TEAM_RUNS, MAX_RETAINED_RUN_RECORDS, type PiSpawn, type RunProgress } from "../types.ts";
+import { stripAnsi } from "../viewer.ts";
 import { fixtureTeam } from "./fixtures.ts";
-import { makeFakeSpawn, messageEndLine, sleep, waitForChild } from "./helpers.ts";
+import { isolateRunsDir, makeFakeSpawn, messageEndLine, sleep, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
 
 function fakeUi(): UiPort {
   return { notify: () => {}, dim: (text) => text };
@@ -206,10 +209,15 @@ test("runIds in the same millisecond get distinct -n suffixes", async () => {
 
     const childA = await waitForChild(spawn, 0);
     const childB = await waitForChild(spawn, 1);
+    // 同毫秒 startedAt 下 records 的先后由落定序决定（pushRecord 稳定排序：
+    // 后落定者在前）。两个 5ms 定时器的回调顺序在机器满载时会翻转（本用例
+    // 曾在全量中偶发抖红），故串行落定 A→B，把「后完成者在前」锁死。
     childA.autoRespond(leaderLines(), 0, 5);
+    const resultA = await first;
+    assert.ok(resultA.ok);
     childB.autoRespond(leaderLines(), 0, 5);
-    const [resultA, resultB] = await Promise.all([first, second]);
-    assert.ok(resultA.ok && resultB.ok);
+    const resultB = await second;
+    assert.ok(resultB.ok);
     assert.deepEqual(coordinator.getStatus().records.map((r) => r.runId), ["run-1000-2", "run-1000"]);
     assert.equal(coordinator.getStatus("run-1000")?.lastRecord?.runId, "run-1000");
     assert.equal(coordinator.getStatus("run-1000-2")?.lastRecord?.runId, "run-1000-2");
@@ -378,4 +386,241 @@ test("formatStatusSnapshot renders multi-active sections and runId lookup", () =
   assert.match(tail, /最近一次 run：team t ✓ completed/);
   assert.match(tail, /近期 run：run-1 ✗failed · run-2 ⊘aborted · run-3 ⊘aborted · run-4 ⊘aborted（最多再列 4 条；\/team:status <runId> 查看详情）/);
   assert.doesNotMatch(tail, /run-5/);
+});
+
+// ---------------------------------------------------------------------------
+// Viewer 切 run 接缝（index.ts 接线）
+//
+// writer-2 把「当前查看 run 的 runId」交到 stop(runId)/onMessage.target.runId/
+// widget onConfirm(actor, runId)，但 index.ts 侧未消费：切到 run B 后 D 仍停
+// 默认 run、插话仍打默认 run、widget enter 不钉选。本组用例用真实 extension
+// + 真实 TranscriptViewer + fake leader 子进程锁住三条接缝；运行目录经
+// PI_AGENT_TEAM_RUNS_DIR 隔离到临时目录。
+// ---------------------------------------------------------------------------
+
+type ExtHandler = (event: unknown, ctx: unknown) => Promise<unknown>;
+
+function extFakePi() {
+  const tools = new Map<string, unknown>();
+  const commands = new Map<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }>();
+  const handlers = new Map<string, ExtHandler[]>();
+  return {
+    tools,
+    commands,
+    registerTool: (tool: { name: string }): void => {
+      tools.set(tool.name, tool);
+    },
+    registerCommand: (name: string, command: { handler: (args: unknown, ctx: unknown) => Promise<unknown> }): void => {
+      commands.set(name, command);
+    },
+    registerEntryRenderer: (): void => {},
+    on: (event: string, handler: ExtHandler): void => {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+    },
+    async fire(event: string, ctx: unknown): Promise<void> {
+      for (const handler of handlers.get(event) ?? []) await handler({}, ctx);
+    },
+  };
+}
+
+type ViewerComponentLike = {
+  handleInput: (data: string) => void;
+  render: (width: number) => string[];
+  dispose: () => void;
+};
+
+interface ExtCapture {
+  viewer: ViewerComponentLike | undefined;
+  inputHandlers: Array<(data: string) => { consume?: boolean } | undefined>;
+  pushed: Array<string[] | undefined>;
+}
+
+interface ExtHost {
+  spawn: FakeSpawnHandle;
+  pi: ReturnType<typeof extFakePi>;
+  sessionCtx: Record<string, unknown>;
+  capture: ExtCapture;
+  startRun: (task: string) => Promise<string>;
+  openViewer: () => Promise<ViewerComponentLike>;
+  cleanup: () => Promise<void>;
+}
+
+/** 真实 cockpit + fake leader 子进程；widget 是否挂载由用例选择。 */
+async function setupExtensionHost(opts: { widget: boolean }): Promise<ExtHost> {
+  resetDoubleLoadGuardForTests();
+  const runsDir = isolateRunsDir();
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-wiring-"));
+  fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
+  const team = fixtureTeam({ name: "wiring-team", description: "切 run 接线观测团队", filePath: "", notes: undefined });
+  fs.writeFileSync(path.join(projectDir, ".pi", "teams", "wiring-team.md"), serializeTeam(team));
+  const spawn = makeFakeSpawn();
+  const pi = extFakePi();
+  const capture: ExtCapture = { viewer: undefined, inputHandlers: [], pushed: [] };
+  const previousWidget = process.env.PI_AGENT_TEAM_WIDGET;
+  if (opts.widget) delete process.env.PI_AGENT_TEAM_WIDGET;
+  else process.env.PI_AGENT_TEAM_WIDGET = "0";
+  const sessionCtx = {
+    cwd: projectDir,
+    hasUI: true,
+    mode: "tui",
+    isProjectTrusted: (): boolean => true,
+    ui: {
+      getEditorText: (): string => "",
+      setWidget: (_key: string, content: unknown): void => {
+        if (typeof content === "function") {
+          (content as (tui: unknown) => unknown)({});
+          return;
+        }
+        capture.pushed.push(content as string[] | undefined);
+      },
+      onTerminalInput: (handler: (data: string) => { consume?: boolean } | undefined): (() => void) => {
+        capture.inputHandlers.push(handler);
+        return () => {};
+      },
+      custom: (...args: unknown[]): Promise<unknown> => {
+        const factory = args[0] as (tui: unknown, theme: unknown, kb: unknown, done: (r: unknown) => void) => unknown;
+        capture.viewer = factory({}, { fg: (_c: string, t: string) => t }, undefined, () => {}) as ViewerComponentLike;
+        return new Promise<unknown>(() => {}); // overlay 常开；cleanup 直接收尾
+      },
+      notify: (): void => {},
+      theme: { fg: (_c: string, t: string): string => t },
+    },
+    sessionManager: { getEntries: (): unknown[] => [] },
+  };
+  agentTeamExtension(pi as never, { spawn: spawn.spawn });
+  await pi.fire("session_start", sessionCtx);
+
+  const startRun = async (task: string): Promise<string> => {
+    const run = pi.tools.get("team_run") as unknown as {
+      execute: (
+        id: string,
+        params: Record<string, unknown>,
+        signal?: undefined,
+        onUpdate?: undefined,
+        ctx?: unknown,
+      ) => Promise<{ isError?: boolean; content?: Array<{ text?: string }>; details?: { runId?: string } }>;
+    };
+    const result = await run.execute("call-run", { team: "wiring-team", task }, undefined, undefined, sessionCtx);
+    assert.notEqual(result.isError, true, `team_run 应成功：${JSON.stringify(result)}`);
+    const runId = result.details?.runId;
+    assert.ok(runId, `启动结果应含 runId：${JSON.stringify(result)}`);
+    return runId;
+  };
+  const openViewer = async (): Promise<ViewerComponentLike> => {
+    const view = pi.commands.get("team:view");
+    assert.ok(view, "cockpit 应注册 /team:view 命令");
+    void view.handler("", sessionCtx as never);
+    await sleep(30);
+    assert.ok(capture.viewer, "viewer 组件应已实例化");
+    return capture.viewer;
+  };
+  const cleanup = async (): Promise<void> => {
+    await pi.fire("session_shutdown", sessionCtx);
+    capture.viewer?.dispose();
+    fs.rmSync(projectDir, { recursive: true, force: true });
+    fs.rmSync(runsDir, { recursive: true, force: true });
+    delete process.env.PI_AGENT_TEAM_RUNS_DIR;
+    if (previousWidget === undefined) delete process.env.PI_AGENT_TEAM_WIDGET;
+    else process.env.PI_AGENT_TEAM_WIDGET = previousWidget;
+    resetDoubleLoadGuardForTests();
+  };
+  return { spawn, pi, sessionCtx, capture, startRun, openViewer, cleanup };
+}
+
+/** 启动较早 run A（先）与较新 run B（后），返回 runId 与两棵 fake 子进程。 */
+async function startTwoRuns(host: ExtHost): Promise<{ runA: string; runB: string }> {
+  const runA = await host.startRun("任务 A");
+  await waitForChild(host.spawn, 0);
+  const runB = await host.startRun("任务 B");
+  await waitForChild(host.spawn, 1);
+  assert.notEqual(runA, runB, "两个 run 应有不同 runId");
+  return { runA, runB };
+}
+
+test("接线：viewer 切到较早 run 后 D 停该 run（stop 消费当前查看 runId）", async () => {
+  const host = await setupExtensionHost({ widget: false });
+  try {
+    const { runA, runB } = await startTwoRuns(host);
+    const viewer = await host.openViewer();
+    assert.ok(
+      stripAnsi(viewer.render(120).join("\n")).includes(`Run: ${runB}`),
+      "默认查看最新活跃 run B",
+    );
+
+    viewer.handleInput("[");
+    assert.ok(
+      stripAnsi(viewer.render(120).join("\n")).includes(`Run: ${runA}`),
+      "`[` 切到较早的 run A",
+    );
+
+    viewer.handleInput("D");
+    viewer.handleInput("\r");
+    await waitFor(() => host.spawn.children[0]!.killed.includes("SIGTERM"), "run A 收到 SIGTERM");
+    host.spawn.children[0]!.emitClose(0); // 让 A 落定，viewer 收到 success notice
+    await waitFor(
+      () => stripAnsi(viewer.render(120).join("\n")).includes(`run ${runA} 已停止`),
+      "A 的停止 notice 上屏",
+    );
+    assert.deepEqual(host.spawn.children[1]!.killed, [], "run B 未收到任何信号");
+  } finally {
+    await host.cleanup();
+  }
+});
+
+test("接线：viewer 切到较早 run 后 m 插话 steer 到该 run 的 leader（onMessage 消费 target.runId）", async () => {
+  const host = await setupExtensionHost({ widget: false });
+  try {
+    const { runA } = await startTwoRuns(host);
+    await waitFor(
+      () => host.spawn.children[0]!.writes.length > 0 && host.spawn.children[1]!.writes.length > 0,
+      "两个 leader 的 RPC stdin 就绪",
+    );
+    const viewer = await host.openViewer();
+    viewer.handleInput("[");
+    assert.ok(
+      stripAnsi(viewer.render(120).join("\n")).includes(`Run: ${runA}`),
+      "`[` 切到较早的 run A",
+    );
+
+    viewer.handleInput("m");
+    viewer.handleInput("查一下");
+    viewer.handleInput("\r");
+    await waitFor(
+      () => host.spawn.children[0]!.writes.some((line) => line.includes("查一下")),
+      "run A 的 leader 收到插话",
+    );
+    assert.ok(
+      host.spawn.children[0]!.writes.some((line) => line.includes('"type":"steer"') && line.includes("查一下")),
+      "插话经 steer 通道写入 A 的 stdin",
+    );
+    assert.ok(
+      !host.spawn.children[1]!.writes.some((line) => line.includes("查一下")),
+      "run B 的 leader 不收到该消息",
+    );
+  } finally {
+    await host.cleanup();
+  }
+});
+
+test("接线：widget enter 从较早 run 的行打开该 run 的 viewer（onConfirm 钉选 runId）", async () => {
+  const host = await setupExtensionHost({ widget: true });
+  try {
+    const { runA, runB } = await startTwoRuns(host);
+    await waitFor(() => host.capture.inputHandlers.length === 1, "widget 输入钩子已挂");
+    await waitFor(
+      () => (host.capture.pushed.at(-1)?.[0] ?? "").includes("2 run 并行"),
+      "widget 多 run 折叠行（2 run 并行）",
+    );
+
+    const handler = host.capture.inputHandlers[0]!;
+    handler("\x1b[B"); // 激活并选中 main 根行
+    handler("\x1b[B"); // 下移到较早 run A 的 leader 行
+    handler("\r"); // enter → onConfirm(actor, runId=A) → openViewer 钉选 A
+    await waitFor(() => host.capture.viewer !== undefined, "viewer 由 widget enter 打开");
+    const frame = stripAnsi(host.capture.viewer!.render(120).join("\n"));
+    assert.ok(frame.includes(`Run: ${runA}`), `widget enter 应打开 run A（钉选行 runId）：\n${frame}`);
+    assert.ok(!frame.includes(`Run: ${runB}`), "不得落到默认 run B");
+  } finally {
+    await host.cleanup();
+  }
 });
