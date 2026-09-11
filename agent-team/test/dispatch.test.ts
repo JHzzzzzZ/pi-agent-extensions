@@ -8,6 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildDispatchReport,
   buildProgressText,
@@ -24,6 +25,8 @@ import {
   LEADER_ENV_RUNID,
   truncateUtf8,
   type DispatchOutcome,
+  type ExternalBackend,
+  type ExternalCliResolveResult,
 } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { makeFakeSpawn, messageEndLine, sleep, toolExecutionEndLine, toolExecutionStartLine, toolExecutionUpdateLine, waitForChild } from "./helpers.ts";
@@ -34,6 +37,17 @@ function assistantLine(text: string): string {
     usage: { input: 100, output: 50, cost: { total: 0.01 }, totalTokens: 150, turns: 1 },
     stopReason: "stop",
   });
+}
+
+const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+
+/** 外部 CLI fixture JSONL 行（跳过注释/空行）——fake child 逐行回放用。 */
+function fixtureLines(name: string): string[] {
+  return fs
+    .readFileSync(path.join(FIXTURES, name), "utf-8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
 }
 
 function baseDeps() {
@@ -542,4 +556,258 @@ test("成员子进程事件写入活动阶段：tool start→tool+名字、updat
   child.emitClose(0);
   const outcome = await unwrap(promise);
   assert.equal(outcome.results[0].status, "done");
+});
+
+// ---------------------------------------------------------------------------
+// v1.22.0 外部 CLI 后端成员（dispatch 集成，10-design §5）
+// ---------------------------------------------------------------------------
+
+const EXTERNAL_CODEX_BIN = "C:\\tools\\codex.exe";
+const EXTERNAL_CLAUDE_BIN = "C:\\tools\\claude.exe";
+const CODEX_MEMBER = { name: "coder", backend: "codex" as const, model: "gpt-5.1-codex", prompt: "你是外部码农。" };
+const CLAUDE_MEMBER = { name: "coder", backend: "claude" as const, model: "claude-haiku-4-5", prompt: "你是外部码农。" };
+
+/** 固定 resolver（进程边界替身）：直接给出可 spawn 的命令。 */
+function fixedResolver(command: string): (backend: ExternalBackend) => ExternalCliResolveResult {
+  return () => ({ ok: true, value: { command } });
+}
+
+test("外部成员派发：resolver 命令/args 形状、stdin ignore、leader 环境剥离", async () => {
+  const restoreEnv = snapshotMemberEnv();
+  seedLeaderEnv();
+  try {
+    const { deps, spawn } = baseDeps();
+    const executor = createDispatchExecutor({
+      ...deps,
+      team: fixtureTeam({ members: [{ ...CODEX_MEMBER }] }),
+      resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+    });
+    const promise = executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, undefined);
+    const child = await waitForChild(spawn, 0);
+
+    const record = spawn.records[0];
+    assert.equal(record.command, EXTERNAL_CODEX_BIN);
+    assert.deepEqual(record.args, [
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "--ephemeral",
+      "-s",
+      "workspace-write",
+      "--model",
+      "gpt-5.1-codex",
+      "你是外部码农。\n\n---\n\nTask: 写脚本",
+    ]);
+    assert.equal(record.cwd, "/repo");
+    // P5：argv prompt + stdin ignore 不挂起；外部 CLI 的任务文本只进 argv。
+    assert.equal(record.stdin, "ignore", "external member stdin stays ignored");
+    assert.equal(record.env?.[LEADER_ENV_FILE], undefined);
+    assert.equal(record.env?.[LEADER_ENV_NAME], undefined);
+    assert.equal(record.env?.[LEADER_ENV_RUNID], undefined);
+    assert.equal(record.env?.AGENT_TEAM_STRIP_SENTINEL, "1", "non-leader env is preserved");
+
+    child.autoRespond(fixtureLines("external-codex-success.jsonl"), 0, 5);
+    const outcome = await unwrap(promise);
+    assert.equal(outcome.results[0].status, "done");
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("codex 外部成员回放成功 fixture：done + usage 折回 + progress latest", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CODEX_MEMBER }] }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+  });
+  const updates: Array<{ text: string; details?: unknown }> = [];
+  const promise = executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, (u) =>
+    updates.push({ text: u.content[0]?.text ?? "", details: u.details }),
+  );
+  const child = await waitForChild(spawn, 0);
+  for (const line of fixtureLines("external-codex-success.jsonl")) child.emitLine(line);
+  assert.equal(parseDispatchMemberResults(updates.at(-1)?.details)?.[0].latest, "ok", "message_end 更新 latest");
+  child.emitClose(0);
+
+  const outcome = await unwrap(promise);
+  const result = outcome.results[0];
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "done");
+  assert.equal(result.result, "ok");
+  assert.deepEqual(result.usage, { input: 17704, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 });
+  assert.match(outcome.text, /## coder — done/);
+});
+
+test("claude 外部成员：tool_use/tool_result 驱动 progress 阶段，result 定稿 usage", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CLAUDE_MEMBER }] }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CLAUDE_BIN),
+  });
+  const updates: Array<{ details?: unknown }> = [];
+  const promise = executor({ tasks: [{ agent: "coder", task: "读文件" }] }, undefined, (u) =>
+    updates.push({ details: u.details }),
+  );
+  const child = await waitForChild(spawn, 0);
+  const member = () => parseDispatchMemberResults(updates.at(-1)?.details)?.[0];
+
+  assert.deepEqual(spawn.records[0].args, [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+    "--permission-mode",
+    "acceptEdits",
+    "--append-system-prompt",
+    "你是外部码农。",
+    "--model",
+    "claude-haiku-4-5",
+    "Task: 读文件",
+  ]);
+
+  const lines = fixtureLines("external-claude-success.jsonl");
+  child.emitLine(lines[1]); // assistant 文本
+  assert.equal(member()?.latest, "我先读取 a.txt 再回答。");
+  child.emitLine(lines[2]); // tool_use
+  assert.equal(member()?.phase, "tool");
+  assert.equal(member()?.toolName, "Read");
+  child.emitLine(lines[3]); // tool_result
+  assert.equal(member()?.phase, "waiting");
+  child.emitLine(lines[4]); // 最终 assistant 文本
+  assert.equal(member()?.latest, "a.txt 的内容是 hello。");
+  child.emitLine(lines[5]); // result
+  child.emitClose(0);
+
+  const outcome = await unwrap(promise);
+  const result = outcome.results[0];
+  assert.equal(result.status, "done");
+  assert.equal(result.result, "a.txt 的内容是 hello。");
+  assert.equal(result.usage.cost, 0.0123);
+  assert.equal(result.usage.turns, 3);
+  assert.equal(result.usage.input, 123);
+});
+
+test("claude 外部成员失败：failed 且错误消息取自 result", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CLAUDE_MEMBER }] }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CLAUDE_BIN),
+  });
+  const promise = executor({ tasks: [{ agent: "coder", task: "读文件" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  child.autoRespond(fixtureLines("external-claude-error.jsonl"), 1, 5);
+
+  const outcome = await unwrap(promise);
+  const result = outcome.results[0];
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "failed");
+  assert.equal(result.error?.code, "CHILD_FAILED");
+  assert.match(result.error?.message ?? "", /405 CONNECT only/);
+  assert.match(outcome.text, /失败处理指令/);
+});
+
+test("外部 CLI 解析失败：零 spawn、failed CLI_NOT_FOUND", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CODEX_MEMBER }] }),
+    resolveExternalCli: () => ({ ok: false, code: "CLI_NOT_FOUND", message: "未找到可直接 spawn 的 codex CLI" }),
+  });
+  // 守卫：resolver 失败必须无子进程可等（防回归/红灯阶段挂起）。
+  const outcome = await Promise.race([
+    executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, undefined).then((r) => (r.ok ? r.value : undefined)),
+    sleep(200).then(() => undefined),
+  ]);
+  assert.ok(outcome, "resolver failure must settle without waiting for a child");
+  assert.equal(spawn.records.length, 0, "no child spawns when the CLI cannot be resolved");
+  assert.equal(outcome.results[0].ok, false);
+  assert.equal(outcome.results[0].status, "failed");
+  assert.equal(outcome.results[0].error?.code, "CLI_NOT_FOUND");
+  assert.match(outcome.text, /失败处理指令/);
+});
+
+test("外部成员 abort：SIGTERM→SIGKILL、成员行 aborted", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CODEX_MEMBER }] }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+  });
+  const controller = new AbortController();
+  const promise = executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, controller.signal, undefined);
+  const child = await waitForChild(spawn, 0);
+  controller.abort();
+  await sleep(50);
+  assert.deepEqual(child.killed, ["SIGTERM", "SIGKILL"]);
+  child.emitClose(null);
+  const outcome = await unwrap(promise);
+  assert.equal(outcome.results[0].status, "aborted");
+  assert.equal(outcome.results[0].error?.code, "AGENT_ABORTED");
+});
+
+test("混合派单：1 pi + 1 codex 成员同池、各自命令面，同一次 dispatch 完成", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({
+      members: [
+        { name: "frontend", model: "chatanywhere/gpt-5.6", prompt: "你是前端工程师。" },
+        { ...CODEX_MEMBER },
+      ],
+    }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+  });
+  const promise = executor(
+    { tasks: [{ agent: "frontend", task: "写登录页" }, { agent: "coder", task: "写脚本" }] },
+    undefined,
+    undefined,
+  );
+  await waitForChild(spawn, 1);
+  for (const [index, rec] of spawn.records.entries()) {
+    if (rec.command === EXTERNAL_CODEX_BIN) {
+      spawn.children[index].autoRespond(fixtureLines("external-codex-success.jsonl"), 0, 5);
+    } else {
+      spawn.children[index].autoRespond([assistantLine("前端完成")], 0, 5);
+    }
+  }
+  const outcome = await unwrap(promise);
+  assert.equal(outcome.results.length, 2);
+  assert.ok(outcome.results.every((r) => r.ok && r.status === "done"));
+  const coder = outcome.results.find((r) => r.name === "coder");
+  assert.equal(coder?.result, "ok");
+  assert.equal(coder?.usage.input, 17704);
+  assert.equal(coder?.usage.cost, 0);
+  const frontend = outcome.results.find((r) => r.name === "frontend");
+  assert.equal(frontend?.result, "前端完成");
+  assert.ok(frontend !== undefined && frontend.usage.cost > 0);
+  assert.equal(spawn.records.length, 2);
+});
+
+test("外部成员 worktree:true 在隔离 worktree 中启动", async () => {
+  const gitCalls: Array<{ args: string[]; cwd?: string }> = [];
+  const fakeGit = async (args: string[], cwd?: string) => {
+    gitCalls.push({ args, cwd });
+    return { code: 0, stdout: args[0] === "rev-parse" ? "true\n" : "", stderr: "" };
+  };
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CODEX_MEMBER, worktree: true }] }),
+    gitRunner: fakeGit,
+    resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+  });
+  const promise = executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  child.autoRespond(fixtureLines("external-codex-success.jsonl"), 0, 5);
+  const outcome = await unwrap(promise);
+
+  const expectedPath = path.join("/tmp/worktrees", "run-1", "coder");
+  const add = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "add");
+  assert.ok(add, "git worktree add invoked");
+  assert.equal(spawn.records[0].cwd, expectedPath, "external member spawns in the isolated worktree");
+  assert.deepEqual(outcome.results[0].worktree, { path: expectedPath, branch: "team/run-1/coder" });
 });

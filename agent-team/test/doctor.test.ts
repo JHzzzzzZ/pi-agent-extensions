@@ -6,6 +6,8 @@
  */
 
 import * as assert from "node:assert/strict";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 import { buildDoctorReport, type DoctorDeps, type DoctorInput } from "../doctor.ts";
 import { fixtureTeam } from "./fixtures.ts";
@@ -166,4 +168,49 @@ test("fs probe failures degrade to reported lines, never thrown", () => {
   assert.match(report, /运行目录.*缺失/s);
   assert.match(report, /git 仓库: 否/);
   assert.match(report, /worktreeRoot: 缺失|不可写|缺失/);
+});
+
+// ---------------------------------------------------------------------------
+// v1.22.0 外部 CLI 后端预检（doctor 接线真实 resolver，10-design §3/§6）
+// ---------------------------------------------------------------------------
+
+test("doctor 预检：外部 leader 报告 v1 限制行", () => {
+  const report = buildDoctorReport(
+    baseInput(),
+    baseDeps({
+      discoverTeams: () => ({
+        teams: [fixtureTeam({ leader: { ...fixtureTeam().leader, backend: "claude" } })],
+        invalid: [],
+      }),
+    }),
+  );
+  assert.match(report, /✗ dev-team/);
+  assert.match(report, /v1 限制：leader 暂不支持外部 CLI 后端/);
+});
+
+test("doctor 预检：外部成员 CLI 不可用报告 CLI 缺失告警（真实 resolver）", () => {
+  const envKey = "PI_AGENT_TEAM_CODEX_BIN";
+  const previous = process.env[envKey];
+  process.env[envKey] = path.join(os.tmpdir(), "agent-team-doctor-missing-codex.exe");
+  try {
+    const report = buildDoctorReport(
+      baseInput(),
+      baseDeps({
+        discoverTeams: () => ({
+          teams: [
+            fixtureTeam({
+              members: [{ name: "coder", backend: "codex", model: "gpt-5.1-codex", prompt: "你是外部码农。" }],
+            }),
+          ],
+          invalid: [],
+        }),
+      }),
+    );
+    assert.match(report, /✗ dev-team/);
+    assert.match(report, /外部成员 coder 的 codex CLI 不可用/);
+    assert.match(report, /PI_AGENT_TEAM_CODEX_BIN/);
+  } finally {
+    if (previous === undefined) delete process.env[envKey];
+    else process.env[envKey] = previous;
+  }
 });

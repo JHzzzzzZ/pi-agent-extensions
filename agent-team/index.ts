@@ -28,6 +28,7 @@ import { archiveRunRecords } from "./archive.ts";
 import { askLeaderQuestion, formatAskResult, type AskPort, type AskToolOutcome } from "./ask.ts";
 import { discoverTeams, findTeam, parseTeamFile, splitModelThinking } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
+import { resolveExternalCli } from "./external.ts";
 import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
@@ -70,6 +71,8 @@ import {
   WIDGET_ID,
   resolveRunBudget,
   truncateUtf8,
+  type ExternalBackend,
+  type ExternalCliResolveResult,
   type PiSpawn,
   type TeamConfig,
   type TeamErrorCode,
@@ -217,7 +220,17 @@ function clearWidget(ctx: ExtensionContext): void {
 // Leader mode (inside the leader child pi process)
 // ---------------------------------------------------------------------------
 
-function registerLeaderMode(pi: ExtensionAPI, teamFile: string, opts: { spawn?: PiSpawn } = {}): void {
+/**
+ * Injection seams for the two OS boundaries (existing `{spawn}` convention):
+ * child-process spawn and external CLI resolution.
+ */
+export interface AgentTeamExtensionOptions {
+  spawn?: PiSpawn;
+  /** Defaults to external.ts's real PATH probe; tests inject a fake resolver. */
+  resolveExternalCli?: (backend: ExternalBackend) => ExternalCliResolveResult;
+}
+
+function registerLeaderMode(pi: ExtensionAPI, teamFile: string, opts: AgentTeamExtensionOptions = {}): void {
   let content: string | null = null;
   try {
     content = fs.readFileSync(teamFile, "utf-8");
@@ -246,6 +259,7 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string, opts: { spawn?: 
           budget: resolveRunBudget(parsed.value.budget),
           transcript: new FileTranscriptSink(transcriptRoot(), runId),
           ...(opts.spawn ? { spawn: opts.spawn } : {}),
+          resolveExternalCli: opts.resolveExternalCli ?? resolveExternalCli,
         })
       : undefined;
 
@@ -396,7 +410,8 @@ function singleLineTail(text: string, max = 160): string {
 // Cockpit mode (main pi session)
 // ---------------------------------------------------------------------------
 
-function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): void {
+function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions = {}): void {
+  const resolveCli = opts.resolveExternalCli ?? resolveExternalCli;
   const state: {
     coordinator: TeamRunCoordinator;
     cwd: string;
@@ -772,9 +787,14 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
     ui: UiPort,
     team: TeamConfig,
   ): { ok: true } | { ok: false; code: string; message: string } => {
-    const lookup = modelLookupFrom((ctx as unknown as { modelRegistry?: unknown }).modelRegistry);
-    if (!lookup) return { ok: true };
-    const result = preflightTeamModels(team, lookup);
+    // Without a host registry there are no provider/id refs to check, but
+    // external CLI availability is independent of it — a permissive lookup
+    // keeps the external probe active without inventing model failures.
+    const lookup = modelLookupFrom((ctx as unknown as { modelRegistry?: unknown }).modelRegistry) ?? {
+      find: () => ({}),
+      hasConfiguredAuth: () => true,
+    };
+    const result = preflightTeamModels(team, lookup, { resolveCli });
     if (!result.ok) return { ok: false, code: result.code, message: result.message };
     for (const warning of result.warnings) ui.notify(warning, "warning");
     return { ok: true };
@@ -1732,7 +1752,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: { spawn?: PiSpawn } = {}): 
  */
 const LOADER_FLAG = "__piAgentTeamExtensionLoaded";
 
-export default function agentTeamExtension(pi: ExtensionAPI, opts?: { spawn?: PiSpawn }): void {
+export default function agentTeamExtension(pi: ExtensionAPI, opts?: AgentTeamExtensionOptions): void {
   const loader = globalThis as { [LOADER_FLAG]?: boolean };
   if (loader[LOADER_FLAG]) return;
   loader[LOADER_FLAG] = true;

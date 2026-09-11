@@ -13,6 +13,7 @@
  */
 
 import * as path from "node:path";
+import { buildExternalArgs, createExternalParser, resolveExternalCli } from "./external.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { type TranscriptEntryKind, type TranscriptSink } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, memberWorktreeBranch, type GitRunner } from "./worktree.ts";
@@ -29,7 +30,10 @@ import {
   emptyUsage,
   truncateUtf8,
   type AgentUsage,
+  type ChildEvent,
   type DispatchOutcome,
+  type ExternalBackend,
+  type ExternalCliResolveResult,
   type MemberPhase,
   type MemberProgress,
   type MemberProgressStatus,
@@ -100,6 +104,11 @@ export interface DispatchDeps {
   spawn?: PiSpawn;
   piCommand?: string;
   gitRunner?: GitRunner;
+  /**
+   * External CLI resolver seam (defaults to external.ts's real PATH probe).
+   * Leader children resolve their own CLIs; only tests inject a fake here.
+   */
+  resolveExternalCli?: (backend: ExternalBackend) => ExternalCliResolveResult;
   /** Test seam: SIGTERM→SIGKILL grace for member children. */
   killGraceMs?: number;
   /** Run transcript writer (member activity artifacts for /team:view). */
@@ -191,7 +200,12 @@ function shortMessage(text: string, max = 80): string {
 }
 
 /** Member result codes that are environmental — retrying cannot help. */
-const ENVIRONMENT_FAILURE_CODES = new Set<string>(["WORKTREE_UNAVAILABLE", "MEMBER_NOT_FOUND", "CHILD_FAILED"]);
+const ENVIRONMENT_FAILURE_CODES = new Set<string>([
+  "WORKTREE_UNAVAILABLE",
+  "MEMBER_NOT_FOUND",
+  "CHILD_FAILED",
+  "CLI_NOT_FOUND",
+]);
 
 const FAILURE_GUIDANCE =
   [
@@ -260,6 +274,7 @@ function truncateMessage(text: string, max = 2000): string {
 export function createDispatchExecutor(deps: DispatchDeps) {
   const git = deps.gitRunner ?? defaultGitRunner();
   const spawn = deps.spawn ?? defaultSpawn();
+  const resolveCli = deps.resolveExternalCli ?? resolveExternalCli;
   const budget = deps.budget ?? resolveRunBudget();
   let dispatchCalls = 0;
   let memberRuns = 0;
@@ -340,6 +355,41 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       emitProgress();
     };
 
+    /**
+     * Shared child-event handler for both member backends (pi JSON stream and
+     * external CLI events already mapped to ChildEvent by the parser): keeps
+     * transcript + progress identical across backends.
+     */
+    const handleChildEvent = (name: string, event: ChildEvent): void => {
+      if (event.type === "message_end" && event.role === "assistant") {
+        if (event.fullText) record(name, "assistant", event.fullText);
+        if (event.usage) {
+          setProgress(name, "running", `turn ${event.usage.turns}`, event.text, { phase: "waiting" });
+        } else {
+          setProgress(name, "running", undefined, event.text, { phase: "waiting" });
+        }
+        return;
+      }
+      if (event.type === "tool_execution_start") {
+        record(name, "tool", toolCallText(event.toolName, event.args));
+        setProgress(name, "running", undefined, undefined, { phase: "tool", toolName: event.toolName });
+        return;
+      }
+      if (event.type === "tool_execution_update") {
+        // 流式输出只刷新时间（保持工具阶段与工具名）。
+        setProgress(name, "running", undefined, undefined, { phase: "tool", toolName: event.toolName });
+        return;
+      }
+      if (event.type === "tool_execution_end") {
+        record(name, "tool", toolResultText(event.toolName, event.text));
+        setProgress(name, "running", undefined, undefined, { phase: "waiting" });
+        return;
+      }
+      if (event.type === "error") {
+        record(name, "error", `${event.code}: ${event.message}`);
+      }
+    };
+
     // Plan: resolve members up front (unknown names never spawn anything).
     const planned: PlannedDispatch[] = [];
     for (const item of request.tasks) {
@@ -403,6 +453,106 @@ export function createDispatchExecutor(deps: DispatchDeps) {
         };
       }
 
+      const backend = plan.member.backend;
+      if (backend) {
+        // 外部 CLI 成员（v1: codex / claude）：解析可执行文件 → 构建 args →
+        // 进程骨架复用 runChildPi（abort/SIGTERM→SIGKILL/stderr/pid 全同）；
+        // stdout JSONL 走 onWire 喂解析器，结果取 parser 而非 pi 口径的 outcome。
+        const resolved = resolveCli(backend);
+        if (!resolved.ok) {
+          record(name, "error", `${resolved.code}: ${resolved.message}`);
+          setProgress(name, "failed", shortMessage(`${resolved.code}: ${resolved.message}`));
+          const result: MemberRunResult = {
+            name,
+            ok: false,
+            status: "failed",
+            result: "",
+            summary: "",
+            usage: emptyUsage(),
+            durationMs: 0,
+            error: { code: resolved.code, message: resolved.message },
+          };
+          if (plan.worktree) result.worktree = plan.worktree;
+          return result;
+        }
+        const args = buildExternalArgs(
+          backend,
+          { ...(plan.member.model ? { model: plan.member.model } : {}), prompt: plan.member.prompt },
+          plan.task,
+        );
+        const parser = createExternalParser(backend);
+
+        record(name, "task", plan.task);
+        setProgress(name, "running");
+        try {
+          const outcome = await runChildPi({
+            command: resolved.value.command,
+            args,
+            cwd: plan.worktree?.path ?? deps.cwd,
+            env: stripLeaderEnv(),
+            spawn,
+            signal,
+            killGraceMs: deps.killGraceMs,
+            // stdin 不传 = 默认 ignore（探测 P5：argv prompt + ignore 不挂起）。
+            onWire: (message) => {
+              for (const event of parser.feed(message)) handleChildEvent(name, event);
+            },
+          });
+          const durationMs = Date.now() - startMs;
+          const aborted = signal?.aborted === true;
+          const finalized = parser.finalize();
+          const failed = aborted || finalized.failed || outcome.exitCode !== 0;
+          const rawText = parser.finalText || outcome.stderr || "(no output)";
+          const result: MemberRunResult = {
+            name,
+            ok: !failed,
+            status: aborted ? "aborted" : failed ? "failed" : "done",
+            result: truncateUtf8(rawText, MAX_RESULT_BYTES),
+            summary: truncateUtf8(rawText, MAX_SUMMARY_BYTES),
+            usage: parser.usage,
+            durationMs,
+          };
+          if (plan.worktree) result.worktree = plan.worktree;
+          if (failed) {
+            result.error = {
+              code: aborted ? "AGENT_ABORTED" : "CHILD_FAILED",
+              message: truncateMessage(
+                finalized.errorMessage || outcome.stderr || `${backend} exited with code ${outcome.exitCode}`,
+              ),
+            };
+          }
+          setProgress(
+            name,
+            result.status,
+            result.ok ? `turn ${parser.usage.turns}` : shortMessage(`${result.error?.code}: ${result.error?.message}`),
+            result.ok ? shortMessage(rawText) : undefined,
+          );
+          const secs = Math.round(durationMs / 100) / 10;
+          record(name, "system", `${result.status} · ${secs}s · $${parser.usage.cost.toFixed(4)} · ${parser.usage.turns} turns`);
+          if (result.error) record(name, "error", `${result.error.code}: ${result.error.message}`);
+          return result;
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          setProgress(name, "failed", shortMessage(`CHILD_FAILED: ${message}`));
+          record(name, "error", `CHILD_FAILED: failed to start ${backend} subprocess: ${message}`);
+          const result: MemberRunResult = {
+            name,
+            ok: false,
+            status: "failed",
+            result: "",
+            summary: "",
+            usage: emptyUsage(),
+            durationMs: Date.now() - startMs,
+            error: {
+              code: "CHILD_FAILED",
+              message: truncateMessage(`failed to start ${backend} subprocess: ${message}`),
+            },
+          };
+          if (plan.worktree) result.worktree = plan.worktree;
+          return result;
+        }
+      }
+
       // The task travels through argv, so this child must not get a writable
       // stdin: pi's `-p` mode waits for stdin EOF before it works, and nobody
       // ever closes the pipe — the dispatch would hang forever (v1.15.0).
@@ -426,35 +576,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           spawn,
           signal,
           killGraceMs: deps.killGraceMs,
-          onEvent: (event) => {
-            if (event.type === "message_end" && event.role === "assistant") {
-              if (event.fullText) record(name, "assistant", event.fullText);
-              if (event.usage) {
-                setProgress(name, "running", `turn ${event.usage.turns}`, event.text, { phase: "waiting" });
-              } else {
-                setProgress(name, "running", undefined, event.text, { phase: "waiting" });
-              }
-              return;
-            }
-            if (event.type === "tool_execution_start") {
-              record(name, "tool", toolCallText(event.toolName, event.args));
-              setProgress(name, "running", undefined, undefined, { phase: "tool", toolName: event.toolName });
-              return;
-            }
-            if (event.type === "tool_execution_update") {
-              // 流式输出只刷新时间（保持工具阶段与工具名）。
-              setProgress(name, "running", undefined, undefined, { phase: "tool", toolName: event.toolName });
-              return;
-            }
-            if (event.type === "tool_execution_end") {
-              record(name, "tool", toolResultText(event.toolName, event.text));
-              setProgress(name, "running", undefined, undefined, { phase: "waiting" });
-              return;
-            }
-            if (event.type === "error") {
-              record(name, "error", `${event.code}: ${event.message}`);
-            }
-          },
+          onEvent: (event) => handleChildEvent(name, event),
         });
         const durationMs = Date.now() - startMs;
         const aborted = signal?.aborted === true || outcome.stopReason === "aborted";
