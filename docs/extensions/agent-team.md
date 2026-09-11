@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 94d6085
+> last verified @ 772ef36
 
 ## 职责与边界
 
@@ -51,7 +51,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - **viewer 帧行单行不变量（v1.13.3）**：多行 tool 条目（`cockpit.ts:499` 的 `team_dispatch 派发 →\n  - 成员: 任务`）必须按 `\n` 拆成物理帧行（首段 `· `、续段两空格缩进），`fitLine` 再兜底把残余 CR/LF 折成空格——帧行携带原始换行会让宿主按物理行写出时把尾巴挤到下一行同列（overlay 左缘残行 + 帧几何漂移，diff 无法清理；真机事故见 `docs/incidents.md`）。widget/cockpit 同族路径由 `flattenText`（viewer.ts 单一实现，`\s+`）保证。
 - **status 任务行压平与截断（v1.15.2）**：`/team:status` 与 `team_status` 的 `任务:` 行经 `statusTaskText()` 先 `flattenText` 压平换行、再按 `STATUS_TASK_MAX_WIDTH=60` 显示列 `truncateVisible` 截断（CJK 双宽），运行态与终态两处拼接点同调；flatten 只有 viewer.ts 一份（widget/cockpit 共用），不许在 cockpit.ts 复制实现。
 - **leader 可注入、成员不可注入**：leader 子进程以 `--mode rpc` 拉起，cockpit 持有其 stdin（`steerLeader()` 写 `steer` 命令，仅 run 活跃且通道未关时可写——`agent_settled`/prompt 拒绝/run 收尾即 `end()`，之后回退队列语义）；成员子进程归 leader 派生、cockpit 无任何通道，成员消息仍编成新 run 的 task（chat.ts 派单语义），绝不试图写运行中子进程的 stdin。该通道同时承载 leader 提问的回答（`extension_ui_response`，`AskChannel` 写、同一 `leaderStdin`）。
-- **leader 提问 fail-closed（v1.17.0）**：任何等待都有界——工具侧 timeout clamp `[30s, 30min]`、默认 10 分钟；cockpit 侧 backstop = 请求超时 + 5s（宿主对话框不返回时兜底写 cancelled）；超时/用户取消/主会话无 UI/run abort/settle 全部回 `{cancelled:true}`（stdin 已关则写失败忽略），工具结果 `{answered:false}`（**非** isError，避免重试循环），leader prompt 要求不追问、按合理假设继续并在报告声明；问答/未答原因落 leader transcript（`question`/`answer`/`system`），viewer 独立成块，`TeamRunRecord`/`status.json` schema 不变。
+- **leader 提问 fail-closed（v1.19.0）**：任何等待都有界——工具侧 timeout clamp `[30s, 30min]`、默认 10 分钟；cockpit 侧 backstop = 请求超时 + 5s（宿主对话框不返回时兜底写 cancelled）；超时/用户取消/主会话无 UI/run abort/settle 全部回 `{cancelled:true}`（stdin 已关则写失败忽略），工具结果 `{answered:false}`（**非** isError，避免重试循环），leader prompt 要求不追问、按合理假设继续并在报告声明；问答/未答原因落 leader transcript（`question`/`answer`/`system`），viewer 独立成块，`TeamRunRecord`/`status.json` schema 不变。
 - **子进程 stdin 模式（v1.15.1）**：`PiSpawn`/`runChildPi` 的 `stdin` 默认 `ignore`，只有 leader RPC 显式要 `pipe`（`cockpit.ts` 是唯一写 stdin 的调用方）——pi 的 `--mode json -p` 会读 stdin 到 EOF 才推进，成员 prompt 已在 argv 却持有无人关闭的管道 ⇒ 每次成员派发死锁（v1.15.0 真机事故，见 `docs/incidents.md`）。新增子进程调用点：**不写 stdin 就别开管道**。
 - **RPC 收尾不变量**：leader 进程只在 stdin 结束时退出（`onInputEnd`→shutdown）——必须在 `agent_settled` 时关 stdin；prompt 预检失败（`response.prompt.success=false`）不会产生 settle，必须同样关 stdin 否则 run 永久挂起；`promptError` 折进 failed 记录（不让预检失败落成 completed 空报告）。
 - chat 队列条目只存 `{ targetLabel, message }`，上文尾部派出时刻现读（不随消息缓存，避免排队期间陈旧）；链式门控仅 completed 续发，failed/aborted 全清——显式停止（team_stop/D//team:clear）同样清队列。
@@ -77,7 +77,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - **亮块背景块与宿主内容宽（v1.15.4，差异条目 tui-sync §3.16）**：宿主 `setExtensionWidget` 对 `string[]` 每行包 `Text(line, 1, 0)`（左右各 1 列 margin），内容可用宽 = 终端宽 − `WIDGET_HOST_INSET = 2`——按终端宽补齐会折行成额外物理行（背景块断续）、超出更会触发宿主超宽断言崩溃。`renderWidgetView` 统一按该内容宽 CJK 双宽截断+补齐后再包背景（普通行 `rowBg` = theme `userMessageBg`、选中行 `rowSelectedBg` = theme `selectedBg`；取不到色名 → 无背景降级）；宿主包装常量由测试直读宿主 dist 源码锁定，真实渲染锚点（120/20 列背景连续、不折行、折叠加展开）由 capture-screens 场景测试锁定。
 - 入口接受 `{ spawn }` 供工具级测试（`test/run-tool.test.ts`）。
 - **成员派发死锁（v1.15.0，真机 100% 复现；v1.15.1 修）**：`defaultSpawn` 的 stdio 从 `ignore` 改 `pipe` 后，成员 `--mode json -p` 等 stdin EOF、无人关管道 → run 永远 running（零输出 / 零 TCP 连接 / CPU 冻结）。`makeFakeSpawn`/`FakeChild` 的 stdin 是普通对象、不会真的等 EOF——**纯 fake 测试永远抓不到这类进程边界语义**；`runner.test.ts` 的两个真实子进程用例（默认模式见 EOF 即退出、显式 `pipe` 可写）就是它的回归护栏。
-- **RPC dialog 不能从 `session_start` 触发（v1.17.0 实证）**：pi 在 session-start 处理器 pending 期间不消费 RPC stdin——在 `session_start` 里开 dialog，请求会发出但 response 永远读不到，且 stdin.end() 也不生效（进程只能被强杀）。真机 E2E fixture 因此改为 `/ask-e2e` 命令触发（对齐 pi 官方 `examples/extensions/rpc-demo.ts` 的 dialog 经命令模式）。
+- **RPC dialog 不能从 `session_start` 触发（v1.19.0 实证）**：pi 在 session-start 处理器 pending 期间不消费 RPC stdin——在 `session_start` 里开 dialog，请求会发出但 response 永远读不到，且 stdin.end() 也不生效（进程只能被强杀）。真机 E2E fixture 因此改为 `/ask-e2e` 命令触发（对齐 pi 官方 `examples/extensions/rpc-demo.ts` 的 dialog 经命令模式）。
 - **真实 pi 进程测试的启动入口**：spawn 包的真实 bin 入口 `dist/bundle/cli.js`（本工作区 unbundled `dist/cli.js` 启动后零输出、stdin 不消费）；用 `PI_CODING_AGENT_DIR` 指向临时目录隔离用户全局扩展/配置，`PI_OFFLINE=1` 避免联网检查（见 `test/ask-real-pi.test.ts`）。
 
 ## 改动清单
