@@ -171,6 +171,30 @@ test("buildBlocks merges consecutive tool rows and keeps each message separate",
   assert.deepEqual(firstTools.lines, ["read src/login.tsx", "read → file body"]);
 });
 
+test("buildBlocks keeps question/answer entries as their own blocks", () => {
+  const blocks = buildBlocks(
+    [
+      entry("assistant", "需要确认一下"),
+      entry("question", "提问：要发到哪个环境？"),
+      entry("answer", "回答：staging"),
+      entry("tool", "read x"),
+    ],
+    true,
+  );
+  assert.deepEqual(blocks.map((b) => b.kind), ["assistant", "question", "answer", "tools"]);
+});
+
+test("blockLines renders question/answer with distinct labels", () => {
+  const question = blockLines({ kind: "question", text: "要发到哪个环境？", ts: "12:34:56" }, 40, styles);
+  assert.equal(question[0], "❓ 提问 · 12:34:56");
+  assert.deepEqual(question.slice(1), ["要发到哪个环境？"]);
+  const answer = blockLines({ kind: "answer", text: "staging", ts: "12:35:00" }, 40, styles);
+  assert.equal(answer[0], "✔ 回答 · 12:35:00");
+  assert.deepEqual(answer.slice(1), ["staging"]);
+  const noTs = blockLines({ kind: "question", text: "x", ts: "" }, 40, styles);
+  assert.equal(noTs[0], "❓ 提问");
+});
+
 test("buildBlocks hides tool rows when toggled off and strips legacy icon prefixes", () => {
   const hidden = buildBlocks([entry("task", "t"), entry("tool", "▶ read x")], false);
   assert.deepEqual(hidden.map((b) => b.kind), ["task"]);
@@ -321,7 +345,7 @@ test("renderViewerFrame styles the roster with the port: selected marker, bold l
   assert.ok(!frame[1].includes("\x1b[1m"), "title row never bolds (roster-only styling)");
 });
 
-test("renderViewerFrame pins a fixed four-line meta header atop the detail pane", () => {
+test("renderViewerFrame pins a fixed five-line meta header atop the detail pane", () => {
   const styled: Styles = { ...styles, bold: ansi("1") };
   const data = viewerData({
     actors: [
@@ -338,7 +362,8 @@ test("renderViewerFrame pins a fixed four-line meta header atop the detail pane"
     /^\x1b\[1m模型:\x1b\[0m anthropic\/claude-opus-4-5/,
     "model line fourth (selected actor's backend model)",
   );
-  assert.match(frame.slice(7).join("\n"), /让我先拆解任务/, "transcript body starts below the header");
+  assert.match(paneColumns(frame[7]).detail, /^\x1b\[1m活动:\x1b\[0m /, "activity line fifth");
+  assert.match(frame.slice(8).join("\n"), /让我先拆解任务/, "transcript body starts below the header");
   assert.doesNotMatch(paneColumns(frame[3]).detail, /❯/, "header does not scroll with the body");
 
   // 未声明模型的 actor（子进程走 pi 默认）：显式降级文案，不猜模型名。
@@ -355,7 +380,7 @@ test("renderViewerFrame pins a fixed four-line meta header atop the detail pane"
 });
 
 // 需求 B：模型行追加思考级别段——`<model> · 思考 <level>`；
-// model 已知/未知分别降级 `（默认）`，头部仍是固定 4 行。
+// model 已知/未知分别降级 `（默认）`，头部仍是固定 5 行。
 test("详情头模型行带思考级别：有值 `· 思考 <level>`，model 已知/未知分别降级 （默认）", () => {
   const styled: Styles = { ...styles, bold: ansi("1") };
   const withLevel = viewerData({
@@ -363,7 +388,7 @@ test("详情头模型行带思考级别：有值 `· 思考 <level>`，model 已
   });
   const frame = renderViewerFrame(withLevel, initialViewerState(), 80, { styles: styled, bodyHeight: 10 });
   assert.match(paneColumns(frame[6]).detail, /^\x1b\[1m模型:\x1b\[0m anthropic\/claude-opus-4-5 · 思考 high/);
-  assert.equal(frame.length, 10 + VIEWER_CHROME_ROWS, "帧总行数不变（仍 4 行头）");
+  assert.equal(frame.length, 10 + VIEWER_CHROME_ROWS, "帧总行数不变（仍 5 行头）");
 
   // model 已知而思考级别未知（legacy/unmanaged provider 缺省）：显式降级
   const noLevel = viewerData({
@@ -688,18 +713,18 @@ test("renderViewerFrame：action 行占右栏正文窗口顶部（头部之下�
   const armed = { ...initialViewerState(), follow: false, scroll: 0, stopConfirming: true };
   const frame = renderViewerFrame(viewerData(), armed, 80, { styles, bodyHeight });
   assert.equal(frame.length, bodyHeight + VIEWER_CHROME_ROWS, "帧总行数恒定");
-  // detail 列布局：头部四行（3-6）→ 横幅按 detail 宽换行（7-9）→ 正文（10 起）。
-  assert.match(paneColumns(frame[7]).detail, /确认停止 run run-42/, "横幅第一行在头部之下");
-  assert.match(paneColumns(frame[8]).detail, /Enter\/Y 确认/, "横幅第二行（换行后首段）");
-  assert.match(paneColumns(frame[9]).detail, /· N 取消 · Esc 取消/, "横幅换行尾段");
-  assert.match(paneColumns(frame[10]).detail, /❯ 修复登录 bug/, "正文第一行被横幅下推");
+  // detail 列布局：头部五行（3-7）→ 横幅按 detail 宽换行（8-10）→ 正文（11 起）。
+  assert.match(paneColumns(frame[8]).detail, /确认停止 run run-42/, "横幅第一行在头部之下");
+  assert.match(paneColumns(frame[9]).detail, /Enter\/Y 确认/, "横幅第二行（换行后首段）");
+  assert.match(paneColumns(frame[10]).detail, /· N 取消 · Esc 取消/, "横幅换行尾段");
+  assert.match(paneColumns(frame[11]).detail, /❯ 修复登录 bug/, "正文第一行被横幅下推");
   for (const [index, line] of frame.entries()) {
     assert.equal(visibleWidth(line), 80, `line ${index} fitLine 后行宽恒定`);
   }
 
   const noticeFrame = renderViewerFrame(viewerData(), { ...initialViewerState(), notice: { text: "run 已结束（done），无需停止", kind: "error" } }, 80, { styles, bodyHeight });
   assert.equal(noticeFrame.length, bodyHeight + VIEWER_CHROME_ROWS);
-  assert.match(paneColumns(noticeFrame[7]).detail, /run 已结束（done），无需停止/);
+  assert.match(paneColumns(noticeFrame[8]).detail, /run 已结束（done），无需停止/);
 });
 
 test("图例行独立于底边框：含 D 停止/r 刷新/q 关闭与成员位置", () => {

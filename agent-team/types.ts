@@ -15,6 +15,14 @@ export const MAX_RESULT_BYTES = 50 * 1024;
 /** Maximum per-member summary embedded in run records (bytes, UTF-8). */
 export const MAX_SUMMARY_BYTES = 8 * 1024;
 
+/**
+ * Maximum failure notice delivered to the main session (bytes, UTF-8).
+ * Bounds the followUp payload for a failed run (status + error + member
+ * rows + partial report); the report is placed last so truncation eats it
+ * first.
+ */
+export const MAX_FAILURE_NOTICE_BYTES = 8 * 1024;
+
 /** Maximum tasks accepted in a single team_dispatch call. */
 export const MAX_TASKS_PER_DISPATCH = 8;
 
@@ -49,6 +57,22 @@ export const RUN_RESULT_MESSAGE_TYPE = "agent-team-result";
 /** Widget id (one status surface per extension, per repo convention). */
 export const WIDGET_ID = "agent-team";
 
+/**
+ * Default wait for a leader question before it degrades to "no answer"
+ * (user-chosen: 10 minutes — long enough for a human to notice, bounded so an
+ * unattended run never idles forever).
+ */
+export const ASK_TIMEOUT_DEFAULT_MS = 10 * 60 * 1000;
+
+/** Minimum wait the team_ask tool allows (never ask a human for less than 30s). */
+export const ASK_TIMEOUT_MIN_MS = 30 * 1000;
+
+/** Maximum wait for a leader question (tool + wire clamp). */
+export const ASK_TIMEOUT_MAX_MS = 30 * 60 * 1000;
+
+/** Leader-mode tool: ask the main session (human) a clarifying question. */
+export const ASK_TOOL_NAME = "team_ask";
+
 /** Repaint interval of the below-editor run widget (elapsed labels). */
 export const WIDGET_TICK_MS = 1000;
 
@@ -79,6 +103,7 @@ export const LEADER_ENV_NAME = "PI_AGENT_TEAM_NAME";
 export const LEADER_ENV_RUNID = "PI_AGENT_TEAM_RUN_ID";
 
 /**
+/**
  * Env var aliasing member worktree paths/branches to the resumed parent run
  * (a resume run keeps the new runId for its own artifacts but reuses the
  * parent's member worktrees on disk).
@@ -87,6 +112,19 @@ export const LEADER_ENV_WORKTREE_RUNID = "PI_AGENT_TEAM_WORKTREE_RUN_ID";
 
 /** Env var carrying per-member model overrides (JSON `{name: provider/id}`) for one run. */
 export const LEADER_ENV_MEMBER_MODELS = "PI_AGENT_TEAM_MEMBER_MODELS";
+
+/**
+ * Tools every derived-agent child (leader + members) must not expose.
+ * `subagent` would open a nested sub-agent hierarchy and `team_run` would
+ * start a nested team run from inside a run — both defeat the bounded
+ * leader/member topology and the per-run budget. Passed to child pi as
+ * `--exclude-tools`; the host applies exclusions on top of any `--tools`
+ * allowlist (exclude wins), so even a team file that lists them cannot
+ * bypass this. `team_dispatch` is deliberately absent: it is the leader's
+ * own scheduling tool, it is registered only in leader mode, and members
+ * must keep the leader able to dispatch.
+ */
+export const DERIVED_AGENT_TOOL_DENYLIST = ["subagent", "team_run"] as const;
 
 // ---------------------------------------------------------------------------
 // Team configuration
@@ -404,6 +442,13 @@ export interface TeamRunRecord {
 
 export type MemberProgressStatus = "queued" | "running" | "done" | "failed" | "aborted";
 
+/**
+ * Live activity phase of an actor (leader/member): `tool` while a tool call
+ * is executing, `waiting` while the model is thinking / between events.
+ * Feeds the viewer activity line (v1.17.0).
+ */
+export type MemberPhase = "tool" | "waiting";
+
 export interface MemberProgress {
   name: string;
   status: MemberProgressStatus;
@@ -414,6 +459,12 @@ export interface MemberProgress {
   model?: string;
   /** Declared model-suffix / child-reported thinking level (absent = provider default). */
   thinkingLevel?: string;
+  /** Live activity phase (tool execution vs. waiting/thinking). */
+  phase?: MemberPhase;
+  /** Tool name while `phase === "tool"`. */
+  toolName?: string;
+  /** Epoch ms of the member's last observed child event (viewer activity age). */
+  lastActivityAtMs?: number;
 }
 
 export interface RunProgress {
@@ -431,6 +482,12 @@ export interface RunProgress {
   leaderNote?: string;
   /** Leader's latest activity tail (progress display only). */
   leaderActivity?: string;
+  /** Leader live activity phase (tool execution vs. waiting/thinking). */
+  leaderPhase?: MemberPhase;
+  /** Tool name while `leaderPhase === "tool"`. */
+  leaderToolName?: string;
+  /** Epoch ms of the leader's last observed child event (viewer activity age). */
+  leaderLastEventAtMs?: number;
   members: MemberProgress[];
   /** Live budget accounting (caps + spent) when the run tracks a budget. */
   budget?: RunBudgetSnapshot;
