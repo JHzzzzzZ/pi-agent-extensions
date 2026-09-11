@@ -20,6 +20,7 @@ import { fileRunStore, RUN_STATUS_VERSION, type RunStoreWriter } from "./runstor
 import { FileTranscriptSink, LEADER_ACTOR, type TranscriptEntryKind } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, isGitRepo, teamWorktreeBranch, type GitRunner } from "./worktree.ts";
 import {
+  DERIVED_AGENT_TOOL_DENYLIST,
   LEADER_ENV_FILE,
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
@@ -626,6 +627,7 @@ export class TeamRunCoordinator {
       if (team.leader.model) args.push("--model", team.leader.model);
       if (team.leader.tools && team.leader.tools.length > 0) args.push("--tools", team.leader.tools.join(","));
       if (this.deps.extensionEntryPath) args.push("-e", this.deps.extensionEntryPath);
+      args.push("--exclude-tools", DERIVED_AGENT_TOOL_DENYLIST.join(","));
       args.push("--append-system-prompt", `team-tmp://${leaderPrompt}`);
 
       const invocation = this.deps.piCommand ? { command: this.deps.piCommand, args } : getPiInvocation(args);

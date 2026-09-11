@@ -78,6 +78,19 @@ export const LEADER_ENV_NAME = "PI_AGENT_TEAM_NAME";
 /** Env var carrying the run id (used for worktree paths/branches). */
 export const LEADER_ENV_RUNID = "PI_AGENT_TEAM_RUN_ID";
 
+/**
+ * Tools every derived-agent child (leader + members) must not expose.
+ * `subagent` would open a nested sub-agent hierarchy and `team_run` would
+ * start a nested team run from inside a run — both defeat the bounded
+ * leader/member topology and the per-run budget. Passed to child pi as
+ * `--exclude-tools`; the host applies exclusions on top of any `--tools`
+ * allowlist (exclude wins), so even a team file that lists them cannot
+ * bypass this. `team_dispatch` is deliberately absent: it is the leader's
+ * own scheduling tool, it is registered only in leader mode, and members
+ * must keep the leader able to dispatch.
+ */
+export const DERIVED_AGENT_TOOL_DENYLIST = ["subagent", "team_run"] as const;
+
 // ---------------------------------------------------------------------------
 // Team configuration
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
-import type { RunProgress } from "../types.ts";
+import { DERIVED_AGENT_TOOL_DENYLIST, type RunProgress } from "../types.ts";
 import { visibleWidth } from "../viewer.ts";
 import { teamWorktreeBranch } from "../worktree.ts";
 import { fixtureTeam } from "./fixtures.ts";
@@ -79,6 +79,13 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   assert.equal(record.args[record.args.indexOf("--model") + 1], "anthropic/claude-opus-4-5");
   const extIndex = record.args.indexOf("-e");
   assert.equal(record.args[extIndex + 1], "/ext/agent-team/index.ts");
+  // The leader may not start nested teams/subagents either: the same
+  // single-source denylist travels as --exclude-tools (host: exclude wins
+  // over --tools allowlists).
+  const denyIndex = record.args.indexOf("--exclude-tools");
+  assert.ok(denyIndex >= 0, "leader argv carries --exclude-tools");
+  assert.equal(record.args[denyIndex + 1], DERIVED_AGENT_TOOL_DENYLIST.join(","));
+  assert.ok(denyIndex < record.args.indexOf("--append-system-prompt"));
   const promptIndex = record.args.indexOf("--append-system-prompt");
   const promptPath = record.args[promptIndex + 1];
   assert.ok(!promptPath.startsWith("team-tmp://"), "prompt materialized to a temp file before spawn");

@@ -17,6 +17,10 @@ import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { type TranscriptEntryKind, type TranscriptSink } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, memberWorktreeBranch, type GitRunner } from "./worktree.ts";
 import {
+  DERIVED_AGENT_TOOL_DENYLIST,
+  LEADER_ENV_FILE,
+  LEADER_ENV_NAME,
+  LEADER_ENV_RUNID,
   MAX_PARALLEL_MEMBERS,
   MAX_RESULT_BYTES,
   MAX_SUMMARY_BYTES,
@@ -37,6 +41,20 @@ import {
 
 export interface DispatchRequest {
   tasks: Array<{ agent: string; task: string }>;
+}
+
+/**
+ * Copies an environment and removes the three leader-mode keys. Member
+ * child processes must not inherit them: agent-team would load in leader
+ * mode inside a member and bind its tooling to the parent run. Everything
+ * else (PATH, provider keys, credentials) is preserved.
+ */
+export function stripLeaderEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const copy = { ...env };
+  delete copy[LEADER_ENV_FILE];
+  delete copy[LEADER_ENV_NAME];
+  delete copy[LEADER_ENV_RUNID];
+  return copy;
 }
 
 export interface DispatchMemberDetail {
@@ -360,6 +378,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
       const args: string[] = ["--mode", "json", "-p", "--no-session"];
       if (plan.member.model) args.push("--model", plan.member.model);
       if (plan.member.tools && plan.member.tools.length > 0) args.push("--tools", plan.member.tools.join(","));
+      args.push("--exclude-tools", DERIVED_AGENT_TOOL_DENYLIST.join(","));
       if (plan.member.prompt.trim()) args.push("--append-system-prompt", `team-tmp://${plan.member.prompt}`);
       args.push(`Task: ${plan.task}`);
 
@@ -372,6 +391,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           command: invocation.command,
           args: invocation.args,
           cwd: plan.worktree?.path ?? deps.cwd,
+          env: stripLeaderEnv(),
           spawn,
           signal,
           killGraceMs: deps.killGraceMs,
