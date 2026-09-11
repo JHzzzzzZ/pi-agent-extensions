@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>agent-manager</h1>
+  <nav class="tabs" id="tabs">
+    <button type="button" class="tab is-active" data-tab="sessions">会话</button>
+    <button type="button" class="tab" data-tab="agents">Agents</button>
+    <button type="button" class="tab" data-tab="settings">设置</button>
+  </nav>
+  <span class="muted" id="status-line"></span>
+</header>
+
+<main>
+  <section class="panel is-active" id="panel-sessions">
+    <div class="toolbar">
+      <input id="session-query" type="search" placeholder="搜索用户/助手文本或会话名">
+      <button type="button" id="session-search">搜索</button>
+      <button type="button" id="session-reload">刷新</button>
+    </div>
+    <div class="split">
+      <div class="list-pane">
+        <table class="data">
+          <thead>
+            <tr><th>名称/首条</th><th>id</th><th>cwd</th><th>模型</th><th>修改时间</th><th>消息(用/助/工具)</th><th>操作</th></tr>
+          </thead>
+          <tbody id="session-rows"></tbody>
+        </table>
+        <p class="muted" id="session-empty">暂无会话</p>
+      </div>
+      <aside class="detail-pane">
+        <h2>预览</h2>
+        <div id="session-preview" class="muted">从左侧选择一条会话</div>
+        <div class="toolbar">
+          <button type="button" id="session-resume" disabled>用此会话启动接续 agent</button>
+          <button type="button" id="session-fork" disabled>用此会话启动分支 agent</button>
+        </div>
+        <details>
+          <summary>回收站</summary>
+          <ul id="trash-list"></ul>
+          <p class="muted" id="trash-empty">回收站为空</p>
+        </details>
+      </aside>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-agents">
+    <p class="muted">运行列表每 2 秒自动刷新；详情输出每 1 秒增量刷新（页面隐藏时暂停）。</p>
+    <form id="agent-form" class="form">
+      <label>cwd <input id="agent-cwd" required placeholder="必须存在的绝对路径"></label>
+      <label>提示词 <textarea id="agent-prompt" rows="3" required placeholder="启动后子进程自动执行，无工具审批"></textarea></label>
+      <label>模型 <input id="agent-model" placeholder="provider/id（留空用 pi 默认模型）"></label>
+      <label>名称 <input id="agent-name" placeholder="agent-manager-&lt;id&gt;"></label>
+      <fieldset>
+        <legend>启动方式</legend>
+        <label class="inline"><input type="radio" name="agent-kind" value="new" checked> 新建</label>
+        <label class="inline"><input type="radio" name="agent-kind" value="resume"> 接续</label>
+        <label class="inline"><input type="radio" name="agent-kind" value="fork"> 分支</label>
+      </fieldset>
+      <label>会话 id（接续/分支必填） <input id="agent-session-ref" placeholder="点击会话页「预览」后自动填入"></label>
+      <div class="toolbar">
+        <button type="submit">启动 agent</button>
+        <button type="button" id="agents-reload">刷新列表</button>
+        <span class="muted" id="agent-form-note"></span>
+      </div>
+    </form>
+    <table class="data">
+      <thead>
+        <tr><th>id</th><th>状态</th><th>pid</th><th>方式</th><th>模型</th><th>开始</th><th>最后输出</th><th>操作</th></tr>
+      </thead>
+      <tbody id="agent-rows"></tbody>
+    </table>
+    <p class="muted" id="agent-empty">暂无 agent</p>
+    <div id="agent-detail" class="detail hidden">
+      <div class="toolbar">
+        <h2 id="agent-detail-title">详情</h2>
+        <button type="button" id="agent-detail-close">关闭</button>
+      </div>
+      <pre id="agent-output"></pre>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-settings">
+    <form id="settings-form" class="form">
+      <label>会话目录 <input id="settings-session-dir"></label>
+      <label>pi 路径（推荐指向 cli.js，绕开 Windows .cmd 包装） <input id="settings-pi-path" placeholder="留空使用 PATH 中的 pi"></label>
+      <label>端口（下次启动生效） <input id="settings-port" type="number" min="0" max="65535"></label>
+      <div class="toolbar">
+        <button type="submit">保存设置</button>
+        <span class="muted" id="settings-note"></span>
+      </div>
+    </form>
+    <h2>解析结果</h2>
+    <pre id="settings-resolved"></pre>
+    <p class="muted">仅监听 127.0.0.1，请勿做端口转发；pi 路径变更在有运行中 agent 时需重启生效。</p>
+  </section>
+</main>
+
+<script src="app.js" defer></script>
+</body>
+</html>
