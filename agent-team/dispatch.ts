@@ -19,8 +19,10 @@ import { createWorktree, defaultGitRunner, memberWorktreeBranch, type GitRunner 
 import {
   DERIVED_AGENT_TOOL_DENYLIST,
   LEADER_ENV_FILE,
+  LEADER_ENV_MEMBER_MODELS,
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
+  LEADER_ENV_WORKTREE_RUNID,
   MAX_PARALLEL_MEMBERS,
   MAX_RESULT_BYTES,
   MAX_SUMMARY_BYTES,
@@ -55,6 +57,20 @@ export function stripLeaderEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   delete copy[LEADER_ENV_FILE];
   delete copy[LEADER_ENV_NAME];
   delete copy[LEADER_ENV_RUNID];
+  return copy;
+}
+
+/**
+ * 拷贝环境并删除全部 run 级键：3 个 leader 键 + 2 个 resume 谱系键
+ * （WORKTREE_RUN_ID / MEMBER_MODELS）。leader 派生一个「新 run」时不能继承
+ * 任何父进程的 run 绑定，因此这里比成员侧的 `stripLeaderEnv`（只剥 3 个
+ * leader 键、刻意保留 resume 谱系键）剥得更干净；其余环境（PATH、provider
+ * key、凭据）全部继承，新 run 自己的键由调用方叠加。
+ */
+export function stripRunScopedEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const copy = stripLeaderEnv(env);
+  delete copy[LEADER_ENV_WORKTREE_RUNID];
+  delete copy[LEADER_ENV_MEMBER_MODELS];
   return copy;
 }
 

@@ -27,7 +27,7 @@ export const MAX_FAILURE_NOTICE_BYTES = 8 * 1024;
 export const MAX_TASKS_PER_DISPATCH = 8;
 
 /** Maximum member child processes running concurrently. */
-export const MAX_PARALLEL_MEMBERS = 4;
+export const MAX_PARALLEL_MEMBERS = 8;
 
 /** Dispatch-call budget per run (leader loop guard — exceeded ⇒ wrap up). */
 export const MAX_DISPATCH_CALLS_PER_RUN = 12;
