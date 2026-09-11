@@ -46,7 +46,7 @@
 
 | 卡 | 一句话 |
 | --- | --- |
-| [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI：单入口 `node tools/todo.mjs`（七子命令，triage 只读扫描 worktree↔条目），只读写 `todos/`、CLI-only 无 pi 依赖 |
+| [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI：单入口 `node tools/todo.mjs`（七子命令 + list 结构化查询 flags / db sqlite 索引子命令（可重建、无 DB 时降级），triage 只读扫描 worktree↔条目），只读写 `todos/`、CLI-only 无 pi 依赖 |
 | [agent-manager](tools/agent-manager.md) | 独立 agent 管理工具（零依赖、非 Pi 扩展）：会话浏览/检索/重命名/可恢复删除 + pi 子进程启动/停止 + 浏览器前端；`node agent-manager/server.ts` |
 
 ## 收录与淘汰

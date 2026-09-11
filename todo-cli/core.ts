@@ -19,11 +19,13 @@
  * 用法（仓库根）：
  *   node tools/todo.mjs summary [--json]
  *   node tools/todo.mjs list [--status open|processing|done] [--file general]
+ *   node tools/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
  *   node tools/todo.mjs add --file general "需求描述"        # 跨全部文件查重
  *   node tools/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
  *   node tools/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
  *   node tools/todo.mjs lint
  *   node tools/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
+ *   node tools/todo.mjs db status|rebuild|drop    # L14 索引生命周期（markdown 仍是权威）
  *
  * 纯函数（parseTodoFile / summarize / findDuplicates / appendEntry / setProcessing /
  * completeEntry / resolveTodoPath / normalizeText / parseWorktrees / parseMergedBranches /
@@ -34,6 +36,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// L14/L15 接线（10-design §3.4–3.6）：store 与 core 是函数级循环 import——双方顶层
+// 均不调用对方导出，只在函数体内使用，ESM live binding 下安全。
+import { atomicWriteFile, openTodoStore } from "./store.ts";
+import { dbStatus, dropStore, rebuildStore } from "./migrate.ts";
+import {
+  applyEntryFilter,
+  deriveQueryEntries,
+  parseFilterOptions,
+  serializeEntries,
+  sortQueryEntries,
+} from "./query.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, "..");
@@ -105,27 +119,37 @@ export function normalizeText(text) {
 }
 
 /**
- * 跨文件查重：归一化全等 = exact，一方包含另一方（长度 ≥ 8）= similar。
+ * 行级查重核心（findDuplicates 的提取）：归一化全等 = exact，
+ * 一方包含另一方（长度 ≥ 8）= similar。entries 可为 DB 行或 parseTodoFile + name 派生行，
  * 返回 [{ name, line, status, text, kind }]。
  */
-export function findDuplicates(text, docs) {
+export function findDuplicateHits(text, entries) {
   const norm = normalizeText(text);
   if (norm.length === 0) return [];
   const hits = [];
-  for (const doc of docs) {
-    for (const entry of parseTodoFile(doc.content)) {
-      const other = normalizeText(entry.text);
-      if (other.length === 0) continue;
-      if (other === norm) {
-        hits.push({ name: doc.name, line: entry.line, status: entry.status, text: entry.text, kind: "exact" });
-      } else if (norm.length >= 8 && other.includes(norm)) {
-        hits.push({ name: doc.name, line: entry.line, status: entry.status, text: entry.text, kind: "similar" });
-      } else if (other.length >= 8 && norm.includes(other)) {
-        hits.push({ name: doc.name, line: entry.line, status: entry.status, text: entry.text, kind: "similar" });
-      }
+  for (const entry of entries) {
+    const other = normalizeText(entry.text);
+    if (other.length === 0) continue;
+    if (other === norm) {
+      hits.push({ name: entry.name, line: entry.line, status: entry.status, text: entry.text, kind: "exact" });
+    } else if (norm.length >= 8 && other.includes(norm)) {
+      hits.push({ name: entry.name, line: entry.line, status: entry.status, text: entry.text, kind: "similar" });
+    } else if (other.length >= 8 && norm.includes(other)) {
+      hits.push({ name: entry.name, line: entry.line, status: entry.status, text: entry.text, kind: "similar" });
     }
   }
   return hits;
+}
+
+/** 跨文件查重：文档列表展平成行后委托 findDuplicateHits（行为与既有实现逐字节一致）。 */
+export function findDuplicates(text, docs) {
+  const entries = [];
+  for (const doc of docs) {
+    for (const entry of parseTodoFile(doc.content)) {
+      entries.push({ name: doc.name, line: entry.line, status: entry.status, text: entry.text });
+    }
+  }
+  return findDuplicateHits(text, entries);
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +272,8 @@ export function parseMergedBranches(stdout) {
     .filter((b) => b !== "" && !b.startsWith("remotes/") && !b.startsWith("("));
 }
 
-const PROCESSING_REF_RE = /@\s*([^\s：:，,）)]+)/;
+/** 分支引用正则（triage 使用；导出供 W4 对照测试锁与 query.parseBranchRef 口径一致）。 */
+export const PROCESSING_REF_RE = /@\s*([^\s：:，,）)]+)/;
 
 function normalizePath(p) {
   return String(p).replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
@@ -351,6 +376,202 @@ function parseArgs(argv) {
   return opts;
 }
 
+// ---------------------------------------------------------------------------
+// L14/L15：存储索引与结构化查询接线（10-design §3.4–3.6）
+// ---------------------------------------------------------------------------
+
+/** node:sqlite 不可用的静态说明（降级路径与 db 子命令共用，10-design §1.4）。 */
+const SQLITE_UNAVAILABLE_MSG =
+  "node:sqlite 不可用（Node <22.13 或被禁用）：时间维度查询需要数据库索引；其余命令已降级为直接读写 markdown";
+
+/** 写临界区异常（busy 超时等 sqlite 异常）的静态模板（10-design §3.6）。 */
+const DB_BUSY_MSG = "数据库忙（todo 索引被占用），请重试";
+
+/** 打开 store：deps.openStore 注入优先（返回 null 模拟降级；fake store 供测试）。 */
+function resolveStore(repoRoot, deps) {
+  const openStore = deps.openStore ?? openTodoStore;
+  return openStore(repoRoot);
+}
+
+/** 注入时钟：DB 时间戳统一走此函数（默认真实 UTC now）。 */
+function resolveNow(deps) {
+  return deps.now ?? (() => new Date().toISOString());
+}
+
+/** 磁盘 stat 摘要（漂移检测输入）；读取列表时的瞬态删除跳过，由下次导入清理。 */
+function statDocs(docs) {
+  const stats = [];
+  for (const doc of docs) {
+    try {
+      const st = fs.statSync(doc.file);
+      stats.push({ name: doc.name, size: st.size, mtimeMs: st.mtimeMs });
+    } catch {
+      // 文件刚被删除：跳过
+    }
+  }
+  return stats;
+}
+
+/** 事务内漂移重导入：stat 与 files 表不一致（或无记录）的文件按当前 markdown 重导——markdown 永远赢。 */
+function reimportDrifted(store, docs, now) {
+  const drifted = new Set(store.driftedFiles(statDocs(docs)));
+  for (const doc of docs) {
+    if (drifted.has(doc.name)) store.reimportFile(doc.name, doc.content, now);
+  }
+}
+
+/** 目标文件漂移检查（claim/complete 只需目标文件新鲜）；需重导时用已读到的 content。 */
+function reimportTargetIfDrifted(store, file, name, content, now) {
+  let stat;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    return;
+  }
+  if (store.driftedFiles([{ name, size: stat.size, mtimeMs: stat.mtimeMs }]).length > 0) {
+    store.reimportFile(name, content, now);
+  }
+}
+
+/** DB 行 → QueryEntry：branch/tags 复用 query 派生，时间戳来自 DB 列。 */
+function rowsToQueryEntries(rows) {
+  return rows.map((row) => {
+    const [entry] = deriveQueryEntries(row.file, [{ line: row.line, status: row.status, text: row.text }]);
+    return { ...entry, createdAt: row.createdAt, claimedAt: row.claimedAt, completedAt: row.completedAt };
+  });
+}
+
+/** markdown 降级派生（时间戳 null）：与 DB 路径同一过滤/排序/序列化链路。 */
+function docsToQueryEntries(docs) {
+  const entries = [];
+  for (const doc of docs) entries.push(...deriveQueryEntries(doc.name, parseTodoFile(doc.content)));
+  return entries;
+}
+
+/** 与 locateEntry 同口径的单条匹配（stampEntry 需要修改前的条目文本；歧义返回 null）。 */
+function uniqueEntry(content, match) {
+  const hits = parseTodoFile(content).filter((entry) => entry.text.includes(match));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** sqlite 临界区异常判别（node:sqlite 的 code + message 兜底）→ busy 静态模板。 */
+function isStoreBusy(error) {
+  if (!error || typeof error !== "object") return false;
+  if (error.code === "ERR_SQLITE_ERROR") return true;
+  return /busy|locked|SQLITE_BUSY/i.test(String(error.message ?? ""));
+}
+
+/** db status 探测：注入 openStore 时用它模拟可用/降级；否则只读探测（不建库、无副作用）。 */
+function probeDbStatus(repoRoot, deps) {
+  if (!deps.openStore) return dbStatus(repoRoot);
+  const store = deps.openStore(repoRoot);
+  if (!store) return { available: false, reason: "SQLITE_UNAVAILABLE", files: 0, entries: 0, schemaVersion: null };
+  try {
+    const rows = store.listEntryRows();
+    return {
+      available: true,
+      reason: null,
+      files: new Set(rows.map((row) => row.file)).size,
+      entries: rows.length,
+      schemaVersion: 1,
+    };
+  } finally {
+    store.close();
+  }
+}
+
+/** 全量 markdown 条目计数（db rebuild 成功行）。 */
+function countDocEntries(docs) {
+  let count = 0;
+  for (const doc of docs) count += parseTodoFile(doc.content).length;
+  return count;
+}
+
+/** db status 的静态原因行（不可用时的 stdout 约定）。 */
+function dbStatusLine(info) {
+  if (info.available) return `索引可用：${info.files} 个文件 · ${info.entries} 条目 · schema v${info.schemaVersion}`;
+  return dbReasonLine(info.reason);
+}
+
+function dbReasonLine(reason) {
+  if (reason === "NO_DB") return "索引不存在（todos/.todo-cli/index.db）——运行 db rebuild 建立";
+  if (reason === "CORRUPT") return "索引损坏——运行 db rebuild 重建";
+  return SQLITE_UNAVAILABLE_MSG;
+}
+
+/**
+ * add/claim/complete 的统一执行体（10-design §3.6）：store 非空时调用方已进入 writeTxn，
+ * 本函数内所有文件读取/写入与 DB 操作都在同一临界区（跨进程 read-modify-write 串行化）。
+ * store 为空 = 降级：行为与今日路径逐字节一致（writeFile 注入语义保留）。
+ */
+function runWriteCommand(params) {
+  const { command, opts, repoRoot, file, name, store, now, log, writeFile } = params;
+  const exists = fs.existsSync(file);
+
+  if (command === "add") {
+    const text = opts._.slice(1).join(" ").trim();
+    if (!text) {
+      log("缺少需求描述");
+      return 1;
+    }
+    const docs = loadTodos(repoRoot);
+    let hits;
+    if (store) {
+      reimportDrifted(store, docs, now);
+      hits = findDuplicateHits(
+        text,
+        store.listEntryRows().map((row) => ({ name: row.file, line: row.line, status: row.status, text: row.text })),
+      );
+    } else {
+      hits = findDuplicates(text, docs);
+    }
+    if (hits.length > 0 && !opts.force) {
+      for (const h of hits) log(`重复（${h.kind}）：${h.name}:${h.line}  ${h.text}`);
+      log("如确认是新需求，加 --force 重新执行");
+      return 1;
+    }
+    const content = exists ? fs.readFileSync(file, "utf8") : `# ${name} TODO\n\n`;
+    const next = appendEntry(content, text);
+    if (store) {
+      atomicWriteFile(file, next);
+      store.reimportFile(name, next, now);
+    } else {
+      writeFile(file, next);
+    }
+    log(`已登记到 ${path.relative(repoRoot, file).replace(/\\/g, "/")}：${text}`);
+    return 0;
+  }
+
+  if (!exists) {
+    log(`找不到 todo 文件：${opts.file}`);
+    return 1;
+  }
+  const match = opts.match;
+  if (!match) {
+    log('缺少 --match "子串"');
+    return 1;
+  }
+  const content = fs.readFileSync(file, "utf8");
+  if (store) reimportTargetIfDrifted(store, file, name, content, now);
+  const result = command === "claim" ? setProcessing(content, match, opts.branch) : completeEntry(content, match, opts.note);
+  if (!result.ok) {
+    log(`${result.code}：${result.message}`);
+    return 1;
+  }
+  if (result.changed) {
+    if (store) {
+      atomicWriteFile(file, result.content);
+      store.reimportFile(name, result.content, now);
+      const target = uniqueEntry(content, match);
+      if (target) store.stampEntry(name, normalizeText(target.text), command === "claim" ? "claimedAt" : "completedAt", now());
+    } else {
+      writeFile(file, result.content);
+    }
+  }
+  log(`${command === "claim" ? "已领取" : "已完成"}（${result.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  return 0;
+}
+
 const USAGE = `用法：
   node tools/todo.mjs summary [--json]
   node tools/todo.mjs list [--status open|processing|done] [--file <name>]
@@ -358,7 +579,9 @@ const USAGE = `用法：
   node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
   node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]
   node tools/todo.mjs lint
-  node tools/todo.mjs triage [--json]`;
+  node tools/todo.mjs triage [--json]
+  node tools/todo.mjs list [--status open|processing|done] [--file <name>] [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
+  node tools/todo.mjs db status|rebuild|drop`;
 
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
@@ -384,23 +607,125 @@ export function main(argv, deps = {}) {
   }
 
   if (command === "list") {
-    let docs = loadTodos(repoRoot);
-    let file = null;
+    const docs = loadTodos(repoRoot);
+    let resolvedFile = null;
+    let fileFilter = null;
     if (opts.file) {
-      file = resolveTodoPath(opts.file, repoRoot);
-      if (!file || !fs.existsSync(file)) {
+      resolvedFile = resolveTodoPath(opts.file, repoRoot);
+      if (!resolvedFile || !fs.existsSync(resolvedFile)) {
         log(`找不到 todo 文件：${opts.file}`);
         return 1;
       }
-      docs = docs.filter((d) => d.file === file);
+      fileFilter = path.basename(resolvedFile, ".md");
     }
-    for (const doc of docs) {
-      for (const entry of parseTodoFile(doc.content)) {
-        if (opts.status && entry.status !== opts.status) continue;
-        log(`${STATUS_MARK[entry.status]} ${doc.name}:${entry.line}  ${entry.text}`);
+    const scopedDocs = resolvedFile ? docs.filter((d) => d.file === resolvedFile) : docs;
+    const usesQuery =
+      opts.json === true || "branch" in opts || "tag" in opts || "text" in opts || "claimed-since" in opts;
+
+    // 只带旧 flags 且无 --json：走今日代码路径，字节不变。
+    if (!usesQuery) {
+      for (const doc of scopedDocs) {
+        for (const entry of parseTodoFile(doc.content)) {
+          if (opts.status && entry.status !== opts.status) continue;
+          log(`${STATUS_MARK[entry.status]} ${doc.name}:${entry.line}  ${entry.text}`);
+        }
       }
+      return 0;
     }
-    return 0;
+
+    const parsed = parseFilterOptions(opts);
+    if (!parsed.ok) {
+      log(parsed.message);
+      return 1;
+    }
+    const filter = parsed.filter;
+    if (fileFilter) filter.file = fileFilter;
+
+    const store = resolveStore(repoRoot, deps);
+    if (store === null) {
+      // 降级：文本派生维度照常；时间维度明确报错（10-design §1.4）。
+      if (filter.claimedSince !== undefined) {
+        log(SQLITE_UNAVAILABLE_MSG);
+        return 1;
+      }
+      const sorted = sortQueryEntries(applyEntryFilter(docsToQueryEntries(scopedDocs), filter));
+      for (const line of serializeEntries(sorted, { json: parsed.json })) log(line);
+      return 0;
+    }
+
+    try {
+      const entries = store.writeTxn(() => {
+        reimportDrifted(store, scopedDocs, resolveNow(deps));
+        return rowsToQueryEntries(store.listEntryRows());
+      });
+      const sorted = sortQueryEntries(applyEntryFilter(entries, filter));
+      for (const line of serializeEntries(sorted, { json: parsed.json })) log(line);
+      return 0;
+    } catch (error) {
+      if (isStoreBusy(error)) {
+        log(DB_BUSY_MSG);
+        return 1;
+      }
+      throw error;
+    } finally {
+      store.close();
+    }
+  }
+
+  if (command === "db") {
+    const sub = opts._[1];
+    const now = resolveNow(deps);
+
+    if (sub === "status") {
+      const info = probeDbStatus(repoRoot, deps);
+      if (opts.json) log(JSON.stringify(info, null, 2));
+      else log(dbStatusLine(info));
+      return info.available ? 0 : 1;
+    }
+
+    if (sub === "rebuild") {
+      const docs = loadTodos(repoRoot);
+      if (deps.openStore) {
+        // 注入路径：模拟降级（null → exit 1）或 fake store；不落真实库。
+        const store = deps.openStore(repoRoot);
+        if (!store) {
+          log(SQLITE_UNAVAILABLE_MSG);
+          return 1;
+        }
+        try {
+          store.writeTxn(() => {
+            for (const doc of docs) store.reimportFile(doc.name, doc.content, now);
+          });
+          log(`索引已重建：${docs.length} 个文件 · ${countDocEntries(docs)} 条目`);
+          return 0;
+        } catch (error) {
+          if (isStoreBusy(error)) {
+            log(DB_BUSY_MSG);
+            return 1;
+          }
+          throw error;
+        } finally {
+          store.close();
+        }
+      }
+      const result = rebuildStore(repoRoot, docs, now);
+      if (!result.ok) {
+        log(dbReasonLine(result.reason));
+        return 1;
+      }
+      const info = dbStatus(repoRoot);
+      log(`索引已重建：${info.files} 个文件 · ${info.entries} 条目`);
+      return 0;
+    }
+
+    if (sub === "drop") {
+      const result = dropStore(repoRoot);
+      log(result.removed.length === 0 ? "无可删除的索引文件" : `已删除索引文件：${result.removed.join("、")}`);
+      return 0;
+    }
+
+    log(`未知 db 子命令：${sub ?? ""}`);
+    return 1;
   }
 
   if (command === "lint") {
@@ -420,45 +745,28 @@ export function main(argv, deps = {}) {
       log("--file 只能是 todos/ 下的文件名");
       return 1;
     }
-    const exists = fs.existsSync(file);
-    const docs = loadTodos(repoRoot);
+    const name = path.basename(file, ".md");
+    const now = resolveNow(deps);
+    const store = resolveStore(repoRoot, deps);
 
-    if (command === "add") {
-      const text = opts._.slice(1).join(" ").trim();
-      if (!text) {
-        log("缺少需求描述");
-        return 1;
-      }
-      const hits = findDuplicates(text, docs);
-      if (hits.length > 0 && !opts.force) {
-        for (const h of hits) log(`重复（${h.kind}）：${h.name}:${h.line}  ${h.text}`);
-        log("如确认是新需求，加 --force 重新执行");
-        return 1;
-      }
-      const content = exists ? fs.readFileSync(file, "utf8") : `# ${path.basename(file, ".md")} TODO\n\n`;
-      writeFile(file, appendEntry(content, text));
-      log(`已登记到 ${path.relative(repoRoot, file).replace(/\\/g, "/")}：${text}`);
-      return 0;
+    if (store === null) {
+      // 降级：今日路径原样执行（含 writeFile 注入语义）。
+      return runWriteCommand({ command, opts, repoRoot, file, name, store: null, now, log, writeFile });
     }
 
-    if (!exists) {
-      log(`找不到 todo 文件：${opts.file}`);
-      return 1;
+    try {
+      return store.writeTxn(() =>
+        runWriteCommand({ command, opts, repoRoot, file, name, store, now, log, writeFile }),
+      );
+    } catch (error) {
+      if (isStoreBusy(error)) {
+        log(DB_BUSY_MSG);
+        return 1;
+      }
+      throw error;
+    } finally {
+      store.close();
     }
-    const match = opts.match;
-    if (!match) {
-      log("缺少 --match \"子串\"");
-      return 1;
-    }
-    const content = fs.readFileSync(file, "utf8");
-    const result = command === "claim" ? setProcessing(content, match, opts.branch) : completeEntry(content, match, opts.note);
-    if (!result.ok) {
-      log(`${result.code}：${result.message}`);
-      return 1;
-    }
-    if (result.changed) writeFile(file, result.content);
-    log(`${command === "claim" ? "已领取" : "已完成"}（${result.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
-    return 0;
   }
 
   if (command === "triage") {

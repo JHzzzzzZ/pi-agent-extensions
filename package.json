@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-extensions",
-  "version": "2.32.8",
+  "version": "2.33.0",
   "private": true,
   "type": "module",
   "description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge / deep-init / human-notify / solo-mode；另有独立运行（非扩展）的 agent-manager 工具：会话浏览/检索/重命名/可恢复删除 + agent 子进程管理 + 零依赖浏览器前端",
@@ -10,7 +10,7 @@
   "scripts": {
     "test:contract": "node --test test/status-bar-contract.test.ts",
     "test:smoke": "node --test test/install-smoke.test.ts",
-    "test:todo": "node --test test/todo-cli.test.ts",
+    "test:todo": "node --test \"test/todo-cli.test.ts\" \"todo-cli/test/*.test.ts\"",
     "smoke": "node tools/install-smoke.mjs"
   },
   "engines": {
