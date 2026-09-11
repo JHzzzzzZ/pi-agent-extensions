@@ -8,6 +8,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { LEADER_ENV_RUNID } from "../types.ts";
 import type { ChildStdinMode, PiChildProcess, PiSpawn } from "../types.ts";
 
 /**
@@ -144,6 +145,27 @@ export async function waitForChild(handle: FakeSpawnHandle, index = 0): Promise<
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error(`no child spawned at index ${index}`);
+}
+
+/**
+ * Waits until the child spawned for `runId` exists and returns it.
+ * Concurrent start() calls run real fs/git work before spawning, so spawn
+ * completion order can differ from start-call order — pairing children by
+ * array index then feeds one run's events to another run's channel (and
+ * hangs `await` on the run that never gets a response). Pair by the runId
+ * the spawn port already records in `env[LEADER_ENV_RUNID]` instead.
+ */
+export async function waitForChildByRunId(
+  handle: FakeSpawnHandle,
+  runId: string,
+  attempts = 400,
+): Promise<FakeChild> {
+  for (let i = 0; i < attempts; i++) {
+    const index = handle.records.findIndex((record) => record.env?.[LEADER_ENV_RUNID] === runId);
+    if (index >= 0 && handle.children[index]) return handle.children[index]!;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`no leader child spawned for runId ${runId}`);
 }
 
 export function sleep(ms: number): Promise<void> {
