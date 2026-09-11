@@ -136,6 +136,68 @@ test("coordinator spawns the leader with prompt/env/-e and folds member results 
   assert.equal(status.lastRecord?.runId, run.runId);
 });
 
+test("leader env 继承父进程环境（不再是仅含 run 级键的全新对象）", async () => {
+  const envBackup = { ...process.env };
+  const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const pathPrefix = `fast-dev-inherit${path.delimiter}`;
+  try {
+    process.env.FAST_DEV_INHERIT_MARKER = "inherited-from-parent";
+    process.env[pathKey] = `${pathPrefix}${process.env[pathKey] ?? ""}`;
+    const spawn = makeFakeSpawn();
+    const coordinator = new TeamRunCoordinator({
+      cwd: () => "/repo",
+      worktreeRoot: "/tmp/worktrees",
+      spawn: spawn.spawn,
+      piCommand: "pi",
+    });
+    const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+    const child = await waitForChild(spawn, 0);
+    const env = spawn.records[0].env;
+    assert.equal(env?.FAST_DEV_INHERIT_MARKER, "inherited-from-parent", "父进程标记键必须被 leader 继承");
+    assert.ok((env?.[pathKey] ?? "").startsWith(pathPrefix), "父进程 PATH 必须被继承（前缀保留）");
+    // 本次 run 的三个键仍叠加在继承环境之上。
+    assert.equal(env?.PI_AGENT_TEAM_FILE, fixtureTeam().filePath);
+    assert.equal(env?.PI_AGENT_TEAM_NAME, "dev-team");
+    assert.match(env?.PI_AGENT_TEAM_RUN_ID ?? "", /^run-\d+$/);
+    child.autoRespond(leaderLines(), 0, 5);
+    const result = await promise;
+    assert.ok(result.ok, result.ok ? "" : result.message);
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, envBackup);
+  }
+});
+
+test("非 resume run 剥离父进程残留的 run 级键（不继承 WORKTREE_RUN_ID/MEMBER_MODELS）", async () => {
+  const envBackup = { ...process.env };
+  try {
+    process.env.PI_AGENT_TEAM_WORKTREE_RUN_ID = "run-parent";
+    process.env.PI_AGENT_TEAM_MEMBER_MODELS = JSON.stringify({ frontend: "opencode-go/deepseek-v4" });
+    const spawn = makeFakeSpawn();
+    const coordinator = new TeamRunCoordinator({
+      cwd: () => "/repo",
+      worktreeRoot: "/tmp/worktrees",
+      spawn: spawn.spawn,
+      piCommand: "pi",
+    });
+    const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+    const child = await waitForChild(spawn, 0);
+    const env = spawn.records[0].env;
+    assert.equal(env?.PI_AGENT_TEAM_WORKTREE_RUN_ID, undefined, "父进程的 worktree 别名不得继承");
+    assert.equal(env?.PI_AGENT_TEAM_MEMBER_MODELS, undefined, "父进程的成员模型覆盖不得继承");
+    // 本次 run 自己的三个键照常写入。
+    assert.equal(env?.PI_AGENT_TEAM_FILE, fixtureTeam().filePath);
+    assert.equal(env?.PI_AGENT_TEAM_NAME, "dev-team");
+    assert.match(env?.PI_AGENT_TEAM_RUN_ID ?? "", /^run-\d+$/);
+    child.autoRespond(leaderLines(), 0, 5);
+    const result = await promise;
+    assert.ok(result.ok, result.ok ? "" : result.message);
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, envBackup);
+  }
+});
+
 test("RPC steer：run 运行中插话写入 stdin，agent_settled 后关闭 stdin（进程退出门）", async () => {
   const spawn = makeFakeSpawn();
   const coordinator = new TeamRunCoordinator({
