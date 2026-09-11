@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { formatStatusSnapshot, TeamRunCoordinator, type UiPort } from "../cockpit.ts";
+import type { RunProgress } from "../types.ts";
 import { visibleWidth } from "../viewer.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import {
@@ -581,4 +582,123 @@ test("leader child failure marks the run failed with the error detail", async ()
   assert.ok(result.ok);
   assert.equal(result.value?.status, "failed");
   assert.match(result.value?.error ?? "", /model exploded/);
+});
+
+// 需求 A：live 成员模型必须是子进程实际上报值（usage.model），声明值只是
+// 成员未跑过/未上报时的占位；thinkingLevel 同通路（需求 B）。
+test("dispatch 结果把成员实际 model/thinkingLevel 折进 live progress（覆盖声明值、补未声明成员）", async () => {
+  const spawn = makeFakeSpawn();
+  const updates: RunProgress[] = [];
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const team = fixtureTeam({
+    members: [
+      { name: "frontend", model: "chatanywhere/gpt-5.6:high", prompt: "p" },
+      { name: "backend", prompt: "p" },
+      { name: "db", model: "anthropic/claude-sonnet-4-5:xhigh", prompt: "p" },
+    ],
+  });
+  const promise = coordinator.start({ team, task: "t", ui: fakeUi(), onProgress: (p) => updates.push(structuredClone(p)) });
+  const child = await waitForChild(spawn, 0);
+
+  // 首次 leader 事件触发 render：播种态把声明后缀拆成 thinkingLevel
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "拆解" }], usage: { input: 1, output: 1, cost: { total: 0 }, totalTokens: 2 } }));
+  assert.deepEqual(
+    updates.at(-1)!.members.map((m) => [m.name, m.model, m.thinkingLevel]),
+    [
+      ["frontend", "chatanywhere/gpt-5.6:high", "high"],
+      ["backend", undefined, undefined],
+      ["db", "anthropic/claude-sonnet-4-5:xhigh", "xhigh"],
+    ],
+  );
+
+  child.emitLine(toolExecutionStartLine("team_dispatch", { tasks: [{ agent: "frontend", task: "a" }, { agent: "backend", task: "b" }] }));
+  child.emitLine(
+    dispatchDetails([
+      { name: "frontend", ok: true, status: "done", usage: { input: 1, output: 1, cost: 0, turns: 1, model: "gpt-5.6", thinkingLevel: "medium" } },
+      { name: "backend", ok: true, status: "done", usage: { input: 1, output: 1, cost: 0, turns: 1, model: "claude-sonnet-4-5" } },
+    ]),
+  );
+  const folded = updates.at(-1)!;
+  const frontend = folded.members.find((m) => m.name === "frontend")!;
+  assert.equal(frontend.model, "gpt-5.6", "实际上报值覆盖声明值");
+  assert.equal(frontend.thinkingLevel, "medium", "实际思考级别覆盖声明后缀");
+  const backend = folded.members.find((m) => m.name === "backend")!;
+  assert.equal(backend.model, "claude-sonnet-4-5", "未声明成员补实际值");
+  assert.equal(backend.thinkingLevel, undefined);
+  const db = folded.members.find((m) => m.name === "db")!;
+  assert.equal(db.model, "anthropic/claude-sonnet-4-5:xhigh", "未派发成员保留声明值");
+  assert.equal(db.thinkingLevel, "xhigh");
+
+  // leader 的 provider 原生级别随 message_end 进 live 状态，并写进终态记录。
+  child.emitLine(
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "FINAL" }],
+      usage: { input: 50, output: 20, cost: { total: 0.05 }, totalTokens: 300 },
+      model: "claude-opus-4-5",
+      providerThinkingLevel: "max",
+    }),
+  );
+  assert.equal(updates.at(-1)!.leaderThinkingLevel, "max");
+  child.emitClose(0);
+  const result = await promise;
+  assert.ok(result.ok, result.ok ? "" : result.message);
+  assert.equal(result.value!.leaderThinkingLevel, "max");
+});
+
+test("record.leaderThinkingLevel：leader 事件实际值优先，无事件时回退团队声明后缀", async () => {
+  const spawn = makeFakeSpawn();
+  const coordinator = new TeamRunCoordinator({
+    cwd: () => "/repo",
+    worktreeRoot: "/tmp/worktrees",
+    spawn: spawn.spawn,
+    piCommand: "pi",
+  });
+  const team = fixtureTeam({ leader: { model: "anthropic/claude-opus-4-5:xhigh", prompt: "你是负责人。" } });
+
+  const first = coordinator.start({ team, task: "t1", ui: fakeUi() });
+  const child = await waitForChild(spawn, 0);
+  child.autoRespond(
+    [
+      messageEndLine("assistant", {
+        content: [{ type: "text", text: "A" }],
+        model: "claude-opus-4-5",
+        providerThinkingLevel: "low",
+      }),
+    ],
+    0,
+    5,
+  );
+  const firstResult = await first;
+  assert.ok(firstResult.ok);
+  assert.equal(firstResult.value!.leaderThinkingLevel, "low", "有实际上报值时以它为准");
+
+  const second = coordinator.start({ team, task: "t2", ui: fakeUi() });
+  const child2 = await waitForChild(spawn, 1);
+  child2.autoRespond([messageEndLine("assistant", { content: [{ type: "text", text: "B" }], model: "claude-opus-4-5" })], 0, 5);
+  const secondResult = await second;
+  assert.ok(secondResult.ok);
+  assert.equal(secondResult.value!.leaderThinkingLevel, "xhigh", "无实际上报时回退声明后缀");
+});
+
+test("formatStatusSnapshot running 成员行在状态后带模型（与终态成员行位置对齐）", () => {
+  const running = formatStatusSnapshot(
+    {
+      running: true,
+      progress: {
+        runId: "r",
+        team: "dev-team",
+        task: "t",
+        startedAtMs: 0,
+        members: [{ name: "frontend", status: "running", model: "gpt-5.6", note: "turn 2", latest: "在写样式" }],
+      },
+      lastRecord: null,
+    },
+    0,
+  );
+  assert.match(running, /▶ frontend running — gpt-5\.6 — turn 2 — 在写样式/);
 });

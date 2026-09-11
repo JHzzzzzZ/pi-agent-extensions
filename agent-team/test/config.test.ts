@@ -14,6 +14,7 @@ import {
   findNearestProjectTeamsDir,
   parseTeamFile,
   serializeTeam,
+  splitModelThinking,
   validateTeam,
 } from "../config.ts";
 import { TeamErrorCodes } from "../types.ts";
@@ -196,6 +197,31 @@ test("discoverTeams scans global+project dirs with project precedence", () => {
   const globalOnly = discoverTeams({ cwd: path.join(root, "proj"), scope: "global", globalDir });
   assert.equal(globalOnly.teams.length, 2);
   assert.equal(globalOnly.teams.find((t) => t.name === "dev-team")?.source, "global");
+});
+
+// 思考级别后缀来自宿主 VALID_THINKING_LEVELS（pi CLI `--model provider/id:level`）。
+test("splitModelThinking 只在最后一段是有效思考级别时剥离模型后缀", () => {
+  for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    assert.deepEqual(splitModelThinking(`anthropic/claude-opus-4-5:${level}`), {
+      model: "anthropic/claude-opus-4-5",
+      thinkingLevel: level,
+    });
+  }
+  // provider 斜杠形态 & 模型 id 本就带冒号：只剥最后一个合法后缀
+  assert.deepEqual(splitModelThinking("openrouter/deepseek/deepseek-r1:max"), {
+    model: "openrouter/deepseek/deepseek-r1",
+    thinkingLevel: "max",
+  });
+  assert.deepEqual(splitModelThinking("a:b:medium"), { model: "a:b", thinkingLevel: "medium" });
+  // 非法后缀不剥（是模型名的一部分）
+  assert.deepEqual(splitModelThinking("provider/model:ultra"), { model: "provider/model:ultra" });
+  assert.deepEqual(splitModelThinking("provider/model:high5"), { model: "provider/model:high5" });
+  // 无后缀与空值安全
+  assert.deepEqual(splitModelThinking("anthropic/claude-opus-4-5"), { model: "anthropic/claude-opus-4-5" });
+  assert.deepEqual(splitModelThinking(undefined), {});
+  assert.deepEqual(splitModelThinking(""), {});
+  // 剥完会得到空模型（裸后缀）不剥：`:high` 不是可解析的模型引用
+  assert.deepEqual(splitModelThinking(":high"), { model: ":high" });
 });
 
 test("createTeamFile writes the file and refuses overwrites", () => {

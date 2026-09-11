@@ -310,6 +310,30 @@ test("renderViewerFrame pins a fixed four-line meta header atop the detail pane"
   assert.ok(!tight.join("\n").includes("\x1b[1m成员:"), "header capped at bodyHeight-1");
 });
 
+// 需求 B：模型行追加思考级别段——`<model> · 思考 <level>`；
+// model 已知/未知分别降级 `（默认）`，头部仍是固定 4 行。
+test("详情头模型行带思考级别：有值 `· 思考 <level>`，model 已知/未知分别降级 （默认）", () => {
+  const styled: Styles = { ...styles, bold: ansi("1") };
+  const withLevel = viewerData({
+    actors: [{ actor: "_leader", label: "leader", status: "running", model: "anthropic/claude-opus-4-5", thinkingLevel: "high" }],
+  });
+  const frame = renderViewerFrame(withLevel, initialViewerState(), 80, { styles: styled, bodyHeight: 10 });
+  assert.match(paneColumns(frame[6]).detail, /^\x1b\[1m模型:\x1b\[0m anthropic\/claude-opus-4-5 · 思考 high/);
+  assert.equal(frame.length, 10 + VIEWER_CHROME_ROWS, "帧总行数不变（仍 4 行头）");
+
+  // model 已知而思考级别未知（legacy/unmanaged provider 缺省）：显式降级
+  const noLevel = viewerData({
+    actors: [{ actor: "_leader", label: "leader", status: "running", model: "anthropic/claude-opus-4-5" }],
+  });
+  const frame2 = renderViewerFrame(noLevel, initialViewerState(), 80, { styles: styled, bodyHeight: 10 });
+  assert.match(paneColumns(frame2[6]).detail, /^\x1b\[1m模型:\x1b\[0m anthropic\/claude-opus-4-5 · 思考 （默认）/);
+
+  // model 与级别均未知：仅 （默认），不猜
+  const neither = viewerData({ actors: [{ actor: "_leader", label: "leader", status: "running" }] });
+  const frame3 = renderViewerFrame(neither, initialViewerState(), 80, { styles: styled, bodyHeight: 10 });
+  assert.match(paneColumns(frame3[6]).detail, /^\x1b\[1m模型:\x1b\[0m （默认）/);
+});
+
 test("renderViewerFrame gates tiny terminals with a single hint line", () => {
   // 最小宽度门（§4，fleet.ts:1321）：width<36 → 单行提示（与 fleet 同构：
   // 窄终端下提示本身也会被截断，只保证单行不破版）。

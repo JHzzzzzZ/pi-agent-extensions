@@ -55,6 +55,41 @@ test("runChildPi parses JSON events and accumulates usage/finalText", async () =
   assert.deepEqual(events, ["message_end", "message_end", "message_end", "exit"]);
 });
 
+test("runChildPi folds providerThinkingLevel into usage and emits it on assistant message_end", async () => {
+  const spawn = makeFakeSpawn();
+  const emitted: Array<{ type: string; thinkingLevel?: string }> = [];
+  const promise = runChildPi({
+    command: "pi",
+    args: [],
+    spawn: spawn.spawn,
+    onEvent: (event) => emitted.push(event),
+  });
+  const child = await waitForChild(spawn);
+  child.emitLine(
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "OK" }],
+      usage: { input: 1, output: 1, cost: { total: 0 }, totalTokens: 2 },
+      model: "claude-opus-4-5",
+      providerThinkingLevel: "high",
+    }),
+  );
+  child.emitClose(0);
+  const outcome = await promise;
+  assert.equal(outcome.usage.thinkingLevel, "high");
+  assert.equal(emitted.find((event) => event.type === "message_end")?.thinkingLevel, "high", "event 携带 provider 原生级别");
+
+  // legacy/unmanaged provider 缺省 providerThinkingLevel → 不注入（不猜级别）
+  const spawn2 = makeFakeSpawn();
+  const emitted2: Array<{ type: string; thinkingLevel?: string }> = [];
+  const promise2 = runChildPi({ command: "pi", args: [], spawn: spawn2.spawn, onEvent: (event) => emitted2.push(event) });
+  const child2 = await waitForChild(spawn2);
+  child2.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "x" }], usage: {}, model: "claude-opus-4-5" }));
+  child2.emitClose(0);
+  const outcome2 = await promise2;
+  assert.equal(outcome2.usage.thinkingLevel, undefined);
+  assert.equal(emitted2.find((event) => event.type === "message_end")?.thinkingLevel, undefined);
+});
+
 test("runChildPi buffers partial stdout chunks", async () => {
   const spawn = makeFakeSpawn();
   const promise = runChildPi({ command: "pi", args: [], spawn: spawn.spawn });
