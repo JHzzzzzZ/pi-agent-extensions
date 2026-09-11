@@ -70,7 +70,7 @@ const USAGE = [
 
 /** 后台运行注入点：测试替换为假实现；默认拉起真实子 pi 进程（runner.ts） */
 export interface LoopBgOverrides {
-  runBg?: (opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal }) => Promise<BgRunOutcome>;
+  runBg?: (opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal; model?: string }) => Promise<BgRunOutcome>;
 }
 
 interface BgEntry {
@@ -88,7 +88,7 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
 
   const tasks: LoopTask[] = [];
   const bgEntries = new Map<string, BgEntry>();
-  const runBg = overrides?.runBg ?? ((opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal }) => runBgAgent(opts));
+  const runBg = overrides?.runBg ?? ((opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal; model?: string }) => runBgAgent(opts));
   let stopTicker: (() => void) | undefined;
   let savedCtx: ExtensionContext | undefined;
   /** 上次写入 widget 的纯文本指纹：tick 驱动下内容不变就跳过 setWidget。 */
@@ -227,7 +227,8 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     bgEntries.set(t.id, entry);
     refreshWidget();
     notify(savedCtx, `loop ${t.id} 已转后台执行，完成后通知（会话可用 pi --session 恢复查看）`);
-    runBg({ taskId: t.id, prompt: t.task, cwd: safeCwd(), signal: entry.controller.signal })
+    // v1.4 模型指定必须从任务透传：丢了它就等于 --bg --model 形同虚设（子 pi 会落回默认模型）
+    runBg({ taskId: t.id, prompt: t.task, cwd: safeCwd(), signal: entry.controller.signal, model: t.model })
       .then((outcome) => finishBgRun(t.id, entry, outcome))
       .catch((err) => {
         bgEntries.delete(t.id);
