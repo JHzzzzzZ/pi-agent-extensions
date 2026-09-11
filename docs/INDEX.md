@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 8bee163
+> last verified @ 0db6236
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -36,6 +36,7 @@
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
 | run-timer | 会话/任务/回合计时 widget |
 | solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启 |
+| todo-cli | `todos/` 工作流原子操作：agent 工具 `todo` + 冒号命令面；`core.ts` 与仓库 CLI 共用，triage 只读扫描 worktree↔条目 |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 
 ## 收录与淘汰
