@@ -378,7 +378,14 @@ test("buildProgressText renders status icons, notes and latest activity", () => 
  * boundary test proves the OS-level child never sees them).
  */
 function snapshotMemberEnv(): () => void {
-  const keys = [LEADER_ENV_FILE, LEADER_ENV_NAME, LEADER_ENV_RUNID, "AGENT_TEAM_STRIP_SENTINEL"] as const;
+  const keys = [
+    LEADER_ENV_FILE,
+    LEADER_ENV_NAME,
+    LEADER_ENV_RUNID,
+    "AGENT_TEAM_STRIP_SENTINEL",
+    // 外部成员 env 透传用例会临时设置代理放行变量。
+    "NO_PROXY",
+  ] as const;
   const saved = new Map<string, string | undefined>(keys.map((key) => [key, process.env[key]]));
   return () => {
     for (const key of keys) {
@@ -810,4 +817,34 @@ test("外部成员 worktree:true 在隔离 worktree 中启动", async () => {
   assert.ok(add, "git worktree add invoked");
   assert.equal(spawn.records[0].cwd, expectedPath, "external member spawns in the isolated worktree");
   assert.deepEqual(outcome.results[0].worktree, { path: expectedPath, branch: "team/run-1/coder" });
+});
+
+test("外部成员 env 透传：保留父进程 NO_PROXY，只剥 leader 三键", async () => {
+  const restoreEnv = snapshotMemberEnv();
+  seedLeaderEnv();
+  process.env.NO_PROXY = "127.0.0.1,localhost";
+  try {
+    const { deps, spawn } = baseDeps();
+    const executor = createDispatchExecutor({
+      ...deps,
+      team: fixtureTeam({ members: [{ ...CODEX_MEMBER }] }),
+      resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+    });
+    const promise = executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, undefined);
+    const child = await waitForChild(spawn, 0);
+    const record = spawn.records[0];
+
+    // F1 修复链路的下半段：leader 子进程继承到的 NO_PROXY 必须能穿过
+    // stripLeaderEnv 到达外部成员（claude 访问 localhost BASE_URL 放行）。
+    assert.equal(record.env?.NO_PROXY, "127.0.0.1,localhost", "父进程代理放行变量透传到外部成员");
+    assert.equal(record.env?.[LEADER_ENV_FILE], undefined);
+    assert.equal(record.env?.[LEADER_ENV_NAME], undefined);
+    assert.equal(record.env?.[LEADER_ENV_RUNID], undefined);
+
+    child.autoRespond(fixtureLines("external-codex-success.jsonl"), 0, 5);
+    const outcome = await unwrap(promise);
+    assert.equal(outcome.results[0].status, "done");
+  } finally {
+    restoreEnv();
+  }
 });

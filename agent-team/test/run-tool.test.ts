@@ -678,6 +678,24 @@ test("team_run 预检：外部成员 CLI 不可解析 → CLI_NOT_FOUND 且零 s
   }
 });
 
+test("team_run 预检（登记偏差）：无注册表 + pi 成员裸 id model → MODEL_NOT_FOUND", async () => {
+  // 1.21.0 在无注册表时整门跳过（裸 id 放行）；v1.22.0 的 permissive fallback
+  // 让外部成员 CLI 探测在无注册表时仍生效，代价是裸 id model 硬失败——此用例
+  // 锁定该已知边缘偏差（理由见 index.ts runModelPreflight 注释）。
+  const { spawn, run, cleanup } = await setup({
+    members: [{ name: "frontend", description: "前端", model: "bareid", prompt: "你是前端工程师。" }],
+  });
+  try {
+    const result = await run({ team: "proj-team", task: "修复登录 bug" });
+    assert.equal(result.isError, true);
+    assert.equal((result.details as { code?: string }).code, "MODEL_NOT_FOUND");
+    assert.match(result.content[0].text, /bareid/);
+    assert.equal(spawn.records.length, 0, "no leader spawned on model preflight failure");
+  } finally {
+    cleanup();
+  }
+});
+
 test("leader 模式 team_dispatch：外部成员 usage 折回 details.totalUsage", async () => {
   isolateRunsDir();
   resetDoubleLoadGuardForTests();
