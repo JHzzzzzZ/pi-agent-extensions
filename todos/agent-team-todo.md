@@ -161,3 +161,4 @@
 - [ ] 团队文件 description 含 ASCII「: 」时 frontmatter 解析失败被吞、团队静默从 /team:list 消失（v1.26.0 QA 真机发现）：要求解析失败可见（列表/doctor 显示「定义不可用 + 原因」）或容忍含冒号标量；补单测覆盖含「: 」/引号/多行块标量。
 - [ ] 外部 CLI 后端 v2 待定项（承接 L121「待实现时定」）：① 外部 leader 形态（MCP 桥或单角色直派）；② codex 费用口径（cost 恒 0、不入 cost 预算）与用量统计；③ 外部成员 sandbox/权限面配置化（当前 tools: 白名单对外部成员忽略）。
 - [ ] cockpit leader env 继承语义的 POSIX 专用测试：v1.26.0 F1 修复（leader env = 父环境 + 三键覆盖）仅 Windows 侧有测试锁定，补 Linux/macOS 用例（PATH/代理变量透传一致）防平台回归。
+- [ ] 外部 CLI 成员 thinking/reasoning 级别映射（v1.26.0 缺口，用户 2026-09-12 追问）：外部成员 model 原串直传 CLI，写 :level 后缀会被当成模型名报错（当前无任何级别参数注入，见 external.ts buildExternalArgs）——实际级别只能跟随各 CLI 全局配置（codex ~/.codex/config.toml 的 model_reasoning_effort；claude --effort 默认）。要求：按成员指定级别——codex 注入 -c model_reasoning_effort=<level>、claude 注入 --effort <level>；设计待定：per-member 字段（如 thinking:）还是解析 model 的 :level 后缀映射（pi 的 off/minimal/low/medium/high/xhigh/max → 各 CLI 支持集，claude 仅 low/medium/high/xhigh/max）；预检对非法级别 fail-closed；README §7 + docs 卡同步。（processing）
