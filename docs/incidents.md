@@ -147,3 +147,10 @@
 - 根因：`createWorktree` 把「已注册 worktree 的分支 ≠ 期望分支」一律当致命错误，没有区分「可无损切回」（期望分支存在 + 未被任何 worktree 检出 + 工作树干净）与「真不可恢复」（脏改/分支被占/分支已被删）；文案也只给了破坏性出路。
 - 处置（v1.24.0）：三条件成立时 `git switch <branch>` 自愈并返回可选 `switchedBackFrom`（dispatch 进度 note 与报告 worktree 行标注「已从 X 切回」）；其余失败改非破坏文案——当前/期望分支 + `Fix: git -C "<path>" switch "<branch>"`（脏区注明 commit/stash、分支被检出附 holder 路径 + `git worktree list`），分支不匹配路径禁提 `remove --force`；真实临时 git 仓库 5 用例 + dispatch 级集成回归（`test/worktree-branch-heal.test.ts`）。
 - 教训：① **「检测到不一致」不等于「不可恢复」**——修复类路径要先枚举无损恢复条件，只有条件不成立时才是错误；② **错误文案里的每条命令都是会被执行的建议**——`remove --force` 这类破坏性出路不该出现在可自愈/可人工决策的场景；③ 成员自建分支是子 agent 的正常行为，隔离层应兜底而不是惩罚。
+
+## leader 子进程 env 替换语义断代理/宿主配置透传（agent-team v1.26.0，QA 真机 run-1789134203331 F1）
+
+- 症状：外部 claude 成员经本地代理链路（宿主 `httpProxy` + `BASE_URL=localhost`）派发必失败（405），同 run 的 codex 成员与 pi 成员正常；QA S2 场景复现并作为 F1 卡点回派修复。
+- 根因：cockpit 组装 leader 子进程 env 时用**白名单替换**——只注入 run 三键、丢掉父进程环境；宿主 `applyHttpProxySettings` 注入的 `HTTPS_PROXY`/`NO_PROXY` 与 `PI_CODING_AGENT_DIR` 到不了 leader，再由 `stripLeaderEnv()` 传给外部成员时仍是残缺 env，本地 `BASE_URL` 被全局 httpProxy 劫持。
+- 处置（v1.26.0）：leader env 改**继承父进程环境 + 覆盖 run 三键**（`dispatch.ts` `stripRunScopedEnv()`：剥 3 个 leader 键与 resume 谱系键，其余原样保留），与成员侧 `stripLeaderEnv()` 的透传语义对齐；cockpit 4 条 env 继承/覆盖/透传测试锁定（含 NO_PROXY / PI_CODING_AGENT_DIR 透传与父进程残留 leader 键被覆盖）。
+- 教训：① 子进程 env 的默认正确姿势是「继承 + 覆盖」而非「白名单替换」——代理、宿主目录、凭据等进程级配置由宿主注入父进程环境，替换语义会静默切断；② `NO_PROXY` 是本地服务链路的隐性依赖，外部 CLI 走 localhost 时必须透传；③ 该类缺陷只在「父进程有环境 + 子进程走网络」的真实链路显形，纯 fake 测试与本地直连都抓不到。
