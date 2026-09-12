@@ -20,7 +20,7 @@
                            （worktree 成员 cd 到独立 git worktree）
 ```
 
-成员亦可声明 `backend: codex|claude` 改由外部 agent CLI 非交互执行（v1.22.0，见 §7）；未声明 backend 的成员行为与旧版完全一致。
+成员亦可声明 `backend: codex|claude` 改由外部 agent CLI 非交互执行（v1.26.0，见 §7）；未声明 backend 的成员行为与旧版完全一致。
 
 ## 安装
 
@@ -73,7 +73,7 @@ members:
 - **leader 默认拥有全部内置工具**（读写文件、bash 等）。若要限制 leader 亲自动手（例如只让它拆解派发），在团队文件里设置 `leader.tools`（如 `tools: [read, grep, find, ls]`）。实测中 leader 可能会用编辑工具自行"降级代写"或修订团队配置——不希望如此就收紧它的工具。
 - **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team-run-<runId>`，连字符形式——避免与成员分支 `team/<runId>/<member>` 构成 git ref 文件/目录冲突）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；路径被非 worktree 占用等才报 `WORKTREE_UNAVAILABLE` 并附可操作提示）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
 - **模型预检**：派单前会先对 leader + 全体成员的 `provider/id` 做一次注册表预检——引用不存在的模型直接报 `MODEL_NOT_FOUND`（不启动任何子进程，提示先调 `team_models`）；存在但未配置鉴权的模型放行并警告。成员不配 model 则用 pi 默认模型（无从预检）。
-- **外部 CLI 后端成员（v1.22.0）**：成员可声明 `backend: codex|claude` 改用对应 CLI 非交互执行（语法/口径/限制见 §7）；leader 不可声明 backend（run 预检 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed）。
+- **外部 CLI 后端成员（v1.26.0）**：成员可声明 `backend: codex|claude` 改用对应 CLI 非交互执行（语法/口径/限制见 §7）；leader 不可声明 backend（run 预检 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed）。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（下次派单/列表即生效，无注册缓存）。
 
 ### 3. 派单与复用
@@ -262,4 +262,4 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 - 成员子进程与 pwr 的 `PiAgentRunner`、官方 subagent 扩展同模式：`--mode json -p --no-session`、行 JSON 事件流解析（usage/stopReason/finalText）、`team-tmp://` prompt 物化为 0600 临时文件、SIGTERM→SIGKILL 中止。本扩展自包含，不 import pwr。
 - 子进程环境与工具面显式声明（v1.17.1）：成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
 - 结果截断：单成员结果 50KB、摘要 8KB；错误按成员隔离（单个成员失败不拖垮整次 dispatch）。
-- 已知限制（v1）：任务为纯文本（GitHub issue 输入）；worktree 不自动合并；无超时（手动 `/team:stop`）；外部 CLI 后端（v1.22.0，codex/claude）仅成员可用（leader 声明 backend 由 run 预检 fail-closed），`:level` 思考后缀不映射。
+- 已知限制（v1）：任务为纯文本（GitHub issue 输入）；worktree 不自动合并；无超时（手动 `/team:stop`）；外部 CLI 后端（v1.26.0，codex/claude）仅成员可用（leader 声明 backend 由 run 预检 fail-closed），`:level` 思考后缀不映射。
