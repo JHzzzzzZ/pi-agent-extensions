@@ -1,38 +1,29 @@
 /**
- * todo-cli/query.ts — L15 元数据化筛选查询的纯函数层（10-design §3.1，W2 白名单文件）。
+ * todo-cli/query.ts — list 结构化查询的纯函数层（方案 C 适配，todos/todo-cli-todo.md:17）。
  *
- * 输入只有文本派生的条目与过滤条件，输出只有行对象/字符串：不 import
- * node:fs / node:sqlite / store / migrate / core，保证查询逻辑可在无数据库、
- * 无文件系统的环境下单独验证。statusMark 与 parseBranchRef 两处口径独立于
- * core 实现，与 core.STATUS_MARK / core.PROCESSING_REF_RE 保持一致（W4 以
- * 对照测试锁定）；时间戳三字段由 store 的 DB 列填充，markdown 派生路径恒为
- * null（10-design §2.1 字段来源表）。
+ * 输入只有 JSON 条目的投影与过滤条件，输出只有行对象/字符串：不 import fs / lock /
+ * migrate / core，保证查询逻辑可在无文件系统环境下单独验证。方案 C 后 branch/tags/
+ * 三时间戳都是 schema 原生字段，不再有「文本派生 vs DB 列」双口径，也没有降级路径。
  *
- * 人读行格式与今日 list 输出字节一致：`${statusMark} ${file}:${line}  ${text}`
- * （`file` 为去 `.md` 的归属名，`line` 为 1-based 行号，行号与文本间两空格）。
+ * 人读行格式：`${statusMark} ${file}#${id}  ${text}`（file 为去 `.json` 的归属名，
+ * id 为文件内稳定编号，id 与文本间两空格）。
  */
 
-/** 条目三态：与 core.parseTodoFile 的 status 口径一致。 */
-export type EntryStatus = "open" | "processing" | "done";
+import type { EntryStatus } from "./schema.ts";
 
-/** 查询行对象：文本派生字段（file/line/status/text/branch/tags）+ DB 时间戳列。 */
+/** 查询行对象：JSON 条目的查询投影（无派生字段——branch/tags 原生）。 */
 export interface QueryEntry {
-  /** 归属文件名，无 `.md`（如 `general-todo`）。 */
+  /** 归属文件名，无 `.json`（如 `general-todo`）。 */
   file: string;
-  /** 1-based 行号。 */
-  line: number;
+  /** 文件内稳定 id。 */
+  id: number;
   status: EntryStatus;
-  /** 条目全文，含 `（processing…）`/`（完成…）` 标注，不做转义。 */
+  /** 纯需求描述（不含标注；标注在 notes，不参与 --text/--match 匹配）。 */
   text: string;
-  /** 派生：`@` 分支引用（PROCESSING_REF_RE 口径）；无则 null。 */
   branch: string | null;
-  /** 派生：`#词` 标签，保序去重；无 DB 亦可得到。 */
   tags: string[];
-  /** DB 列：首次导入/登记时刻；markdown 派生时 null。 */
   createdAt: string | null;
-  /** DB 列：claim 写入时刻；markdown 派生时 null。 */
   claimedAt: string | null;
-  /** DB 列：complete 写入时刻；markdown 派生时 null。 */
   completedAt: string | null;
 }
 
@@ -52,53 +43,11 @@ export interface EntryFilter {
   claimedSince?: string;
 }
 
-/** 与 core.STATUS_MARK 同表：done→`[x]` processing→`[~]` open→`[ ]`（core 私有常量不动，此处独立实现）。 */
 const STATUS_MARKS: Record<EntryStatus, string> = { done: "[x]", processing: "[~]", open: "[ ]" };
 
 /** 状态标记：人读行首列。 */
 export function statusMark(status: EntryStatus): string {
   return STATUS_MARKS[status];
-}
-
-/** 分支引用探针：口径 = core.PROCESSING_REF_RE（首个捕获组，遇全/半角冒号逗号与右括号截断）。 */
-const BRANCH_REF_RE = /@\s*([^\s：:，,）)]+)/;
-
-/** 分支引用派生：`/@\s*([^\s：:，,）)]+)/` 首个捕获组；无则 null。 */
-export function parseBranchRef(text: string): string | null {
-  const match = BRANCH_REF_RE.exec(text);
-  return match ? match[1] : null;
-}
-
-/**
- * `#词` 词法：`/(^|[\s（(])#([\p{L}\p{N}][\p{L}\p{N}_-]*)/gu`，保序去重。
- * 每次新建正则实例，避免 `/g` 的 lastIndex 状态在多次调用间泄漏。
- */
-export function parseTags(text: string): string[] {
-  const tagRe = /(^|[\s（(])#([\p{L}\p{N}][\p{L}\p{N}_-]*)/gu;
-  const tags: string[] = [];
-  for (const match of text.matchAll(tagRe)) {
-    const tag = match[2];
-    if (!tags.includes(tag)) tags.push(tag);
-  }
-  return tags;
-}
-
-/** parseTodoFile 输出 → QueryEntry（时间戳三字段恒 null；branch/tags 派生）。 */
-export function deriveQueryEntries(
-  fileName: string,
-  entries: Array<{ line: number; status: EntryStatus; text: string }>,
-): QueryEntry[] {
-  return entries.map((entry) => ({
-    file: fileName,
-    line: entry.line,
-    status: entry.status,
-    text: entry.text,
-    branch: parseBranchRef(entry.text),
-    tags: parseTags(entry.text),
-    createdAt: null,
-    claimedAt: null,
-    completedAt: null,
-  }));
 }
 
 /** AND 组合过滤；保持输入序（排序由 sortQueryEntries 单独负责）。全字段 undefined → 原样返回。 */
@@ -123,23 +72,23 @@ export function applyEntryFilter(entries: QueryEntry[], filter: EntryFilter): Qu
   );
 }
 
-/** file 升序（UTF-16 码元比较，与 readdirSync 排序口径一致）→ line 升序；返回新数组。 */
+/** file 升序（UTF-16 码元比较，与 readdirSync 排序口径一致）→ id 升序；返回新数组。 */
 export function sortQueryEntries(entries: QueryEntry[]): QueryEntry[] {
   return [...entries].sort((a, b) => {
     if (a.file !== b.file) return a.file < b.file ? -1 : 1;
-    return a.line - b.line;
+    return a.id - b.id;
   });
 }
 
 /**
  * json=true → `[JSON.stringify(sorted, null, 2)]`（整体一行交给 log）；否则每条
- * `${statusMark(s)} ${file}:${line}  ${text}`（与今日 list 人读行字节一致）。
- * 输出前复用 sortQueryEntries 的稳定排序，任何输入序下都与 list 排序字节一致。
+ * `${statusMark(s)} ${file}#${id}  ${text}`。输出前复用 sortQueryEntries 的稳定排序，
+ * 任何输入序下都与 list 排序字节一致。
  */
 export function serializeEntries(entries: QueryEntry[], opts: { json: boolean }): string[] {
   const sorted = sortQueryEntries(entries);
   if (opts.json) return [JSON.stringify(sorted, null, 2)];
-  return sorted.map((entry) => `${statusMark(entry.status)} ${entry.file}:${entry.line}  ${entry.text}`);
+  return sorted.map((entry) => `${statusMark(entry.status)} ${entry.file}#${entry.id}  ${entry.text}`);
 }
 
 const BAD_CLAIMED_SINCE = "--claimed-since 需要 YYYY-MM-DD 日期";

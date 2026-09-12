@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "title": "stream-token-speed-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "text": "根 README 为每个插件增加效果示意图",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 2,
+      "text": "状态条时钟统一与排序（跨插件）：footer 状态键 → `50:stream-token-speed`（调用点统一用 `STATUS_KEY` 常量；250ms 流式节流不变）；契约 `docs/cross/status-bar.md`。",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-10 @ feat/status-clock b9d397e，stream-token-speed 43 测试绿"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 3,
+      "text": "footer 多源状态挤占优化（跨插件）：多插件同时写 footer 时，宿主按 key 排序后把各段单空格拼一行并整行右截断（宿主 `footer.js`：`sortedStatuses.join(\" \")` + `truncateToWidth`）——段间无分隔、按字符硬切、无优先级。真机截图（2026-09-11）：goal + provider-quota + pwr 同屏时 pwr 段被截成 `workflows: 2 activ...`；本插件段最长（`TTFT 1200 ms｜最后 45.2 tok/s｜平均 38.1 tok/s`，约 40 字符）且排序带 50 最末，是整段被截没的头号受害者。涉及全部 5 个 footer 写入者：goal(`10:goal`)、provider-quota(`20:provider-quota`)、pwr(`30:pwr`)、solo-mode(`40:solo-mode`)、stream-token-speed(`50:stream-token-speed`)。优化方向待定：(a) 本插件文本瘦身/次要信息分时轮播（如默认只留 `TTFT+瞬时`、平均段轮播或省略、` tok/s` 后缀缩为 `t/s`）；(b) 段间可见分隔/短标签契约（统一前缀图标或 `│`），提升可辨性；(c) 截断改按段/按优先级而非尾部硬切（可能需宿主 `footer.js` 补丁；宿主补丁现已禁用，见 `docs/pi-widget-order-issue.md`）；(d) 本插件状态迁往编辑器上方 widget（避免与其余 footer 段争宽）。约束：不引入跨插件通信（`docs/cross/status-bar.md` 非目标）；250ms 流式节流与指纹跳过不变；完成时同步该契约卡 + 涉及插件 README/测试。跨插件需求，已在 goal / provider-quota / pwr / solo-mode todo 同步登记。（2026-09-14：宿主补丁方案已作废并完全还原——「仓库外禁改，除非人工批准」规则见 AGENTS.md「仓库边界」；替代方案：新增 status-footer 插件用公开 API `ctx.ui.setFooter` 接管 footer、扩展状态逐行 + 单段超宽续行，待人工确认后实施。）",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-15 @ merge e68095d：去 `生成中` 前缀与 `｜` 分隔——等待 `TTFT —`、热身 `TTFT 412ms · —`、流式 `TTFT 412ms · 86.4 tok/s`、汇总 `TTFT 412ms · ~78.6 tok/s`（`~` 标注平均，不再输出最后瞬时值）；无流式数据清除状态（删 `NO_DATA_STATUS`）；`status-port.setStatus` 统一拼 `│ `；45 测试绿"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 4,
+      "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件主要写 footer（按 key 排序，不受插入序影响），同属宿主根修受益面。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
+      "status": "processing",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-10 @ route A：材料已备，待提交上游"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 5,
+      "text": "footer 首段定格（跨插件）：按排序带排在最前的可见段不加 `│ ` 前导分隔符（行首定格），其余段之间仍用 `│ `；任一段出现/消失时实时重算最前段并重渲染其余段。宿主无「谁在最前」API（`ExtensionUIContext` 只写不读，`FooterDataProvider` 仅自定义 footer 可见），故新增每插件目录一份 `status-band.ts`：`Symbol.for(\"pi.status-bar.bands.v1\")` 进程共享登记表 + 出现/消失通知，不跨插件 import、保持单目录可复制安装；只认识同样使用本模块的写入者（本仓库五个 footer 写入者）。跨插件需求，五个 todo 同步登记。",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-15 @ merge 9db7983：段前缀改由本地 `status-band.ts` 统一决定（最前段无前缀、其余段 `│ `，低带出现/消失重渲染，前缀决策在样式之前）；新增 `session_shutdown` 清上一轮汇总与登记；45 测试绿（新增最前/非最前/重渲染用例）"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    }
+  ]
+}

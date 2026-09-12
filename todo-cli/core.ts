@@ -4,15 +4,13 @@
  * 本文件是仓库 CLI（`node tools/todo.mjs`）的唯一实现源：导出纯函数 + `main(argv, deps)`，
  * 无任何 Pi/宿主依赖，任意 cwd 可调用（REPO_ROOT 由脚本位置解析）。
  *
- * 背景：todos/ 工作流的规则（查重、路由、processing 标注、完成收口）目前只写在
- * skill 里，靠 agent 人工 grep + edit 执行——格式破坏、漏查重、错文件都发生过风险。
- * 本工具把「读/写 todos/ 文件」变成可重复的原子操作：解析、状态判定、跨文件查重、
- * 追加、领取标注、完成勾选与 lint 全部是纯函数，CLI 只做参数解析与文件落地。
- *
- * 设计边界（对齐 AGENTS.md 规则 2/7）：
- *   - 只读写仓库 `todos/` 目录内的文件，路径穿越直接拒绝；
- *   - 不自动 commit，不碰 `todos/` 之外的任何文件；
- *   - 登记（add）不做 processing 标注，领取（claim）才标注——动作显式分离；
+ * 存储形态（方案 C，todos/todo-cli-todo.md:17）：`todos/<名>.json` 是唯一持久真相，
+ * markdown 已退出（逃生回滚走 `migrate to-md`）。本模块负责：
+ *   - 七个子命令契约不变：summary / list / add / claim / complete / lint / triage；
+ *   - 全部写操作经 `todos/.todo-cli/locks/<名>.lock` 跨进程互斥 + temp+rename 原子落盘
+ *     （lock.ts；sqlite 索引层已删除，`--claimed-since` 等时间维度成为一等公民）；
+ *   - 只读写仓库 `todos/` 目录内的文件，路径穿越直接拒绝；不自动 commit；
+ *   - 登记（add）不做 processing 标注，领取（claim）才改状态——动作显式分离；
  *   - `lint` 只校验「根 package.json pi.extensions 注册的扩展都有同名 todo 文件」
  *     这一个方向（未实现插件的 todo 文件合法，不报）。
  *
@@ -20,110 +18,43 @@
  *   node tools/todo.mjs summary [--json]
  *   node tools/todo.mjs list [--status open|processing|done] [--file general]
  *   node tools/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
- *   node tools/todo.mjs add --file general "需求描述"        # 跨全部文件查重
+ *   node tools/todo.mjs add --file general "需求描述" [--tag 词1,词2]   # 跨全部文件查重
  *   node tools/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
  *   node tools/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
  *   node tools/todo.mjs lint
  *   node tools/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
- *   node tools/todo.mjs db status|rebuild|drop    # L14 索引生命周期（markdown 仍是权威）
+ *   node tools/todo.mjs migrate from-md [--dry-run] [--force] | to-md
  *
- * 纯函数（parseTodoFile / summarize / findDuplicates / appendEntry / setProcessing /
- * completeEntry / resolveTodoPath / normalizeText / parseWorktrees / parseMergedBranches /
- * triageRepo）导出给 `test/todo-cli.test.ts` 单测；`main` 同时供测试在临时目录上闭环演练。
+ * 纯函数（findDuplicateHits / resolveTodoPath / parseWorktrees / parseMergedBranches /
+ * triageRepo）导出给单测；`main` 同时供测试在临时目录上闭环演练。
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
-// L14/L15 接线（10-design §3.4–3.6）：store 与 core 是函数级循环 import——双方顶层
-// 均不调用对方导出，只在函数体内使用，ESM live binding 下安全。
-import { atomicWriteFile, openTodoStore } from "./store.ts";
-import { dbStatus, dropStore, rebuildStore } from "./migrate.ts";
-import {
-  applyEntryFilter,
-  deriveQueryEntries,
-  parseFilterOptions,
-  serializeEntries,
-  sortQueryEntries,
-} from "./query.ts";
+import { emptyTodoData, nextId, normalizeText, parseTodoJson, serializeTodo } from "./schema.ts";
+import type { TodoFileData } from "./schema.ts";
+import { atomicWriteFile, installProcessHooks, tmpDirFor, withTodoLock } from "./lock.ts";
+import { migrateFromMd, migrateToMd } from "./migrate.ts";
+import { applyEntryFilter, parseFilterOptions, serializeEntries, sortQueryEntries } from "./query.ts";
+import type { QueryEntry } from "./query.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, "..");
 
-const ENTRY_RE = /^\s*-\s+\[([ xX])\]\s+(.*)$/;
-const PROCESSING_RE = /[（(]processing[^）)]*[）)]/;
-
-/** 行尾探测：真实 todos/ 多为 CRLF，读写都必须保持原样（否则整文件 diff）。 */
-function detectEol(content) {
-  return String(content).includes("\r\n") ? "\r\n" : "\n";
-}
-
-/** 拆行并剥掉尾 \r（正则的 `.*$` 匹配不到 \r），写回时用 eol 还原。 */
-function splitLines(content) {
-  const lines = String(content).split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
-  return { lines, eol: detectEol(content) };
-}
+export { normalizeText } from "./schema.ts";
 
 // ---------------------------------------------------------------------------
-// 解析与状态
+// 查重（口径与 markdown 时代逐字节一致，仅 line → id）
 // ---------------------------------------------------------------------------
-
-/** 解析一个 todo 文件的条目（忽略不带 checkbox 的缩进说明行）。 */
-export function parseTodoFile(content) {
-  const entries = [];
-  const { lines } = splitLines(content);
-  for (let i = 0; i < lines.length; i += 1) {
-    const match = ENTRY_RE.exec(lines[i]);
-    if (!match) continue;
-    const text = match[2].trim();
-    const checked = match[1] !== " ";
-    const processing = !checked && PROCESSING_RE.test(text);
-    entries.push({
-      line: i + 1,
-      checked,
-      processing,
-      status: checked ? "done" : processing ? "processing" : "open",
-      text,
-    });
-  }
-  return entries;
-}
-
-/** 按文件汇总三态计数（name 为不带 .md 的文件名）。 */
-export function summarize(docs) {
-  return docs.map((doc) => {
-    const entries = parseTodoFile(doc.content);
-    return {
-      name: doc.name,
-      open: entries.filter((e) => e.status === "open").length,
-      processing: entries.filter((e) => e.status === "processing").length,
-      done: entries.filter((e) => e.status === "done").length,
-      total: entries.length,
-    };
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 查重
-// ---------------------------------------------------------------------------
-
-/** 归一化：去掉标注括号、空白与句读，转小写——"同一需求换个说法"要能撞上。 */
-export function normalizeText(text) {
-  return String(text)
-    .replace(/（[^）]*）|\([^)]*\)/g, "")
-    .replace(/[\s\u3000]/g, "")
-    .replace(/[。！？!?.,，、;；:：]/g, "")
-    .toLowerCase();
-}
 
 /**
- * 行级查重核心（findDuplicates 的提取）：归一化全等 = exact，
- * 一方包含另一方（长度 ≥ 8）= similar。entries 可为 DB 行或 parseTodoFile + name 派生行，
- * 返回 [{ name, line, status, text, kind }]。
+ * 行级查重核心：归一化全等 = exact，一方包含另一方（长度 ≥ 8）= similar。
+ * entries 输入为 {name, id, status, text} 投影，返回 [{ name, id, status, text, kind }]。
  */
-export function findDuplicateHits(text, entries) {
+export function findDuplicateHits(text: string, entries: Array<{ name: string; id: number; status: string; text: string }>) {
   const norm = normalizeText(text);
   if (norm.length === 0) return [];
   const hits = [];
@@ -131,107 +62,82 @@ export function findDuplicateHits(text, entries) {
     const other = normalizeText(entry.text);
     if (other.length === 0) continue;
     if (other === norm) {
-      hits.push({ name: entry.name, line: entry.line, status: entry.status, text: entry.text, kind: "exact" });
+      hits.push({ name: entry.name, id: entry.id, status: entry.status, text: entry.text, kind: "exact" });
     } else if (norm.length >= 8 && other.includes(norm)) {
-      hits.push({ name: entry.name, line: entry.line, status: entry.status, text: entry.text, kind: "similar" });
+      hits.push({ name: entry.name, id: entry.id, status: entry.status, text: entry.text, kind: "similar" });
     } else if (other.length >= 8 && norm.includes(other)) {
-      hits.push({ name: entry.name, line: entry.line, status: entry.status, text: entry.text, kind: "similar" });
+      hits.push({ name: entry.name, id: entry.id, status: entry.status, text: entry.text, kind: "similar" });
     }
   }
   return hits;
 }
 
-/** 跨文件查重：文档列表展平成行后委托 findDuplicateHits（行为与既有实现逐字节一致）。 */
-export function findDuplicates(text, docs) {
-  const entries = [];
-  for (const doc of docs) {
-    for (const entry of parseTodoFile(doc.content)) {
-      entries.push({ name: doc.name, line: entry.line, status: entry.status, text: entry.text });
-    }
-  }
-  return findDuplicateHits(text, entries);
-}
-
 // ---------------------------------------------------------------------------
-// 写操作（纯函数，输入输出都是文件内容字符串）
+// 路径、读取与保存
 // ---------------------------------------------------------------------------
 
-/** 追加一条未领取条目（`- [ ]`），保留原文件行尾与尾行。 */
-export function appendEntry(content, text) {
-  const base = String(content);
-  const eol = detectEol(base);
-  const head = base === "" || base.endsWith("\n") ? base : `${base}${eol}`;
-  return `${head}- [ ] ${text}${eol}`;
-}
-
-/** 唯一定位含 match 的条目；返回 { entry, lines, eol } 或 { code }。 */
-function locateEntry(content, match) {
-  const { lines, eol } = splitLines(content);
-  const hits = parseTodoFile(content).filter((e) => e.text.includes(match));
-  if (hits.length === 0) return { code: "NOT_FOUND" };
-  if (hits.length > 1) return { code: "AMBIGUOUS", hits };
-  return { entry: hits[0], lines, eol };
-}
-
-/** 领取：给唯一条目标注 `（processing [@ feat/branch]）`；已标注时幂等。 */
-export function setProcessing(content, match, ref) {
-  const located = locateEntry(content, match);
-  if (!located.entry) {
-    return { ok: false, code: located.code, message: located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围" };
-  }
-  const { entry, lines, eol } = located;
-  if (entry.processing) return { ok: true, content, changed: false };
-  const marker = ref ? `（processing @ ${String(ref).replace(/[）)]/g, " ")}）` : "（processing）";
-  lines[entry.line - 1] = `${lines[entry.line - 1]}${marker}`;
-  return { ok: true, content: lines.join(eol), changed: true };
-}
-
-/** 完成：勾选 `[x]`、去掉 processing 标注，可附 `（完成 <note>）`。 */
-export function completeEntry(content, match, note) {
-  const located = locateEntry(content, match);
-  if (!located.entry) {
-    return { ok: false, code: located.code, message: located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围" };
-  }
-  const { entry, lines, eol } = located;
-  if (entry.checked) return { ok: true, content, changed: false };
-  let line = lines[entry.line - 1].replace(/\[ \]/, "[x]").replace(PROCESSING_RE, "");
-  if (note) line += `（完成 ${String(note).replace(/[）)]/g, " ")}）`;
-  lines[entry.line - 1] = line;
-  return { ok: true, content: lines.join(eol), changed: true };
-}
-
-// ---------------------------------------------------------------------------
-// 路径与读取
-// ---------------------------------------------------------------------------
-
-/** todo 文件路径解析：只允许 `todos/` 下的一层文件名，拒绝穿越。 */
-export function resolveTodoPath(nameOrFile, repoRoot = REPO_ROOT) {
+/**
+ * todo 文件路径解析：只允许 `todos/` 下的一层文件名，拒绝穿越。
+ * 兼容四种输入：`general` / `general-todo` / `general-todo.md`（旧引用）/ `general-todo.json`。
+ */
+export function resolveTodoPath(nameOrFile: string, repoRoot = REPO_ROOT): string | null {
   const clean = String(nameOrFile).trim();
   if (clean === "" || clean.includes("/") || clean.includes("\\") || clean.includes("..")) return null;
-  const file = clean.endsWith(".md") ? clean : clean.endsWith("-todo") ? `${clean}.md` : `${clean}-todo.md`;
-  return path.join(repoRoot, "todos", file);
+  let base = clean;
+  if (base.endsWith(".json")) base = base.slice(0, -5);
+  else if (base.endsWith(".md")) base = base.slice(0, -3);
+  else if (!base.endsWith("-todo")) base = `${base}-todo`;
+  return path.join(repoRoot, "todos", `${base}.json`);
 }
 
-/** 读取 `todos/` 全部 .md 文件（按文件名排序），name = 去 .md。 */
-export function loadTodos(repoRoot = REPO_ROOT) {
+export interface LoadedDoc {
+  name: string;
+  file: string;
+  data: TodoFileData;
+}
+
+type DocsResult = { ok: true; docs: LoadedDoc[] } | { ok: false; message: string };
+
+/** 读取 `todos/` 全部 .json 文件（按文件名排序）；任一损坏即整体失败（fail-closed）。 */
+function readTodoDocs(repoRoot: string): DocsResult {
   const dir = path.join(repoRoot, "todos");
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".md"))
-    .sort()
-    .map((f) => ({ name: f.slice(0, -3), file: path.join(dir, f), content: fs.readFileSync(path.join(dir, f), "utf8") }));
+  if (!fs.existsSync(dir)) return { ok: true, docs: [] };
+  const docs: LoadedDoc[] = [];
+  for (const fileName of fs.readdirSync(dir).sort()) {
+    if (!fileName.endsWith(".json")) continue;
+    const file = path.join(dir, fileName);
+    const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${fileName}`);
+    if (!parsed.ok) return { ok: false, message: parsed.message };
+    docs.push({ name: fileName.slice(0, -5), file, data: parsed.data });
+  }
+  return { ok: true, docs };
+}
+
+/** 原子保存（锁由调用方持有）；两空格缩进 + LF，tmp 落 `todos/.todo-cli/tmp/`。 */
+function writeTodoData(repoRoot: string, file: string, data: TodoFileData): void {
+  atomicWriteFile(file, serializeTodo(data), { tmpDir: tmpDirFor(repoRoot) });
+}
+
+/** 按文件汇总三态计数（name 为不带 .json 的文件名）。 */
+export function summarizeData(docs: LoadedDoc[]) {
+  return docs.map((doc) => ({
+    name: doc.name,
+    open: doc.data.entries.filter((entry) => entry.status === "open").length,
+    processing: doc.data.entries.filter((entry) => entry.status === "processing").length,
+    done: doc.data.entries.filter((entry) => entry.status === "done").length,
+    total: doc.data.entries.length,
+  }));
 }
 
 /** lint：根 package.json 注册的扩展都应有同名 todo 文件。返回问题清单。 */
-export function lintTodos(repoRoot = REPO_ROOT) {
+export function lintTodos(repoRoot = REPO_ROOT): string[] {
   const manifestPath = path.join(repoRoot, "package.json");
   if (!fs.existsSync(manifestPath)) return ["找不到根 package.json"];
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const dirs = (manifest.pi?.extensions ?? []).map((e) => path.basename(path.dirname(String(e))));
-  const problems = [];
+  const problems: string[] = [];
   for (const dir of dirs) {
-    if (!fs.existsSync(path.join(repoRoot, "todos", `${dir}-todo.md`))) problems.push(`扩展 ${dir} 缺少 todos/${dir}-todo.md`);
+    if (!fs.existsSync(path.join(repoRoot, "todos", `${dir}-todo.json`))) problems.push(`扩展 ${dir} 缺少 todos/${dir}-todo.json`);
   }
   return problems;
 }
@@ -241,9 +147,9 @@ export function lintTodos(repoRoot = REPO_ROOT) {
 // ---------------------------------------------------------------------------
 
 /** 解析 `git worktree list --porcelain`：块间空行分隔，branch 去掉 refs/heads/ 前缀。 */
-export function parseWorktrees(porcelain) {
+export function parseWorktrees(porcelain: string) {
   const out = [];
-  let cur = null;
+  let cur: Record<string, unknown> | null = null;
   for (const raw of String(porcelain).split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line === "") {
@@ -265,49 +171,49 @@ export function parseWorktrees(porcelain) {
 }
 
 /** 解析 `git branch --merged <主干>`：剥掉 `* `/`+ `/缩进，忽略 remotes/ 与 detached 行。 */
-export function parseMergedBranches(stdout) {
+export function parseMergedBranches(stdout: string): string[] {
   return String(stdout)
     .split("\n")
     .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line).replace(/^[*+]?\s*/, "").trim())
     .filter((b) => b !== "" && !b.startsWith("remotes/") && !b.startsWith("("));
 }
 
-/** 分支引用正则（triage 使用；导出供 W4 对照测试锁与 query.parseBranchRef 口径一致）。 */
-export const PROCESSING_REF_RE = /@\s*([^\s：:，,）)]+)/;
-
-function normalizePath(p) {
+function normalizePath(p: string): string {
   return String(p).replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
 }
 
 /**
  * 只读 triage：把 worktree 事实与 todos 条目互相映射。
  * facts：{ worktrees, mergedBranches, docs, exists(path), dirty(path), orphanDirs }
- * 判定优先级：missing > merged-dirty > cleanup > orphan > active；条目关联靠
- * “‘条目文本包含该分支名”匹配（processing 注记里的 `@ feat/<plugin>-<事项>` 是现有纪律）。
+ * 判定优先级：missing > merged-dirty > cleanup > orphan > active；条目关联 =
+ * `entry.branch === worktree.branch` 精确相等（branch 是 claim --branch 写入的原生字段）。
  */
-export function triageRepo(facts = {}) {
-  const worktrees = facts.worktrees ?? [];
-  const mergedSet = new Set(facts.mergedBranches ?? []);
-  const dirExists = facts.exists ?? (() => true);
-  const dirtyCount = facts.dirty ?? (() => 0);
+export function triageRepo(facts: Record<string, unknown> = {}) {
+  const worktrees = (facts.worktrees as Array<Record<string, unknown>>) ?? [];
+  const mergedSet = new Set((facts.mergedBranches as string[]) ?? []);
+  const dirExists = (facts.exists as (p: string) => boolean) ?? (() => true);
+  const dirtyCount = (facts.dirty as (p: string) => number) ?? (() => 0);
   const main = worktrees.find((w) => !w.bare) ?? null;
-  const mainPath = main ? normalizePath(main.path) : null;
-  const entries = (facts.docs ?? []).flatMap((doc) => parseTodoFile(doc.content).map((e) => ({ ...e, name: doc.name })));
-  const pending = entries.filter((e) => !e.checked);
+  const mainPath = main ? normalizePath(String(main.path)) : null;
+  const entries = ((facts.docs as LoadedDoc[]) ?? []).flatMap((doc) =>
+    doc.data.entries.map((entry) => ({ ...entry, name: doc.name })),
+  );
+  const pending = entries.filter((entry) => entry.status !== "done");
 
   const listed = worktrees
-    .filter((w) => !mainPath || normalizePath(w.path) !== mainPath)
+    .filter((w) => !mainPath || normalizePath(String(w.path)) !== mainPath)
     .map((w) => {
-      const linked = w.branch ? pending.filter((e) => e.text.includes(w.branch)) : [];
-      const exists = dirExists(w.path);
-      const dirty = exists ? dirtyCount(w.path) : 0;
-      const merged = Boolean(w.branch && mergedSet.has(w.branch));
-      const flags = [];
-      if (!w.branch) flags.push(w.detached ? "detached" : "no-branch");
+      const branch = w.branch as string | null;
+      const linked = branch ? pending.filter((entry) => entry.branch === branch) : [];
+      const exists = dirExists(String(w.path));
+      const dirty = exists ? dirtyCount(String(w.path)) : 0;
+      const merged = Boolean(branch && mergedSet.has(branch));
+      const flags: string[] = [];
+      if (!branch) flags.push(w.detached ? "detached" : "no-branch");
       if (!exists) flags.push("missing-dir");
       if (merged) flags.push("merged");
       if (dirty > 0) flags.push("dirty");
-      if (w.branch && linked.length === 0) flags.push("no-todo");
+      if (branch && linked.length === 0) flags.push("no-todo");
       const state = !exists
         ? "missing"
         : merged && dirty > 0
@@ -320,25 +226,24 @@ export function triageRepo(facts = {}) {
       return {
         path: w.path,
         head: w.head,
-        branch: w.branch,
+        branch,
         detached: w.detached,
         exists,
         merged,
         dirty,
         state,
         flags,
-        entries: linked.map((e) => ({ name: e.name, line: e.line, text: e.text })),
+        entries: linked.map((entry) => ({ name: entry.name, id: entry.id, text: entry.text })),
       };
     });
 
-  const liveBranches = new Set(listed.filter((w) => w.branch && w.exists).map((w) => w.branch));
+  const liveBranches = new Set(listed.filter((w) => w.branch && w.exists).map((w) => w.branch as string));
   const processing = pending
-    .filter((e) => e.processing)
-    .map((e) => {
-      const match = PROCESSING_REF_RE.exec(e.text);
-      const ref = match ? match[1] : null;
+    .filter((entry) => entry.status === "processing")
+    .map((entry) => {
+      const ref = entry.branch;
       const kind = ref && ref.includes("/") ? (liveBranches.has(ref) ? "active" : "stale") : "no-ref";
-      return { name: e.name, line: e.line, text: e.text, ref, kind };
+      return { name: entry.name, id: entry.id, text: entry.text, ref, kind };
     });
 
   return {
@@ -350,23 +255,180 @@ export function triageRepo(facts = {}) {
       stale: processing.filter((p) => p.kind === "stale"),
       noRef: processing.filter((p) => p.kind === "no-ref"),
     },
-    orphanDirs: facts.orphanDirs ?? [],
+    orphanDirs: (facts.orphanDirs as string[]) ?? [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// 写命令（add / claim / complete）
+// ---------------------------------------------------------------------------
+
+interface WriteDeps {
+  repoRoot: string;
+  opts: Record<string, unknown>;
+  now: () => string;
+  log: (line: string) => void;
+}
+
+/** `--tag a,b` → 去空去重标签。 */
+function parseTagsOption(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const tags: string[] = [];
+  for (const piece of value.split(",")) {
+    const tag = piece.trim();
+    if (tag !== "" && !tags.includes(tag)) tags.push(tag);
+  }
+  return tags;
+}
+
+function runAdd(deps: WriteDeps): number {
+  const { repoRoot, opts, now, log } = deps;
+  const text = (opts._ as string[]).slice(1).join(" ").trim();
+  if (!text) {
+    log("缺少需求描述");
+    return 1;
+  }
+  const all = readTodoDocs(repoRoot);
+  if (!all.ok) {
+    log(all.message);
+    return 1;
+  }
+  const duplicateInput = all.docs.flatMap((doc) =>
+    doc.data.entries.map((entry) => ({ name: doc.name, id: entry.id, status: entry.status, text: entry.text })),
+  );
+  const hits = findDuplicateHits(text, duplicateInput);
+  if (hits.length > 0 && opts.force !== true) {
+    for (const hit of hits) log(`重复（${hit.kind}）：${hit.name}#${hit.id}  ${hit.text}`);
+    log("如确认是新需求，加 --force 重新执行");
+    return 1;
+  }
+  const file = resolveTodoPath(String(opts.file), repoRoot) as string;
+  const name = path.basename(file, ".json");
+  type WriteOutcome = { ok: true } | { ok: false; message: string };
+  const locked = withTodoLock(repoRoot, name, (): WriteOutcome => {
+    let data: TodoFileData;
+    if (fs.existsSync(file)) {
+      const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
+      if (!parsed.ok) return { ok: false, message: parsed.message };
+      data = parsed.data;
+    } else {
+      data = emptyTodoData(name);
+    }
+    const entry = {
+      id: nextId(data.entries),
+      text,
+      status: "open" as const,
+      branch: null,
+      tags: parseTagsOption(opts.tag),
+      notes: [],
+      createdAt: now(),
+      claimedAt: null,
+      completedAt: null,
+    };
+    writeTodoData(repoRoot, file, { ...data, entries: [...data.entries, entry] });
+    return { ok: true };
+  });
+  if (!locked.ok) {
+    log(locked.message);
+    return 1;
+  }
+  if (!locked.value.ok) {
+    log(locked.value.message);
+    return 1;
+  }
+  log(`已登记到 todos/${name}.json：${text}`);
+  return 0;
+}
+
+/** 唯一定位含 match 的条目；--match 只匹配纯描述 text（标注/注记在 notes，不参与）。 */
+function locateEntry(data: TodoFileData, match: string) {
+  const hits = data.entries.filter((entry) => entry.text.includes(match));
+  if (hits.length === 0) return { code: "NOT_FOUND" as const };
+  if (hits.length > 1) return { code: "AMBIGUOUS" as const };
+  return { entry: hits[0] };
+}
+
+function runClaim(deps: WriteDeps): number {
+  const { repoRoot, opts, now, log } = deps;
+  const file = resolveTodoPath(String(opts.file), repoRoot) as string;
+  const name = path.basename(file, ".json");
+  const match = String(opts.match ?? "");
+  type ClaimOutcome = { ok: true; changed: boolean } | { ok: false; message: string };
+  const result = withTodoLock(repoRoot, name, (): ClaimOutcome => {
+    if (!fs.existsSync(file)) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
+    const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
+    if (!parsed.ok) return { ok: false, message: parsed.message };
+    const located = locateEntry(parsed.data, match);
+    if (!("entry" in located)) {
+      return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
+    }
+    const entry = located.entry;
+    if (entry.status === "done") return { ok: false, message: "ALREADY_DONE：条目已完成，不能再领取" };
+    if (entry.status === "processing") return { ok: true, changed: false };
+    entry.status = "processing";
+    entry.branch = typeof opts.branch === "string" && opts.branch !== "" ? opts.branch : null;
+    entry.claimedAt = now();
+    writeTodoData(repoRoot, file, parsed.data);
+    return { ok: true, changed: true };
+  });
+  if (!result.ok) {
+    log(result.message);
+    return 1;
+  }
+  if (!result.value.ok) {
+    log(result.value.message);
+    return 1;
+  }
+  log(`已领取（${result.value.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  return 0;
+}
+
+function runComplete(deps: WriteDeps): number {
+  const { repoRoot, opts, now, log } = deps;
+  const file = resolveTodoPath(String(opts.file), repoRoot) as string;
+  const name = path.basename(file, ".json");
+  const match = String(opts.match ?? "");
+  type CompleteOutcome = { ok: true; changed: boolean } | { ok: false; message: string };
+  const result = withTodoLock(repoRoot, name, (): CompleteOutcome => {
+    if (!fs.existsSync(file)) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
+    const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
+    if (!parsed.ok) return { ok: false, message: parsed.message };
+    const located = locateEntry(parsed.data, match);
+    if (!("entry" in located)) {
+      return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
+    }
+    const entry = located.entry;
+    if (entry.status === "done") return { ok: true, changed: false };
+    entry.status = "done";
+    entry.completedAt = now();
+    const note = opts.note;
+    if (typeof note === "string" && note !== "") entry.notes.push(note);
+    writeTodoData(repoRoot, file, parsed.data);
+    return { ok: true, changed: true };
+  });
+  if (!result.ok) {
+    log(result.message);
+    return 1;
+  }
+  if (!result.value.ok) {
+    log(result.value.message);
+    return 1;
+  }
+  log(`已完成（${result.value.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
-const STATUS_MARK = { done: "[x]", processing: "[~]", open: "[ ]" };
-
-function parseArgs(argv) {
-  const opts = { _: [] };
+function parseArgs(argv: string[]) {
+  const opts: Record<string, unknown> = { _: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg.startsWith("--")) {
       const key = arg.slice(2);
-      if (key === "json" || key === "force" || key === "help") opts[key] = true;
+      if (key === "json" || key === "force" || key === "help" || key === "dry-run") opts[key] = true;
       else {
         opts[key] = argv[i + 1];
         i += 1;
@@ -376,223 +438,122 @@ function parseArgs(argv) {
   return opts;
 }
 
-// ---------------------------------------------------------------------------
-// L14/L15：存储索引与结构化查询接线（10-design §3.4–3.6）
-// ---------------------------------------------------------------------------
-
-/** node:sqlite 不可用的静态说明（降级路径与 db 子命令共用，10-design §1.4）。 */
-const SQLITE_UNAVAILABLE_MSG =
-  "node:sqlite 不可用（Node <22.13 或被禁用）：时间维度查询需要数据库索引；其余命令已降级为直接读写 markdown";
-
-/** 写临界区异常（busy 超时等 sqlite 异常）的静态模板（10-design §3.6）。 */
-const DB_BUSY_MSG = "数据库忙（todo 索引被占用），请重试";
-
-/** 打开 store：deps.openStore 注入优先（返回 null 模拟降级；fake store 供测试）。 */
-function resolveStore(repoRoot, deps) {
-  const openStore = deps.openStore ?? openTodoStore;
-  return openStore(repoRoot);
-}
-
-/** 注入时钟：DB 时间戳统一走此函数（默认真实 UTC now）。 */
-function resolveNow(deps) {
-  return deps.now ?? (() => new Date().toISOString());
-}
-
-/** 磁盘 stat 摘要（漂移检测输入）；读取列表时的瞬态删除跳过，由下次导入清理。 */
-function statDocs(docs) {
-  const stats = [];
-  for (const doc of docs) {
-    try {
-      const st = fs.statSync(doc.file);
-      stats.push({ name: doc.name, size: st.size, mtimeMs: st.mtimeMs });
-    } catch {
-      // 文件刚被删除：跳过
+function runList(repoRoot: string, opts: Record<string, unknown>, log: (line: string) => void): number {
+  const all = readTodoDocs(repoRoot);
+  if (!all.ok) {
+    log(all.message);
+    return 1;
+  }
+  let docs = all.docs;
+  if (opts.file) {
+    const resolvedFile = resolveTodoPath(String(opts.file), repoRoot);
+    if (!resolvedFile || !fs.existsSync(resolvedFile)) {
+      log(`找不到 todo 文件：${opts.file}`);
+      return 1;
     }
+    docs = docs.filter((doc) => doc.file === resolvedFile);
   }
-  return stats;
+  const parsed = parseFilterOptions(opts);
+  if (!parsed.ok) {
+    log(parsed.message);
+    return 1;
+  }
+  const entries: QueryEntry[] = docs.flatMap((doc) =>
+    doc.data.entries.map((entry) => ({ ...entry, file: doc.name })),
+  );
+  const sorted = sortQueryEntries(applyEntryFilter(entries, parsed.filter));
+  for (const line of serializeEntries(sorted, { json: parsed.json })) log(line);
+  return 0;
 }
 
-/** 事务内漂移重导入：stat 与 files 表不一致（或无记录）的文件按当前 markdown 重导——markdown 永远赢。 */
-function reimportDrifted(store, docs, now) {
-  const drifted = new Set(store.driftedFiles(statDocs(docs)));
-  for (const doc of docs) {
-    if (drifted.has(doc.name)) store.reimportFile(doc.name, doc.content, now);
+function runTriage(repoRoot: string, opts: Record<string, unknown>, deps: Record<string, unknown>, log: (line: string) => void): number {
+  const execGit =
+    (deps.execGit as ((args: string[], cwd?: string) => string) | undefined) ??
+    ((args: string[], cwd?: string) => execFileSync("git", ["-C", cwd ?? repoRoot, ...args], { encoding: "utf8" }));
+  const worktrees = parseWorktrees(execGit(["worktree", "list", "--porcelain"]));
+  const main = worktrees.find((w) => !w.bare) ?? null;
+  const mergedBranches = main?.branch ? parseMergedBranches(execGit(["branch", "--merged", String(main.branch)])) : [];
+  const registered = new Set(worktrees.map((w) => normalizePath(String(w.path))));
+  const wtDir = path.join(repoRoot, ".worktrees");
+  const orphanDirs = !fs.existsSync(wtDir)
+    ? []
+    : fs
+        .readdirSync(wtDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => `.worktrees/${d.name}`)
+        .filter((rel) => !registered.has(normalizePath(path.join(repoRoot, rel))));
+  const all = readTodoDocs(repoRoot);
+  if (!all.ok) {
+    log(all.message);
+    return 1;
   }
-}
-
-/** 目标文件漂移检查（claim/complete 只需目标文件新鲜）；需重导时用已读到的 content。 */
-function reimportTargetIfDrifted(store, file, name, content, now) {
-  let stat;
-  try {
-    stat = fs.statSync(file);
-  } catch {
-    return;
-  }
-  if (store.driftedFiles([{ name, size: stat.size, mtimeMs: stat.mtimeMs }]).length > 0) {
-    store.reimportFile(name, content, now);
-  }
-}
-
-/** DB 行 → QueryEntry：branch/tags 复用 query 派生，时间戳来自 DB 列。 */
-function rowsToQueryEntries(rows) {
-  return rows.map((row) => {
-    const [entry] = deriveQueryEntries(row.file, [{ line: row.line, status: row.status, text: row.text }]);
-    return { ...entry, createdAt: row.createdAt, claimedAt: row.claimedAt, completedAt: row.completedAt };
+  const report = triageRepo({
+    worktrees,
+    mergedBranches,
+    docs: all.docs,
+    exists: (p) => fs.existsSync(p),
+    dirty: (p) => {
+      try {
+        return execGit(["status", "--porcelain"], p)
+          .split("\n")
+          .filter((l) => l.trim() !== "" && !l.startsWith("??")).length;
+      } catch {
+        return 0;
+      }
+    },
+    orphanDirs,
   });
-}
-
-/** markdown 降级派生（时间戳 null）：与 DB 路径同一过滤/排序/序列化链路。 */
-function docsToQueryEntries(docs) {
-  const entries = [];
-  for (const doc of docs) entries.push(...deriveQueryEntries(doc.name, parseTodoFile(doc.content)));
-  return entries;
-}
-
-/** 与 locateEntry 同口径的单条匹配（stampEntry 需要修改前的条目文本；歧义返回 null）。 */
-function uniqueEntry(content, match) {
-  const hits = parseTodoFile(content).filter((entry) => entry.text.includes(match));
-  return hits.length === 1 ? hits[0] : null;
-}
-
-/** sqlite 临界区异常判别（node:sqlite 的 code + message 兜底）→ busy 静态模板。 */
-function isStoreBusy(error) {
-  if (!error || typeof error !== "object") return false;
-  if (error.code === "ERR_SQLITE_ERROR") return true;
-  return /busy|locked|SQLITE_BUSY/i.test(String(error.message ?? ""));
-}
-
-/** db status 探测：注入 openStore 时用它模拟可用/降级；否则只读探测（不建库、无副作用）。 */
-function probeDbStatus(repoRoot, deps) {
-  if (!deps.openStore) return dbStatus(repoRoot);
-  const store = deps.openStore(repoRoot);
-  if (!store) return { available: false, reason: "SQLITE_UNAVAILABLE", files: 0, entries: 0, schemaVersion: null };
-  try {
-    const rows = store.listEntryRows();
-    return {
-      available: true,
-      reason: null,
-      files: new Set(rows.map((row) => row.file)).size,
-      entries: rows.length,
-      schemaVersion: 1,
-    };
-  } finally {
-    store.close();
-  }
-}
-
-/** 全量 markdown 条目计数（db rebuild 成功行）。 */
-function countDocEntries(docs) {
-  let count = 0;
-  for (const doc of docs) count += parseTodoFile(doc.content).length;
-  return count;
-}
-
-/** db status 的静态原因行（不可用时的 stdout 约定）。 */
-function dbStatusLine(info) {
-  if (info.available) return `索引可用：${info.files} 个文件 · ${info.entries} 条目 · schema v${info.schemaVersion}`;
-  return dbReasonLine(info.reason);
-}
-
-function dbReasonLine(reason) {
-  if (reason === "NO_DB") return "索引不存在（todos/.todo-cli/index.db）——运行 db rebuild 建立";
-  if (reason === "CORRUPT") return "索引损坏——运行 db rebuild 重建";
-  return SQLITE_UNAVAILABLE_MSG;
-}
-
-/**
- * add/claim/complete 的统一执行体（10-design §3.6）：store 非空时调用方已进入 writeTxn，
- * 本函数内所有文件读取/写入与 DB 操作都在同一临界区（跨进程 read-modify-write 串行化）。
- * store 为空 = 降级：行为与今日路径逐字节一致（writeFile 注入语义保留）。
- */
-function runWriteCommand(params) {
-  const { command, opts, repoRoot, file, name, store, now, log, writeFile } = params;
-  const exists = fs.existsSync(file);
-
-  if (command === "add") {
-    const text = opts._.slice(1).join(" ").trim();
-    if (!text) {
-      log("缺少需求描述");
-      return 1;
-    }
-    const docs = loadTodos(repoRoot);
-    let hits;
-    if (store) {
-      reimportDrifted(store, docs, now);
-      hits = findDuplicateHits(
-        text,
-        store.listEntryRows().map((row) => ({ name: row.file, line: row.line, status: row.status, text: row.text })),
-      );
-    } else {
-      hits = findDuplicates(text, docs);
-    }
-    if (hits.length > 0 && !opts.force) {
-      for (const h of hits) log(`重复（${h.kind}）：${h.name}:${h.line}  ${h.text}`);
-      log("如确认是新需求，加 --force 重新执行");
-      return 1;
-    }
-    const content = exists ? fs.readFileSync(file, "utf8") : `# ${name} TODO\n\n`;
-    const next = appendEntry(content, text);
-    if (store) {
-      atomicWriteFile(file, next);
-      store.reimportFile(name, next, now);
-    } else {
-      writeFile(file, next);
-    }
-    log(`已登记到 ${path.relative(repoRoot, file).replace(/\\/g, "/")}：${text}`);
+  if (opts.json) {
+    log(JSON.stringify(report, null, 2));
     return 0;
   }
-
-  if (!exists) {
-    log(`找不到 todo 文件：${opts.file}`);
-    return 1;
-  }
-  const match = opts.match;
-  if (!match) {
-    log('缺少 --match "子串"');
-    return 1;
-  }
-  const content = fs.readFileSync(file, "utf8");
-  if (store) reimportTargetIfDrifted(store, file, name, content, now);
-  const result = command === "claim" ? setProcessing(content, match, opts.branch) : completeEntry(content, match, opts.note);
-  if (!result.ok) {
-    log(`${result.code}：${result.message}`);
-    return 1;
-  }
-  if (result.changed) {
-    if (store) {
-      atomicWriteFile(file, result.content);
-      store.reimportFile(name, result.content, now);
-      const target = uniqueEntry(content, match);
-      if (target) store.stampEntry(name, normalizeText(target.text), command === "claim" ? "claimedAt" : "completedAt", now());
-    } else {
-      writeFile(file, result.content);
+  const STATE_LABEL: Record<string, string> = {
+    active: "活跃",
+    cleanup: "已并入主干·干净（清理候选）",
+    "merged-dirty": "已并入主干·有未提交改动",
+    orphan: "无关联条目",
+    missing: "目录已不存在",
+  };
+  log(`# triage（只读：worktree 事实 × todos 条目关联）`);
+  log(`主干：${report.main?.branch ?? "<未知>"} @ ${(report.main?.head as string ?? "?").slice(0, 7)}  ${report.main?.path ?? ""}`.trimEnd());
+  if (report.worktrees.length === 0) log("worktree（主工作区除外）：无");
+  else {
+    log(`worktree（主工作区除外）：${report.worktrees.length} 个`);
+    for (const w of report.worktrees) {
+      log(`  [${w.state}·${STATE_LABEL[w.state]}] ${w.branch ?? "(detached)"} @ ${String(w.head).slice(0, 7)} · 关联条目 ${w.entries.length} · 未提交 ${w.dirty} · ${w.path}`);
     }
   }
-  log(`${command === "claim" ? "已领取" : "已完成"}（${result.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  const p = report.processing;
+  log(`processing 条目：${p.total}（有工作台 ${p.active.length} · 引用分支已消失 ${p.stale.length} · 无分支引用 ${p.noRef.length}）`);
+  for (const item of p.stale) log(`  ⚠ ${item.name}#${item.id} 引用 ${item.ref}，已无对应 worktree`);
+  for (const item of p.noRef) log(`  · ${item.name}#${item.id} 无分支引用（人工确认状态）`);
+  log(report.orphanDirs.length === 0 ? "孤儿目录：无" : `孤儿目录：${report.orphanDirs.join("、")}`);
   return 0;
 }
 
 const USAGE = `用法：
   node tools/todo.mjs summary [--json]
   node tools/todo.mjs list [--status open|processing|done] [--file <name>]
-  node tools/todo.mjs add --file <name> "需求描述"
+  node tools/todo.mjs add --file <name> "需求描述" [--tag 词1,词2]
   node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
   node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]
   node tools/todo.mjs lint
   node tools/todo.mjs triage [--json]
-  node tools/todo.mjs list [--status open|processing|done] [--file <name>] [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
-  node tools/todo.mjs db status|rebuild|drop`;
+  node tools/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
+  node tools/todo.mjs migrate from-md [--dry-run] [--force] | to-md`;
 
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
- * readFile/writeFile 可注入用于测试；默认走真实文件系统。
+ * repoRoot / log / now / execGit 可注入；文件读写始终走真实 fs（锁 + 原子写是
+ * 被测行为本身，不做注入替身）。
  */
-export function main(argv, deps = {}) {
-  const repoRoot = deps.repoRoot ?? REPO_ROOT;
-  const log = deps.log ?? ((line) => console.log(line));
-  const writeFile = deps.writeFile ?? ((file, content) => fs.writeFileSync(file, content));
+export function main(argv: string[], deps: Record<string, unknown> = {}): number {
+  const repoRoot = (deps.repoRoot as string | undefined) ?? REPO_ROOT;
+  const log = (deps.log as ((line: string) => void) | undefined) ?? ((line: string) => console.log(line));
+  const now = (deps.now as (() => string) | undefined) ?? (() => new Date().toISOString());
+  installProcessHooks();
   const opts = parseArgs(argv);
-  const command = opts._[0] ?? (opts.help ? "help" : "");
+  const command = (opts._ as string[])[0] ?? (opts.help ? "help" : "");
 
   if (command === "help" || command === "") {
     log(USAGE);
@@ -600,133 +561,18 @@ export function main(argv, deps = {}) {
   }
 
   if (command === "summary") {
-    const rows = summarize(loadTodos(repoRoot));
+    const all = readTodoDocs(repoRoot);
+    if (!all.ok) {
+      log(all.message);
+      return 1;
+    }
+    const rows = summarizeData(all.docs);
     if (opts.json) log(JSON.stringify(rows, null, 2));
     else for (const r of rows) log(`${r.name.padEnd(24)} open ${r.open}  processing ${r.processing}  done ${r.done}  total ${r.total}`);
     return 0;
   }
 
-  if (command === "list") {
-    const docs = loadTodos(repoRoot);
-    let resolvedFile = null;
-    let fileFilter = null;
-    if (opts.file) {
-      resolvedFile = resolveTodoPath(opts.file, repoRoot);
-      if (!resolvedFile || !fs.existsSync(resolvedFile)) {
-        log(`找不到 todo 文件：${opts.file}`);
-        return 1;
-      }
-      fileFilter = path.basename(resolvedFile, ".md");
-    }
-    const scopedDocs = resolvedFile ? docs.filter((d) => d.file === resolvedFile) : docs;
-    const usesQuery =
-      opts.json === true || "branch" in opts || "tag" in opts || "text" in opts || "claimed-since" in opts;
-
-    // 只带旧 flags 且无 --json：走今日代码路径，字节不变。
-    if (!usesQuery) {
-      for (const doc of scopedDocs) {
-        for (const entry of parseTodoFile(doc.content)) {
-          if (opts.status && entry.status !== opts.status) continue;
-          log(`${STATUS_MARK[entry.status]} ${doc.name}:${entry.line}  ${entry.text}`);
-        }
-      }
-      return 0;
-    }
-
-    const parsed = parseFilterOptions(opts);
-    if (!parsed.ok) {
-      log(parsed.message);
-      return 1;
-    }
-    const filter = parsed.filter;
-    if (fileFilter) filter.file = fileFilter;
-
-    const store = resolveStore(repoRoot, deps);
-    if (store === null) {
-      // 降级：文本派生维度照常；时间维度明确报错（10-design §1.4）。
-      if (filter.claimedSince !== undefined) {
-        log(SQLITE_UNAVAILABLE_MSG);
-        return 1;
-      }
-      const sorted = sortQueryEntries(applyEntryFilter(docsToQueryEntries(scopedDocs), filter));
-      for (const line of serializeEntries(sorted, { json: parsed.json })) log(line);
-      return 0;
-    }
-
-    try {
-      const entries = store.writeTxn(() => {
-        reimportDrifted(store, scopedDocs, resolveNow(deps));
-        return rowsToQueryEntries(store.listEntryRows());
-      });
-      const sorted = sortQueryEntries(applyEntryFilter(entries, filter));
-      for (const line of serializeEntries(sorted, { json: parsed.json })) log(line);
-      return 0;
-    } catch (error) {
-      if (isStoreBusy(error)) {
-        log(DB_BUSY_MSG);
-        return 1;
-      }
-      throw error;
-    } finally {
-      store.close();
-    }
-  }
-
-  if (command === "db") {
-    const sub = opts._[1];
-    const now = resolveNow(deps);
-
-    if (sub === "status") {
-      const info = probeDbStatus(repoRoot, deps);
-      if (opts.json) log(JSON.stringify(info, null, 2));
-      else log(dbStatusLine(info));
-      return info.available ? 0 : 1;
-    }
-
-    if (sub === "rebuild") {
-      const docs = loadTodos(repoRoot);
-      if (deps.openStore) {
-        // 注入路径：模拟降级（null → exit 1）或 fake store；不落真实库。
-        const store = deps.openStore(repoRoot);
-        if (!store) {
-          log(SQLITE_UNAVAILABLE_MSG);
-          return 1;
-        }
-        try {
-          store.writeTxn(() => {
-            for (const doc of docs) store.reimportFile(doc.name, doc.content, now);
-          });
-          log(`索引已重建：${docs.length} 个文件 · ${countDocEntries(docs)} 条目`);
-          return 0;
-        } catch (error) {
-          if (isStoreBusy(error)) {
-            log(DB_BUSY_MSG);
-            return 1;
-          }
-          throw error;
-        } finally {
-          store.close();
-        }
-      }
-      const result = rebuildStore(repoRoot, docs, now);
-      if (!result.ok) {
-        log(dbReasonLine(result.reason));
-        return 1;
-      }
-      const info = dbStatus(repoRoot);
-      log(`索引已重建：${info.files} 个文件 · ${info.entries} 条目`);
-      return 0;
-    }
-
-    if (sub === "drop") {
-      const result = dropStore(repoRoot);
-      log(result.removed.length === 0 ? "无可删除的索引文件" : `已删除索引文件：${result.removed.join("、")}`);
-      return 0;
-    }
-
-    log(`未知 db 子命令：${sub ?? ""}`);
-    return 1;
-  }
+  if (command === "list") return runList(repoRoot, opts, log);
 
   if (command === "lint") {
     const problems = lintTodos(repoRoot);
@@ -735,99 +581,36 @@ export function main(argv, deps = {}) {
     return problems.length === 0 ? 0 : 1;
   }
 
+  if (command === "triage") return runTriage(repoRoot, opts, deps, log);
+
+  if (command === "migrate") {
+    const sub = (opts._ as string[])[1];
+    if (sub === "from-md") {
+      return migrateFromMd(repoRoot, { now, log, dryRun: opts["dry-run"] === true, force: opts.force === true });
+    }
+    if (sub === "to-md") return migrateToMd(repoRoot, { now, log });
+    log(`未知 migrate 子命令：${sub ?? ""}（可用：from-md [--dry-run] [--force] | to-md）`);
+    return 1;
+  }
+
   if (command === "add" || command === "claim" || command === "complete") {
     if (!opts.file) {
       log("缺少 --file <name>");
       return 1;
     }
-    const file = resolveTodoPath(opts.file, repoRoot);
+    const file = resolveTodoPath(String(opts.file), repoRoot);
     if (!file) {
       log("--file 只能是 todos/ 下的文件名");
       return 1;
     }
-    const name = path.basename(file, ".md");
-    const now = resolveNow(deps);
-    const store = resolveStore(repoRoot, deps);
-
-    if (store === null) {
-      // 降级：今日路径原样执行（含 writeFile 注入语义）。
-      return runWriteCommand({ command, opts, repoRoot, file, name, store: null, now, log, writeFile });
+    if (command === "add") return runAdd({ repoRoot, opts, now, log });
+    if (!opts.match) {
+      log('缺少 --match "子串"');
+      return 1;
     }
-
-    try {
-      return store.writeTxn(() =>
-        runWriteCommand({ command, opts, repoRoot, file, name, store, now, log, writeFile }),
-      );
-    } catch (error) {
-      if (isStoreBusy(error)) {
-        log(DB_BUSY_MSG);
-        return 1;
-      }
-      throw error;
-    } finally {
-      store.close();
-    }
-  }
-
-  if (command === "triage") {
-    const execGit = deps.execGit ?? ((args, cwd) => execFileSync("git", ["-C", cwd ?? repoRoot, ...args], { encoding: "utf8" }));
-    const worktrees = parseWorktrees(execGit(["worktree", "list", "--porcelain"]));
-    const main = worktrees.find((w) => !w.bare) ?? null;
-    const mergedBranches = main?.branch ? parseMergedBranches(execGit(["branch", "--merged", main.branch])) : [];
-    const registered = new Set(worktrees.map((w) => normalizePath(w.path)));
-    const wtDir = path.join(repoRoot, ".worktrees");
-    const orphanDirs = !fs.existsSync(wtDir)
-      ? []
-      : fs
-          .readdirSync(wtDir, { withFileTypes: true })
-          .filter((d) => d.isDirectory())
-          .map((d) => `.worktrees/${d.name}`)
-          .filter((rel) => !registered.has(normalizePath(path.join(repoRoot, rel))));
-    const report = triageRepo({
-      worktrees,
-      mergedBranches,
-      docs: loadTodos(repoRoot),
-      exists: (p) => fs.existsSync(p),
-      dirty: (p) => {
-        try {
-          return execGit(["status", "--porcelain"], p)
-            .split("\n")
-            .filter((l) => l.trim() !== "" && !l.startsWith("??")).length;
-        } catch {
-          return 0;
-        }
-      },
-      orphanDirs,
-    });
-    if (opts.json) {
-      log(JSON.stringify(report, null, 2));
-      return 0;
-    }
-    const STATE_LABEL = {
-      active: "活跃",
-      cleanup: "已并入主干·干净（清理候选）",
-      "merged-dirty": "已并入主干·有未提交改动",
-      orphan: "无关联条目",
-      missing: "目录已不存在",
-    };
-    log(`# triage（只读：worktree 事实 × todos 条目关联）`);
-    log(`主干：${report.main?.branch ?? "<未知>"} @ ${(report.main?.head ?? "?").slice(0, 7)}  ${report.main?.path ?? ""}`.trimEnd());
-    if (report.worktrees.length === 0) log("worktree（主工作区除外）：无");
-    else {
-      log(`worktree（主工作区除外）：${report.worktrees.length} 个`);
-      for (const w of report.worktrees) {
-        log(`  [${w.state}·${STATE_LABEL[w.state]}] ${w.branch ?? "(detached)"} @ ${w.head.slice(0, 7)} · 关联条目 ${w.entries.length} · 未提交 ${w.dirty} · ${w.path}`);
-      }
-    }
-    const p = report.processing;
-    log(`processing 条目：${p.total}（有工作台 ${p.active.length} · 引用分支已消失 ${p.stale.length} · 无分支引用 ${p.noRef.length}）`);
-    for (const item of p.stale) log(`  ⚠ ${item.name}:${item.line} 引用 ${item.ref}，已无对应 worktree`);
-    for (const item of p.noRef) log(`  · ${item.name}:${item.line} 无分支引用（人工确认状态）`);
-    log(report.orphanDirs.length === 0 ? "孤儿目录：无" : `孤儿目录：${report.orphanDirs.join("、")}`);
-    return 0;
+    return command === "claim" ? runClaim({ repoRoot, opts, now, log }) : runComplete({ repoRoot, opts, now, log });
   }
 
   log(`未知命令：${command}\n${USAGE}`);
   return 1;
 }
-

@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "title": "todo-cli TODO",
+  "entries": [
+    {
+      "id": 1,
+      "text": "制作一个 agentic 的 todo 管理 CLI（来源：用户需求 2026-09-12；默认形态：Pi 扩展 + CLI 式命令，读写本仓库 `todos/<插件名>-todo.md` 工作流文件）",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-11 @ feat/todo-cli-extension，根 2.29.0",
+        "能力：list 盘点（未领取/processing/阻塞）、add 登记（查重 + 路由到唯一落点）、claim 领取（标 processing）、complete 完成（改 `- [x]` 并去标注）、triage 只读扫描（活跃 worktree、processing 遗留、合并遗留）",
+        "agentic 含义：agent 经工具直接调用上述操作，取代当前 skill（todo-add / todo-triage）里的人工 grep + edit 步骤",
+        "约束：只改仓库内 `todos/`；不自动 commit；登记不标 processing（领取动作显式触发）",
+        "验收要点：在真实 `todos/` 上跑通全部命令且既有条目格式零破坏；有测试覆盖；插件短名与目录名统一为 `todo-cli`",
+        "进展（2026-09-11 @ feat/todo-cli-tool，根 2.27.0）：核心落地为 `tools/todo.mjs`（先 CLI 工具、后插件封装）——可导出纯函数（parseTodoFile/summarize/findDuplicates/appendEntry/setProcessing/completeEntry/resolveTodoPath/lintTodos）+ 六个子命令（summary/list/add/claim/complete/lint）；跨文件归一化查重（exact/similar）、领取标注幂等、完成勾选并去 processing、路径穿越拒绝、CRLF 行尾保持；9 个单测（含 CRLF 与真实仓库副本上的写操作闭环）；仍缺：Pi 扩展形态（工具/命令注册）与 triage 的 worktree 扫描。",
+        "进展（2026-09-11 @ feat/todo-cli-triage，根 2.28.0）：新增 `triage [--json]` 只读子命令——解析 `git worktree list --porcelain` 与 `git branch --merged <主干>`，把每个 worktree 判为 active/cleanup/merged-dirty/orphan/missing（含未提交改动与目录缺失检测，靠条目文本包含分支名做 worktree↔条目互映射），processing 条目按 `@ feat/...` 引用分为 有工作台/引用已消失/无分支引用，并透出 `.worktrees/` 孤儿目录；不写任何文件（测试断言 todos/ 零改动）；真实仓库实测：正确把 8 条 route A processing 归为无分支引用（人工确认）；新增 4 个单测（9→13）；`claim` 新增 `--branch feat/x` 选项，把分支引用写进处理标记（`（processing @ feat/x）`），使 worktree↔条目互映射不依赖人工注记纪律；仍缺：Pi 扩展形态（工具/命令注册）。"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 2,
+      "text": "工具名去冲突（用户实测报错）：本扩展注册的 agent 工具 `todo` 与已装第三方扩展 `@juicesharp/rpiv-todo`（同名工具 `todo`，管会话任务列表）冲突——宿主工具注册表无命名空间，后加载的一方整个扩展加载失败（`Error: Failed to load extension \"...rpiv-todo\\index.ts\": Tool \"todo\" conflicts with ...\\todo-cli\\index.ts`）。插件侧避让：工具改名 `todos`（命令面 `/todo` 与 `/todo:*` 不变；对方命令名是 `todos`，属另一注册表）。验收：todo-cli 测试 + 根 test:todo/test:contract/test:smoke 全绿、`node tools/install-smoke.mjs` 14/14、与 rpiv-todo 同装不再报冲突；同步 docs 卡 / README / AGENTS / 本条进展。",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-11 @ merge 1fce323，根 2.30.1 / todo-cli 1.0.1：工具名改 `todos`，命令面不变；`index.test.ts` 加回归锁（不得再注册 `todo`）；真机复现→验证（临时配置目录 + 真实 pi --mode rpc，our 14 扩展 + npm 形态 rpiv-todo 同装）：修前报 `Tool \"todo\" conflicts with ...\\todo-cli\\index.ts` 且 exit 1，修后 exit 0、stderr 空、双方命令面齐全（62 条）；install-smoke 14/14 扩展 61 命令",
+        "进展（2026-09-11 @ feat/todo-cli-extension，根 2.29.0）：Pi 扩展形态落地——`todo-cli/`（`index.ts` 注册 agent 工具 `todo`（summary/list/add/claim/complete/triage/lint 七动作）+ 裸 `/todo` 与六条冒号命令 `/todo:list|add|claim|complete|triage|lint`，旧空格写法只提示改名）；核心逻辑从 `tools/todo.mjs` 迁入 `todo-cli/core.ts`（CLI 变为薄入口再导出，既有 13 个 CLI 测试路径与行为不变），扩展目录自包含、可整目录复制安装；5 个接线测试（fake pi 捕获注册面 + 临时仓库真文件写入 + 注入 git 事实的 triage）；根 `package.json` 2.29.0 注册 13 扩展、`tools/install-smoke.mjs` 期望表同步、README/AGENTS/docs 卡四同步。"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 3,
+      "text": "形态纠正为通用命令行 CLI（用户 2026-09-11）：todo 工具应为独立 CLI 而非 Pi 插件——删除扩展接线（index.ts / index.test.ts / package.json 的 pi 字段与 typebox 依赖），保留 todo-cli/core.ts + tools/todo.mjs 为唯一 CLI 入口（任意 cwd 可调用、零 pi 依赖）；根 package.json pi.extensions 注销（14→13 扩展）并同步 install-smoke 期望表 / README / AGENTS / docs 卡（移出 docs/extensions）/ 版本号；配套改为用户级 skill（~/.pi/agent/skills/todo-cli/，主会话创建）教 agent 直接调用 CLI，todo-add / todo-triage skill 的机械步骤改走 CLI。验收：CLI 任意 cwd 跑通（summary/list/add/claim/complete/lint/triage/--help）、无 @earendil-works 引用；根 test:contract / test:smoke / test:todo 全绿；node tools/install-smoke.mjs 13/13 扩展；文档四处同步。（完成 team-run-1789100633429 → merge 4951d9a，根 2.31.0（13 扩展 ：todo-cli/ 仅剩 core.ts（CLI-only ，tools/todo.mjs 唯一入口；test:contract 3 · test:smoke 19 · test:todo 16（含 3 个进程边界 E2E · install-smoke 13/13 全绿；配套 skill 见 todos/skills-todo.md（~/.pi/agent/skills/todo-cli/ ）",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-11 @ team-run-1789100633429（any-dev）：仓库侧转换完成——todo-cli/ 仅剩 core.ts（CLI-only 头注释，导出/行为零变化）、tools/todo.mjs 唯一入口（7 子命令+--help 不变、无 --root）、根 package.json 注销 pi.extensions（14→13）+ 版本 2.31.0、install-smoke 期望表删 todo-cli 条目、知识卡 git mv 至 docs/tools/todo-cli.md 并重写、README/AGENTS/INDEX/session-manager 四处同步；实测 test:contract 3 / test:smoke 19 / test:todo 16（含 3 个进程边界 E2E，任意 cwd spawnSync 真实 node）全绿，install-smoke 真跑 13/13（注意：agent-team 派生会话需先清 PI_AGENT_TEAM_FILE 再跑，否则 9 条 /team* 断言环境性失败，详见 history/team-runs/run-1789100633429/50-acceptance.md），任意 cwd（仓库根与 C:\\Users\\12967）只读命令全过；产出分支 team-run-1789100633429（四写线 --no-ff 合入，末次 merge 7c4f53c），运行记录 history/team-runs/run-1789100633429/（00/10/20×4/30/40/50/90）；配套 skill 为主会话后续（todos/skills-todo.md ecb70e9 已登记）；遗留：general-todo src/ 收纳条目仍列 todo-cli 于 14 插件目录（口径待主会话修）"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 4,
+      "text": "持久化改造：markdown → 数据库（用户 2026-09-11 提出）。当前实现直接读写 todos/*-todo.md 文本（解析/查重/CRLF 保持全靠字符串处理），优化为数据库持久化：条目结构化字段（状态/文本/文件归属/processing 标记/分支引用/时间戳），写操作单条原子、并发安全，查询/聚合/查重不再扫全部文件。必须保留：现有七子命令 CLI 契约与退出码、skill 配套（todo-add/todo-triage/todo-cli）、AGENTS.md 登记工作流、lint 的扩展↔todo 对应、人工可读的 markdown 视图（导出或双向同步二选一）、历史条目迁移与回滚。待决策（开工前定）：存储选型（node:sqlite 内置 vs 单文件 JSON+锁 vs 其它）、markdown 是权威还是导出视图、迁移与双写策略、无数据库环境的降级。验收：现有 16 个测试与真实 todos/ 行为零破坏（或迁移后等价证明）、并发写/中断写测试、迁移脚本可逆、文档四处同步。",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-11 @ team-run-run-1789118829730：markdown 权威 + node:sqlite 索引 todos/.todo-cli/ 已 gitignore，db status/rebuild/drop，迁移可逆，测试 16→50；history/team-runs/run-1789118829730/"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 5,
+      "text": "元数据化筛选查询（用户 2026-09-11 提出）：todo-cli 支持按 metadata 筛选/查询——① 状态类（未领取 open / 进行中 processing / 已完成 done）；② 归属类（不同插件/软件，如只看 todo-cli 的条目）；③ 更多维度待定（标签/负责人/时间范围/关键词等）。现状：list --status 与 list --file 已覆盖 ① ② 的基本形态；本条把筛选升级为结构化 metadata 查询（组合条件、可扩展维度、稳定输出），与「持久化改造」条目配套（DB 化后 metadata 才有一等公民位置）。待细化（开工前定）：metadata 字段集与来源（条目文本约定 vs 结构化列）、查询语法（flags vs 表达式）、输出格式（人读/--json）、与 skill 的配合。验收：组合条件查询（如「processing 且 file=todo-cli」）一条命令完成；筛选有测试；CLI 契约向后兼容；todo-cli/todo-triage skill 同步用法。",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-11 @ team-run-run-1789118829730：list --branch/--tag/--text/--claimed-since/--json AND 组合 + db 子命令；组合查询一条命令；降级环境文本维度可用；history/team-runs/run-1789118829730/"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 6,
+      "text": "complete --note 处理有缺陷（2026-09-11 实测 agent-team-todo:116 收尾）：备注里的全角右括号「）」被吞掉、「完成」前缀重复——写入结果是「（完成 完成 … statusTaskText( ——」。要求：note 只整体包裹、不解析内部括号与换行；补单测覆盖含「（）」、换行、超长备注的 complete 输入。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "notes": [],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 7,
+      "text": "存储架构迁移方案 C：JSON 权威、去掉 markdown（用户 2026-09-11 讨论后指定登记）——todos/<名>.json 为唯一持久真相，CLI 是唯一读写入口；状态/文本/注记/分支引用/标签/三时间戳为原生字段，无 sqlite 索引层、无漂移、无 node:sqlite 实验依赖；JSON 进 git 可 diff。必须保留：七子命令 CLI 契约（--file 指向 .json）与退出码、lint 的扩展↔todo 对应（文件名改 .json）、AGENTS 登记工作流、skill 配套、list 即人类视图（明确不再保留 md 视图，同时改写 L14 验收里「人工可读 markdown 视图必须保留」条）。并发：自研锁（stale/重入/中断释放）+ temp+rename 原子写，配真实子进程并发/中断测试。迁移：18 文件/189 条 + 注记与缩进子行迁移进 notes，迁移可逆。同步改：AGENTS 红线 2/7、lint、README、docs/tools/todo-cli.md、triage 映射口径、三个 todo skill（仓库外，需用户批准）。待决策（开工前定）：单文件 vs 每插件一文件；条目 schema（原 md 文本是否保留）；锁实现；分支合并冲突策略；是否接受彻底无 md。验收：迁移后等价证明（条目数/状态/注记零丢失）、并发写不丢、lint exit 0、文档四处同步、回滚可还原 md 形态。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "notes": [],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    },
+    {
+      "id": 8,
+      "text": "清理 docs/tools/todo-cli.md 的环境剥离前缀残留：成员侧 env 根治（638eb0f）后「必跑」里的 env -u PI_AGENT_TEAM_* 前缀说明已失效，删掉该句并更新 last verified",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "03bffa8 已合并；test:todo 50 pass；卡片 last verified @ a44c102"
+      ],
+      "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null
+    }
+  ]
+}

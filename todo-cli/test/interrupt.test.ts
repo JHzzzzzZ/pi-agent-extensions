@@ -1,20 +1,15 @@
 /**
- * todo-cli 中断写边界测试（W3；TDD 红 = 预期交付形态）。
+ * todo-cli 中断写边界测试（方案 C 重写版）。
  *
- * 覆盖 10-design.md §6 清单 20–21，全部真实子进程 + 真实临时仓库 fixture：
- *   20. SIGKILL 循环杀 add：每轮后 md 必须是「旧版」或「完整新版」——不得出现半态；
- *       tmp 残留只能来自被杀进程，且过期（>10 分钟）后必须被下一次成功写入清理；
- *       末次 add 成功且 `list` 输出与 markdown 解析逐行一致。
- *   21. 漂移自愈确定性：手工改 md（模拟中断恢复 / 并行 worktree 合并）后，结构化查询
- *       必须立即反映新内容（DB 行集 = 新 parse 像）——今日 `list --json/--text`
- *       尚未接线，JSON.parse 必失败 = 预期红，W4 转绿。
+ * 覆盖（全部真实子进程 + 真实临时仓库 fixture）：
+ *   - SIGKILL 循环杀 add：每轮后 JSON 必须是「旧版」或「完整新版」（temp+rename 原子
+ *     替换，无半态）；被杀进程可能残留锁/pid 死锁文件 → 下一次写必须 stale 抢占成功；
+ *   - tmp 残留只能来自被杀进程，过期（>10 分钟）后必须被下一次成功写入清理；
+ *   - 末次 add 成功且 `list` 输出与 JSON 投影逐行一致。
  *
- * 关于击杀时机的实测说明（诚实记录）：设计稿写「随机 1–15ms」，但本机（Windows /
- * Node v24.13.1）`node tools/todo.mjs` 冷启动实测 ~400ms，1–15ms 只会命中启动阶段。
- * 因此这里随机区间取 [1, 1500]ms 覆盖启动/读改写/写回各阶段；无论命中哪个阶段，
- * 「旧版或完整新版」的断言都必须成立。补充实测：Windows 上 `writeFileSync` 的
- * 截断/写回过程对并发读者不可观测（字节级轮询探针 0 次撕裂），故清单 20 在今日
- * 实现上通常为绿——它的价值在 W4 落地 temp+rename 原子替换后作为回归网。
+ * 击杀时机：本机（Windows / Node 24）`node tools/todo.mjs` 冷启动实测 ~400ms，随机
+ * 区间取 [1, 1500]ms 覆盖启动/读改写/写回各阶段；无论命中哪个阶段，「旧版或完整新版」
+ * 的断言都必须成立。
  */
 
 import test from "node:test";
@@ -25,11 +20,11 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { appendEntry, parseTodoFile } from "../core.ts";
+import { emptyTodoData, parseTodoJson, serializeTodo } from "../schema.ts";
+import type { TodoEntry, TodoFileData } from "../schema.ts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-// 30k 缩进说明行 ≈ 2MB：让被杀的写入阶段有可观测时长，同时保持测试轻量。
-const FILLER_LINES = 30_000;
+const SEED_ENTRIES = 200;
 const STATUS_MARK: Record<string, string> = { done: "[x]", processing: "[~]", open: "[ ]" };
 
 interface CliResult {
@@ -47,13 +42,22 @@ function cleanEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function seedContent(): string {
-  let content = "# general TODO\r\n\r\n";
-  for (let i = 0; i < 10; i += 1) content += `- [ ] 种子条目 ${String(i).padStart(3, "0")} 供中断测试使用\r\n`;
-  for (let i = 0; i < FILLER_LINES; i += 1) {
-    content += `  - 子说明行 ${i} 仅存在于 markdown，不进数据库（撑大读改写窗口）\r\n`;
+function seedEntries(): TodoEntry[] {
+  const entries: TodoEntry[] = [];
+  for (let i = 0; i < SEED_ENTRIES; i += 1) {
+    entries.push({
+      id: i + 1,
+      text: `种子条目 ${String(i).padStart(3, "0")} 供中断测试使用`,
+      status: "open",
+      branch: null,
+      tags: [],
+      notes: [],
+      createdAt: null,
+      claimedAt: null,
+      completedAt: null,
+    });
   }
-  return content;
+  return entries;
 }
 
 function makeFixture(): string {
@@ -62,7 +66,8 @@ function makeFixture(): string {
   fs.mkdirSync(path.join(root, "tools"), { recursive: true });
   fs.cpSync(path.join(REPO_ROOT, "todo-cli"), path.join(root, "todo-cli"), { recursive: true });
   fs.copyFileSync(path.join(REPO_ROOT, "tools", "todo.mjs"), path.join(root, "tools", "todo.mjs"));
-  fs.writeFileSync(path.join(root, "todos", "general-todo.md"), seedContent());
+  const data: TodoFileData = { ...emptyTodoData("general-todo"), entries: seedEntries() };
+  fs.writeFileSync(path.join(root, "todos", "general-todo.json"), serializeTodo(data));
   return root;
 }
 
@@ -74,12 +79,19 @@ function cliPath(root: string): string {
   return path.join(root, "tools", "todo.mjs");
 }
 
-function readTodo(root: string): string {
-  return fs.readFileSync(path.join(root, "todos", "general-todo.md"), "utf8");
+function jsonPath(root: string): string {
+  return path.join(root, "todos", "general-todo.json");
+}
+
+function readData(root: string) {
+  const parsed = parseTodoJson(fs.readFileSync(jsonPath(root), "utf8"), "test");
+  assert.equal(parsed.ok, true, "JSON 必须始终可解析");
+  return parsed.ok ? parsed.data : null;
 }
 
 function leftoverTmps(root: string): string[] {
-  return fs.readdirSync(path.join(root, "todos")).filter((name) => name.endsWith(".tmp"));
+  const dir = path.join(root, "todos", ".todo-cli", "tmp");
+  return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
 }
 
 function collect(child: import("node:child_process").ChildProcess): { stdout: string; stderr: string } {
@@ -122,95 +134,75 @@ function runCliKilled(root: string, args: string[], delayMs: number): Promise<{ 
   });
 }
 
-function expectedListLines(root: string): string[] {
-  return parseTodoFile(readTodo(root)).map((entry) => `${STATUS_MARK[entry.status]} general-todo:${entry.line}  ${entry.text}`);
+function withEntry(data: TodoFileData, text: string): TodoFileData {
+  return {
+    ...data,
+    entries: [
+      ...data.entries,
+      {
+        id: data.entries.length + 1,
+        text,
+        status: "open",
+        branch: null,
+        tags: [],
+        notes: [],
+        createdAt: null,
+        claimedAt: null,
+        completedAt: null,
+      },
+    ],
+  };
 }
 
-test("中断写：5 轮随机延时 SIGKILL 杀 add，md 不得留半态；tmp 过期后由下一次成功写入清理；末次 add 与 list 一致", { timeout: 180_000 }, async (t) => {
+test("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁由 stale 抢占自愈；过期 tmp 被清理；末次 add 与 list 一致", { timeout: 180_000 }, async (t) => {
   const root = makeFixture();
   t.after(() => removeFixture(root));
-  const md = path.join(root, "todos", "general-todo.md");
 
   for (let round = 0; round < 5; round += 1) {
-    const before = readTodo(root);
+    const beforeData = readData(root);
+    const before = fs.readFileSync(jsonPath(root), "utf8");
     const text = `中断测试条目 第${round}轮 由被杀的 add 写入`;
-    const expected = appendEntry(before, text);
     const delay = 1 + Math.floor(Math.random() * 1500);
     const { result, killed } = await runCliKilled(root, ["add", "--file", "general", text], delay);
 
-    const after = readTodo(root);
+    // 时间戳无关的语义比对：旧版（无新条目）或完整新版（追加一条 open 条目）
+    const semantic = (data: TodoFileData) =>
+      JSON.stringify(data.entries.map((entry) => [entry.id, entry.text, entry.status, entry.branch, entry.tags, entry.notes]));
+    const after = fs.readFileSync(jsonPath(root), "utf8");
+    const afterData = readData(root);
+    const isOld = semantic(afterData) === semantic(beforeData);
+    const isNew =
+      semantic(afterData) === semantic(withEntry(beforeData, text)) &&
+      afterData.entries[afterData.entries.length - 1].createdAt !== null;
     assert.ok(
-      after === before || after === expected,
-      `第 ${round} 轮（SIGKILL ${delay}ms，killed=${killed}，exit=${result.code}/${result.signal}）后 md 必须是旧版或完整新版，不得半态：旧 ${before.length} 字节 / 实际 ${after.length} 字节 / 完整新版 ${expected.length} 字节`,
+      isOld || isNew,
+      `第 ${round} 轮（SIGKILL ${delay}ms，killed=${killed}，exit=${result.code}/${result.signal}）后 JSON 必须是旧版或完整新版：旧 ${before.length} 字节 / 实际 ${after.length} 字节`,
     );
-    assert.doesNotThrow(() => parseTodoFile(after), `第 ${round} 轮后 md 必须仍可解析`);
+    assert.doesNotThrow(() => parseTodoJson(after, "roundtrip"), `第 ${round} 轮后 JSON 必须仍可解析`);
   }
 
-  // 残留 tmp 只能来自被杀的进程；拨旧 mtime 后用一次成功写入触发 W4 的过期清理。
+  // 残留 tmp 只能来自被杀进程；拨旧 mtime 后用一次成功写入触发过期清理。
   const aged = Date.now() - 11 * 60_000;
   for (const tmp of leftoverTmps(root)) {
-    fs.utimesSync(path.join(root, "todos", tmp), aged / 1000, aged / 1000);
+    const target = path.join(root, "todos", ".todo-cli", "tmp", tmp);
+    fs.utimesSync(target, aged / 1000, aged / 1000);
   }
 
   const finalText = "中断测试收尾条目 必须完整落盘";
-  const finalBefore = readTodo(root);
   const finalRes = await runCli(root, ["add", "--file", "general", finalText]);
-  assert.equal(finalRes.code, 0, `收尾 add 应 exit 0（stderr=${finalRes.stderr.slice(0, 200)}）`);
+  assert.equal(finalRes.code, 0, `收尾 add 应 exit 0（被杀残留锁必须被 stale 抢占；stderr=${finalRes.stderr.slice(0, 200)}）`);
   assert.equal(finalRes.stderr, "", "收尾 add stderr 应恒空");
-  assert.equal(readTodo(root), appendEntry(finalBefore, finalText), "收尾 add 必须完整落盘");
+  assert.ok(
+    readData(root).entries.some((entry) => entry.text === finalText),
+    "收尾条目必须完整落盘",
+  );
   assert.deepEqual(leftoverTmps(root), [], "成功写入后不得留下任何（含过期）tmp 残留");
 
   const listRes = await runCli(root, ["list"]);
   assert.equal(listRes.code, 0, `list 应 exit 0（stderr=${listRes.stderr.slice(0, 200)}）`);
+  const expectedLines = readData(root).entries.map(
+    (entry) => `${STATUS_MARK[entry.status]} general-todo#${entry.id}  ${entry.text}`,
+  );
   const actualLines = listRes.stdout.split(/\r?\n/).filter((line) => line !== "");
-  assert.deepEqual(actualLines, expectedListLines(root), "list 输出必须与 markdown 解析逐行一致");
-});
-
-const MARKDOWN_PROJECTION = (root: string): Array<{ file: string; line: number; status: string; text: string }> =>
-  parseTodoFile(readTodo(root)).map((entry) => ({ file: "general-todo", line: entry.line, status: entry.status, text: entry.text }));
-
-function parseJsonRows(stdout: string, label: string): Array<Record<string, unknown>> {
-  let value: unknown;
-  try {
-    value = JSON.parse(stdout);
-  } catch {
-    assert.fail(`${label}：list --json 应先输出合法 JSON（今日 --json 未接线 → 预期红，W4 转绿）：${stdout.slice(0, 200)}`);
-  }
-  assert.ok(Array.isArray(value), `${label}：--json 输出应为数组`);
-  return value as Array<Record<string, unknown>>;
-}
-
-function projectRows(rows: Array<Record<string, unknown>>): Array<{ file: unknown; line: unknown; status: unknown; text: unknown }> {
-  return rows.map((row) => ({ file: row.file, line: row.line, status: row.status, text: row.text }));
-}
-
-test("漂移自愈：手工改 md 后结构化查询必须反映新内容（今日 --json/--text 未接线=红，W4 转绿）", { timeout: 120_000 }, async (t) => {
-  const root = makeFixture();
-  t.after(() => removeFixture(root));
-  const md = path.join(root, "todos", "general-todo.md");
-
-  const base = await runCli(root, ["list", "--json"]);
-  assert.equal(base.code, 0, `list --json 应 exit 0（stderr=${base.stderr.slice(0, 200)}）`);
-  const baseRows = parseJsonRows(base.stdout, "基线查询");
-  assert.deepEqual(projectRows(baseRows), MARKDOWN_PROJECTION(root), "基线 --json 行集必须等于 markdown 派生像");
-
-  // 手工漂移：直接改 md（模拟中断后人工编辑 / 并行 worktree 合并进来的条目）。
-  const drifted = `${readTodo(root).replace(/\r\n$/, "")}\r\n- [ ] 手工漂移条目 由外部编辑写入\r\n`;
-  fs.writeFileSync(md, drifted);
-
-  const afterDrift = await runCli(root, ["list", "--json"]);
-  const driftRows = parseJsonRows(afterDrift.stdout, "漂移后查询");
-  assert.deepEqual(projectRows(driftRows), MARKDOWN_PROJECTION(root), "漂移重导入后行集必须跟随 markdown 新内容");
-  assert.ok(
-    driftRows.some((row) => String(row.text).includes("手工漂移条目")),
-    "手工新增条目必须出现在结构化查询结果中",
-  );
-
-  const filtered = await runCli(root, ["list", "--file", "general", "--text", "手工漂移", "--json"]);
-  const filteredRows = parseJsonRows(filtered.stdout, "组合过滤查询");
-  assert.ok(filteredRows.length >= 1, "--text 过滤不应为空");
-  assert.ok(
-    filteredRows.every((row) => String(row.text).includes("手工漂移")),
-    "--text 必须做子串过滤（AND 组合旧 flag --file）",
-  );
+  assert.deepEqual(actualLines, expectedLines, "list 输出必须与 JSON 投影逐行一致");
 });
