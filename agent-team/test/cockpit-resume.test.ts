@@ -17,6 +17,7 @@ import { TeamRunCoordinator, type UiPort } from "../cockpit.ts";
 import { buildResumePrompt } from "../resume.ts";
 import { writeRunStatus, readRunStatuses, type RunStatusFile } from "../runstore.ts";
 import { teamWorktreeBranch } from "../worktree.ts";
+import { LEADER_ENV_MEMBER_MODELS, LEADER_ENV_WORKTREE_RUNID } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { makeFakeSpawn, messageEndLine, toolExecutionEndLine, toolExecutionStartLine, waitForChild } from "./helpers.ts";
 
@@ -321,4 +322,58 @@ test("an unrestorable shared worktree is a hard failure (no silent fresh tree, n
   assert.equal(spawn.records.length, 0, "no leader spawned against the wrong directory");
   const terminal = readRunStatuses(root).entries.find((e) => e.runId !== parentRunId);
   assert.equal(terminal?.status, "failed");
+});
+
+test("续跑 leader env 继承父进程环境：注入键覆盖父进程残留（展开在前、覆盖在后）", async () => {
+  const root = tmpRoot();
+  const parentRunId = "run-parent";
+  writeRunStatus(root, parentStatus(parentRunId));
+  const sessionFile = writeSessionMirror(root, parentRunId);
+
+  const saved = new Map<string, string | undefined>();
+  const keys = ["NO_PROXY", LEADER_ENV_WORKTREE_RUNID, LEADER_ENV_MEMBER_MODELS];
+  for (const key of keys) saved.set(key, process.env[key]);
+  process.env.NO_PROXY = "127.0.0.1,localhost";
+  process.env[LEADER_ENV_WORKTREE_RUNID] = "run-stale-parent";
+  process.env[LEADER_ENV_MEMBER_MODELS] = JSON.stringify({ frontend: "stale/model" });
+  try {
+    const spawn = makeFakeSpawn();
+    const coordinator = new TeamRunCoordinator({
+      cwd: () => "/repo",
+      worktreeRoot: "/tmp/worktrees",
+      spawn: spawn.spawn,
+      piCommand: "pi",
+      transcriptRoot: root,
+    });
+    const promise = coordinator.start({
+      team: fixtureTeam(),
+      task: buildResumePrompt(),
+      ui: fakeUi(),
+      resume: {
+        parentRunId,
+        parentStatus: parentStatus(parentRunId),
+        sessionFile,
+        modelOverrides: { memberModels: { frontend: "opencode-go/deepseek-v4-flash" } },
+      },
+    });
+    const child = await waitForChild(spawn, 0);
+    const record = spawn.records[0];
+
+    // 继承：代理放行变量随父进程进 leader（F1 修复语义）。
+    assert.equal(record.env?.NO_PROXY, "127.0.0.1,localhost");
+    // 覆盖：本次续跑注入的别名/成员覆盖必须赢过父进程残留值。
+    assert.equal(record.env?.[LEADER_ENV_WORKTREE_RUNID], parentRunId);
+    assert.deepEqual(JSON.parse(record.env?.[LEADER_ENV_MEMBER_MODELS] ?? "{}"), {
+      frontend: "opencode-go/deepseek-v4-flash",
+    });
+
+    child.autoRespond(leaderLines(), 0, 5);
+    const result = await promise;
+    assert.ok(result.ok, result.ok ? "" : result.message);
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
