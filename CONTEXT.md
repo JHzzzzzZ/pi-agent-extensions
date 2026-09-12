@@ -49,7 +49,7 @@ _Avoid_: 行号、序号
 ### 存储与并发
 
 **方案 C**:
-「JSON 唯一权威、CLI 唯一读写入口」的存储架构（ADR-0001）；无 markdown、无 sqlite、无降级路径。
+「JSON 唯一权威、CLI 唯一读写入口」的存储架构（ADR-0002）；无 markdown、无 sqlite、无降级路径。
 _Avoid_: JSON 化、迁移后形态
 
 **权威（authority）**:

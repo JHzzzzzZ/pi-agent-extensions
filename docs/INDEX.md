@@ -11,7 +11,7 @@
 | 问题类型 | 读这个 |
 | --- | --- |
 | `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径、JSON schema 与锁 | `tools/todo-cli.md` |
-| todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0001-todos-json-storage.md` |
+| todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0002-todos-json-storage.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |

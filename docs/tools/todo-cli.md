@@ -6,7 +6,7 @@
 
 把 AGENTS.md 规则 2 的 `todos/` 工作流（登记 → 领取 → 完成 + 开工/收尾盘点 triage）从「agent 手写 grep + edit」变成可测试的原子命令。**CLI-only**：不注册任何 Pi 扩展 API（无 agent 工具、无冒号命令）、无 npm 依赖、无 Pi/宿主依赖；`node tools/todo.mjs <子命令>` 是唯一入口，任意 cwd 可用。
 
-**存储（方案 C，todos/todo-cli-todo.md:17）**：`todos/<名>.json` 是唯一持久真相——无 markdown、无 sqlite 索引层、无降级路径。决策取舍见 `docs/adr/0001-todos-json-storage.md`；术语见根 `CONTEXT.md`。
+**存储（方案 C，todos/todo-cli-todo.md:17）**：`todos/<名>.json` 是唯一持久真相——无 markdown、无 sqlite 索引层、无降级路径。决策取舍见 `docs/adr/0002-todos-json-storage.md`；术语见根 `CONTEXT.md`。
 
 **不做**：不自动 commit；不碰 `todos/` 之外的仓库文件（triage 只读）；无 TUI/状态条；运行时产物（锁/tmp）只落 gitignore 的 `todos/.todo-cli/`。
 
@@ -61,5 +61,5 @@ argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损�
 
 - 必跑：`npm run test:todo`（glob = `test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`；44 个，2026-09-12 实测全绿）+ `node tools/todo.mjs lint`（exit 0）。
 - 改行为：同步根 `test/todo-cli.test.ts` + 本卡；改命令面：同步 `core.ts` 的 `USAGE` + 本卡。
-- 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0001-todos-json-storage.md` 同步。
+- 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0002-todos-json-storage.md` 同步。
 - 新增子命令/flags：先补根测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变。

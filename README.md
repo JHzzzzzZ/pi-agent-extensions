@@ -495,7 +495,7 @@ node --experimental-strip-types --test solo-mode/index.test.ts   # 22 个测试
 
 ## todo-cli
 
-`todos/` 工作流的**仓库级 CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0001-todos-json-storage.md`](docs/adr/0001-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/三时间戳都是原生字段）。唯一入口是仓库根的 `node tools/todo.mjs`（实现源 `todo-cli/schema|lock|query|migrate|core.ts`），`REPO_ROOT` 由脚本位置解析，任意 cwd 可用。
+`todos/` 工作流的**仓库级 CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/三时间戳都是原生字段）。唯一入口是仓库根的 `node tools/todo.mjs`（实现源 `todo-cli/schema|lock|query|migrate|core.ts`），`REPO_ROOT` 由脚本位置解析，任意 cwd 可用。
 
 ```bash
 node tools/todo.mjs summary [--json]                    # 全量盘点（open / processing / done）
