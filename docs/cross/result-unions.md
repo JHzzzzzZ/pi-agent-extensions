@@ -1,6 +1,6 @@
 # 跨扩展横切契约：result union 与四层错误码全景
 
-> last verified @ 0142e14
+> last verified @ 775638d
 >
 > 仓库统一约定：**结果联合优先于异常**——`{ ok: true, value } | { ok: false, code, message }`，调用方用判别联合收窄。每层有自己的错误码文件；新失败模式必须登记到所属层的码表，禁止临时字符串码。错误消息 = 静态模板 + 受控 detail，不插值用户输入/密钥/源码。
 
@@ -8,10 +8,10 @@
 
 | 层 | 文件 | 码数 | 关键码 |
 | --- | --- | --- | --- |
-| 编排层（src） | `pwr/src/errors.ts` | 20 | `APPROVAL_REQUIRED` / `APPROVAL_STALE`（改脚本后重批）、`BUDGET_EXCEEDED`、`PROJECT_NOT_TRUSTED`、`NAME_CONFLICT`、`ENGINE_UNAVAILABLE`、`ARGS_SCHEMA_VIOLATION`、`WORKFLOW_NOT_FOUND` |
-| 引擎层（engine） | `pwr/engine/errors.ts` | 7 | `SCRIPT_FORBIDDEN_SYNTAX`、`SCRIPT_UNKNOWN_API`、`SCRIPT_LOOP_LIMIT_EXCEEDED`、`AGENT_LIMIT_EXCEEDED`、`AGENT_RUNNER_UNAVAILABLE`；错误携带源码位置（`ScriptError.start/end`） |
-| 运行时层（runtime） | `pwr/runtime/errors.ts` | 7 | `RUN_NOT_FOUND`、`RUN_NOT_CONTROLLABLE`、`ILLEGAL_STATE_TRANSITION`（迁移表拒绝）、`AGENT_NOT_RESTARTABLE`、`SESSION_SHUTDOWN` |
-| 执行器层（runner） | `pwr/runner/errors.ts` | 5 | `UNKNOWN_AGENT`、`AGENT_RUNNER_UNAVAILABLE`、`AGENT_EXECUTION_ERROR`、`RESULT_TOO_LARGE`（>50KB）、`AGENT_ABORTED` |
+| 编排层（src） | `src/extensions/pwr/src/errors.ts` | 20 | `APPROVAL_REQUIRED` / `APPROVAL_STALE`（改脚本后重批）、`BUDGET_EXCEEDED`、`PROJECT_NOT_TRUSTED`、`NAME_CONFLICT`、`ENGINE_UNAVAILABLE`、`ARGS_SCHEMA_VIOLATION`、`WORKFLOW_NOT_FOUND` |
+| 引擎层（engine） | `src/extensions/pwr/engine/errors.ts` | 7 | `SCRIPT_FORBIDDEN_SYNTAX`、`SCRIPT_UNKNOWN_API`、`SCRIPT_LOOP_LIMIT_EXCEEDED`、`AGENT_LIMIT_EXCEEDED`、`AGENT_RUNNER_UNAVAILABLE`；错误携带源码位置（`ScriptError.start/end`） |
+| 运行时层（runtime） | `src/extensions/pwr/runtime/errors.ts` | 7 | `RUN_NOT_FOUND`、`RUN_NOT_CONTROLLABLE`、`ILLEGAL_STATE_TRANSITION`（迁移表拒绝）、`AGENT_NOT_RESTARTABLE`、`SESSION_SHUTDOWN` |
+| 执行器层（runner） | `src/extensions/pwr/runner/errors.ts` | 5 | `UNKNOWN_AGENT`、`AGENT_RUNNER_UNAVAILABLE`、`AGENT_EXECUTION_ERROR`、`RESULT_TOO_LARGE`（>50KB）、`AGENT_ABORTED` |
 
 ## 跨层同名码（有意为之，别"去重"）
 
@@ -21,7 +21,7 @@
 
 ## pwr 之外
 
-- `agent-team/types.ts` — `TeamErrorCodes`（result union，上限同款：8 任务 / 8 并发 / 50KB / 8KB）；v1.21.0 新增 `RUN_NOT_TERMINAL`（续跑请求时父 run 仍在跑）与 `RESUME_UNAVAILABLE`（父 run 无 leader 会话镜像）。
+- `src/extensions/agent-team/types.ts` — `TeamErrorCodes`（result union，上限同款：8 任务 / 8 并发 / 50KB / 8KB）；v1.21.0 新增 `RUN_NOT_TERMINAL`（续跑请求时父 run 仍在跑）与 `RESUME_UNAVAILABLE`（父 run 无 leader 会话镜像）。
 - 其余扩展（loop / goal / opencode-bridge / deep-init / human-notify）走 `{ ok }` 联合或 deps 注入失败路径，各自 test 文件内锁定契约；没有独立 errors.ts 的（单文件扩展）直接在文件内 `as const` 码对象。
 
 ## 规则

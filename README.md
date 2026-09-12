@@ -4,18 +4,18 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）） | 613 个 |
-| [`stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
-| [`chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
-| [`provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
-| [`run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
-| [`loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；管理走 `/loop:*` 冒号子命令） | 196 个（node:test） |
-| [`goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 63 个 |
-| [`deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
-| [`opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
-| [`human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
-| [`solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
+| [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
+| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）） | 613 个 |
+| [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
+| [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
+| [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
+| [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
+| [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；管理走 `/loop:*` 冒号子命令） | 196 个（node:test） |
+| [`src/extensions/goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 63 个 |
+| [`src/extensions/deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
+| [`src/extensions/opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
+| [`src/extensions/human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
+| [`src/extensions/solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
 
 ## 安装
 
@@ -53,7 +53,7 @@ pi install ./pi-agent-extensions
 
 ### 方式二：手动复制（开发调试）
 
-将扩展目录复制到 `~/.pi/agent/extensions/`（全局）或可信项目 `.pi/extensions/`（项目级），然后在 Pi 中执行 `/reload` 生效。卸载 = 删除目录。每个扩展目录均以 `index.ts` 为入口（pi 自动发现约定：`extensions/*/index.ts`），整目录复制即可被自动加载。
+把仓库内 `src/extensions/<扩展名>/` 目录复制到 `~/.pi/agent/extensions/`（全局）或可信项目 `.pi/extensions/`（项目级，目标目录名保持 `<扩展名>`），然后在 Pi 中执行 `/reload` 生效。卸载 = 删除目录。每个扩展目录均以 `index.ts` 为入口（pi 自动发现约定：`extensions/*/index.ts`），整目录复制即可被自动加载。
 
 ```text
 ~/.pi/agent/extensions/pwr/
@@ -140,11 +140,11 @@ agent 生成脚本后弹出批准卡，选 `Run once`；`/workflow:view` 可实�
 
 ## pwr — Pi Workflow Runtime
 
-本地工作流编排扩展（v2.9.0）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
+本地工作流编排扩展（v2.9.3）。用户编写受约束的 ECMAScript 工作流脚本（白名单 API：`meta/args/agent/pipeline/parallel/sleep/JSON`），PWR 校验后弹出批准卡，再由子 `pi` 进程作为 subagent 执行（solo 开启时批准卡按 once 自动批准）。
 
 ![pwr 运行查看器（/workflow:view）](docs/assets/pwr-viewer.svg)
 
-> 上图与下方 agent-team 截图出自同一条无头管线（`agent-team/tools/capture-screens.mjs`，真实 `TuiMainScreen` + 真实 `RunViewer` + 记录字节流的仿真屏）：左栏 roster（结构/各 stage/结果/脚本）右栏结构图与实时状态；场景数据为示例 run `nightly-audit`，可重复生成、可 diff。
+> 上图与下方 agent-team 截图出自同一条无头管线（`src/extensions/agent-team/tools/capture-screens.mjs`，真实 `TuiMainScreen` + 真实 `RunViewer` + 记录字节流的仿真屏）：左栏 roster（结构/各 stage/结果/脚本）右栏结构图与实时状态；场景数据为示例 run `nightly-audit`，可重复生成、可 diff。
 
 ### 效果示意
 
@@ -228,14 +228,14 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ### 测试与开发
 
 ```bash
-cd pwr
+cd src/extensions/pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
 npm test           # 439 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflow UI（无宿主）
 ```
 
-测试全 mock（fake AgentRunner / fake child pi 进程），不产生真实子进程、无网络。架构与安全说明见 `pwr/DELIVERY.md`，DSL 语法与使用示例见 `pwr/README.md`。
+测试全 mock（fake AgentRunner / fake child pi 进程），不产生真实子进程、无网络。架构与安全说明见 `src/extensions/pwr/DELIVERY.md`，DSL 语法与使用示例见 `src/extensions/pwr/README.md`。
 
 ### 安全边界
 
@@ -254,7 +254,7 @@ npm run demo       # 模拟 /workflow UI（无宿主）
 
 ![agent-team 亮块（编辑器下方 widget，按 ↓ 展开态）](docs/assets/agent-team-widget.svg)
 
-> 上两图由 `agent-team/tools/capture-screens.mjs` **无头重放真实渲染路径**生成（真实 `TuiMainScreen` + 真实 `TranscriptViewer`，终端只换成记录字节流的仿真屏），可重复生成、可 diff：场景数据为示例 run、助手正文按纯文本渲染（未接宿主 Markdown 主题），其余布局/边框/页签/状态色均来自组件本身。亮块的文字来自真实 `buildWidgetView`/`renderWidgetView`（即运行时经 `setWidget` 推送的同一份 string[]），屏上包装照抄宿主 `setExtensionWidget` 对 string[] 的代码路径（`Container` + `Text(line, 1, 0)`），空编辑器是 `↓` 激活门控的真实状态。同一工具同时生成上方 pwr 查看器截图。
+> 上两图由 `src/extensions/agent-team/tools/capture-screens.mjs` **无头重放真实渲染路径**生成（真实 `TuiMainScreen` + 真实 `TranscriptViewer`，终端只换成记录字节流的仿真屏），可重复生成、可 diff：场景数据为示例 run、助手正文按纯文本渲染（未接宿主 Markdown 主题），其余布局/边框/页签/状态色均来自组件本身。亮块的文字来自真实 `buildWidgetView`/`renderWidgetView`（即运行时经 `setWidget` 推送的同一份 string[]），屏上包装照抄宿主 `setExtensionWidget` 对 string[] 的代码路径（`Container` + `Text(line, 1, 0)`），空编辑器是 `↓` 激活门控的真实状态。同一工具同时生成上方 pwr 查看器截图。
 
 效果示意（运行期间亮块，实测格式）：
 
@@ -275,21 +275,21 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 - **多 run 并发（v1.25.0）** — 同一会话最多同时推进 **3 个 run**（协议常量，不可配；第 4 个同步回 `RUN_IN_PROGRESS` 并列出活跃 runId；同毫秒派单自动 `run-<ms>-n` 后缀）；各 run 的进度/预算/停止/RPC 插话/提问独立，跨 run 互不串写。`team_status { runId }` 与 `/team:status [runId]` 定位单个 run（省略 = 全部活跃分节 + 最近终态；再附「近期 run」尾注），`team_stop`/`/team:stop` 省略 runId 三态（恰 1 活跃停它 / 0 活跃提示 / ≥2 活跃要求显式指定并列 runId）；viewer 按 `[`/`]` 环形切 run（多 run 时图例追加 ` · [/] 切 run`）；widget 多 run 折叠行 `agent-team · N run 并行 · ↓/← 查看详情`、展开为单 `main` 根 + 每 run 一棵子树；终态记录保留最近 5 条（`/reload` 逐条水合）
 - **外部 CLI 成员（v1.26.0）** — 成员可声明 `backend: codex|claude`，任务改由对应 CLI 的非交互模式执行（codex `exec --json` / claude `-p --output-format stream-json`），usage/结果折回既有 run 记录、followUp 与 viewer/status 链路；与 pi 成员同池、同停止语义（SIGTERM→SIGKILL）、同 50KB/8KB 上限；CLI 缺失或 leader 声明 backend → run 预检 fail-closed（`CLI_NOT_FOUND` / `EXTERNAL_LEADER_UNSUPPORTED`，不 spawn）；codex 费用恒 0、不入 cost 预算（token 照折）；`tools:` 白名单对外部成员忽略
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
-- **进度可视（可选中亮块）** — 数据驱动：有活跃 run 才挂亮块，run 落定自动消失（不再常驻终态行）。默认只有一行折叠提示（`agent-team <团队> · ↓/← 查看详情`），`↓`/`←`（焦点在主编辑器且编辑器为空时）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行：`↓`/`j` 到底即最后一个成员；成员行连接符 `├─`（非末项）/ `╰─`（末项圆角）、带状态图标与最新活动尾注，多行文本先压平成单行；每行按宿主内容宽补齐并包背景，选中行用更强背景），再按 `↑`/`↓`/`j`/`k` 移动，第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中、在 leader/成员行直接打开查看器并定位该 actor、`esc`/其它键退出并放行编辑器；`/login`、`/model` 等选择器/对话框打开时焦点不在编辑器，widget 完全不介入（方向键原样让给选择器，选中态自动退出）；状态变化（leader 事件/派发起止）即时刷新，1s tick 仅兜底。`/team:clear` 用于丢弃排队的 viewer 对话消息（无内容时提示亮块随 run 结束自动隐藏）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [agent-team/docs/tui-sync.md](agent-team/docs/tui-sync.md））
+- **进度可视（可选中亮块）** — 数据驱动：有活跃 run 才挂亮块，run 落定自动消失（不再常驻终态行）。默认只有一行折叠提示（`agent-team <团队> · ↓/← 查看详情`），`↓`/`←`（焦点在主编辑器且编辑器为空时）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行：`↓`/`j` 到底即最后一个成员；成员行连接符 `├─`（非末项）/ `╰─`（末项圆角）、带状态图标与最新活动尾注，多行文本先压平成单行；每行按宿主内容宽补齐并包背景，选中行用更强背景），再按 `↑`/`↓`/`j`/`k` 移动，第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中、在 leader/成员行直接打开查看器并定位该 actor、`esc`/其它键退出并放行编辑器；`/login`、`/model` 等选择器/对话框打开时焦点不在编辑器，widget 完全不介入（方向键原样让给选择器，选中态自动退出）；状态变化（leader 事件/派发起止）即时刷新，1s tick 仅兜底。`/team:clear` 用于丢弃排队的 viewer 对话消息（无内容时提示亮块随 run 结束自动隐藏）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [src/extensions/agent-team/docs/tui-sync.md](src/extensions/agent-team/docs/tui-sync.md））
 - **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team:doctor` 自检报告
 - **续跑（v1.21.0）** — leader 会话随 run 产物落盘（`runs/<runId>/session/`，7 天保留）。额度耗尽等原因落 failed/aborted 后，`/team:resume <runId> [补充指示]` 或 `team_resume` 工具以**新 run 原地续写父 leader 会话**（完整对话上下文，无交接摘要）并复用父 run 的 worktree（含未提交改动）；`team_resume` 支持 `leaderModel`/`memberModels` 只对本次续跑换模型（不改团队文件，支持 `provider/id:level`）。仅 failed/aborted 可续（completed → `RUN_ALREADY_FINISHED`、进行中 → `RUN_NOT_TERMINAL`、无会话镜像 → `RESUME_UNAVAILABLE`、worktree 不可恢复 → `WORKTREE_UNAVAILABLE` 硬失败）；新 run 记录 `parentRunId`，`/team:status` 与查看器 `Run:` 行展示「续跑自 …」
 - **会话记录查看器** - `/team:view` 全屏左右分栏(fleet inspector 同款:左栏成员 roster 带选中标记与状态,右栏 Run/State/成员/模型/活动 五行元信息头 + 选中成员的连续会话流--任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行;活动行为选中 actor 当前活动（思考中 / 工具调用 <tool> / 排队中 / 已完成/失败/已中止 / run 已结束）+ 5 秒分桶的 `距上次输出` 时长（分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘）；≈85% 终端高,窄于 36 列仅提示),run artifacts 落盘、run 结束后仍可查;`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；按键（v1.8.0）全面对齐 fleet：`↑↓/j/k` 切成员、`Shift+J/K` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行，仅 `m` 发消息是特有键；主 agent 可用 `team_transcript` 工具转述记录要点
 - **查看器内直接对话（`m` 发消息）** — 选中成员/leader 后按 `m` 进入单行输入（右栏输入行），`Enter` 提交；**目标 = leader 且 run 运行中 → RPC steer 插话**（v1.15.0：leader 子进程以 `--mode rpc` 拉起，消息在当前回合边界送达、不打断任务，回复出现在本 run 的 transcript 里）；其余情况（成员目标 / run 已落定 / 通道不可用）走派单语义：消息编成新 run 的 task（附目标 actor transcript 尾部作上文），run 运行中则排队、落定后自动链式派出（failed/aborted 清空）；报告照常 followUp 送达
 
 ```bash
-cd agent-team
+cd src/extensions/agent-team
 npm install && npm test        # 613 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
 ```
 
-详见 [`agent-team/README.md`](agent-team/README.md)（团队文件格式与示例见 `agent-team/examples/dev-team.example.md`）。
+详见 [`src/extensions/agent-team/README.md`](src/extensions/agent-team/README.md)（团队文件格式与示例见 `src/extensions/agent-team/examples/dev-team.example.md`）。
 
 ---
 
@@ -306,7 +306,7 @@ TTFT — │ tok72% mcp40%(14:30) │ pwr 2▶ 1✓   ← 多段同屏：最前�
 ```
 
 ```bash
-cd stream-token-speed
+cd src/extensions/stream-token-speed
 node --experimental-strip-types --test test/*.test.ts   # 43 个测试
 node e2e/run-e2e.mjs                                    # 真实 pi 进程端到端自测
 ```
@@ -337,7 +337,7 @@ tok72% mcp40%(14:30)    ← 智谱：token/MCP 窗口占用 + 下次刷新时间
 ```
 
 ```bash
-node --experimental-strip-types --test provider-quota/index.test.ts
+node --experimental-strip-types --test src/extensions/provider-quota/index.test.ts
 ```
 
 ## run-timer
@@ -352,7 +352,7 @@ node --experimental-strip-types --test provider-quota/index.test.ts
 ```
 
 ```bash
-node --experimental-strip-types --test run-timer/run-timer.test.ts run-timer/aligned-ticker.test.ts
+node --experimental-strip-types --test src/extensions/run-timer/run-timer.test.ts src/extensions/run-timer/aligned-ticker.test.ts
 ```
 
 ## loop
@@ -389,7 +389,7 @@ daily/window 调度与固定间隔共用同一套语义：错过的时间点不�
 **agent 工具**（v1.1.0，v1.2.0 起支持新调度语法，v1.3.0 起支持 `mode: "foreground" | "background"`，v1.4.0 起 `loop_create` 支持可选 `model` 参数——仅 `mode="background"` 生效，前台带 model 返回类型化错误）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"、"后台每小时用便宜模型帮我检查一次部署"这类自然语言请求由 agent 自行建任务。
 
 ```bash
-cd loop
+cd src/extensions/loop
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
 npm test           # 196 个测试（node:test）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
@@ -413,7 +413,7 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 
 ```bash
-node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts   # 63 个测试
+node --experimental-strip-types --test src/extensions/goal/index.test.ts src/extensions/goal/aligned-ticker.test.ts   # 63 个测试
 ```
 
 ---
@@ -427,7 +427,7 @@ node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.te
 - 写铁律：已存在用 `edit`、不存在用 `write`；子不复父、电报体；完成照发 `=== init-deep Complete ===` 报告
 
 ```bash
-cd deep-init && npm install && npm test   # 32 个测试；另有 npm run typecheck
+cd src/extensions/deep-init && npm install && npm test   # 32 个测试；另有 npm run typecheck
 ```
 
 ---
@@ -455,7 +455,7 @@ cd deep-init && npm install && npm test   # 32 个测试；另有 npm run typech
 | `PI_BRIDGE_LOG` | helper 日志文件路径（默认与 helper 同目录的 `opencode-bridge.log`；单行/文件大小均有上限，不记录 payload） |
 
 ```bash
-cd opencode-bridge
+cd src/extensions/opencode-bridge
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型）
 npm test           # 114 个测试（node:test；helper 集成测试用真实子进程 + 手写 fake SOCKS5 server）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
@@ -472,7 +472,7 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 - **一键关闭** — `PI_HUMAN_NOTIFY=0` 关闭全部通知
 
 ```bash
-node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测试
+node --experimental-strip-types --test src/extensions/human-notify/index.test.ts   # 37 个测试
 ```
 
 ---
@@ -488,7 +488,7 @@ node --experimental-strip-types --test human-notify/index.test.ts   # 37 个测�
 - **跨扩展契约** — 状态文件与 fail-closed 口径见 `docs/cross/solo-approval-gate.md`（pwr / opencode-bridge / deep-init 各一份同构 `solo-gate.ts` 只读实现）
 
 ```bash
-node --experimental-strip-types --test solo-mode/index.test.ts   # 22 个测试
+node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts   # 22 个测试
 ```
 
 ---
@@ -535,6 +535,6 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`pwr/` 用 tab 缩进，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/`、`todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与仓库根的 `todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
-- 无 linter、无 formatter、无构建步骤；`pwr/vendor/acorn.mjs` 为生成文件，勿修改
+- 无 linter、无 formatter、无构建步骤；`src/extensions/pwr/vendor/acorn.mjs` 为生成文件，勿修改

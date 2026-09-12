@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-loop",
   "private": true,
-  "version": "1.6.1",
+  "version": "1.6.2",
   "type": "module",
   "description": "loop — Pi 定时任务扩展（/loop：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定）+ agent 工具；v1.6.1：修复后台调度丢失任务模型（startBgRun 透传 task.model，--bg --model 真正生效）｜v1.6.0：命令面冒号化（/loop:list|pause|resume|delete|clear 独立静态命令，裸 /loop 只管创建/用法）｜v1.5.0：状态条对齐墙钟秒节拍（aligned-ticker.ts，契约 docs/cross/status-bar.md））",
   "engines": {

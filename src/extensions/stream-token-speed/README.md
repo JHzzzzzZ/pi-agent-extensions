@@ -2,7 +2,7 @@
 
 在 pi TUI 流式回复期间显示 **TTFT（首 token 延迟）** 与 **瞬时 tokens/s**，
 结束后保留本轮 **TTFT / 平均速度**（`~` 前缀标注平均值）。
-段前缀由 `status-band` 统一决定：**最前段无前缀（行首定格）**，非最前段以 `│ ` 开头（footer 段前缀契约，见 `docs/cross/status-bar.md`）。
+段前缀由 `status-band` 统一决定：**最前段无前缀（行首定格）**，非最前段以 `│ ` 开头（footer 段前缀契约，见 `<仓库根>/docs/cross/status-bar.md`）。
 
 计量范围：文本（`text_delta`）、thinking（`thinking_delta`）、tool call
 （`toolcall_delta`）的流式增量，每个统一流事件计 1 个 token；
@@ -10,7 +10,7 @@
 
 ## 安装
 
-将本目录复制到 pi 的扩展目录：
+将本目录（仓库内 `src/extensions/stream-token-speed/`）复制到 pi 的扩展目录：
 
 ```text
 ~/.pi/agent/extensions/stream-token-speed/     # 全局

@@ -1,10 +1,10 @@
 # 跨扩展横切契约：自定义消息、entry 常量与 session 持久化键
 
-> last verified @ 0142e14
+> last verified @ 775638d
 >
 > 各扩展通过 `pi.appendEntry`（持久化快照）与 `pi.sendMessage`（触发回合 / 送达结果）通信，键值常量集中在各自 types/index 文件。**改键名 = 破坏旧会话恢复**，必须同时写迁移或放弃兼容并注明。
 
-## pwr（`pwr/src/types.ts`）
+## pwr（`src/extensions/pwr/src/types.ts`）
 
 | 常量 | 值 | 用途 |
 | --- | --- | --- |
@@ -13,7 +13,7 @@
 | `PWR_GENERATION_CUSTOM_TYPE` | `pwr-generation-request` | `/workflow` → 主 agent 生成请求（before_agent_start） |
 | `PWR_RESULT_CUSTOM_TYPE` | `pwr-workflow-result` | 运行完成 → followUp 结果送达 |
 
-## agent-team（`agent-team/types.ts`）
+## agent-team（`src/extensions/agent-team/types.ts`）
 
 | 常量 | 值 | 用途 |
 | --- | --- | --- |
@@ -36,4 +36,4 @@
 - pwr 持久化**仅元数据**：脚本源码 / args / 工具输出永不写盘；`pwr-tmp://`、`team-tmp://` 仅进程内物化，不落业务盘。
 - entry 读取一律 `ctx.sessionManager.getEntries()` 后按 `customType` 过滤（loop/goal 都这么做），并 try/catch 包裹——持久化失败绝不破坏会话。
 - 环境变量开关模式：`PI_AGENT_TEAM_WIDGET=0`、`PI_HUMAN_NOTIFY=0`、`PI_AGENT_TEAM_FILE`（模式切换）——新开关沿用 `PI_<扩展>_<开关>` 命名。
-- 子进程契约统一：`pi --mode json -p --no-session`（pwr 固定追加 `--no-session`，见 pwr/runner/index.ts），按行 JSON 事件，SIGTERM → 5s（pwr）/ 等价 grace（agent-team）后 SIGKILL。loop 的 --bg 后台模式例外：不带 --no-session 以便 `pi --session <id>` 恢复；**agent-team leader 例外（v1.21.0）**：首跑带 `--session-dir <runsRoot>/<runId>/session`（会话落盘供续跑），续跑带 `--session <父会话文件>` 原地续写（成员仍固定 `--no-session`）。
+- 子进程契约统一：`pi --mode json -p --no-session`（pwr 固定追加 `--no-session`，见 src/extensions/pwr/runner/index.ts），按行 JSON 事件，SIGTERM → 5s（pwr）/ 等价 grace（agent-team）后 SIGKILL。loop 的 --bg 后台模式例外：不带 --no-session 以便 `pi --session <id>` 恢复；**agent-team leader 例外（v1.21.0）**：首跑带 `--session-dir <runsRoot>/<runId>/session`（会话落盘供续跑），续跑带 `--session <父会话文件>` 原地续写（成员仍固定 `--no-session`）。

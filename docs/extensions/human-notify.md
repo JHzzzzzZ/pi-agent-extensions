@@ -1,6 +1,6 @@
 # human-notify — 人工介入 Windows Toast 通知
 
-> last verified @ 8d02bf8
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -38,11 +38,11 @@
 - **失败全静默，真机坏了没日志**：spawn 失败/子进程 error/脚本出错都不抛不写盘。诊断只能靠 `index.test.ts` 的 fake spawn 单测（断言 calls 参数）+ Windows 真机跑 `buildToastScript` 产物看 `status=0`、stderr 为空（d0eda4c 交付备注的做法）。
 - **审批与 settle 在 5s 内只到一条 Toast**：全局防抖是有意设计（防刷屏），不是 bug；被取消抑制的 settle 同样不消耗窗口（守卫在 `fire` 之前返回）。
 - **`PI_HUMAN_NOTIFY=0` 只认精确的 "0"**：`PI_HUMAN_NOTIFY=false`、`FALSE` 均无效，不会关闭通知。
-- 无 package.json：测试必须从仓库根用 `node --experimental-strip-types --test human-notify/index.test.ts` 跑，不能 `cd human-notify` 后 npm test。
+- 无 package.json：测试必须从仓库根用 `node --experimental-strip-types --test src/extensions/human-notify/index.test.ts` 跑，不能 `cd src/extensions/human-notify` 后 npm test。
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test human-notify/index.test.ts`（37 个，仓库根执行）+ `tsc --noEmit`（strict + erasableSyntaxOnly）。
+- 必跑：`node --experimental-strip-types --test src/extensions/human-notify/index.test.ts`（37 个，仓库根执行）+ `tsc --noEmit`（strict + erasableSyntaxOnly）。
 - 改脚本拼装（`buildToastScript`/转义/程序集加载）时：除单测外必须在 Windows 真机执行一次产物验证 Show() 实际调用成功（单测只验字符串，验不出 WinRT 绑定问题——d0eda4c 的教训）。
 - 新增等人工具：只动 `WAITING_TOOL_NAMES` + `WAITING_TOOL_LABELS`（`index.ts`）；若该工具 args 携带用户可读问题，扩展 `extractWaitingQuestion` 提取，并按既有模式补“名单命中/args 提取/回退链/非名单零 spawn 且不占窗口”单测。
 - fake 模式（参照 `docs/cross/deps-ports.md` 的 `HumanNotifyDeps`）：注入 `spawn` / `platform` / `nowMs` / `env` 四端口，手写 fake（`makeFakeSpawn` + `makeClock` + `makeFakePi`），不用 mock 库、不派真实进程。

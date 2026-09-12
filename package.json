@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-extensions",
-  "version": "2.39.0",
+  "version": "2.40.0",
   "private": true,
   "type": "module",
   "description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge / deep-init / human-notify / solo-mode；另有独立运行（非扩展）的 agent-manager 工具：会话浏览/检索/重命名/可恢复删除 + agent 子进程管理 + 零依赖浏览器前端",
@@ -18,18 +18,18 @@
   },
   "pi": {
     "extensions": [
-      "./pwr/index.ts",
-      "./agent-team/index.ts",
-      "./stream-token-speed/index.ts",
-      "./chatanywhere-provider/index.ts",
-      "./provider-quota/index.ts",
-      "./run-timer/index.ts",
-      "./loop/index.ts",
-      "./goal/index.ts",
-      "./opencode-bridge/index.ts",
-      "./deep-init/index.ts",
-      "./human-notify/index.ts",
-      "./solo-mode/index.ts"
+      "./src/extensions/pwr/index.ts",
+      "./src/extensions/agent-team/index.ts",
+      "./src/extensions/stream-token-speed/index.ts",
+      "./src/extensions/chatanywhere-provider/index.ts",
+      "./src/extensions/provider-quota/index.ts",
+      "./src/extensions/run-timer/index.ts",
+      "./src/extensions/loop/index.ts",
+      "./src/extensions/goal/index.ts",
+      "./src/extensions/opencode-bridge/index.ts",
+      "./src/extensions/deep-init/index.ts",
+      "./src/extensions/human-notify/index.ts",
+      "./src/extensions/solo-mode/index.ts"
     ]
   }
 }

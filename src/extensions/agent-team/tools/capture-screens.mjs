@@ -517,7 +517,8 @@ export function assertWidgetFrame(lines, { multiRun = false } = {}) {
 // ---------------------------------------------------------------------------
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(here, "..", "..");
+// 插件目录收进 src/extensions/ 后，从 tools/ 回仓库根要退四级（tools → agent-team → extensions → src）。
+const ROOT = path.resolve(here, "..", "..", "..", "..");
 
 export function capture() {
   const scene = captureViewerScene();

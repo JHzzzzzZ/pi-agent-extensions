@@ -1,6 +1,6 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ f3a93c2
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -46,7 +46,7 @@
 
 ## 改动清单
 
-- 必跑：`cd loop && npm install && npm test`（196 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.6.1 → 根 2.30.0 模式）。
+- 必跑：`cd src/extensions/loop && npm install && npm test`（196 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.6.1 → 根 2.30.0 模式）。
 - 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台跳过/interrupted）、test/tasks.test.ts（调度推进与 7 天过期边界）、test/runner.test.ts（子进程契约）、test/parse.test.ts（语法与闭区间窗口）。
 - fake 模式：进程边界手写 fake child + fake spawn（runner.test.ts，参照 deps-ports.md fake 选型规则 1）；时钟经 nowMs 注入手动推进，不引 mock 库。
 - 改调度语义：parse.ts 与 tasks.ts 的推进逻辑两端同看，并补 parse.test.ts 边界用例（午夜 / 窗口端点 / 已过时刻排明天）。

@@ -24,7 +24,7 @@
 
 ## 安装
 
-把本目录复制到 `~/.pi/agent/extensions/`（全局）或受信任项目的 `.pi/extensions/`，然后在 Pi 中 `/reload`。也可 `pi -e ./agent-team` 临时加载。无构建步骤（Node ≥ 22.18 原生 type-stripping），无运行时 npm 依赖。`/reload`（以及 new/resume/fork/switch）后扩展会重新注册全部工具与命令——双加载守卫在 `session_shutdown` 时自动复位。
+把本目录（仓库内 `src/extensions/agent-team/`）复制到 `~/.pi/agent/extensions/`（全局）或受信任项目的 `.pi/extensions/`，然后在 Pi 中 `/reload`。也可 `pi -e ./src/extensions/agent-team` 临时加载。无构建步骤（Node ≥ 22.18 原生 type-stripping），无运行时 npm 依赖。`/reload`（以及 new/resume/fork/switch）后扩展会重新注册全部工具与命令——双加载守卫在 `session_shutdown` 时自动复位。
 
 ## 用法
 
@@ -157,7 +157,7 @@ agent-team count-duet · ↓/← 查看详情
 | `esc` | 退出选中并收回折叠 |
 | 其它任意键 | 退出选中，并把该键**原样交还编辑器**（打字、ctrl+c 不受影响） |
 
-实现：`setWidget(key, string[], { placement: "belowEditor" })`——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由快照决定（`running` ⇒ string[] 帧；落定 ⇒ `setWidget(key, undefined)` 卸载）；**刷新双触发**：coordinator `onProgress` 状态变化点事件即时重绘 + 1s aligned ticker（`aligned-ticker.ts`，契约 `docs/cross/status-bar.md`）兜底，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey；折叠行不含时间 → 未展开时不逐秒 churn）；宿主自行包装渲染是跨宿主构建最稳的路径（组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行，`docs/tui-sync.md` §3.1）；行投影 `buildWidgetView` 产出「折叠单行 + 展开树」（`main`/`leader`（含任务摘要）/成员行），`renderWidgetView` 按 `selected` 选分支（大团队展开态窗口化：帧 ≤ 宿主 `MAX_WIDGET_LINES = 10`、选中行恒在窗口内、隐藏侧 `… 上方/下方还有 N 行`）；任务摘要/成员尾注文本先 `\s+` 压平再截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理（reducer 顶部 `isKeyRelease` 过滤 Kitty 协议 release 事件，一次按键只生效一次；repeat 保留供长按连续移动）；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
+实现：`setWidget(key, string[], { placement: "belowEditor" })`——**数据驱动挂载**：controller 每会话挂一次（`session_start` 无条件），宿主 widget 注册由快照决定（`running` ⇒ string[] 帧；落定 ⇒ `setWidget(key, undefined)` 卸载）；**刷新双触发**：coordinator `onProgress` 状态变化点事件即时重绘 + 1s aligned ticker（`aligned-ticker.ts`，契约 `<仓库根>/docs/cross/status-bar.md`）兜底，渲染串指纹无变化即跳过 `setWidget`（对齐 fleet-status renderKey；折叠行不含时间 → 未展开时不逐秒 churn）；宿主自行包装渲染是跨宿主构建最稳的路径（组件工厂式逐帧重绘在某个 bundle 构建的宿主上会产生逐秒追加的残影行，`docs/tui-sync.md` §3.1）；行投影 `buildWidgetView` 产出「折叠单行 + 展开树」（`main`/`leader`（含任务摘要）/成员行），`renderWidgetView` 按 `selected` 选分支（大团队展开态窗口化：帧 ≤ 宿主 `MAX_WIDGET_LINES = 10`、选中行恒在窗口内、隐藏侧 `… 上方/下方还有 N 行`）；任务摘要/成员尾注文本先 `\s+` 压平再截断（多行任务不再产生残行）；选中经 `ctx.ui.onTerminalInput`（特性检测，宿主不支持时自动降级为纯展示）在编辑器之前拦截按键 + 纯函数 reducer 处理（reducer 顶部 `isKeyRelease` 过滤 Kitty 协议 release 事件，一次按键只生效一次；repeat 保留供长按连续移动）；焦点判定经挂载时一次性的 factory 形态 `setWidget` 捕获宿主 TUI（`probeEditorFocus`：`getFocusedComponent()` 优先、`focusedComponent` 字段回退，五方法结构判定编辑器形状；宿主无焦点信息时降级）；查看器 overlay 打开期间自动旁路；`PI_AGENT_TEAM_WIDGET=0` 可整体关闭亮块。TUI 行为逐细节对照 pi-subagents fleet 同步，矩阵见 [docs/tui-sync.md](docs/tui-sync.md)。
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
@@ -252,7 +252,7 @@ members:
 ## 开发与测试
 
 ```bash
-cd agent-team
+cd src/extensions/agent-team
 npm install
 npm test          # node --test test/*.test.ts（613 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
@@ -269,9 +269,9 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 
 ### 文档截图（无头真实渲染）
 
-`tools/capture-screens.mjs` 把真实 `TuiMainScreen` + 真实 `TranscriptViewer` 接到一个记录字节流的 headless 终端上，把渲染器写出的 ANSI 还原成字符网格并输出 SVG 到 `../docs/assets/`（根 README 内嵌）。不需要真机终端窗口、不需要人工抓屏，产物可重复生成、可 diff；`tools/vt-screen.mjs` 是带样式追踪的最小 VT 仿真屏（与 `test/viewer-host.test.ts` 的 FakeScreen 同源、互不依赖）。帧锚点自检失败时工具直接报错退出——渲染路径变了，截图就不许悄悄过期。
+`tools/capture-screens.mjs` 把真实 `TuiMainScreen` + 真实 `TranscriptViewer` 接到一个记录字节流的 headless 终端上，把渲染器写出的 ANSI 还原成字符网格并输出 SVG 到 `../../../docs/assets/`（根 README 内嵌）。不需要真机终端窗口、不需要人工抓屏，产物可重复生成、可 diff；`tools/vt-screen.mjs` 是带样式追踪的最小 VT 仿真屏（与 `test/viewer-host.test.ts` 的 FakeScreen 同源、互不依赖）。帧锚点自检失败时工具直接报错退出——渲染路径变了，截图就不许悄悄过期。
 
-同一工具也是**工作区级**截图管线：第二个场景导入 `../pwr/src/ui/viewer.ts` 的真实 `RunViewer`，输出 `../docs/assets/pwr-viewer.svg`（pwr 卡「改动清单」指向它）；第三个场景是**亮块**（输入栏下方 widget）：文字取真实 `buildWidgetView` + `renderWidgetView`（运行时 `setWidget` 推送的同一份 string[]），上方放真实 pi-tui `Editor`（宿主 `CustomEditor` 的基类），widget 的屏上包装照抄宿主 `setExtensionWidget` 对 string[] 的确切代码路径（`Container` + `Text(line, 1, 0)`，每行 1 列缩进），输出 `../docs/assets/agent-team-widget.svg`。为第二个插件复制一份 VT 仿真屏不值得——跨插件只发生在 dev 工具里，运行时仍互不 import。
+同一工具也是**工作区级**截图管线：第二个场景导入 `../../pwr/src/ui/viewer.ts` 的真实 `RunViewer`，输出 `../../../docs/assets/pwr-viewer.svg`（pwr 卡「改动清单」指向它）；第三个场景是**亮块**（输入栏下方 widget）：文字取真实 `buildWidgetView` + `renderWidgetView`（运行时 `setWidget` 推送的同一份 string[]），上方放真实 pi-tui `Editor`（宿主 `CustomEditor` 的基类），widget 的屏上包装照抄宿主 `setExtensionWidget` 对 string[] 的确切代码路径（`Container` + `Text(line, 1, 0)`，每行 1 列缩进），输出 `../../../docs/assets/agent-team-widget.svg`。为第二个插件复制一份 VT 仿真屏不值得——跨插件只发生在 dev 工具里，运行时仍互不 import。
 
 ## 设计说明
 

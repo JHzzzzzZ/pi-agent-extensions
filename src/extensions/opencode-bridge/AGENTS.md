@@ -27,5 +27,5 @@
 
 ## COMMANDS
 ```bash
-cd opencode-bridge && npm install && npm test   # 109 测试；另有 npm run typecheck
+cd src/extensions/opencode-bridge && npm install && npm test   # 109 测试；另有 npm run typecheck
 ```
