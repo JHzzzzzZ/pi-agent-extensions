@@ -25,20 +25,20 @@ const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf
 test("pi.extensions 注册顺序保证上方 widget 栈顺序：pwr < run-timer < loop", () => {
   const pkg = JSON.parse(read("package.json")) as { pi: { extensions: string[] } };
   const index = (entry: string): number => pkg.pi.extensions.indexOf(entry);
-  assert.ok(index("./pwr/index.ts") >= 0, "pwr 未注册");
-  assert.ok(index("./run-timer/index.ts") >= 0, "run-timer 未注册");
-  assert.ok(index("./loop/index.ts") >= 0, "loop 未注册");
-  assert.ok(index("./pwr/index.ts") < index("./run-timer/index.ts"), "pwr 必须在 run-timer 前");
-  assert.ok(index("./run-timer/index.ts") < index("./loop/index.ts"), "run-timer 必须在 loop 前");
+  assert.ok(index("./src/extensions/pwr/index.ts") >= 0, "pwr 未注册");
+  assert.ok(index("./src/extensions/run-timer/index.ts") >= 0, "run-timer 未注册");
+  assert.ok(index("./src/extensions/loop/index.ts") >= 0, "loop 未注册");
+  assert.ok(index("./src/extensions/pwr/index.ts") < index("./src/extensions/run-timer/index.ts"), "pwr 必须在 run-timer 前");
+  assert.ok(index("./src/extensions/run-timer/index.ts") < index("./src/extensions/loop/index.ts"), "run-timer 必须在 loop 前");
 });
 
 test("footer 排序带：五个键 localeCompare 顺序固定且字面量来自各自插件源码", () => {
   const bands = [
-    ["goal", "10:goal", "goal/index.ts"],
-    ["provider-quota", "20:provider-quota", "provider-quota/index.ts"],
-    ["pwr", "30:pwr", "pwr/src/ui/renderer.ts"],
-    ["solo-mode", "40:solo-mode", "solo-mode/index.ts"],
-    ["stream-token-speed", "50:stream-token-speed", "stream-token-speed/status-port.ts"],
+    ["goal", "10:goal", "src/extensions/goal/index.ts"],
+    ["provider-quota", "20:provider-quota", "src/extensions/provider-quota/index.ts"],
+    ["pwr", "30:pwr", "src/extensions/pwr/src/ui/renderer.ts"],
+    ["solo-mode", "40:solo-mode", "src/extensions/solo-mode/index.ts"],
+    ["stream-token-speed", "50:stream-token-speed", "src/extensions/stream-token-speed/status-port.ts"],
   ] as const;
   const keys = bands.map(([, key]) => key);
   const sorted = [...keys].sort((a, b) => a.localeCompare(b));
@@ -50,11 +50,11 @@ test("footer 排序带：五个键 localeCompare 顺序固定且字面量来自�
 
 test("footer 段前缀：五个写入者各带一份 status-band.ts（最前段无前缀，其余段 `│ `）", () => {
   const writers = [
-    ["goal", "goal/status-band.ts", "goal/index.ts"],
-    ["provider-quota", "provider-quota/status-band.ts", "provider-quota/index.ts"],
-    ["pwr", "pwr/src/ui/status-band.ts", "pwr/src/ui/renderer.ts"],
-    ["solo-mode", "solo-mode/status-band.ts", "solo-mode/index.ts"],
-    ["stream-token-speed", "stream-token-speed/status-band.ts", "stream-token-speed/status-port.ts"],
+    ["goal", "src/extensions/goal/status-band.ts", "src/extensions/goal/index.ts"],
+    ["provider-quota", "src/extensions/provider-quota/status-band.ts", "src/extensions/provider-quota/index.ts"],
+    ["pwr", "src/extensions/pwr/src/ui/status-band.ts", "src/extensions/pwr/src/ui/renderer.ts"],
+    ["solo-mode", "src/extensions/solo-mode/status-band.ts", "src/extensions/solo-mode/index.ts"],
+    ["stream-token-speed", "src/extensions/stream-token-speed/status-band.ts", "src/extensions/stream-token-speed/status-port.ts"],
   ] as const;
   for (const [name, bandFile, boundaryFile] of writers) {
     const band = read(bandFile);

@@ -126,11 +126,11 @@ export function loadManifest(repoRoot) {
   return entries;
 }
 
-/** `./pwr/index.ts` → `pwr`；入口约定 `extensions/<dir>/index.ts`。 */
+/** `./src/extensions/pwr/index.ts` → `pwr`；按父目录名解析，对注册路径深度不敏感。 */
 export function extensionDirsFromManifest(manifest) {
   return manifest.map((entry) => {
-    const dir = entry.replace(/^\.\//, "").split("/")[0];
-    if (!dir) throw new Error(`无法从 manifest 条目解析扩展目录: ${entry}`);
+    const dir = path.basename(path.dirname(entry));
+    if (!dir || dir === "." || dir === "..") throw new Error(`无法从 manifest 条目解析扩展目录: ${entry}`);
     return dir;
   });
 }
@@ -465,8 +465,7 @@ export async function runInstallSmoke({ repoRoot = REPO_ROOT, keep = false, time
   const extensionsDir = path.join(configDir, "extensions");
   fs.mkdirSync(extensionsDir, { recursive: true });
   try {
-    for (const entry of manifest) {
-      const dir = entry.replace(/^\.\//, "").split("/")[0];
+    for (const dir of dirs) {
       copyExtension(path.join(repoRoot, dir), path.join(extensionsDir, dir));
     }
   } catch (error) {

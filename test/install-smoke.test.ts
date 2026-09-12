@@ -36,6 +36,13 @@ test("extensionDirsFromManifest：条目路径解析为扩展目录名", () => {
   assert.deepEqual(extensionDirsFromManifest(["./pwr/index.ts", "./agent-team/index.ts"]), ["pwr", "agent-team"]);
 });
 
+test("extensionDirsFromManifest：插件目录收进 src/extensions/ 后按父目录名解析（深度不敏感）", () => {
+  assert.deepEqual(
+    extensionDirsFromManifest(["./src/extensions/pwr/index.ts", "./src/extensions/agent-team/index.ts"]),
+    ["pwr", "agent-team"],
+  );
+});
+
 test("findManifestDrift：两侧缺一即报，双向可查", () => {
   const expectations = { alpha: { commands: [], uiKeys: [] }, beta: { commands: [], uiKeys: [] } };
   assert.deepEqual(findManifestDrift(["alpha", "beta"], expectations), []);
@@ -241,14 +248,14 @@ test("findPiPackage：在安装根下递归找到带 pi.extensions 的 package.j
   try {
     const clone = path.join(root, "git", "github.com", "a", "b");
     fs.mkdirSync(path.join(clone, "node_modules", "junk"), { recursive: true });
-    fs.writeFileSync(path.join(clone, "package.json"), JSON.stringify({ name: "pi-agent-extensions", version: "2.25.0", pi: { extensions: ["./pwr/index.ts"] } }));
+    fs.writeFileSync(path.join(clone, "package.json"), JSON.stringify({ name: "pi-agent-extensions", version: "2.40.0", pi: { extensions: ["./src/extensions/pwr/index.ts"] } }));
     fs.writeFileSync(path.join(clone, "node_modules", "junk", "package.json"), JSON.stringify({ name: "junk", pi: { extensions: ["./junk.ts"] } }));
     const found = findPiPackage([path.join(root, "git")]);
     assert.ok(found);
     assert.equal(found.dir, clone);
     assert.equal(found.name, "pi-agent-extensions");
-    assert.equal(found.version, "2.25.0");
-    assert.deepEqual(found.extensions, ["./pwr/index.ts"]);
+    assert.equal(found.version, "2.40.0");
+    assert.deepEqual(found.extensions, ["./src/extensions/pwr/index.ts"]);
     assert.equal(findPiPackage([path.join(root, "nowhere")]), undefined);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
