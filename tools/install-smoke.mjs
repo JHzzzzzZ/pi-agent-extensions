@@ -126,11 +126,20 @@ export function loadManifest(repoRoot) {
   return entries;
 }
 
-/** `./pwr/index.ts` → `pwr`；入口约定 `extensions/<dir>/index.ts`。 */
+/** `./src/extensions/pwr/index.ts` → `pwr`；按父目录名解析，对注册路径深度不敏感。 */
 export function extensionDirsFromManifest(manifest) {
   return manifest.map((entry) => {
-    const dir = entry.replace(/^\.\//, "").split("/")[0];
-    if (!dir) throw new Error(`无法从 manifest 条目解析扩展目录: ${entry}`);
+    const dir = path.basename(path.dirname(entry));
+    if (!dir || dir === "." || dir === "..") throw new Error(`无法从 manifest 条目解析扩展目录: ${entry}`);
+    return dir;
+  });
+}
+
+/** `./src/extensions/pwr/index.ts` → `src/extensions/pwr`：复制源 = manifest 条目的父目录（相对仓库根、正斜杠归一）。 */
+export function extensionSourceDirsFromManifest(manifest) {
+  return manifest.map((entry) => {
+    const dir = path.dirname(entry).replace(/^\.[\\/]/, "").replace(/\\/g, "/");
+    if (!dir || dir === "." || dir === "..") throw new Error(`无法从 manifest 条目解析扩展源目录: ${entry}`);
     return dir;
   });
 }
@@ -465,9 +474,10 @@ export async function runInstallSmoke({ repoRoot = REPO_ROOT, keep = false, time
   const extensionsDir = path.join(configDir, "extensions");
   fs.mkdirSync(extensionsDir, { recursive: true });
   try {
-    for (const entry of manifest) {
-      const dir = entry.replace(/^\.\//, "").split("/")[0];
-      copyExtension(path.join(repoRoot, dir), path.join(extensionsDir, dir));
+    // dirs 与 sourceDirs 由同一 manifest 依序派生，按位一一对应。
+    const sourceDirs = extensionSourceDirsFromManifest(manifest);
+    for (let i = 0; i < dirs.length; i++) {
+      copyExtension(path.join(repoRoot, sourceDirs[i]), path.join(extensionsDir, dirs[i]));
     }
   } catch (error) {
     // 清单指向不存在的目录：清理后按问题返回，不抛裸栈。

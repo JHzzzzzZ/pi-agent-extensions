@@ -37,7 +37,7 @@ PWR 工作流运行时：受约束 ECMAScript 脚本 → 校验 → 批准卡 �
 
 ## COMMANDS
 ```bash
-cd pwr && npm install && npm test        # 405 测试：test/ + tests/ + runtime/test/ + runner/test/
+cd src/extensions/pwr && npm install && npm test        # 405 测试：test/ + tests/ + runtime/test/ + runner/test/
 npm run typecheck                        # 承载性规则（.ts 扩展名/import type/无 enum）
 node --test tests/ui-*.test.ts           # UI 子集；perf 门：64KB 脚本 validate <300ms
 ```

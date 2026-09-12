@@ -1,10 +1,10 @@
 # agent-manager — 独立 agent 管理工具（非 Pi 扩展）
 
-> last verified @ 0180cac
+> last verified @ 775638d
 
 ## 职责与边界
 
-独立于 pi 运行的本地工具：一个 Node HTTP 进程（仅监听 `127.0.0.1`）+ 零依赖浏览器页面，用于浏览/检索/重命名/可恢复删除 pi 落盘会话，并启动/观察/停止**本工具发起的** pi agent 子进程。pi 未运行也能启动并浏览会话；agent 不感知它。**不是 Pi 扩展**：不注册任何扩展点、不 import 宿主 SDK、根 `package.json` `pi.extensions` 已移除（14→13），install-smoke 不再覆盖它。
+独立于 pi 运行的本地工具：一个 Node HTTP 进程（仅监听 `127.0.0.1`）+ 零依赖浏览器页面，用于浏览/检索/重命名/可恢复删除 pi 落盘会话，并启动/观察/停止**本工具发起的** pi agent 子进程。pi 未运行也能启动并浏览会话；agent 不感知它。**不是 Pi 扩展**：不注册任何扩展点、不 import 宿主 SDK、根 `package.json` `pi.extensions` 不含此项（现清单 12 条），install-smoke 不再覆盖它。
 
 **不做**：外部 pi 进程发现（只管理自己启动的 agent）；不给运行中 agent 发消息（接续 = 停止后在会话页用宿主 `pi --session <id>` 或本工具「接续」启动）；无鉴权/多用户/远程访问、无 WebSocket/SSE、无会话树/标签/归档、无分页索引。
 

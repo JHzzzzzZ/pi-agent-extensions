@@ -1,6 +1,6 @@
 # provider-quota — 余额/额度状态行 + /quota 手动刷新
 
-> last verified @ 9db7983
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -40,7 +40,7 @@ footer 状态行显示当前 provider 的余额/额度（无 provider 前缀；�
 
 ## 改动清单
 
-- 必跑：node --experimental-strip-types --test provider-quota/index.test.ts（26 个测试；此目录无 package.json，npm test 跑不了）。
+- 必跑：node --experimental-strip-types --test src/extensions/provider-quota/index.test.ts（26 个测试；此目录无 package.json，npm test 跑不了）。
 - 必看测试：index.test.ts 头注释——时钟约定全部用本地时间 Date 构造固定 now，断言不依赖运行机器时区，新增时间相关用例必须沿用。
 - fake 模式：按 docs/cross/deps-ports.md 规则 3——纯逻辑不 fake，直接测导出的解析函数、now 参数注入；fetch 链路在测试里未覆盖，网络行为只能真机 /quota 验证。
 - 加新 provider：只动 `QUOTA_ENDPOINTS`（必要时补 `PROVIDER_ALIASES`/`AUTH_ID_FALLBACK`）+ index.test.ts 补 parse 用例，勿散落到别处。

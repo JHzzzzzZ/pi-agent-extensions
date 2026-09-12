@@ -2,7 +2,7 @@
 
 PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P0，Stage 3）：**PiAgentRunner 适配层**（PRD §5.4、§9 子任务 3），并内含全部既有模块。
 
-> 版本：**v2.9.2**（2026-09-15：footer 首段定格——新增 `src/ui/status-band.ts` 进程共享登记表统一决定段前缀（最前段无前缀、行首定格；其余段 `│ `；低带出现/消失重渲染本段），`refreshUiStatus` 改走 `writeBand`；跨插件契约 `docs/cross/status-bar.md`。v2.9.1：footer 段瘦身——`runStatusText` 改计数式 `pwr <active>▶[ <finished>✓]`。v2.9.0：命令面归一——`/workflows` 根与 12 条子命令全部并入单一 `/workflow:*`，旧前缀硬切不注册；命令面 = 裸 `/workflow`（`<任务>` 生成 / 空参·`help`=完整分组帮助 / 14 个旧词只提示改名）+ 15 条 `/workflow:*` 独立子命令。v2.8.0：命令面冒号化——`/workflow:run|:delete|:model` 与 `/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help` 各自独立静态注册；裸 `/workflows` 保留列表/详情/`--filter`/`help`，裸 `/workflow` 保留生成；旧空格子命令只提示改名、绝不执行。v2.7.0：`/workflows:view` 分栏化——fleet/agent-team 同款 roster + detail 外壳，键位/几何/750ms 指纹门控全面对齐，`D` 两步停止；删自写 `text.ts` 改用宿主文本工具。v2.6.0：命令面曾收拢为空格子命令（v2.8.0 改回冒号）。v2.5.0：solo 审批门——`/solo` 开启时批准卡按 once 自动批准；v2.4.2 会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
+> 版本：**v2.9.3**（2026-09-12：随仓库布局整理迁入 `src/extensions/pwr/`——纯移动，模块结构与行为不变。2026-09-15：footer 首段定格——新增 `src/ui/status-band.ts` 进程共享登记表统一决定段前缀（最前段无前缀、行首定格；其余段 `│ `；低带出现/消失重渲染本段），`refreshUiStatus` 改走 `writeBand`；跨插件契约 `<仓库根>/docs/cross/status-bar.md`。v2.9.1：footer 段瘦身——`runStatusText` 改计数式 `pwr <active>▶[ <finished>✓]`。v2.9.0：命令面归一——`/workflows` 根与 12 条子命令全部并入单一 `/workflow:*`，旧前缀硬切不注册；命令面 = 裸 `/workflow`（`<任务>` 生成 / 空参·`help`=完整分组帮助 / 14 个旧词只提示改名）+ 15 条 `/workflow:*` 独立子命令。v2.8.0：命令面冒号化——`/workflow:run|:delete|:model` 与 `/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help` 各自独立静态注册；裸 `/workflows` 保留列表/详情/`--filter`/`help`，裸 `/workflow` 保留生成；旧空格子命令只提示改名、绝不执行。v2.7.0：`/workflows:view` 分栏化——fleet/agent-team 同款 roster + detail 外壳，键位/几何/750ms 指纹门控全面对齐，`D` 两步停止；删自写 `text.ts` 改用宿主文本工具。v2.6.0：命令面曾收拢为空格子命令（v2.8.0 改回冒号）。v2.5.0：solo 审批门——`/solo` 开启时批准卡按 once 自动批准；v2.4.2 会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
 >
 > 依赖说明：本包是 JHL-16 交付（`src/` 触发/批准层）的延续，内置 JHL-12 引擎 v1.1.2（`engine/` + `vendor/`，单次快照安全边界已收敛）。Runtime 未注入 runner 时，保存/加载/参数校验/批准全部可用，仅实际启动返回 `AGENT_RUNNER_UNAVAILABLE`（不隐式回退）。JHL-14 起入口在 session_start 自动构造 PiAgentRunner 注入 runtime。
 
@@ -39,7 +39,7 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 ### 批准记忆（复用 JHL-16 ApprovalStore）
 - 批准键 = **项目 canonical path + script digest**；保存命令的启动同样走该记忆
 - 已记住的脚本被编辑（digest 变化）→ 再次调用 `/workflow:run <name>` 时**必须重新批准**（重新展示批准卡），批准记录以新 digest 落库
-- **solo 免审批模式**（v2.5.0）：`/solo` 开启时批准卡按 once 自动批准（不弹卡），`workflow_start` 强制降级 once、已保存命令同口径——**绝不写 remembered 记录**；契约见 [`docs/cross/solo-approval-gate.md`](../docs/cross/solo-approval-gate.md)
+- **solo 免审批模式**（v2.5.0）：`/solo` 开启时批准卡按 once 自动批准（不弹卡），`workflow_start` 强制降级 once、已保存命令同口径——**绝不写 remembered 记录**；契约见 [`docs/cross/solo-approval-gate.md`](../../../docs/cross/solo-approval-gate.md)
 
 ### 覆盖确认（`NAME_CONFLICT` 处理）
 - 重名保存返回 `NAME_CONFLICT`（不覆盖任何现有文件）；工具契约新增可选 `overwrite: boolean`，确认后替换
@@ -83,7 +83,7 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 ## 目录结构
 
 ```
-pwr/
+src/extensions/pwr/
 ├── index.ts               # 扩展入口：命令/事件/工具注册、批准卡 UI 钩子、持久化、saved 调用现读盘、runner 注入
 ├── engine/                # JHL-12 脚本引擎（validator/parser/spec/plain/...，v1.1.2）
 ├── vendor/                # acorn 8.18.0（MIT，引擎解析用，零运行时依赖）
@@ -123,7 +123,7 @@ pwr/
 ## 运行单测（Windows PowerShell）
 
 ```powershell
-cd pwr
+cd src/extensions/pwr
 npm install        # 仅开发依赖（typescript、@types/node、typebox、pi 宿主类型）
 npm test           # 439 个单测（test/ 105 + tests/ 233 + runtime/test/ 56 + runner/test/ 45）
 npm run typecheck  # tsc --noEmit（strict）

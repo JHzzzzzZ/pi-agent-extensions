@@ -1,6 +1,6 @@
 # solo-mode — 免审批模式（审批门自动批准）
 
-> last verified @ 20dbb78
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -28,7 +28,7 @@
 - **状态文件契约**（`docs/cross/solo-approval-gate.md`）：路径 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`，`{pid, activatedAt}`，激活判定必须同时满足可读 + JSON 合法 + `pid === process.pid`；其余一律 fail-closed。读者三份 `solo-gate.ts` 与写者同构，改一处必须四处同步。
 - **只清自己的 pid**：`session_start` / `session_shutdown` / 关闭只处理 own-pid 文件，绝不删除异 pid 文件（并发 Pi 实例互不干扰）；崩溃残留靠 pid 不匹配自然失效。
 - **启动 flag 走宿主原生通道**：`pi.registerFlag("solo", {type:"boolean", default:false})` + `pi.getFlag("solo")`——不直读 `process.argv`（宿主会拒绝未注册的 `--solo`：`Unknown option: --solo`），也不自行定义 flag 名字以外的解析；值归一由 `soloFlagEnabled`（true/"true"/"1"）负责。
-- **对 PWR 只产生 once**：solo 绝不写 remembered 批准记录（`pwr/index.ts` 三处接线都强制降级 once），solo 关闭后既有 remembered 批准不受影响。
+- **对 PWR 只产生 once**：solo 绝不写 remembered 批准记录（`src/extensions/pwr/index.ts` 三处接线都强制降级 once），solo 关闭后既有 remembered 批准不受影响。
 - **异常隔离**：fs / UI 调用全部 try/catch；notify/setStatus 失败不影响状态机。
 - 状态条文本是纯字符串（宿主 `ExtensionUIContext` 无 `theme` 字段，不能调 `theme.fg`）；写入经本地 `status-band.ts`（最前段无前缀、其余段 `│ `，低带出现/消失会重渲染本段）；写入前 `ctx.hasUI` 守卫。键 `40:solo-mode` 为排序带（`docs/cross/status-bar.md`），不可改回 `solo-mode`；状态是静态的，不跑 ticker。
 
@@ -38,11 +38,11 @@
 - **子进程不继承是特性不是缺口**：PWR sub-agent / agent-team 成员在子 pi 里读不到主进程 pid 的状态文件，因此 solo 不影响委派出去的子 agent——这是有意的安全边界（免审批只限当前会话）。
 - **opencode-bridge 的 `env` 注入**：bridge 用扩展注入的 `env`（`BridgeExtensionDeps.env`）读状态路径；生产默认为 `process.env`，测试可注入隔离环境表，不必改全局环境变量。
 - **删除失败别静默**：`clearSoloState` 返回 boolean；`rmSync` 对目录等异常路径返回 false——"关闭"路径必须据此 error notify（`index.test.ts` 有回归）。
-- 无 package.json：测试必须从仓库根跑 `node --experimental-strip-types --test solo-mode/index.test.ts`，不能 `cd solo-mode` 后 npm test。
+- 无 package.json：测试必须从仓库根跑 `node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts`，不能 `cd src/extensions/solo-mode` 后 npm test。
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test solo-mode/index.test.ts`（22 个，仓库根执行）。
+- 必跑：`node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts`（22 个，仓库根执行）。
 - 改命令面/文案：只动 `index.ts` 常量区与 `parseSoloCommand`，同步 `index.test.ts` 的解析与文案断言 + 根 README 小节。
 - 改状态文件契约（路径/字段/判定）：同步 `docs/cross/solo-approval-gate.md` + pwr/opencode-bridge/deep-init 的 `solo-gate.ts` 与其测试——**契约卡与三份实现必须一致**。
 - 新增采纳方：按 `docs/cross/solo-approval-gate.md` 的"新增采纳方步骤"（复制 `solo-gate.ts` + 门处判定 + notify + 两类测试 + 文档）。

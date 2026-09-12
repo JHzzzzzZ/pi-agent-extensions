@@ -1,6 +1,6 @@
 # chatanywhere-provider — 双 provider 运行时自动发现（OpenAI 兼容 + Anthropic Messages）
 
-> last verified @ 8fc5a78
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -46,7 +46,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test chatanywhere-provider/test/*.test.ts`（32 个）；真机 `/reload` 后 `/model` 目检。
+- 必跑：`node --experimental-strip-types --test src/extensions/chatanywhere-provider/test/*.test.ts`（32 个）；真机 `/reload` 后 `/model` 目检。
 - 改 catalog/MODEL_LINES/策略表（NON_CHAT / GENERATION_FLOORS）：同步 + 跑发现类测试（目录自洽测试会抓不一致）。
 - 改归并规则：先写锁定行为的失败测试再实现（纯函数，直接测）。
 - 真实探测验证（需要 auth.json 的 chatanywhere key）：probeModels → selectForRegistration 打印清单。

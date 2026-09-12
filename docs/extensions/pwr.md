@@ -1,6 +1,6 @@
 # pwr — Pi Workflow Runtime
 
-> last verified @ 445e82e
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -49,7 +49,7 @@
 
 ## 改动清单
 
-- 必跑：`cd pwr && npm test`（439 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。viewer 改动跑 `tests/ui-viewer.test.ts`（纯函数）+ `tests/ui-viewer-host.test.ts`（真实宿主，防 overlay 堆叠）；外观变更后再跑 `node agent-team/tools/capture-screens.mjs` 重生成 `docs/assets/pwr-viewer.svg`（工作区级无头截图管线的 pwr 场景，锚点自检失败即报错）。
-- DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `pwr/DELIVERY.md` 版本历史。
+- 必跑：`cd src/extensions/pwr && npm test`（439 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。viewer 改动跑 `tests/ui-viewer.test.ts`（纯函数）+ `tests/ui-viewer-host.test.ts`（真实宿主，防 overlay 堆叠）；外观变更后再跑 `node src/extensions/agent-team/tools/capture-screens.mjs` 重生成 `docs/assets/pwr-viewer.svg`（工作区级无头截图管线的 pwr 场景，锚点自检失败即报错）。
+- DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `src/extensions/pwr/DELIVERY.md` 版本历史。
 - 测试 fake：`test/helpers.ts` 的 `makeFakeRunner`（fake AgentRunner）、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn`（fake 子进程）。集成模式见 `runner/test/integration.test.ts`。
-- 完整架构 / 安全文档 / 版本历史 → `pwr/DELIVERY.md`（权威，勿在别处重复）。
+- 完整架构 / 安全文档 / 版本历史 → `src/extensions/pwr/DELIVERY.md`（权威，勿在别处重复）。

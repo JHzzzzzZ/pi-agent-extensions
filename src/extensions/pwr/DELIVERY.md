@@ -13,7 +13,7 @@
 
 # DELIVERY — PWR 合并交付包 v2.9.1（footer 段瘦身）
 
-> footer 状态段瘦身 + 段分隔前缀（跨插件契约 `docs/cross/status-bar.md`）：`runStatusText` 从 `workflows: N active (<名> <状态>), N finished` 改为计数式 `pwr <active>▶`（有已完成时补 ` <finished>✓`；无活跃 run 仍清状态），由 `refreshUiStatus` 在唯一写入边界拼 `│ ` 前缀。安全不变量与 439 测试不变。
+> footer 状态段瘦身 + 段分隔前缀（跨插件契约 `<仓库根>/docs/cross/status-bar.md`）：`runStatusText` 从 `workflows: N active (<名> <状态>), N finished` 改为计数式 `pwr <active>▶`（有已完成时补 ` <finished>✓`；无活跃 run 仍清状态），由 `refreshUiStatus` 在唯一写入边界拼 `│ ` 前缀。安全不变量与 439 测试不变。
 
 ## 本版变更（v2.9.1）
 
@@ -94,7 +94,7 @@
 
 # DELIVERY — PWR 合并交付包 v2.5.0（solo 审批门）
 
-> v2.5.0：新增 solo 免审批模式的 PWR 侧接线——`/solo` 开启时批准卡按 once 自动批准（不弹卡），`workflow_start` 强制降级 once，已保存命令 `approveSavedCommand` 同口径；绝不写 remembered 批准。状态文件契约与 fail-closed 口径见 `docs/cross/solo-approval-gate.md`（pwr 侧为只读 `src/solo-gate.ts`，校验 `pid === process.pid`）。
+> v2.5.0：新增 solo 免审批模式的 PWR 侧接线——`/solo` 开启时批准卡按 once 自动批准（不弹卡），`workflow_start` 强制降级 once，已保存命令 `approveSavedCommand` 同口径；绝不写 remembered 批准。状态文件契约与 fail-closed 口径见 `<仓库根>/docs/cross/solo-approval-gate.md`（pwr 侧为只读 `src/solo-gate.ts`，校验 `pid === process.pid`）。
 
 ## 本版变更（v2.4.2）
 

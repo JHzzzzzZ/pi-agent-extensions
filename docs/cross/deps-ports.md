@@ -1,6 +1,6 @@
 # 跨扩展横切契约：注入端口（Deps）与测试 fake 模式
 
-> last verified @ 0142e14
+> last verified @ 775638d
 >
 > 仓库统一模式：**依赖注入经 deps 对象**，不用 mock 库、无全局注入。fake 只替进程/IO/时钟边界，不做被测行为的"纸面替身"。
 
@@ -20,7 +20,7 @@
 
 ## 时钟约定
 
-- 时钟注入 `now: () => string` / `nowMs`，测试固定 `2026-08-05T12:00:00Z`。**已知例外：loop** —— 调度/倒计时直接用 `Date.now()`（loop/index.ts 多处），`LoopToolDeps` 无时钟口；测试经双 mock（setTimeout + Date.now）覆盖，新插件勿模仿。
+- 时钟注入 `now: () => string` / `nowMs`，测试固定 `2026-08-05T12:00:00Z`。**已知例外：loop** —— 调度/倒计时直接用 `Date.now()`（src/extensions/loop/index.ts 多处），`LoopToolDeps` 无时钟口；测试经双 mock（setTimeout + Date.now）覆盖，新插件勿模仿。
 - run-timer/loop/goal/agent-team 的节拍器（`aligned-ticker.ts`）同样是 mock `setTimeout` 的特例（timer 本身就是被测行为）；节拍对齐语义在 `aligned-ticker.test.ts` 用注入 `now` 覆盖。跨插件契约见 `docs/cross/status-bar.md`。
 
 ## fake 选型规则

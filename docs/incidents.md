@@ -1,6 +1,6 @@
 # 事故与教训（纯增量，防重复踩坑）
 
-> last verified @ ef7791b
+> last verified @ 775638d
 >
 > 记录格式：症状 → 根因 → 教训。新事故追加在表后；修完必须留档。
 
@@ -9,7 +9,7 @@
 - 症状：查看器顶部标题 + 成员页签逐帧重影堆叠；用户截图实锤。
 - 根因：纯函数单测全绿但真机照样坏——堆叠只存在于 pi-tui 真实合成 / previousLines diff 路径，fake 结构断言不到。三轮渐进修：overlay maxHeight 对齐 + widget 暂停 → 照抄 fleet 壳 + 打开互斥。
 - 教训：**宿主/进程边界风险必须接真实实现测**（`viewer-host.test.ts`：真实 TuiMainScreen headless 渲染 + VT 仿真还原屏幕字节流）；纯函数绿 ≠ 真机对。见 AGENTS.md「测试与 QA」。
-- 后续（1.2.0）：重影反复出现的根源是 agent-team 抄 fleet 后两边各自漂移——已建立代码级同步矩阵 `agent-team/docs/tui-sync.md`（基线 pi-subagents v0.66.0），逐细节测试锁死；pi-subagents 每升版跟进一次，TUI 期望值只认矩阵。
+- 后续（1.2.0）：重影反复出现的根源是 agent-team 抄 fleet 后两边各自漂移——已建立代码级同步矩阵 `src/extensions/agent-team/docs/tui-sync.md`（基线 pi-subagents v0.66.0），逐细节测试锁死；pi-subagents 每升版跟进一次，TUI 期望值只认矩阵。
 
 ## 亮块逐秒追加残影（agent-team widget）
 
@@ -98,6 +98,7 @@
 - 根因：Windows 默认 260 字符 MAX_PATH 上限；node_modules 里嵌套依赖的 `dist-types/ts3.4` 路径超限，普通删除 API 无法遍历/删除这些条目，且失败不是总是报错（PowerShell 静默跳过）。
 - 处置（可复用流程）：① 空目录镜像两遍 `MSYS_NO_PATHCONV=1 robocopy <empty> <target> /MIR`（Git Bash 会把 `/MIR` 当路径转换，必须加 `MSYS_NO_PATHCONV=1` 或写 `//MIR`），第一遍删大部分、第二遍清剩余长路径文件；② `find <target> -depth -type d -exec rmdir {} \;` 逐级删空目录。删前先确认没有 reparse point（`Get-ChildItem -Recurse -Force -Directory | Where-Object { $_.Attributes -band ReparsePoint }`）——junction 删除另有事故（见上）。
 - 教训：worktree 删除失败不要反复重试或硬删；长路径是 Windows 结构性限制，每次使用上述 robocopy 流程（不试探），并先用 `find`/`du` 确认只剩空壳再删。
+- 跟进（2026-09-12）：12 个插件目录收进 `src/extensions/` 后工作区内路径整体再深两级（如 `src/extensions/agent-team/node_modules/...`），同类超限风险加码；worktree 内依赖一律真实 `npm install`（禁止 junction，见上两条事故），删除仍走本条 robocopy 流程。
 
 ## 成员派发死锁：子进程 stdin 无人关闭（agent-team v1.15.0 回归）
 

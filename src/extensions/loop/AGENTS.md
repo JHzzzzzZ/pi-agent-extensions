@@ -12,7 +12,7 @@
 | agent 工具 | `tools.ts`（`loop_create/list/delete`） |
 | 后台拉起 | `runner.ts`（前台 followUp 送达；`--bg` 拉子 `pi --mode json -p`，会话 id 可 `pi --session` 恢复） |
 | 命令入口 | `index.ts`（`pi.extensions: ["./index.ts"]` 清单） |
-| 状态条节拍 | `aligned-ticker.ts`（对齐墙钟秒边界；契约 `docs/cross/status-bar.md`） |
+| 状态条节拍 | `aligned-ticker.ts`（对齐墙钟秒边界；契约 `<仓库根>/docs/cross/status-bar.md`） |
 
 ## CONVENTIONS
 - `setWidget` 传纯字符串，不碰 `ctx.ui.theme` —— `ExtensionUIContext` 无 theme 字段，访问即编译失败。
@@ -29,5 +29,5 @@
 
 ## COMMANDS
 ```bash
-cd loop && npm install && npm test   # 192 测试；另有 npm run typecheck
+cd src/extensions/loop && npm install && npm test   # 192 测试；另有 npm run typecheck
 ```

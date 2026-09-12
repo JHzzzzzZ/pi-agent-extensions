@@ -1,6 +1,6 @@
 # solo 审批门 — 跨扩展契约（solo-mode ↔ 审批方）
 
-> last verified @ 134a3d6
+> last verified @ 775638d
 
 solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/solo` 开启后，**审批摩擦类**确认自动按批准路径通过。本卡是唯一语义事实来源——读者（pwr / opencode-bridge / deep-init 各一份 `solo-gate.ts`）与写者（solo-mode）都必须符合本卡。
 
@@ -44,7 +44,7 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 
 ## 测试锚点
 
-- solo-mode：`solo-mode/index.test.ts`（22 个）——写读/生命周期/fail-closed/写失败/启动 flag。
-- pwr：`pwr/tests/solo-gate.test.ts` + `pwr/test/entry.test.ts` 的 solo 集成（弹卡点、workflow_start、已保存命令）。
+- solo-mode：`src/extensions/solo-mode/index.test.ts`（22 个）——写读/生命周期/fail-closed/写失败/启动 flag。
+- pwr：`src/extensions/pwr/tests/solo-gate.test.ts` + `src/extensions/pwr/test/entry.test.ts` 的 solo 集成（弹卡点、workflow_start、已保存命令）。
 - opencode-bridge：`solo-gate.test.ts` + `index.test.ts` 的 sync/端口切换/restore 三条 solo 路径。
 - deep-init：`solo-gate.test.ts` + `index.test.ts` 的 `planDispatch` 与命令接线。
