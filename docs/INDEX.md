@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 0180cac
+> last verified @ 775638d
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -19,9 +19,10 @@
 | 状态条刷新节拍 / footer 排序带 / 段分隔与首段定格 / widget 栈顺序契约 | `cross/status-bar.md` |
 | widget 刷新重排问题与上游 issue 稿（本地不打补丁） | `pi-widget-order-issue.md` |
 | 历史事故与教训（渲染堆叠、误杀进程、编码坑） | `incidents.md` |
-| PWR DSL 白名单 / 上限 / 脚本版本权威定义 | `pwr/engine/spec.ts`（代码即真相）+ `extensions/pwr.md` |
-| PWR 完整架构 / 安全不变量 / 版本历史 | `pwr/DELIVERY.md`（pwr 卡从薄，不重复它） |
+| PWR DSL 白名单 / 上限 / 脚本版本权威定义 | `src/extensions/pwr/engine/spec.ts`（代码即真相）+ `extensions/pwr.md` |
+| PWR 完整架构 / 安全不变量 / 版本历史 | `src/extensions/pwr/DELIVERY.md`（pwr 卡从薄，不重复它） |
 | agent-manager 独立工具（会话/agent 进程管理，非扩展）的边界、数据流、不变量、坑 | `tools/agent-manager.md` |
+| 仓库布局决策（为什么插件目录在 `src/extensions/`、哪些留在根） | `adr/0001-插件目录收进-src-extensions.md` |
 
 ## 扩展卡一览（一行摘要）
 

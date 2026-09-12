@@ -1,6 +1,6 @@
 # deep-init — /deep-init 层级 AGENTS.md 深度初始化
 
-> last verified @ 0260f89
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -42,7 +42,7 @@
 
 ## 改动清单
 
-- 必跑：`cd deep-init && npm install && npm test`（37 个）+ `npm run typecheck`；缩进 2 空格。
+- 必跑：`cd src/extensions/deep-init && npm install && npm test`（37 个）+ `npm run typecheck`；缩进 2 空格。
 - 必看测试：`index.test.ts`（fakeScanner tree 字典 + planDispatch 决策断言是理解门控与三出口语义的最快路径）。
 - fake 模式：按 docs/cross/deps-ports.md——fs 边界手写 fake `DirScanner`（tree Record），git / 时钟经 `DeepInitDeps` 注入 fake；纯逻辑不 fake 直接测真函数；禁止引入 mock 库。
 - 改四阶段行为：先改 `buildDeepInitPrompt` 模板并同步 index.test.ts 的提示词断言，再 bump package.json 版本（当前 1.1.0）。

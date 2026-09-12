@@ -1,6 +1,6 @@
 # opencode-bridge — HTTP CONNECT → SOCKS5 桥 helper 的拉起与 settings 联动
 
-> last verified @ 134a3d6
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -42,6 +42,6 @@ opencode-go 等模型按出口 IP 限区，Pi 又只支持 HTTP 代理（不认 
 
 ## 改动清单
 
-- 必跑：`cd opencode-bridge && npm install && npm test`（114 个）+ `npm run typecheck`。
+- 必跑：`cd src/extensions/opencode-bridge && npm install && npm test`（114 个）+ `npm run typecheck`。
 - 协议/进程契约改动 → 必看 `helper.test.ts`（真实 helper + 手写 fake SOCKS5，无外部网络）；配置/生命周期 → `bridge.test.ts`；宿主接线 → `index.test.ts`。
 - fake 模式（docs/cross/deps-ports.md）：进程/IO 边界手写 fake BridgeDeps / ProxySyncDeps；宿主交互 fake pi（对齐 goal 手写风格）；协议契约接真实 helper 子进程——文件系统/子进程行为纯函数测试抓不住。

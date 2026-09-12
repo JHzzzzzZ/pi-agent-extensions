@@ -1,6 +1,6 @@
 # goal — 会话目标自动循环推进
 
-> last verified @ 9db7983
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -48,7 +48,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test goal/index.test.ts goal/aligned-ticker.test.ts`（63 个，goal/ 目录下执行，无 package.json 无 typecheck 脚本）。
+- 必跑：`node --experimental-strip-types --test src/extensions/goal/index.test.ts src/extensions/goal/aligned-ticker.test.ts`（63 个，从仓库根执行，无 package.json 无 typecheck 脚本）。
 - 必看测试：`index.test.ts` — `makeFakePi` 手写 fake pi 宿主（记录 sendMessage/sendUserMessage/entries/statuses/statusKeys）+ fake 评估器 + 注入 `nowMs`，全离线；节拍用全局 `setTimeout` mock + `fireTick()`；评估器小调用边界只 fake 不真连。
 - fake 模式：沿 `GoalDeps` 注入口（评估器 + 时钟），对应 docs/cross/deps-ports.md 的 goal 行；新增进程/IO 边界才立新口，别加策略层。
 - 改上限值/消息文案/条目键 ⇒ 同步 README 的 goal 段与头部注释；改条目键 ⇒ 同步 docs/cross/messages-entries.md。

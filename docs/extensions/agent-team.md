@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ cddd01f
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -67,7 +67,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - **RPC 收尾不变量**：leader 进程只在 stdin 结束时退出（`onInputEnd`→shutdown）——必须在 `agent_settled` 时关 stdin；prompt 预检失败（`response.prompt.success=false`）不会产生 settle，必须同样关 stdin 否则 run 永久挂起；`promptError` 折进 failed 记录（不让预检失败落成 completed 空报告）。
 - chat 队列条目只存 `{ runId, targetLabel, message }`，上文尾部派出时刻现读（不随消息缓存，避免排队期间陈旧）；链式门控仅 completed 续发（派出队首），failed/aborted **只丢该 runId 的条目**（其他并行 run 的队列保留）；显式停止路径按范围清：`team_stop` 工具与 viewer `D` 只清该 run（`clearRun(runId)`），`/team:stop` 命令与 `/team:clear` 清全队列（用户变卦语义）。
 - **不偷编辑器按键**：亮块**默认折叠单行**（未选中态只有激活键被消费，其余（含 esc）原样交还编辑器）——`↓`/`←`（空编辑器 ∧ 主编辑器焦点）或 `alt+↓`/`alt+↑` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行）+ 底部提示行，`esc` 或第 0 行再按 `↑`/`k` 收回折叠；`main` 行 enter 只收起选中（fleet main 语义），leader/成员行 enter 按 actor 进查看器；**按键 release 过滤**（v1.13.2）：widget/viewer 的 key reducer 顶部 `isKeyRelease` 短路（fleet-status.ts:699 同款）——Kitty flag 2 下 release 事件（`:3` 编码）同样能被 `matchesKey` 命中，漏过滤 = 一次按键生效两次；repeat（`:2`）保留供长按连续移动；**焦点门控**（对齐 fleet-status `editorHasFocus`，v1.9.1）：`ensureRunWidget` 挂载时经 factory 形态 `setWidget` 一次性捕获宿主 TUI（宿主同步调用 factory，空组件在 controller 首帧（running）或首个字符串帧被替换、无可见变化），`editorFocus: () => probeEditorFocus(state.tui)`——`getFocusedComponent()` 优先、`focusedComponent` 字段回退、五方法结构判定编辑器形状（`isEditorComponentLike`，不用 `instanceof`：跨 jiti 模块边界不可靠）；焦点确定非编辑器（`/login`、`/model`、`/settings` 选择器，`ctx.ui.select`，overlay 对话框）时 widget 完全不介入（含 alt 通道）且选中态退出让行；宿主无焦点信息/取用抛错 → `undefined`，降级为旧门控（仅空编辑器）。bare `↓`/`←` 仅当焦点在主编辑器且编辑器为空才激活（`editorState` 端口注入 `getEditorText`，宿主缺该 API 时降级为仅 alt 通道）；选中态 `↑`/`k` 在第 0 行再按退出选中（fleet-status 同构，后续键到达编辑器，退出保持 cursor 供再次激活恢复）。
-- **TUI 同步 ≠ 依赖**：viewer/widget 行为对照 pi-subagents（基线 v0.66.0，`agent-team/docs/tui-sync.md`）代码级同步，但不 import 它；测试期望只能从矩阵来，不从实现反推；同步后登记新版本号。
+- **TUI 同步 ≠ 依赖**：viewer/widget 行为对照 pi-subagents（基线 v0.66.0，`src/extensions/agent-team/docs/tui-sync.md`）代码级同步，但不 import 它；测试期望只能从矩阵来，不从实现反推；同步后登记新版本号。
 - 渲染串指纹相同跳过 `setWidget`（renderKey 对齐）；但 `setPaused(false)` 必须重置指纹强制重绘——否则恢复帧被跳过，亮块卡在隐藏态；时间类刷新一律走 `aligned-ticker.ts`（widget 重绘、cockpit `onProgress` 进度 ticker）对齐墙钟秒边界；`tickMs` 仅测试可覆盖，生产 1000；节拍器 `unref()` 不阻宿主退出。
 - 双加载守卫（`globalThis.__piAgentTeamExtensionLoaded`）**复位时机 = session_shutdown**：pi 宿主保证重绑扩展（reload/new/resume/fork/switch）前必发该事件，entry 在此删标志，下一次 factory 调用重新注册全部工具/命令；同一进程内两份之间无 shutdown 的真双加载（leader 子 `-e` + 自动发现）依旧被抑制。没有复位的话 `/reload` 后 team_* 工具全部消失。
 
@@ -93,7 +93,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd agent-team && npm install && npm test`（613 个）+ `npm run typecheck`。
+- 必跑：`cd src/extensions/agent-team && npm install && npm test`（613 个）+ `npm run typecheck`。
 - 真实 pi 宿主契约（opt-in，不调模型）：`node test/resume-host-smoke.mjs` —— 写 fixture 会话后 `pi --mode rpc --session <file>`，断言 `get_state` 的 `messageCount` 保留且 `sessionFile` 指向该文件，stdin 结束后干净退出（续跑功能的宿主前提）。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
 - TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。

@@ -1,6 +1,6 @@
 # run-timer — 会话/任务/回合计时 widget
 
-> last verified @ b9d397e
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -38,6 +38,6 @@
 
 ## 改动清单
 
-- 必跑（仓库根，目录无 package.json 不能 cd 进去跑）：node --experimental-strip-types --test run-timer/run-timer.test.ts run-timer/aligned-ticker.test.ts（59 个 it）。
+- 必跑（仓库根，目录无 package.json 不能 cd 进去跑）：node --experimental-strip-types --test src/extensions/run-timer/run-timer.test.ts src/extensions/run-timer/aligned-ticker.test.ts（59 个 it）。
 - 必看测试：run-timer.test.ts 的 describe "real factory — timer lifecycle"（节拍单例契约）、"aligned ticker + fingerprint skip" 与 "dedup accounting"（计账幂等）。
 - fake 模式（按 docs/cross/deps-ports.md）：纯函数直接测不 fake；工厂测试用真实工厂 + 假 pi 对象（createFakeAPI）fire 事件；时钟按特例约定直接 mock `setTimeout`，不立端口。

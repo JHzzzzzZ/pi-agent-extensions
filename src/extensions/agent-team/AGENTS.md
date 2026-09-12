@@ -17,7 +17,7 @@
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
 | 子进程 env / 工具面 | 成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`，exclude 优先于 `--tools`） |
 | 隔离分支 | `worktree.ts`（每次 run 独立分支；同 run 重派复用已注册 worktree / 空闲同名分支，不碰当前目录） |
-| 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界，契约 `docs/cross/status-bar.md`）；数据驱动挂载：controller 每会话挂一次，运行中有帧、落定 `setWidget(undefined)` 自动卸载；未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`，选中态 = `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（末行恒为成员行；v1.13.0，任务摘要 v1.13.1 并入）；连接符 `├─ `/`╰─ `（末项圆角，v1.15.4），每行带背景（普通行 `rowBg`、选中行 `rowSelectedBg`，按宿主内容宽补齐，v1.15.4） |
+| 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界，契约 `<仓库根>/docs/cross/status-bar.md`）；数据驱动挂载：controller 每会话挂一次，运行中有帧、落定 `setWidget(undefined)` 自动卸载；未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`，选中态 = `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（末行恒为成员行；v1.13.0，任务摘要 v1.13.1 并入）；连接符 `├─ `/`╰─ `（末项圆角，v1.15.4），每行带背景（普通行 `rowBg`、选中行 `rowSelectedBg`，按宿主内容宽补齐，v1.15.4） |
 | 错误码 | `types.ts` `TeamErrorCodes` |
 
 ## CONVENTIONS
@@ -45,7 +45,7 @@
 
 ## COMMANDS
 ```bash
-cd agent-team && npm install && npm test   # 564 测试（node --test test/*.test.ts）
+cd src/extensions/agent-team && npm install && npm test   # 564 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```

@@ -1,6 +1,6 @@
 # stream-token-speed — 流式回复 TTFT 与实时 tokens/s 状态显示
 
-> last verified @ 9db7983
+> last verified @ 775638d
 
 ## 职责与边界
 
@@ -48,7 +48,7 @@
 
 ## 改动清单
 
-- 必跑：`cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts`（45 个：adapter 7 + metrics 18 + integration 20）。
+- 必跑：`cd src/extensions/stream-token-speed && node --experimental-strip-types --test test/*.test.ts`（45 个：adapter 7 + metrics 18 + integration 20）。
 - 必看测试：`test/integration.test.ts`（逐条验证 PRD §8 的 AC-01～AC-09 全链路）、`test/metrics.test.ts`（窗口/节流/除零/结束补算口径）。
 - fake 模式（参照 docs/cross/deps-ports.md）：无 deps 口——纯逻辑直接测真函数，时钟经 adapter 的 `now` 参数注入可控时钟，状态上报用 `test/fixtures.ts` 的 `RecordingStatusPort` 替身（状态端口 fake 的仓库样板，支持 `throwOnSet` 模拟 UI 崩溃）。
 - 改速度口径 / 常量：同步 metrics.ts 文件头的契约注释 + README 效果示意；完成后更新本卡 last verified 行。
