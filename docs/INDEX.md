@@ -10,7 +10,8 @@
 
 | 问题类型 | 读这个 |
 | --- | --- |
-| `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径 | `tools/todo-cli.md` |
+| `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径、JSON schema 与锁 | `tools/todo-cli.md` |
+| todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0001-todos-json-storage.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
@@ -46,7 +47,7 @@
 
 | 卡 | 一句话 |
 | --- | --- |
-| [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI：单入口 `node tools/todo.mjs`（七子命令 + list 结构化查询 flags / db sqlite 索引子命令（可重建、无 DB 时降级），triage 只读扫描 worktree↔条目），只读写 `todos/`、CLI-only 无 pi 依赖 |
+| [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI：单入口 `node tools/todo.mjs`（七子命令 + list 结构化查询 flags + migrate 双向迁移子命令；存储 = `todos/<名>.json` 唯一权威 + 每文件 O_EXCL 锁 + 原子写，triage 只读扫描 worktree↔条目），只读写 `todos/`、CLI-only 无 pi 依赖 |
 | [agent-manager](tools/agent-manager.md) | 独立 agent 管理工具（零依赖、非 Pi 扩展）：会话浏览/检索/重命名/可恢复删除 + pi 子进程启动/停止 + 浏览器前端；`node agent-manager/server.ts` |
 
 ## 收录与淘汰

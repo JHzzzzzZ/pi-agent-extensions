@@ -495,22 +495,22 @@ node --experimental-strip-types --test solo-mode/index.test.ts   # 22 个测试
 
 ## todo-cli
 
-`todos/` 工作流的**仓库级 CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作；并支持基于 markdown 派生 sqlite 索引的结构化组合查询（list 新 flags + `db` 子命令，索引可随时删除重建）。唯一入口是仓库根的 `node tools/todo.mjs`（实现源 `todo-cli/core.ts`），`REPO_ROOT` 由脚本位置解析，任意 cwd 可用。
+`todos/` 工作流的**仓库级 CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0001-todos-json-storage.md`](docs/adr/0001-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/三时间戳都是原生字段）。唯一入口是仓库根的 `node tools/todo.mjs`（实现源 `todo-cli/schema|lock|query|migrate|core.ts`），`REPO_ROOT` 由脚本位置解析，任意 cwd 可用。
 
 ```bash
 node tools/todo.mjs summary [--json]                    # 全量盘点（open / processing / done）
 node tools/todo.mjs list [--status open|processing|done] [--file <name>] [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]   # 按状态/文件/分支/标签/文本/领取时间组合查询（AND）
-node tools/todo.mjs add --file <name> "描述"             # 追加登记（跨文件查重，重复拒绝；--force 强制）
-node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]   # 领取并标 processing
-node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]  # 完成勾选 [x] 并去标注
+node tools/todo.mjs add --file <name> "描述" [--tag 词1,词2]   # 追加登记（跨文件查重，重复拒绝；--force 强制）
+node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]   # 领取：status→processing，--branch 写入原生字段
+node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]  # 完成：status→done，--note 逐字进 notes
 node tools/todo.mjs lint                                # 单向核对 pi.extensions 扩展 ↔ todo 文件
-node tools/todo.mjs triage [--json]                     # 只读扫描 worktree↔条目关联与遗留
-node tools/todo.mjs db status|rebuild|drop              # sqlite 索引：状态 / 从 markdown 全量重建 / 删除（markdown 恒为权威）
+node tools/todo.mjs triage [--json]                     # 只读扫描 worktree↔条目关联与遗留（条目 branch 字段 ↔ worktree 分支精确相等）
+node tools/todo.mjs migrate from-md [--dry-run] [--force] | to-md   # md→JSON 一次性迁移（带逐文件等价自检）/ JSON→md 逃生回滚
 node tools/todo.mjs --help                              # 打印用法
 ```
 
-- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝）、保持 CRLF 行尾、绝不自动 commit；登记（`add`）不标 processing，领取（`claim`）才标（动作显式分离）；结构化查询经 `todos/.todo-cli/` 派生 sqlite 索引（gitignore、可 `db drop` 回退纯 markdown）
-- **测试** — 仓库根 `npm run test:todo`（50 个，含 3 个进程边界 E2E）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝）、绝不自动 commit；登记（`add`）不改状态，领取（`claim`）才转 processing（动作显式分离）；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 id 取并集手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp 与锁在 gitignore 的 `todos/.todo-cli/`）
+- **测试** — 仓库根 `npm run test:todo`（44 个，含 3 个进程边界 E2E + 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
