@@ -77,24 +77,28 @@
     {
       "id": 6,
       "text": "complete --note 处理有缺陷（2026-09-11 实测 agent-team-todo:116 收尾）：备注里的全角右括号「）」被吞掉、「完成」前缀重复——写入结果是「（完成 完成 … statusTaskText( ——」。要求：note 只整体包裹、不解析内部括号与换行；补单测覆盖含「（）」、换行、超长备注的 complete 输入。",
-      "status": "open",
+      "status": "done",
       "branch": null,
       "tags": [],
-      "notes": [],
+      "notes": [
+        "随方案 C 根治：note 为 JSON 原生字段（complete --note 逐字进 notes，不解析括号/换行），md 行尾拼接路径删除；单测覆盖含「（）」、换行、超长备注（test/todo-cli.test.ts complete --note 用例）"
+      ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": "2026-09-12T09:57:28.878Z"
     },
     {
       "id": 7,
       "text": "存储架构迁移方案 C：JSON 权威、去掉 markdown（用户 2026-09-11 讨论后指定登记）——todos/<名>.json 为唯一持久真相，CLI 是唯一读写入口；状态/文本/注记/分支引用/标签/三时间戳为原生字段，无 sqlite 索引层、无漂移、无 node:sqlite 实验依赖；JSON 进 git 可 diff。必须保留：七子命令 CLI 契约（--file 指向 .json）与退出码、lint 的扩展↔todo 对应（文件名改 .json）、AGENTS 登记工作流、skill 配套、list 即人类视图（明确不再保留 md 视图，同时改写 L14 验收里「人工可读 markdown 视图必须保留」条）。并发：自研锁（stale/重入/中断释放）+ temp+rename 原子写，配真实子进程并发/中断测试。迁移：18 文件/189 条 + 注记与缩进子行迁移进 notes，迁移可逆。同步改：AGENTS 红线 2/7、lint、README、docs/tools/todo-cli.md、triage 映射口径、三个 todo skill（仓库外，需用户批准）。待决策（开工前定）：单文件 vs 每插件一文件；条目 schema（原 md 文本是否保留）；锁实现；分支合并冲突策略；是否接受彻底无 md。验收：迁移后等价证明（条目数/状态/注记零丢失）、并发写不丢、lint exit 0、文档四处同步、回滚可还原 md 形态。",
-      "status": "open",
-      "branch": null,
+      "status": "done",
+      "branch": "feat/todo-cli-json-store",
       "tags": [],
-      "notes": [],
+      "notes": [
+        "feat/todo-cli-json-store：JSON 唯一权威落地（根 2.41.0，merge 0eacb8d）——todo-cli 重构为 schema/lock/query/migrate/core 五模块（删 store.ts sqlite 层），44 测试全绿（并发/中断真子进程 + 迁移 roundtrip）；18 个 md → 18 个 JSON 零丢失验证 18/18（174 顶层条目 open 27/processing 9/done 138、注记 272 条、缩进子行并入 notes）；AGENTS/README/docs 卡/INDEX/ADR-0002/CONTEXT 同步；仓库外 todo-add/todo-triage(survey.sh 委托 CLI)/todo-cli/wrap-up 四 skill × .zcode/.pi 两镜像同步（备份 *.bak-migration）；complete --note 逐字进 notes（L16 bug 根治）"
+      ],
       "createdAt": null,
-      "claimedAt": null,
-      "completedAt": null
+      "claimedAt": "2026-09-12T09:57:28.366Z",
+      "completedAt": "2026-09-12T09:57:28.618Z"
     },
     {
       "id": 8,
