@@ -20,6 +20,7 @@ import {
   checkSmoke,
   deepModelFromSettings,
   extensionDirsFromManifest,
+  extensionSourceDirsFromManifest,
   findManifestDrift,
   findPiPackage,
   installSourceKind,
@@ -40,6 +41,13 @@ test("extensionDirsFromManifest：插件目录收进 src/extensions/ 后按父�
   assert.deepEqual(
     extensionDirsFromManifest(["./src/extensions/pwr/index.ts", "./src/extensions/agent-team/index.ts"]),
     ["pwr", "agent-team"],
+  );
+});
+
+test("extensionSourceDirsFromManifest：复制源 = manifest 条目父目录（相对仓库根，正斜杠归一）", () => {
+  assert.deepEqual(
+    extensionSourceDirsFromManifest(["./pwr/index.ts", "./src/extensions/agent-team/index.ts"]),
+    ["pwr", "src/extensions/agent-team"],
   );
 });
 
