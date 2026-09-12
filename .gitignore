@@ -7,3 +7,4 @@ build/
 .zcode/
 todos/.todo-cli/
 history
+.pi/team-runs/
