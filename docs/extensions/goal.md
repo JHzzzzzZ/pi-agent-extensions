@@ -42,7 +42,7 @@
 - 评估器看不见工具输出：evidence 只含 assistant 文本块。要求"测试通过"类目标时，续跑消息明确指示 agent 在回复中呈现可验证证据（buildContinueMessage 已内置此要求）——删掉这句指示会导致评估器永远判 not met。
 - `parseVerdict` 只截第一个括号平衡的 JSON 对象（容忍 code fence/前后废话）；模型若输出多个 JSON 对象且第一个不是判定，会 `bad-verdict`（message 仅前 200 字符，排查时看这个）。
 - 中断后 elapsed/turns 不跨会话保留：水合把 startedAtMs 重置为 now、turns=0，/goal 显示的时长与轮数在 reload/resume 后不连续，属预期而非 bug。
-- 目录无 package.json，测试用 `node --experimental-strip-types --test` 直跑；缩进 2 空格（同多数卫星扩展，与 pwr 的 tab 不同）。
+- 目录无 package.json，测试用 `node --experimental-strip-types --test` 直跑；缩进 2 空格（同多数扩展，与 pwr 的 tab 不同）。
 - 评估器直调 `provider.stream(...)`，绕过宿主 streamFn 的请求头合并（`mergeProviderAttributionHeaders`）：opencode 系模型（provider `opencode`/`opencode-go` 或 baseUrl host `opencode.ai`）必须自注入 `x-opencode-session`/`x-opencode-client` 会话头（Console Go 缺失返回 400 `MissingSessionID`，评估器连败 3 次后 goal 被暂停）。`isOpencodeModel`/`buildOpencodeSessionHeaders` 已复刻宿主判定；仅注入会话头，不注入归因遥测头（HTTP-Referer 等）。若宿主 provider-attribution 判定逻辑变更，需同步这两处。
 - 仅一个 commit（c5e167e）无历史坑可挖；后续踩坑在此追加。
 

@@ -26,7 +26,7 @@ PWR 工作流运行时：受约束 ECMAScript 脚本 → 校验 → 批准卡 �
 - 杀进程 SIGTERM 后 5s SIGKILL（`KILL_GRACE_MS=5000`）—— 改小则子 pi 来不及落盘事件。
 - prompt 物化仅 `pwr-tmp://` 进程内 —— 落盘即泄漏用户脚本。
 - trace 文本单行+尾部截断，禁透传原始工具输出 —— 违反则 widget 换行重影。
-- 缩进 tab（卫星 2 空格）—— 混用即 typecheck 无事但 diff 噪音。
+- 缩进 tab（其余扩展 2 空格）—— 混用即 typecheck 无事但 diff 噪音。
 
 ## ANTI-PATTERNS
 - 直引 `vendor/acorn.mjs` 以外解析器 —— 实证：仅 `engine/parser.ts` 引入，运行时零 npm 依赖。

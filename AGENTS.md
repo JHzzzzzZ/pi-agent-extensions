@@ -5,7 +5,7 @@
 
 ## 项目概览
 
-Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。主项目 `pwr/`（Pi Workflow Runtime，本地工作流编排）加 11 个独立卫星扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）；另有独立运行的 **agent-manager**（带浏览器前端的 agent 管理工具，非 Pi 扩展，agent 不感知）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。`pwr/`（Pi Workflow Runtime，本地工作流编排）与 11 个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）；另有独立运行的 **agent-manager**（带浏览器前端的 agent 管理工具，非 Pi 扩展，agent 不感知）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 每个扩展的职责边界、文件地图、数据流、不变量与已知坑：见 [`docs/INDEX.md`](docs/INDEX.md) 路由到的卡片与各扩展 README。安装/加载：复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目），Pi 中执行 `/reload` 生效。
 
@@ -27,7 +27,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 - `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键/状态条/solo 审批门）→ `tools/<工具名>.md` 仓库工具卡（非插件，现 todo-cli 与 agent-manager）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
 - `test/` — 根契约测试（`status-bar-contract.test.ts`：footer 排序带 + 段分隔/首段定格 + widget 栈顺序，`npm run test:contract`）、安装冒烟工具的纯逻辑单测（`install-smoke.test.ts`，`npm run test:smoke`）与 todo CLI 单测（`test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`，`npm run test:todo`，含进程边界 E2E）。
 - `tools/` — 仓库级开发工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc` 进程，验证 12 个扩展在“手动复制”安装形态下全部加载，`node tools/install-smoke.mjs`；`--task` 追加真实模型工具调用任务；`--install <源>` 真跑 `pi install` 推荐安装路径并核对装到的包版本/扩展清单/命令面，联网）；`todo.mjs`（仓库级 todo CLI 唯一入口，实现源 `todo-cli/core.ts`，CLI-only 无 pi 依赖：解析/查重/追加/领取/完成/lint/triage 全部是可导出纯函数，`summary`/`list`/`add`/`claim`/`complete`/`lint`/`triage` 七个子命令 + list 结构化查询 flags 与 `db` sqlite 派生索引子命令（可 drop/重建，无 DB 时降级），只读写仓库 `todos/`、保持 CRLF 行尾、不 commit；`triage` 只读扫描 worktree↔条目关联与遗留）。
-- 卫星扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port/status-band + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota` + `status-band.ts`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器 + `status-band.ts`）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约 + `status-band.ts` + `pi --solo` 启动 flag）。
+- 扩展（各目录自包含，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port/status-band + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota` + `status-band.ts`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器 + `status-band.ts`）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约 + `status-band.ts` + `pi --solo` 启动 flag）。
 - 独立工具（非扩展）：`agent-manager/`（独立 Node 工具，仅 listen `127.0.0.1`：`server.ts` 入口（15 条 JSON 路由 + 静态白名单）+ `settings.ts` 四级设置 + `core.ts` 会话数据层（两段式 rename/delete/restore，rename=追加宿主语义 `session_info`，trash 可恢复删除）+ `agent-runner.ts` pi 子进程（JSON 事件归约 + 进程树停止）+ `web/` 零依赖前端（会话/Agents/设置三区）；不 import 宿主 SDK、不注册 pi 扩展点，已从根 `pi.extensions` 注销；浏览器→HTTP→core/runner→fs/子进程数据流）。
 
 pwr 与 agent-team 的目录地图、架构与数据流：见 `docs/extensions/pwr.md` + `pwr/DELIVERY.md`（权威架构/安全文档 + 版本历史）与 `docs/extensions/agent-team.md`。文档截图（无头真实渲染 → SVG，三个场景：agent-team 查看器 / pwr 查看器 / agent-team 亮块）由 `agent-team/tools/capture-screens.mjs` 生成到 `docs/assets/`，用法见 agent-team README。
@@ -55,7 +55,7 @@ node tools/install-smoke.mjs --task   # 追加真实模型任务（需鉴权 + �
 node tools/install-smoke.mjs --install <pi install 源>   # 真跑 README 推荐安装路径（联网）：定位装到的包、核对版本/扩展清单/命令面；可与 --task 叠加
 ```
 
-卫星扩展 + 独立工具（不在 pwr 脚本覆盖范围内）：
+其余扩展 + 独立工具（不在 pwr 脚本覆盖范围内）：
 
 ```bash
 cd stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 45 个测试
@@ -93,7 +93,7 @@ tsconfig（`pwr/tsconfig.json`）强制承载性规则——违反将导致 `npm
 - **文件头注释** 引用 JHL 工单号 + PRD 章节（`* PWR - Pi Workflow Runtime extension entry (JHL-16 trigger/generation/approval + JHL-17 save/load & parameter commands)`）。保持同步更新。
 - **安全不变量**（PWR）：无 `vm`/`eval`；执行前白名单校验；fail-closed 默认（缺 engine/runner ⇒ 类型化错误，无隐式回退）；脚本源码/args 永不持久化；`pwr-tmp://` 仅进程内；不存 API key；错误信息为静态模板。
 - **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
-- **TUI 约定（卫星扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
+- **TUI 约定（其余扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
 - **状态条契约（跨插件，`docs/cross/status-bar.md`）：** ① 时间类状态一律对齐同一墙钟秒边界刷新——各插件带一份 `aligned-ticker.ts`（首跳对齐、自校正、异常吞掉），生产禁用裸 `setInterval` 计时器；非时间类刷新（流式节流/低频轮询/推送）不受约束；② 写入前做文本指纹比对，内容不变跳过 `setStatus`/`setWidget`；③ footer 状态键带两位排序前缀：`10:goal` / `20:provider-quota` / `30:pwr` / `40:solo-mode` / `50:stream-token-speed`（宿主按 key `localeCompare` 拼接，不得改回无前缀键）；④ 编辑器上方 widget 栈顺序 = 根 `package.json` `pi.extensions` 注册顺序（`pwr-runs` → `run-timer` → `loop`）——该顺序只在**首次挂载**时成立；宿主 `setExtensionWidget` 每次刷新都会把 key 移到栈底（周期性刷新 widget 因此逐秒换位），这是宿主行为，本仓库不打补丁（`AGENTS.md` 规则红线·仓库边界），问题走上游（issue 草稿 `docs/pi-widget-order-issue.md`）；改注册顺序须同步根契约测试；⑤ **段分隔与首段定格**：按 key 排序后**最靠前的可见段不加 `│ `**（行首定格），其余段以 `│ `（U+2502+空格）连接；任一段出现/消失时所有已登记段立即重算前缀并重渲染。协调走每插件一份 `status-band.ts`（`Symbol.for("pi.status-bar.bands.v1")` 进程共享登记表 + `writeBand(key, text, writer)`）——不跨插件 import、单目录仍可复制安装；只认识同样使用该模块的写入者（本仓库五个 footer 写入者）。写入边界不得自己拼前缀，且 `session_shutdown` 必须清登记（防 /reload 残留），前缀决策在插件 dim 样式之前且计入指纹；段文本格式（goal 目标 ≤20 显示列、provider-quota 去 provider 前缀与倒计时、pwr 计数式 `pwr N▶ M✓`、stream-token-speed 汇总 `~` 标注平均/无数据清状态）锁定在 `docs/cross/status-bar.md`「段分隔、首段定格与瘦身契约」；根契约测试校验五份 `status-band.ts` 与写入边界接线。
 - 缩进：`pwr/` 用 tab，`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/`、`solo-mode/`、`todo-cli/`、`agent-manager/` 用 2 空格。
 

@@ -45,7 +45,7 @@
 - `vendor/acorn.mjs` 是生成文件（内置 acorn 8.18.0 + 手写 d.mts），**勿手改**。
 - pwr 无 init/onLoad 钩子，全部在 `index.ts` 加载时注册；`session_start` 动态 import runtime/runner 并水合 `pwr-approval-v1` / `pi-workflow-run-v1` 条目。
 - `engine/validate-tool.ts` 的 `runWorkflowValidate` 仅被测试消费，别当成生产入口。
-- 缩进用 tab（与多数卫星扩展的 2 空格不同）。
+- 缩进用 tab（与多数扩展的 2 空格不同）。
 
 ## 改动清单
 
