@@ -7,6 +7,7 @@
  * 驱动 N 个真实子进程同时读改写同一 JSON 文件（git 自动发现路径另见
  * root-discovery.test.ts，避免重 fixture 依赖 .git 目录）。
  * 锁（lock.ts，O_EXCL + 重试）串行化临界区：并发全落、stderr 恒空、收尾无锁残留。
+ * 依赖写入（dep add，todo-cli-todo:10）也走同一条读改写路径，一并在此覆盖。
  */
 
 import test from "node:test";
@@ -53,6 +54,7 @@ function seedEntries(): TodoEntry[] {
       status: "open",
       branch: null,
       tags: [],
+      dependsOn: [],
       notes: [],
       createdAt: null,
       claimedAt: null,
@@ -135,6 +137,29 @@ test("并发写：6 个真实子进程同时 add --file general，6 条全落、
   const ids = new Set(data.entries.map((entry) => entry.id));
   assert.equal(ids.size, data.entries.length, "并发分配的 id 不得重复");
   assert.equal(data.entries.length, SEED_ENTRIES + 6, "6 条全部落盘（丢更新即失败）");
+  assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件");
+});
+
+test("并发 dep add：2 个真实子进程同时给不同条目加依赖，两条都在（无丢更新）+ 无锁残留", { timeout: 120_000 }, async (t) => {
+  const root = makeFixture();
+  t.after(() => removeFixture(root));
+
+  const first = "种子条目 0001 供并发测试使用";
+  const second = "种子条目 0002 供并发测试使用";
+  const results = await Promise.all([
+    runCli(root, ["dep", "add", "--file", "general", "--match", first, "--on", "general-todo#3"]),
+    runCli(root, ["dep", "add", "--file", "general", "--match", second, "--on", "general-todo#4"]),
+  ]);
+
+  assert.equal(results[0].code, 0, `dep add 甲 exit ${results[0].code}（stderr=${results[0].stderr.slice(0, 200)}）`);
+  assert.equal(results[1].code, 0, `dep add 乙 exit ${results[1].code}（stderr=${results[1].stderr.slice(0, 200)}）`);
+  assert.equal(results[0].stderr, "");
+  assert.equal(results[1].stderr, "");
+
+  const data = readJson(root);
+  assert.deepEqual(data.entries.find((entry) => entry.text === first).dependsOn, ["general-todo#3"], "并发下不得丢更新（甲）");
+  assert.deepEqual(data.entries.find((entry) => entry.text === second).dependsOn, ["general-todo#4"], "并发下不得丢更新（乙）");
+  assert.equal(data.entries.length, SEED_ENTRIES, "依赖写入不改条目集");
   assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件");
 });
 

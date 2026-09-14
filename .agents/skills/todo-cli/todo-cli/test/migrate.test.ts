@@ -139,8 +139,13 @@ test("renderMarkdown → parseLegacyMarkdown → buildTodoData：五态 roundtri
     "  - feat/x：做完",
   ].join("\n");
   const first = buildTodoData("general-todo", parseLegacyMarkdown(md));
-  assert.equal(first.version, 2, "buildTodoData 产出 v2");
+  assert.equal(first.version, 3, "buildTodoData 产出 v3");
   assert.deepEqual(first.entries.map((e) => e.alignedAt), [null, null, null, null, null]);
+  assert.deepEqual(
+    first.entries.map((e) => e.dependsOn),
+    [[], [], [], [], []],
+    "md 无依赖语法 → 迁移条目的 dependsOn 一律空（不回填、不猜）",
+  );
   assert.deepEqual(
     first.entries.map((e) => e.status),
     ["open", "aligning", "aligned", "processing", "done"],
@@ -258,7 +263,7 @@ test("migrateToMd：JSON → 规范 md（processing 标记还原、notes 作缩�
   assert.ok(fs.existsSync(path.join(root, "todos", "general-todo.json")), "to-md 不删 JSON");
   // 还原的 md 再迁移回去必须语义恒等（roundtrip 稳定）
   const round = buildTodoData("general-todo", parseLegacyMarkdown(md));
-  assert.equal(round.version, 2);
+  assert.equal(round.version, 3);
   assert.deepEqual(round.entries.map((e) => e.alignedAt), [null, null, null, null, null]);
   const original = parseTodoJson(fs.readFileSync(path.join(root, "todos", "general-todo.json"), "utf8"), "t");
   assert.equal(original.ok, true);

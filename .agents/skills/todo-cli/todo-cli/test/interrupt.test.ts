@@ -56,6 +56,7 @@ function seedEntries(): TodoEntry[] {
       status: "open",
       branch: null,
       tags: [],
+      dependsOn: [],
       notes: [],
       createdAt: null,
       claimedAt: null,

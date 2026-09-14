@@ -2,7 +2,7 @@
  * todo CLI 的纯逻辑 + 临时目录功能单测（工具本体与测试同居：`.agents/skills/todo-cli/todo-cli/`）。
  *
  * 边界说明：这里覆盖查重/路径解析/命令闭环/triage 可在文件系统边界内验证的行为；
- * 存储是 `todos/<名>.json`（方案 C：JSON 唯一权威；v2 = 对齐门五态），写操作走锁 +
+ * 存储是 `todos/<名>.json`（方案 C：JSON 唯一权威；v3 = 五态对齐门 + dependsOn 依赖门），写操作走锁 +
  * temp+rename 原子落盘——并发/中断边界在 test/{lock,concurrency,interrupt}.test.ts 用
  * 真实进程覆盖，仓库根发现（--root / git）在 test/root-discovery.test.ts 覆盖。本文件
  * 只在临时 fixture 目录演练写操作，不触碰仓库真实 todos/；末尾的进程边界 E2E 只跑只读命令。
@@ -79,7 +79,7 @@ function writeAlignDoc(root, name, id, overrides = {}) {
   return file;
 }
 
-/** 内联条目构造：默认 v2 全字段（alignedAt 原生）。 */
+/** 内联条目构造：默认 v3 全字段（alignedAt / dependsOn 原生）。 */
 function entry(id, text, status, extra = {}) {
   return {
     id,
@@ -87,6 +87,7 @@ function entry(id, text, status, extra = {}) {
     status,
     branch: null,
     tags: [],
+    dependsOn: [],
     notes: [],
     createdAt: null,
     claimedAt: null,
@@ -127,7 +128,7 @@ test("main：add/dup/claim/align/complete 在临时仓库上闭环，JSON 字段
 
   assert.equal(main(["add", "--file", "general", "第一条需求"], deps), 0);
   let data = readRepoData(root, "general-todo");
-  assert.equal(data.version, 2, "新建文件即 v2");
+  assert.equal(data.version, 3, "新建文件即 v3");
   assert.equal(data.entries.length, 1);
   assert.deepEqual(data.entries[0], {
     id: 1,
@@ -135,6 +136,7 @@ test("main：add/dup/claim/align/complete 在临时仓库上闭环，JSON 字段
     status: "open",
     branch: null,
     tags: [],
+    dependsOn: [],
     notes: [],
     createdAt: "2026-09-12T00:00:00.000Z",
     claimedAt: null,
@@ -514,6 +516,246 @@ test("lint：注册扩展 ↔ todos/<名>-todo.json 一一对应（一个方向�
 });
 
 // ---------------------------------------------------------------------------
+// 依赖门（todo-cli-todo:10）：声明入口 —— 写入期校验 + 引用归一
+// ---------------------------------------------------------------------------
+
+test("main：add --dep 写入归一后的规范引用；非法/悬空引用拒绝且不写盘", () => {
+  const root = makeRepo({
+    "general-todo": { version: 3, title: "t", entries: [entry(1, "已有前提", "open")] },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["add", "--file", "general", "依赖已有前提", "--dep", "general#1"], deps), 0);
+  assert.deepEqual(readRepoData(root, "general-todo").entries[1].dependsOn, ["general-todo#1"], "短名归一为规范引用");
+  assert.match(out.join("\n"), /依赖 general-todo#1/);
+
+  out.length = 0;
+  assert.equal(main(["add", "--file", "general", "悬空依赖", "--dep", "general-todo#99"], deps), 1);
+  assert.match(out.join("\n"), /DEP_NOT_FOUND：依赖目标不存在 general-todo#99/);
+  assert.equal(main(["add", "--file", "general", "非法引用", "--dep", "general"], deps), 1);
+  assert.match(out.join("\n"), /DEP_REF_INVALID：--dep 需要 文件#id 引用/);
+  assert.equal(readRepoData(root, "general-todo").entries.length, 2, "拒绝时不写入");
+});
+
+test("main：dep add / dep remove —— 追加去重、幂等、缺引用与校验失败都不写盘", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "已完成前提", "done", { completedAt: "2026-09-10T00:00:00.000Z" }),
+        entry(2, "依赖方", "aligned", { dependsOn: ["general-todo#1"], alignedAt: "2026-09-13T00:00:00.000Z" }),
+        entry(3, "另一条", "open"),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["dep", "add", "--file", "general", "--match", "依赖方", "--on", "general-todo#3, general#1"], deps), 0);
+  assert.deepEqual(readRepoData(root, "general-todo").entries[1].dependsOn, ["general-todo#1", "general-todo#3"], "去重并保序追加");
+  assert.match(out.join("\n"), /已更新依赖（已写入）/);
+
+  out.length = 0;
+  assert.equal(main(["dep", "add", "--file", "general", "--match", "依赖方", "--on", "general-todo#3"], deps), 0);
+  assert.match(out.join("\n"), /状态未变/, "重复声明是幂等 no-op");
+
+  out.length = 0;
+  assert.equal(main(["dep", "add", "--file", "general", "--match", "依赖方", "--on", "general-todo#99"], deps), 1);
+  assert.match(out.join("\n"), /DEP_NOT_FOUND：依赖目标不存在 general-todo#99/);
+  assert.equal(main(["dep", "add", "--file", "general", "--match", "依赖方", "--on", "general#2"], deps), 1);
+  assert.match(out.join("\n"), /DEP_SELF：条目不能依赖自身 general-todo#2/);
+  assert.deepEqual(readRepoData(root, "general-todo").entries[1].dependsOn, ["general-todo#1", "general-todo#3"], "校验失败不写盘");
+
+  assert.equal(main(["dep", "remove", "--file", "general", "--match", "依赖方", "--on", "general-todo#1"], deps), 0);
+  assert.deepEqual(readRepoData(root, "general-todo").entries[1].dependsOn, ["general-todo#3"]);
+  assert.equal(main(["dep", "remove", "--file", "general", "--match", "依赖方", "--on", "general-todo#1"], deps), 1);
+  assert.match(out.join("\n"), /DEP_ABSENT：该条目未声明依赖 general-todo#1/);
+
+  out.length = 0;
+  assert.equal(main(["dep", "remove", "--file", "general", "--match", "依赖方"], deps), 1);
+  assert.match(out.join("\n"), /缺少 --on/);
+  assert.equal(main(["dep", "frobnicate", "--file", "general", "--match", "依赖方", "--on", "general-todo#1"], deps), 1);
+  assert.match(out.join("\n"), /未知 dep 子命令/);
+});
+
+test("main：dep add 拒绝成环（回显环路径）且不写盘", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "环甲", "aligned", { dependsOn: ["general-todo#2"] }),
+        entry(2, "环乙", "open"),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l) };
+  assert.equal(main(["dep", "add", "--file", "general", "--match", "环乙", "--on", "general#1"], deps), 1);
+  assert.match(out.join("\n"), /DEP_CYCLE：依赖成环 general-todo#2 → general-todo#1 → general-todo#2/);
+  assert.deepEqual(readRepoData(root, "general-todo").entries[1].dependsOn, [], "成环不写盘");
+});
+
+test("main：claim 依赖门——被阻塞 fail-closed 不写盘，前提完成后可开工；首次领取与 align 不受阻", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "前提条目", "open"),
+        entry(2, "被阻塞条目", "aligned", {
+          branch: "feat/b",
+          claimedAt: "2026-09-13T00:00:00.000Z",
+          alignedAt: "2026-09-13T01:00:00.000Z",
+          dependsOn: ["general-todo#1"],
+        }),
+        entry(3, "待对齐的阻塞条目", "open", { dependsOn: ["general-todo#1"] }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["claim", "--file", "general", "--match", "被阻塞条目"], deps), 1);
+  assert.match(out.join("\n"), /DEP_BLOCKED：依赖未完成，不能开工/);
+  assert.match(out.join("\n"), /general-todo#1（open）/);
+  assert.equal(readRepoData(root, "general-todo").entries[1].status, "aligned", "门没过不写盘");
+
+  out.length = 0;
+  assert.equal(main(["claim", "--file", "general", "--match", "待对齐的阻塞条目"], deps), 0, "被阻塞条目仍可先对齐");
+  assert.equal(readRepoData(root, "general-todo").entries[2].status, "aligning");
+  writeAlignDoc(root, "general-todo", 3);
+  assert.equal(main(["align", "--file", "general", "--match", "待对齐的阻塞条目"], deps), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[2].status, "aligned");
+
+  out.length = 0;
+  assert.equal(main(["complete", "--file", "general", "--match", "前提条目"], deps), 0);
+  assert.match(out.join("\n"), /提示：以下未完成条目依赖本条目：general-todo#2（aligned）、general-todo#3（aligned）/, "收口时反查直接依赖者");
+  assert.equal(main(["complete", "--file", "general", "--match", "被阻塞条目", "--note", "收口"], deps), 0);
+  assert.equal(main(["claim", "--file", "general", "--match", "被阻塞条目"], deps), 1, "已完成条目不可领取");
+});
+
+test("main：依赖未完成时的开工门与解锁（done 即解锁，含悬空引用算阻塞）", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "悬空前提", "aligned", { dependsOn: ["general-todo#99"], alignedAt: "2026-09-13T01:00:00.000Z" }),
+        entry(2, "正常前提", "done", { completedAt: "2026-09-13T00:00:00.000Z" }),
+        entry(3, "已可开工", "aligned", { dependsOn: ["general-todo#2"], alignedAt: "2026-09-13T01:00:00.000Z" }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["claim", "--file", "general", "--match", "悬空前提"], deps), 1);
+  assert.match(out.join("\n"), /DEP_BLOCKED/);
+  assert.match(out.join("\n"), /general-todo#99（不存在）/, "悬空依赖也算阻塞并标不存在");
+
+  out.length = 0;
+  assert.equal(main(["claim", "--file", "general", "--match", "已可开工"], deps), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[2].status, "processing", "依赖 done 即解锁");
+  assert.match(out.join("\n"), /进入 processing/);
+});
+
+test("main：list 阻塞标记（非阻塞行字节不变）+ --json 带 dependsOn/blockedBy；summary 不变", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "前提", "processing", { branch: "feat/a" }),
+        entry(2, "被阻塞", "aligned", { dependsOn: ["general-todo#1"], alignedAt: "2026-09-13T00:00:00.000Z" }),
+        entry(3, "无依赖", "open"),
+        entry(4, "依赖已完成", "open", { dependsOn: ["general-todo#5"] }),
+        entry(5, "已完成前提", "done", { completedAt: "2026-09-10T00:00:00.000Z" }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l) };
+
+  assert.equal(main(["list"], deps), 0);
+  assert.deepEqual(out, [
+    "[~] general-todo#1  前提",
+    "[>] general-todo#2  被阻塞 （阻塞：等待 general-todo#1）",
+    "[ ] general-todo#3  无依赖",
+    "[ ] general-todo#4  依赖已完成",
+    "[x] general-todo#5  已完成前提",
+  ]);
+
+  out.length = 0;
+  assert.equal(main(["list", "--json"], deps), 0);
+  const rows = JSON.parse(out.join("\n"));
+  assert.deepEqual(rows[1].dependsOn, ["general-todo#1"]);
+  assert.deepEqual(rows[1].blockedBy, ["general-todo#1"], "非空即阻塞（派生字段只有一个）");
+  assert.deepEqual(rows[0].blockedBy, []);
+  assert.deepEqual(rows[3].dependsOn, ["general-todo#5"], "依赖已完成 → 不算阻塞");
+  assert.deepEqual(rows[3].blockedBy, []);
+
+  out.length = 0;
+  assert.equal(main(["summary"], deps), 0);
+  assert.match(out.join("\n"), /^general-todo\s+open 2  aligning 0  aligned 1  processing 1  done 1  total 5$/, "summary 不含阻塞信息");
+});
+
+test("main：complete 提示直接依赖者（已完成的依赖者不进提示）", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "被依赖的前提", "processing", { branch: "feat/a" }),
+        entry(2, "依赖方甲", "open", { dependsOn: ["general-todo#1"] }),
+        entry(3, "依赖方乙", "done", { dependsOn: ["general-todo#1"], completedAt: "2026-09-12T00:00:00.000Z" }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["complete", "--file", "general", "--match", "被依赖的前提"], deps), 0);
+  assert.match(out.join("\n"), /提示：以下未完成条目依赖本条目：general-todo#2（open）/);
+  assert.equal(out.join("\n").includes("依赖方乙"), false);
+});
+
+test("lint：扩展核对之外扫描依赖悬空/自引用/环", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-lint-dep-"));
+  fs.mkdirSync(path.join(root, "todos"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ pi: { extensions: ["./myext/index.ts"] } }));
+  const file = path.join(root, "todos", "myext-todo.json");
+  fs.writeFileSync(
+    file,
+    serializeTodo({
+      version: 3,
+      title: "myext TODO",
+      entries: [
+        entry(1, "悬空", "open", { dependsOn: ["myext-todo#9"] }),
+        entry(2, "自引用", "open", { dependsOn: ["myext-todo#2"] }),
+        entry(3, "环甲", "open", { dependsOn: ["myext-todo#4"] }),
+        entry(4, "环乙", "open", { dependsOn: ["myext-todo#3"] }),
+        entry(5, "干净", "open", { dependsOn: ["myext-todo#1"] }),
+      ],
+    }),
+  );
+  const out = [];
+  assert.equal(main(["lint"], { repoRoot: root, log: (l) => out.push(l) }), 1);
+  const text = out.join("\n");
+  assert.match(text, /✗ myext-todo#1 依赖目标不存在：myext-todo#9/);
+  assert.match(text, /✗ myext-todo#2 自引用依赖：myext-todo#2/);
+  assert.match(text, /✗ myext-todo#3 依赖成环：myext-todo#3 → myext-todo#4 → myext-todo#3/);
+  assert.equal(text.includes("myext-todo#5"), false, "干净条目不进问题清单");
+
+  fs.writeFileSync(file, serializeTodo({ version: 3, title: "clean", entries: [entry(1, "干净", "open")] }));
+  out.length = 0;
+  assert.equal(main(["lint"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.match(out.join("\n"), /lint 通过/);
+});
+
+// ---------------------------------------------------------------------------
 // triage：git worktree 事实 × todos 条目（branch 原生字段精确相等，只读）
 // ---------------------------------------------------------------------------
 
@@ -548,7 +790,7 @@ const TRIAGE_DOCS = [
   {
     name: "a-todo",
     data: {
-      version: 2,
+      version: 3,
       title: "a",
       entries: [
         entry(1, "在做的需求", "processing", { branch: "feat/live-thing" }),
@@ -681,16 +923,17 @@ test("CLI E2E：仓库子目录 cwd 跑 summary（git 自动发现到仓库根�
   assert.match(res.stdout, /-todo/);
 });
 
-test("CLI E2E：--help 在非仓库 cwd 也退出 0 且含完整用法（migrate 替代 db，align 是第八子命令）", () => {
+test("CLI E2E：--help 在非仓库 cwd 也退出 0 且含完整用法（migrate 替代 db，dep 是第九子命令）", () => {
   const res = runCli(["--help"], os.tmpdir());
   assert.equal(res.status, 0);
   assert.match(res.stdout, /用法/);
-  for (const sub of ["summary", "list", "add", "claim", "align", "complete", "lint", "triage", "migrate"]) {
+  for (const sub of ["summary", "list", "add", "claim", "align", "complete", "lint", "triage", "migrate", "dep"]) {
     assert.ok(res.stdout.includes(sub), `用法含子命令 ${sub}`);
   }
   assert.match(res.stdout, /--status open\|aligning\|aligned\|processing\|done/);
   assert.equal(res.stdout.includes("db "), false, "db 子命令已删除");
   assert.match(res.stdout, /--root/, "用法说明含 --root");
+  assert.match(res.stdout, /--dep/, "用法说明含 --dep");
 });
 
 test("CLI E2E：align 缺 --file / 缺 --match 均提示 + exit 1、stderr 恒空", () => {
@@ -712,6 +955,23 @@ test("CLI E2E：真实仓库 list --file 短名与全名输出一致且非空（
   assert.equal(full.status, 0);
   assert.ok(short.stdout.trim().length > 0, "短名不得静默返回空结果");
   assert.equal(short.stdout, full.stdout);
+});
+
+test("CLI E2E：dep 缺 --file / --match / --on 均提示 + exit 1、stderr 恒空", () => {
+  const noFile = runCli(["dep", "add", "--match", "随便", "--on", "a#1"], os.tmpdir());
+  assert.equal(noFile.status, 1);
+  assert.match(noFile.stdout, /缺少 --file <name>/);
+  assert.equal(noFile.stderr, "");
+
+  const noMatch = runCli(["dep", "remove", "--file", "general", "--on", "a#1"], os.tmpdir());
+  assert.equal(noMatch.status, 1);
+  assert.match(noMatch.stdout, /缺少 --match "子串"/);
+  assert.equal(noMatch.stderr, "");
+
+  const noOn = runCli(["dep", "add", "--file", "general", "--match", "随便"], os.tmpdir());
+  assert.equal(noOn.status, 1);
+  assert.match(noOn.stdout, /缺少 --on/);
+  assert.equal(noOn.stderr, "");
 });
 
 test("CLI E2E：未知命令退出 1 并提示（非仓库 cwd 也不需要仓库根）", () => {

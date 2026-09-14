@@ -198,10 +198,11 @@ export function buildTodoData(name: string, doc: LegacyDoc, timestamps?: Readonl
       createdAt: seeded?.createdAt ?? null,
       claimedAt: seeded?.claimedAt ?? null,
       completedAt: seeded?.completedAt ?? null,
+      dependsOn: [],
       alignedAt: null,
     });
   }
-  return { version: 2, title: doc.title ?? `${name} TODO`, entries };
+  return { version: 3, title: doc.title ?? `${name} TODO`, entries };
 }
 
 // ---------------------------------------------------------------------------

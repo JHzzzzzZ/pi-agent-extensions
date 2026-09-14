@@ -16,15 +16,20 @@
  * 条目新增 alignedAt。**读 v1 兼容、写出一律 v2**：parseTodoJson 接受 version 1 或 2 并在
  * 内存里归一成 v2（v1 的 alignedAt 视为 null）；任一写操作重写整文件 => 该文件一次性升级，
  * 不做批量回填。旧版 CLI 读 v2 文件会明确报错（回滚路径见 ADR-0003）。
+ *
+ * schema v3（todo-cli-todo:10 依赖门）：条目新增 dependsOn（规范引用 `文件基名#id`，可跨文件，
+ * 保序去重由写入方保证）。同一套兼容口径：读 1|2|3 归一成 3（旧版缺 dependsOn 视为 []），
+ * 写出一律 3；v1/v2 文件被写一次即整体升版。schema 层不校验引用存在性/环——那是
+ * depends.ts 的职责（这里只管字段形态）。
  */
 
 export const ENTRY_STATUSES = ["open", "aligning", "aligned", "processing", "done"] as const;
 export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 
-/** 持久 schema 当前版本：写出一律此版本；读兼容 1。 */
-export type TodoFileVersion = 1 | 2;
+/** 持久 schema 当前版本：写出一律此版本；读兼容 1 / 2。 */
+export type TodoFileVersion = 1 | 2 | 3;
 
-/** 单条待办：schema v2 的完整字段集（原生字段，无 rawText）。 */
+/** 单条待办：schema v3 的完整字段集（原生字段，无 rawText）。 */
 export interface TodoEntry {
   /** 文件内稳定 id（max+1 分配，永不复用/重排）。 */
   id: number;
@@ -35,6 +40,8 @@ export interface TodoEntry {
   branch: string | null;
   /** 标签（add --tag 写入，list --tag 精确匹配）。 */
   tags: string[];
+  /** 依赖引用（规范形态 `文件基名#id`，可跨文件，保序）：被引用条目未 done 则本条目不得开工。 */
+  dependsOn: string[];
   /** 注记池：完成备注、迁移的历史标注、缩进子行，保序。 */
   notes: string[];
   createdAt: string | null;
@@ -46,7 +53,7 @@ export interface TodoEntry {
 
 /** 单个 todo 文件的持久形态（`todos/<名>.json` 的 JSON 根对象）。 */
 export interface TodoFileData {
-  version: 2;
+  version: 3;
   /** md 时代文件头标题（迁移保真；新建文件 = `<名> TODO`）。 */
   title: string;
   entries: TodoEntry[];
@@ -94,8 +101,10 @@ function validateEntry(value: unknown, label: string, version: TodoFileVersion):
   for (const field of ["createdAt", "claimedAt", "completedAt"] as const) {
     if (stringOrNull(value[field]) === undefined) return `条目 ${field} 必须是字符串或 null`;
   }
+  // v3 的 dependsOn 是必填原生字段；v1/v2 无此字段（读入时归一为 []）。
+  if (version === 3 && stringArray(value.dependsOn) === undefined) return "条目 dependsOn 必须是字符串数组";
   // v2 的 alignedAt 是必填原生字段；v1 无此字段（读入时归一为 null）。
-  if (version === 2 && stringOrNull(value.alignedAt) === undefined) return "条目 alignedAt 必须是字符串或 null";
+  if (version >= 2 && stringOrNull(value.alignedAt) === undefined) return "条目 alignedAt 必须是字符串或 null";
   if (label === "") return "缺少文件标签";
   return null;
 }
@@ -114,7 +123,7 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
     return badJson(label, conflict);
   }
   if (!isRecord(parsed)) return badJson(label, false);
-  if (parsed.version !== 1 && parsed.version !== 2) return badSchema(label, "version 必须是 1 或 2");
+  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) return badSchema(label, "version 必须是 1、2 或 3");
   if (typeof parsed.title !== "string") return badSchema(label, "title 必须是字符串");
   if (!Array.isArray(parsed.entries)) return badSchema(label, "entries 必须是数组");
   const version: TodoFileVersion = parsed.version;
@@ -129,14 +138,15 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
       status: record.status as EntryStatus,
       branch: stringOrNull(record.branch) ?? null,
       tags: stringArray(record.tags) ?? [],
+      dependsOn: version === 3 ? (stringArray(record.dependsOn) ?? []) : [],
       notes: stringArray(record.notes) ?? [],
       createdAt: stringOrNull(record.createdAt) ?? null,
       claimedAt: stringOrNull(record.claimedAt) ?? null,
       completedAt: stringOrNull(record.completedAt) ?? null,
-      alignedAt: version === 2 ? (stringOrNull(record.alignedAt) ?? null) : null,
+      alignedAt: version >= 2 ? (stringOrNull(record.alignedAt) ?? null) : null,
     });
   }
-  return { ok: true, data: { version: 2, title: parsed.title, entries } };
+  return { ok: true, data: { version: 3, title: parsed.title, entries } };
 }
 
 /** 序列化：两空格缩进 + LF + 尾换行（git 可 diff 的规范形态）。 */
@@ -153,9 +163,22 @@ export function nextId(entries: TodoEntry[]): number {
   return max + 1;
 }
 
-/** 新建 todo 文件的空数据（title 沿旧 add 的 `# <名> TODO` 约定；v2 写下）。 */
+/** 新建 todo 文件的空数据（title 沿旧 add 的 `# <名> TODO` 约定；v3 写下）。 */
 export function emptyTodoData(name: string): TodoFileData {
-  return { version: 2, title: `${name} TODO`, entries: [] };
+  return { version: 3, title: `${name} TODO`, entries: [] };
+}
+
+/**
+ * todo 文件名归一：`x` / `x-todo` / `x-todo.json` / `x-todo.md` → `x-todo`（无扩展名）。
+ * 拒绝穿越（`/`、`\\`、`..`）与空串。两个消费方：core 的 resolveTodoPath（路径解析）与
+ * depends 的引用解析（`x#3` → `x-todo#3`）——同一口径，避免「登记写全名、依赖写短名」分叉。
+ */
+export function normalizeTodoName(nameOrFile: string): string | null {
+  const clean = String(nameOrFile).trim();
+  if (clean === "" || clean.includes("/") || clean.includes("\\") || clean.includes("..")) return null;
+  if (clean.endsWith(".json")) return clean.slice(0, -5);
+  if (clean.endsWith(".md")) return clean.slice(0, -3);
+  return clean.endsWith("-todo") ? clean : `${clean}-todo`;
 }
 
 /**
