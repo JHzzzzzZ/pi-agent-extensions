@@ -176,6 +176,22 @@
       "createdAt": "2026-09-14T14:19:36.135Z",
       "claimedAt": "2026-09-14T14:19:36.259Z",
       "completedAt": "2026-09-14T14:23:35.821Z"
+    },
+    {
+      "id": 15,
+      "text": "AGENTS.md 规则红线重排为「生命周期 + 硬约束」两组（用户 2026-09-14 定序 2→9→10→3→5→6→7→收尾）：生命周期顺序编号 1-7（1 登记 todos/、2 对齐 grill-with-docs、3 规格 to-spec、4 worktree 实现、5 TDD、6 docs 卡同步、7 交付四处同步+收尾），硬约束编号 8-10（仓库边界、命令显式超时、团队方案先审批）；原红线 3 的「自测达标→merge --no-ff→worktree remove」并入红线 7 收尾，去掉 2/3/7 之间重复的收尾语；docs 里 3 处「红线 2 / 规则 2」编号引用同步改写。验收：节内编号顺序即执行顺序、无重复收尾语、根三自检绿。",
+      "status": "done",
+      "branch": "feat/agents-rules-chain",
+      "tags": [
+        "docs",
+        "process"
+      ],
+      "notes": [
+        "完成并 merge（97ff670）：AGENTS.md 规则红线改为两组——需求生命周期 1-7（1 登记 → 2 grill-with-docs 对齐 → 3 to-spec 规格落盘 → 4 worktree → 5 TDD → 6 docs 卡同步 → 7 交付四处同步+收尾），全程硬约束 8-10（仓库边界 / 命令超时 / 团队方案审批）。原红线 3 的 merge/worktree remove 并入第 7 步；编号引用同步：docs/tools/todo-cli.md 规则 2→1、docs/adr/0002 红线 2→1。字节 19499→19707（+208：两组小标题与链式引用换来的顺序显式化，不是净删）。自测：contract 3 / smoke 21 / todo 44（首次复跑 42+2 失败系并发负载偶发，后两次 44/44）+ lint 通过。"
+      ],
+      "createdAt": "2026-09-14T14:29:39.668Z",
+      "claimedAt": "2026-09-14T14:29:39.798Z",
+      "completedAt": "2026-09-14T14:31:08.964Z"
     }
   ]
 }
