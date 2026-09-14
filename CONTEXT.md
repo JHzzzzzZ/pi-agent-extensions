@@ -7,7 +7,7 @@ Pi 编码助手的扩展工作区：12 个零构建 TypeScript ESM 插件（pwr 
 ### todos 工作流（todo-cli 域）
 
 **条目（Entry）**:
-`todos/<名>.json` 里的一条待办，schema v1 原生字段 = id / text / status / branch / tags / notes / 三时间戳。
+`todos/<名>.json` 里的一条待办，schema v2 原生字段 = id / text / status / branch / tags / notes / createdAt / claimedAt / completedAt / alignedAt（读兼容 v1，写出一律 v2）。
 _Avoid_: todo 行、任务、item
 
 **顶层条目**:
@@ -19,15 +19,31 @@ _Avoid_: 子任务、sub-entry
 _Avoid_: 提交、创建 todo
 
 **领取（claim）**:
-把 open 条目转 processing 并写入 `--branch` 分支引用的动作；done 条目不可领取。
+两段式状态推进：首次领取把 open 条目转 `aligning` 并写入 `--branch` 分支引用与 `claimedAt`；在 `aligned` 上再次领取才转 `processing`（此后无人值守至收口）。`aligning`/`processing` 上重复领取是幂等 no-op；done 条目不可领取。
 _Avoid_: 认领、开始做
 
+**对齐门**:
+五态状态机 `open → aligning → aligned → processing → done` 中「开工前必须与人工对齐」的那道门：`aligning` 阶段写对齐文档、禁止写代码，`align` 结构校验通过（且人工已确认）才进 `aligned`。CLI 只保证迁移顺序与文档结构，不能证明「是人敲的」。决策见 ADR-0003。
+_Avoid_: 审批流、gate、人工门（指代不清时用「审批」，红线 10）
+
+**对齐文档（align doc）**:
+`todos/align/<文件基名>#<id>.md` 的逐条对齐记录，四小节 `## 意图`/`## 范围`/`## 验收标准`/`## 人工确认` 各需非空正文，且正文须出现 `<名>#<id>` 标记（防串条目）；路径固定派生、无自由路径参数。模板单源在 `docs/tools/todo-cli.md`。
+_Avoid_: 需求文档、设计文档
+
+**aligning**:
+条目五态之一，表示已领取、正在写对齐文档并与人工确认；此阶段禁止写代码。`claimedAt` 已写，`alignedAt` 为 null。
+_Avoid_: 对齐中状态、待确认
+
+**aligned**:
+条目五态之一，表示对齐已确认、待开工；再次 `claim` 才进 `processing`。`alignedAt` 由 `align` 写入。
+_Avoid_: 已批准、ready
+
 **完成（complete）**:
-把条目转 done 的收口动作；`--note` 逐字进 notes（不解析括号/换行）。
+把条目转 done 的收口动作；`--note` 逐字进 notes（不解析括号/换行）。从 `aligning`/`aligned` 收口必须带 `--note`（取消/搁置留原因），从 `open`/`processing` 收口可选。
 _Avoid_: 勾选、关闭
 
 **processing**:
-条目三态之一（open / processing / done），表示已被领取、进行中；分支引用在 `branch` 字段。
+条目五态之一（open / aligning / aligned / processing / done），表示对齐已确认、正式开工；分支引用在 `branch` 字段，从它到 merge/commit 全程无人值守。
 _Avoid_: 进行中标记、`（processing）`注记
 
 **台账**:
