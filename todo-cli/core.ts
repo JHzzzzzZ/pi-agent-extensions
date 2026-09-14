@@ -444,20 +444,23 @@ function runList(repoRoot: string, opts: Record<string, unknown>, log: (line: st
     log(all.message);
     return 1;
   }
-  let docs = all.docs;
-  if (opts.file) {
-    const resolvedFile = resolveTodoPath(String(opts.file), repoRoot);
-    if (!resolvedFile || !fs.existsSync(resolvedFile)) {
-      log(`找不到 todo 文件：${opts.file}`);
-      return 1;
-    }
-    docs = docs.filter((doc) => doc.file === resolvedFile);
+  // --file 归一：resolveTodoPath 解析出规范文件后，用 docs 里的真实归属名回填 filter。
+  // 缺了这一步，`--file general` 会与 doc.name（general-todo）精确比较落空 → 静默空结果；
+  // 大小写不符等解析不出的输入落进同一句明确报错，不倒向「空结果」。
+  const fileOpt = typeof opts.file === "string" && opts.file !== "" ? opts.file : undefined;
+  const resolvedFile = fileOpt === undefined ? undefined : resolveTodoPath(fileOpt, repoRoot);
+  const doc = resolvedFile === undefined ? undefined : all.docs.find((item) => item.file === resolvedFile);
+  if (fileOpt !== undefined && doc === undefined) {
+    log(`找不到 todo 文件：${fileOpt}`);
+    return 1;
   }
+  const docs = doc === undefined ? all.docs : [doc];
   const parsed = parseFilterOptions(opts);
   if (!parsed.ok) {
     log(parsed.message);
     return 1;
   }
+  if (doc !== undefined) parsed.filter.file = doc.name;
   const entries: QueryEntry[] = docs.flatMap((doc) =>
     doc.data.entries.map((entry) => ({ ...entry, file: doc.name })),
   );

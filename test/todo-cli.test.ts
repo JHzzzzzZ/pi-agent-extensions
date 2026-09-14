@@ -189,6 +189,52 @@ test("main：list 人读行 `${mark} ${file}#${id}  text`；--status/--text/--cl
   assert.deepEqual(out, [], "--match/--text 只匹配纯描述 text，不进 notes");
 });
 
+test("main：list --file 短名/全名/.json/.md 四写法一致；不存在仍 exit 1", () => {
+  const entry = (id, text, status, extra = {}) => ({
+    id,
+    text,
+    status,
+    branch: null,
+    tags: [],
+    notes: [],
+    createdAt: null,
+    claimedAt: null,
+    completedAt: null,
+    ...extra,
+  });
+  const root = makeRepo({
+    "general-todo": {
+      version: 1,
+      title: "通用 TODO",
+      entries: [entry(1, "未领取", "open"), entry(2, "进行中", "processing", { branch: "feat/a" }), entry(3, "已完成", "done")],
+    },
+    "other-todo": { version: 1, title: "其它", entries: [entry(1, "别的文件条目", "open")] },
+  });
+  const run = (args) => {
+    const lines = [];
+    const code = main(args, { repoRoot: root, log: (l) => lines.push(l) });
+    return { code, lines };
+  };
+
+  const full = run(["list", "--file", "general-todo"]);
+  assert.equal(full.code, 0);
+  assert.deepEqual(full.lines, ["[ ] general-todo#1  未领取", "[~] general-todo#2  进行中", "[x] general-todo#3  已完成"]);
+  assert.ok(full.lines.every((line) => line.includes("general-todo#")), "不得混入其它文件条目");
+
+  for (const name of ["general", "general-todo", "general-todo.json", "general-todo.md"]) {
+    assert.deepEqual(run(["list", "--file", name]).lines, full.lines, `--file ${name} 应与全名输出逐字节一致`);
+  }
+
+  assert.deepEqual(run(["list", "--file", "general", "--status", "open"]).lines, ["[ ] general-todo#1  未领取"], "短名与其它 flag AND 组合");
+  const json = run(["list", "--file", "general", "--json"]);
+  assert.equal(json.code, 0);
+  assert.equal(JSON.parse(json.lines.join("\n")).length, full.lines.length);
+
+  const missing = run(["list", "--file", "nosuch"]);
+  assert.equal(missing.code, 1, "不存在的文件明确报错，不倒向空结果");
+  assert.match(missing.lines.join("\n"), /找不到 todo 文件：nosuch/);
+});
+
 test("main：损坏 JSON fail-closed——summary/list/add 都明确报错退出 1，绝不静默修复", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-corrupt-"));
   fs.mkdirSync(path.join(root, "todos"));
@@ -401,6 +447,15 @@ test("CLI E2E：--help 退出 0 且含完整用法（migrate 替代 db）", () =
     assert.ok(res.stdout.includes(sub), `用法含子命令 ${sub}`);
   }
   assert.equal(res.stdout.includes("db "), false, "db 子命令已删除");
+});
+
+test("CLI E2E：真实仓库 list --file 短名与全名输出一致且非空（#12 回归锁）", () => {
+  const short = runCli(["list", "--file", "general"], os.tmpdir());
+  const full = runCli(["list", "--file", "general-todo"], os.tmpdir());
+  assert.equal(short.status, 0);
+  assert.equal(full.status, 0);
+  assert.ok(short.stdout.trim().length > 0, "短名不得静默返回空结果");
+  assert.equal(short.stdout, full.stdout);
 });
 
 test("CLI E2E：未知命令退出 1 并提示", () => {
