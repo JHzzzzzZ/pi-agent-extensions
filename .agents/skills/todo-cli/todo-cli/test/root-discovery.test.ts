@@ -138,6 +138,24 @@ test("main：仓库根解析失败 → exit 1 + 静态消息，不写任何文�
   }
 });
 
+test("main triage：git 不可用/不在仓库 → exit 1 + 静态消息（不抛栈）", () => {
+  const root = makeTempDir("todo-cli-root-plain-");
+  const out: string[] = [];
+  try {
+    const code = main(["triage"], {
+      repoRoot: root,
+      execGit: () => {
+        throw new Error("fatal: not a git repository");
+      },
+      log: (l) => out.push(l),
+    });
+    assert.equal(code, 1);
+    assert.match(out.join("\n"), /triage 失败：.*不是 git 仓库/);
+  } finally {
+    removeDir(root);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 进程边界 E2E：真实子进程 + 真实 git 仓库
 // ---------------------------------------------------------------------------
