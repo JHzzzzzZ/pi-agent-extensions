@@ -1,1 +1,2 @@
 todos/*.json text eol=lf
+todos/align/*.md text eol=lf

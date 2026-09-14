@@ -6,8 +6,8 @@
  * `node tools/todo.mjs <子命令>` 与 `test/todo-cli.test.ts` 的导入路径不变。
  * REPO_ROOT 由脚本位置解析，任意 cwd 可用。
  *
- * 用法与设计边界见 todo-cli/core.ts 文件头（list/add/claim/complete/summary/
- * lint/triage 七个子命令；只读写仓库 todos/、不 commit）。
+ * 用法与设计边界见 todo-cli/core.ts 文件头（summary/list/add/claim/align/complete/
+ * lint/triage 八个子命令；只读写仓库 todos/、不 commit）。
  */
 
 export * from "../todo-cli/core.ts";

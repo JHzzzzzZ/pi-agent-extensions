@@ -55,6 +55,7 @@ function seedEntries(): TodoEntry[] {
       createdAt: null,
       claimedAt: null,
       completedAt: null,
+      alignedAt: null,
     });
   }
   return entries;
@@ -149,6 +150,7 @@ function withEntry(data: TodoFileData, text: string): TodoFileData {
         createdAt: null,
         claimedAt: null,
         completedAt: null,
+        alignedAt: null,
       },
     ],
   };
