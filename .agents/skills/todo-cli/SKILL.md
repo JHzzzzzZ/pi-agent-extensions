@@ -1,6 +1,6 @@
 ---
 name: todo-cli
-description: todos/*.json 台账的命令参考卡——add（登记）/ claim（两段式领取）/ align（对齐确认）/ complete（完成）/ summary（盘点）/ list（组合查询）/ triage（worktree↔条目交接扫描）/ lint（注册扩展↔todo 文件一致性）/ migrate（旧 markdown 一次性迁移与逃生回滚），零依赖无构建。状态机五态 open→aligning→aligned→processing→done 与对齐文档契约见正文。当需要调用 todo CLI 的某个子命令、确认参数与退出码、或排查「找不到仓库根 / 锁超时 / JSON 损坏 / 匹配到多条 / 对齐文档缺失」时读它。
+description: todos/*.json 台账的命令参考卡——add（登记）/ claim（两段式领取）/ align（对齐确认）/ dep（依赖增删）/ complete（完成）/ summary（盘点）/ list（组合查询）/ triage（worktree↔条目交接扫描）/ lint（注册扩展↔todo 文件一致性 + 依赖图扫描）/ migrate（旧 markdown 一次性迁移与逃生回滚），零依赖无构建。状态机五态 open→aligning→aligned→processing→done（含依赖门）与对齐文档契约见正文。当需要调用 todo CLI 的某个子命令、确认参数与退出码、或排查「找不到仓库根 / 锁超时 / JSON 损坏 / 匹配到多条 / 对齐文档缺失 / 依赖阻塞」时读它。
 ---
 
 # todo-cli
@@ -35,11 +35,12 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs <子命令> [参数]
 todo.mjs summary [--json]                                     # 按文件汇总 open/aligning/aligned/processing/done
 todo.mjs list [--status open|aligning|aligned|processing|done] [--file <名>]   # 状态/文件过滤
 todo.mjs list [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
-todo.mjs add --file <名> "需求描述" [--tag 词1,词2] [--force]   # 追加 open 条目（跨文件查重）
+todo.mjs add --file <名> "需求描述" [--tag 词1,词2] [--dep 文件#id,...] [--force]   # 追加 open 条目（跨文件查重；--dep 登记即声明依赖）
 todo.mjs claim --file <名> --match "子串" [--branch feat/x]    # 两段式领取：open→aligning / aligned→processing
 todo.mjs align --file <名> --match "子串" [--note "说明"]       # 对齐确认：校验对齐文档，aligning→aligned
+todo.mjs dep add|remove --file <名> --match "子串" --on 文件#id,...   # 增删直接依赖（add 写前校验悬空/自引用/环）
 todo.mjs complete --file <名> --match "子串" [--note "说明"]    # 完成：→ done，note 逐字进 notes
-todo.mjs lint                                                 # 单向：pi.extensions 扩展 ↔ todos/<名>-todo.json
+todo.mjs lint                                                 # 单向：pi.extensions 扩展 ↔ todos/<名>-todo.json + 依赖图扫描
 todo.mjs triage [--json]                                      # 只读：worktree 事实 × 条目 branch 关联
 todo.mjs migrate from-md [--dry-run] [--force] | to-md        # md→JSON（带等价自检）/ JSON→md 逃生回滚
 todo.mjs --help
@@ -48,6 +49,10 @@ todo.mjs --help
 ### 对齐门（五态）
 
 `claim` 是两段式的：首次领取 `open → aligning`（此时**写对齐文档、不许写代码**），文档过 `align` 校验才 `aligning → aligned`，在 `aligned` 上再 `claim` 才进 `processing`（此后到 merge 无人值守）。
+
+### 依赖门
+
+条目可声明 `dependsOn`（规范引用 `文件基名#id`，可跨文件；输入接受 `general#11` / `general-todo#11` 等同 `--file` 口径的写法，存储统一归一）。依赖未 `done`（含指向不存在条目的悬空引用）时，第二次 `claim`（`aligned → processing`）报 `DEP_BLOCKED` 并逐条列出等待对象与状态，条目留在 `aligned`；首次 `claim` 与 `align` 不受此门约束。`add --dep` / `dep add` 在写入前拒绝悬空目标、自引用与成环（`lint` 另做全量图扫描兑合并产物）；`list` 对阻塞条目行尾追加 `（阻塞：等待 a#1, b#2）`，`list --json` 带 `dependsOn` 与 `blockedBy`（非空即阻塞），`triage` 在 aligned 段列明细，`complete` 输出直接依赖者提示。决策见 ADR-0005。
 
 对齐文档固定派生 `todos/align/<文件基名>#<id>.md`（无自由路径参数），需四小节 `## 意图` / `## 范围` / `## 验收标准` / `## 人工确认` 各带非空正文，且正文出现 `<名>#<id>` 标记；`claim` 只打印路径与必填小节，**不代建文件**。缺失报 `ALIGN_DOC_MISSING`，结构不全报 `ALIGN_DOC_INCOMPLETE`。从 `aligning`/`aligned` 用 `complete` 收口**必须带 `--note`**（取消/搁置留原因）。模板单源在 `docs/tools/todo-cli.md`。
 

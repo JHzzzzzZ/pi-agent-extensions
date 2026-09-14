@@ -22,7 +22,7 @@
 
 **lint 全量扫描**：悬空引用 / 自引用 / 依赖环——跨分支合并能造出写路径没见过的图，lint 是对账出口。
 
-**展示口径**：`list` 人读行对阻塞条目行尾追加阻塞标记（非阻塞条目字节不变）；`list --json` 增加 `dependsOn` 与派生 `blocked`（由未完成依赖推导）；`triage` 在 `aligned` 段列出阻塞明细；`summary` 与排序一律不变。
+**展示口径**：`list` 人读行对阻塞条目行尾追加阻塞标记（非阻塞条目字节不变）；`list --json` 增加 `dependsOn` 与派生 `blockedBy`（未完成的直接依赖引用，非空即阻塞——派生字段只此一个，不另设布尔位）；`triage` 在 `aligned` 段列出阻塞明细；`summary` 与排序一律不变。
 
 **取消即解锁**：不新增第六态。`complete` 一律 `done` ⇒ 依赖机械解锁；`complete` 输出追加一行提示，列出直接依赖本条目的未完成条目。
 
@@ -39,8 +39,9 @@
 
 - `schema.ts`：`TodoFileVersion` 增 3；`TodoEntry` 增 `dependsOn: string[]`；`validateEntry` 在 v3 下要求 `dependsOn` 是字符串数组，v1/v2 读入归一为 `[]`；`parseTodoJson` 接受 `1|2|3`，返回 `{version: 3}`；`serializeTodo` 输出 v3。
 - 新增纯函数模块（`depends.ts`）：引用解析与归一（`parseDepRef` / `formatDepRef` / `normalizeDepRef`）、`resolveDepTargets`（引用 → 命中条目，处理短名/不存在）、`detectDepCycle`（在写入候选图上做 DFS，返回环路径或 null）、`findDepProblems`（全量台账的悬空/自引用/环清单，供 lint）、`isBlocked`（条目 + 全量索引 → 未完成依赖清单）。
-- `core.ts`：`runClaim` 在 `aligned → processing` 分支前调用依赖检查（阻塞 → `DEP_BLOCKED` + exit 1，不写盘）；`runAdd` 解析 `--dep` 并做写前校验；新增 `runDep`（`add`/`remove`）；`runComplete` 在成功后计算「直接依赖本条目且未完成」的列表并输出提示行；`runList` 人读行追加阻塞标记、`--json` 补 `dependsOn` 与 `blocked`；`lintTodos` 接入 `findDepProblems`；`REPO_COMMANDS` 增 `dep`，`USAGE` 同步。
-- `query.ts`：`QueryEntry` 增 `dependsOn: string[]` 与派生 `blocked: boolean`；`serializeEntries` 只对 `blocked` 条目追加标记（`（阻塞：等待 a#1, b#2）`），非阻塞行字节不变。
+- `core.ts`：`runClaim` 在 `aligned → processing` 分支前调用依赖检查（阻塞 → `DEP_BLOCKED` + exit 1，不写盘）；`runAdd` 解析 `--dep` 并做写前校验（**仅当真的声明了依赖才建图索引**——普通登记不得给锁临界区加成本，见下）；新增 `runDep`（`add`/`remove`）；`runComplete` 在成功后计算「直接依赖本条目且未完成」的列表并输出提示行；`runList` 人读行追加阻塞标记、`--json` 补 `dependsOn` 与 `blockedBy`（用 `blockedByMap` 一次建图，不逐条重建索引）；`lintTodos` 接入 `findDepProblems`；`REPO_COMMANDS` 增 `dep`，`USAGE` 同步。
+- `query.ts`：`QueryEntry` 增 `dependsOn: string[]` 与派生 `blockedBy: string[]`；`serializeEntries` 只对 `blockedBy` 非空者追加标记（`（阻塞：等待 a#1, b#2）`），非阻塞行字节不变。
+- 性能教训（实测发现）：依赖校验一开始无条件建图，使 `add` 的锁临界区多出 ~1ms（2000 条 fixture）——Windows 下并发 `add` 的 temp→rename 争用概率随之明显上升（baseline 0/8 vs 变慢后 4/8 失败）。落地两条：`checkDepWrite` 对空 `dependsOn` 直接返回、`runAdd` 仅在有依赖时才 `depIndex`。修后 A/B 回到同级（2/8 vs 2/8，均为环境性偶发，跟跟踪项 #13）。
 - `migrate.ts`：md 无依赖语法，迁移条目的 `dependsOn` 一律 `[]`（等价自检沿用既有字段集，不新增 md 语法）。
 - 错误码：`DEP_BLOCKED`（门）、`DEP_NOT_FOUND`（目标不存在）、`DEP_SELF`（自引用）、`DEP_CYCLE`（环，附路径）、`DEP_ABSENT`（`dep remove` 移除不存在的引用）——全部走 stdout 静态模板，不插值用户输入以外的内容；退出码 1。
 - 文档：`CONTEXT.md` 五个术语；ADR-0005；`docs/tools/todo-cli.md`（含 `last verified`）；`SKILL.md`；根 `README.md` 测试数。
@@ -49,7 +50,7 @@
 
 - `depends.ts` 纯函数（`test/depends.test.ts`）：引用归一四写法；短名歧义与不存在；自引用；二元环、跨文件三元环、无环的反例（同一节点两条路径）；`findDepProblems` 对悬空/自引用/环的分类；`isBlocked` 只看直接依赖且 `done` 即解锁。
 - schema（`test/schema.test.ts`）：v3 可读；v1/v2 读入归一 `dependsOn: []`；v3 缺 `dependsOn` / 类型非字符串数组拒绝；`version: 4` 拒绝；写出 `"version": 3`。
-- core 闭环（`test/todo-cli.test.ts`，临时 fixture）：`add --dep` 写入归一引用并拒绝悬空/自引用/环；`dep add` / `dep remove` 成功与失败各例；`claim` 阻塞（exit 1 + 提示含 `文件#id` 与状态 + 条目仍为 aligned）→ 依赖 `complete` 后同一命令成功转 `processing`；被阻塞条目仍可首次 `claim`（对齐不受阻）与 `align`；`list` 人读标记与非阻塞行字节不变、`--json` 带 `dependsOn`/`blocked`；`summary` 输出与改动前逐字节一致；`complete` 提示行；`lint` 对含环/悬空台账 exit 1。
+- core 闭环（`test/todo-cli.test.ts`，临时 fixture）：`add --dep` 写入归一引用并拒绝悬空/自引用/环；`dep add` / `dep remove` 成功与失败各例；`claim` 阻塞（exit 1 + 提示含 `文件#id` 与状态 + 条目仍为 aligned）→ 依赖 `complete` 后同一命令成功转 `processing`；被阻塞条目仍可首次 `claim`（对齐不受阻）与 `align`；`list` 人读标记与非阻塞行字节不变、`--json` 带 `dependsOn`/`blockedBy`；`summary` 输出与改动前逐字节一致；`complete` 提示行；`lint` 对含环/悬空台账 exit 1。
 - 真子进程（`test/concurrency.test.ts`）：两个子进程并发 `dep add` 到同一文件不同条目——无丢更新、无锁残留；并发下环校验仍 fail-closed。
 - 进程边界 E2E：`--help` 含 `dep`；`dep` 缺 `--file` / `--match` / `--on` 的提示与 exit 1、stderr 恒空。
 - 必跑门：`npm run test:todo`、`npm run test:contract`、`npm run test:smoke`、`node .agents/skills/todo-cli/todo-cli/todo.mjs lint`。
