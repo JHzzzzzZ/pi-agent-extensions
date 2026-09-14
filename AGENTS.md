@@ -1,5 +1,4 @@
 # 仓库开发指南
-<!-- PROJECT KNOWLEDGE BASE / Generated: 2026-09-09T03:50:04Z / Commit: 457adcf / Branch: dev-laptop / Mode: update / MaxDepth: 3 -->
 
 > **愿景准绳：[GOAL.md](GOAL.md)**——把派 Agent 建成最好用的 Agent 框架（插件形态，给自己也给别人用；尺子/差异化/里程碑见 GOAL.md）。每个任务收尾时回答 GOAL.md §5 自检问题（这次离愿景更近了什么），并用 wrap-up skill 走收尾门。
 
@@ -14,30 +13,30 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 以下规则无例外；与其他考量冲突时以本节为准。
 
 1. **仓库边界**——默认只改本仓库内文件。宿主 npm 全局安装（`@earendil-works/pi-coding-agent` / `pi-tui` 的 `dist/`、`bundle/chunks/` 等）、其它全局包、用户配置（`~/.pi/agent/`）、系统文件一律不动。宿主/依赖行为不满足需求只有两条路：① 插件侧用公开扩展 API 解决；② 向上游提 issue/PR（或请用户人工处理）。确需动仓库外文件：先说明「改哪个文件、为什么、风险、回滚方式」，取得用户对具体改动的逐次明确同意，改完在交付报告中登记（文件、备份、回滚）；仓库内文档/待办不得把「已应用宿主补丁」当作插件行为的前提或契约；违反本规则的历史改动一律还原并在 `todos/` 记录真实状态。
-2. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点（skill `todo-add`）：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建 `todos/<插件名>-todo.json`；通用领域功能或涉及多个插件的需求 → `todos/general-todo.json`；仓库级工具（非插件）的需求 → 该工具的专门 todo 文件（现 `todos/todo-cli-todo.json`、`todos/agent-manager-todo.json`）。`todos/` 的唯一读写入口是 todo CLI（`node tools/todo.mjs`，手工编辑 JSON 视为破坏存储）：已有匹配条目直接领取（`claim`，`--branch` 写入分支引用并转 processing），没有则 `add` 末尾追加；完成（代码 + 文档同步）后 `complete` 收口（可附 `--note`）；取消/搁置的注明原因后还原或删除——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 id 取并集手工解决。
+2. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点（skill `todo-add`）：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建同名文件；通用/跨插件需求 → `todos/general-todo.json`；仓库级工具 → 该工具专门文件（现 `todo-cli-todo.json`、`agent-manager-todo.json`）。`todos/` 唯一读写入口是 todo CLI（`node tools/todo.mjs`，手工编辑 JSON 视为破坏存储；命令面/锁/查重口径见 `docs/tools/todo-cli.md`）：已有条目 `claim` 领取（`--branch` 写入分支引用），没有则 `add` 追加；完成后 `complete` 收口，取消/搁置注明原因后还原或删除——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 id 取并集手工解决。
 3. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记。自测达标（全量测试绿 + `npm run typecheck` 零错误）后才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`。
 4. **命令必须显式超时**——每次执行命令都传 bash 工具的 `timeout` 参数：快速 shell 操作（ls/grep/git）30–60 秒，`npm test`/`npm run typecheck` 120–300 秒；不允许不带超时的命令，长工作拆成多个有界小步骤。
 5. **TDD 测试先行**——新能力、bug 修复与重构一律测试先行：先写能复现问题或锁定新行为的失败测试（红），再实现到绿；没有保护网不动被测代码。
 6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
-7. **交付四处同步 + 收尾核对**——任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数）、AGENTS.md（架构/布局/约定/命令/测试数变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件（`todos/<名>-todo.json`）必须与插件目录、根 `package.json` 的 `pi.extensions` 注册一一对应，新增插件同变更创建 todo 文件；todo-cli、agent-manager 是既有专门非插件（工具）文件，不参与插件文件↔pi.extensions 一一对应；通用/跨插件需求另置 `todos/general-todo.json`（非插件文件）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
+7. **交付四处同步 + 收尾核对**——任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node tools/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
 8. **团队方案先审批**——agent team 出具方案后、实施改动之前，必须用 `team_ask` 把方案交用户审批并取得明确同意；未获同意（含超时/取消/无法提问）不得开始写代码或改文件，只停下如实报告；只读排查与评审不受限，审批结论随 run 记录留存。
 9. **先对齐意图（grill-with-docs）**——需求动手前先跑 `/skill:grill-with-docs`（mattpocock/skills 库：内部为 grilling 访谈 + domain-modeling 建模）与人类把意图、边界、术语问清，**对齐产物必须落盘**：术语与领域词汇进 `CONTEXT.md`、决策进 `docs/adr/`；只留在会话里的对齐视为没对齐。
-10. **规格落盘（to-spec）**——对齐后用 `/skill:to-spec` 把结论综合成规格文档（问题陈述/方案/用户故事/实现决策/测试决策/范围外）落盘到 `docs/specs/`，再按红线 2 登记 `todos/` 进入实现；规格与实现同变更同步，不许只活在会话或工单里。仓库级一次性配置（issue tracker 取 local files、labels、文档落盘位置）走 `/skill:setup-matt-pocock-skills`。
+10. **规格落盘（to-spec）**——对齐后用 `/skill:to-spec` 把结论综合成规格文档（问题陈述/方案/用户故事/实现决策/测试决策/范围外）落盘到 `docs/specs/`，再按红线 2 登记 `todos/` 进入实现；规格与实现同变更同步，不许只活在会话或工单里。需求跟踪始终以 `todos/` 为准（红线 2），不引入外部 issue tracker。
 
 ## 关键目录
 
-- `docs/` — agent 知识库：`INDEX.md` 路由表（开发前先查）→ `extensions/<插件名>.md` 每插件一卡（职责边界/文件地图/数据流/不变量/已知坑/改动清单，≤100 行，头部带 `last verified @ <commit>`）→ `cross/` 横切契约（错误码全景/注入端口/消息与 entry 键/状态条/solo 审批门）→ `tools/<工具名>.md` 仓库工具卡（非插件，现 todo-cli 与 agent-manager）→ `incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；改代码须同步对应卡片与 last verified 行。
-- `test/` — 根契约测试（`status-bar-contract.test.ts`：footer 排序带 + 段分隔/首段定格 + widget 栈顺序，`npm run test:contract`）、安装冒烟工具的纯逻辑单测（`install-smoke.test.ts`，`npm run test:smoke`）与 todo CLI 单测（`test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`，`npm run test:todo`，含进程边界 E2E）。
-- `tools/` — 仓库级开发工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc` 进程，验证 12 个扩展在“手动复制”安装形态下全部加载，`node tools/install-smoke.mjs`；`--task` 追加真实模型工具调用任务；`--install <源>` 真跑 `pi install` 推荐安装路径并核对装到的包版本/扩展清单/命令面，联网）；`todo.mjs`（仓库级 todo CLI 唯一入口，实现源 `todo-cli/*.ts`（schema/lock/query/migrate/core），CLI-only 无 pi 依赖：查重/追加/领取/完成/lint/triage 全部是可导出纯函数，`summary`/`list`/`add`/`claim`/`complete`/`lint`/`triage` 七个子命令 + list 结构化查询 flags + `migrate from-md|to-md` 双向迁移子命令；存储为 `todos/<名>.json` 唯一权威（方案 C），写操作经每文件 O_EXCL 锁（stale 抢占）+ temp+rename 原子落盘，无 markdown、无 sqlite、无降级路径；只读写仓库 `todos/`、不 commit；`triage` 只读扫描 worktree↔条目关联与遗留，映射靠条目 `branch` 字段精确相等）。
-- 扩展（各目录自包含，均位于 `src/extensions/<插件名>/`，`index.ts` 入口 + 就地测试；模块地图见各自 docs 卡与 README）：`stream-token-speed/`（多文件：index/adapter/controller/metrics/status-port/status-band + test/）、`chatanywhere-provider/`（catalog.ts 模型目录 + discover.ts 纯函数归并层 + auth.ts key 解析（环境变量 → auth.json）+ index.ts，带 `pi.extensions` 清单的 package.json + test/）、`provider-quota/`（余额/额度 widget + `/quota` + `status-band.ts`，适配器注入）、`run-timer/`（计时 widget + 对齐秒节拍 `aligned-ticker.ts`）、`loop/`（`/loop` 定时 + `--bg` 后台 agent，`runner.ts`）、`goal/`（`/goal` 会话目标循环 + 独立评估器 + `status-band.ts`）、`opencode-bridge/`（HTTP CONNECT → SOCKS5 桥 helper + settings 联动，`bridge.ts` 可测核心 + 注入 `ProxySyncDeps`）、`deep-init/`（提示词驱动四阶段 + `solo-gate`）、`human-notify/`（Windows Toast，内联 WinRT 零依赖）、`solo-mode/`（`/solo` 免审批模式：状态文件 pid 作用域 + 三份同构 `solo-gate.ts` 只读契约 + `status-band.ts` + `pi --solo` 启动 flag）。
-- 独立工具（非扩展）：`agent-manager/`（独立 Node 工具，仅 listen `127.0.0.1`：`server.ts` 入口（15 条 JSON 路由 + 静态白名单）+ `settings.ts` 四级设置 + `core.ts` 会话数据层（两段式 rename/delete/restore，rename=追加宿主语义 `session_info`，trash 可恢复删除）+ `agent-runner.ts` pi 子进程（JSON 事件归约 + 进程树停止）+ `web/` 零依赖前端（会话/Agents/设置三区）；不 import 宿主 SDK、不注册 pi 扩展点，已从根 `pi.extensions` 注销；浏览器→HTTP→core/runner→fs/子进程数据流）。
-
-pwr 与 agent-team 的目录地图、架构与数据流：见 `docs/extensions/pwr.md` + `src/extensions/pwr/DELIVERY.md`（权威架构/安全文档 + 版本历史）与 `docs/extensions/agent-team.md`。文档截图（无头真实渲染 → SVG，三个场景：agent-team 查看器 / pwr 查看器 / agent-team 亮块）由 `src/extensions/agent-team/tools/capture-screens.mjs` 生成到 `docs/assets/`，用法见 agent-team README。
+- `docs/` — agent 知识库，入口是 [`docs/INDEX.md`](docs/INDEX.md) 路由表：`extensions/<插件名>.md` 每插件一卡、`cross/` 横切契约、`tools/<工具名>.md` 仓库工具卡、`adr/` 决策记录、`specs/` 规格（红线 10）、`incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；每卡 ≤100 行、头部带 `last verified @ <commit>`，改代码须同步对应卡片与该行。
+- `test/` — 仓库根三层自检（契约 / 安装冒烟纯逻辑 / todo CLI），命令见下节。
+- `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 12 扩展加载）、`todo.mjs`（todo CLI 唯一入口）。用法见脚本头与 `docs/tools/`。
+- `src/extensions/<插件名>/` — 12 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
+- `agent-manager/` — 独立 Node 工具，**非扩展**：不 import 宿主 SDK、不注册 pi 扩展点、已从根 `pi.extensions` 注销，仅 listen `127.0.0.1`；边界与数据流见 `docs/tools/agent-manager.md`。
 
 ## 开发命令
 
+测试数与各扩展完整用法见根 `README.md`（唯一来源）；无构建步骤、无 linter、无 formatter。
+
 ```bash
-cd src/extensions/pwr && npm install   # 全部依赖均为 devDependencies（pi-ai/pi-coding-agent/pi-tui、typebox、typescript）
+cd src/extensions/pwr && npm install   # 依赖全部是 devDependencies
 npm test                       # node --test 覆盖 test/、tests/、runtime/test/、runner/test/
 npm run typecheck              # tsc -p tsconfig.json --noEmit
 # 子集示例：
@@ -45,36 +44,34 @@ node --test tests/ui-*.test.ts
 node --test runtime/test/scheduler.test.ts
 ```
 
-根契约（仓库根，无任何依赖）：
+仓库根（无任何依赖）：
 
 ```bash
-npm run test:contract   # 状态条排序带 + 段前缀 + widget 栈顺序（3 个测试，doc 见 docs/cross/status-bar.md）
-npm run test:smoke      # 安装冒烟工具纯逻辑单测（19 个测试，不 spawn pi）
-npm run test:todo       # todo CLI 纯逻辑 + 临时目录闭环单测（44 个测试，含 3 个进程边界 E2E + 并发/中断真子进程）
-node tools/todo.mjs summary    # agentic todo CLI：全量盘点（list/add/claim/complete/lint/triage/migrate 见文件头）
-node tools/install-smoke.mjs   # 端到端：干净临时配置目录 + 真实 pi 进程，验证 12 扩展加载（需已装 pi）
-node tools/install-smoke.mjs --task   # 追加真实模型任务（需鉴权 + 网络；模型取配置默认值，可 --model 覆盖）
-node tools/install-smoke.mjs --install <pi install 源>   # 真跑 README 推荐安装路径（联网）：定位装到的包、核对版本/扩展清单/命令面；可与 --task 叠加
+npm run test:contract   # 状态条契约（doc → docs/cross/status-bar.md）
+npm run test:smoke      # 安装冒烟工具的纯逻辑单测
+npm run test:todo       # todo CLI 单测（含进程边界 E2E）
+node tools/todo.mjs summary                            # todo 全量盘点
+node tools/install-smoke.mjs                           # 端到端：临时配置目录 + 真实 pi，验 12 扩展加载（需已装 pi）
+node tools/install-smoke.mjs --task                    # 追加真实模型任务（需鉴权 + 网络）
+node tools/install-smoke.mjs --install <pi install 源> # 真跑 README 推荐安装路径（联网）
 ```
 
-其余扩展 + 独立工具（不在 pwr 脚本覆盖范围内）：
+扩展 + 独立工具（不在 pwr 脚本覆盖范围内）：
 
 ```bash
-cd src/extensions/stream-token-speed && node --experimental-strip-types --test test/*.test.ts   # 45 个测试
-cd src/extensions/agent-team && npm install && npm test                                        # 613 个测试（node --test test/*.test.ts；另 node test/resume-host-smoke.mjs 验真实 pi 的 --session 续写）
-node --experimental-strip-types --test src/extensions/run-timer/run-timer.test.ts src/extensions/run-timer/aligned-ticker.test.ts   # 59 个测试，此目录无 package.json
-node --experimental-strip-types --test src/extensions/goal/index.test.ts src/extensions/goal/aligned-ticker.test.ts                # 63 个测试，此目录无 package.json
-node --experimental-strip-types --test src/extensions/human-notify/index.test.ts                # 37 个测试，此目录无 package.json
-node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts                    # 22 个测试，此目录无 package.json
-node --experimental-strip-types --test src/extensions/provider-quota/index.test.ts              # 26 个测试，此目录无 package.json
-node --experimental-strip-types --test src/extensions/chatanywhere-provider/test/*.test.ts        # 32 个测试，此目录无 package.json
-cd src/extensions/loop && npm install && npm test                                               # 196 个测试；另有 npm run typecheck
-cd src/extensions/opencode-bridge && npm install && npm test                                    # 114 个测试（helper 集成测试派生真实 helper + 手写 fake SOCKS5）；另有 npm run typecheck
-cd agent-manager && npm install && npm test                                      # 37 个测试（14 core + 10 runner + 13 server；独立工具，真实 HTTP + 临时目录）；另有 npm run typecheck；npm run test:e2e opt-in（需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
-cd src/extensions/deep-init && npm install && npm test                                               # 37 个测试（纯函数 + fake scanner）；另有 npm run typecheck
+cd src/extensions/stream-token-speed && node --experimental-strip-types --test test/*.test.ts
+cd src/extensions/agent-team && npm install && npm test            # 另 node test/resume-host-smoke.mjs（真实 pi --session 续写）
+node --experimental-strip-types --test src/extensions/run-timer/run-timer.test.ts src/extensions/run-timer/aligned-ticker.test.ts
+node --experimental-strip-types --test src/extensions/goal/index.test.ts src/extensions/goal/aligned-ticker.test.ts
+node --experimental-strip-types --test src/extensions/human-notify/index.test.ts
+node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts
+node --experimental-strip-types --test src/extensions/provider-quota/index.test.ts
+node --experimental-strip-types --test src/extensions/chatanywhere-provider/test/*.test.ts
+cd src/extensions/loop && npm install && npm test && npm run typecheck
+cd src/extensions/opencode-bridge && npm install && npm test && npm run typecheck
+cd agent-manager && npm install && npm test && npm run typecheck   # 另 npm run test:e2e opt-in（需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
+cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 ```
-
-无构建步骤、无 linter、无 formatter。
 
 ## 代码约定与常见模式
 
@@ -96,7 +93,7 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **安全不变量**（PWR）：无 `vm`/`eval`；执行前白名单校验；fail-closed 默认（缺 engine/runner ⇒ 类型化错误，无隐式回退）；脚本源码/args 永不持久化；`pwr-tmp://` 仅进程内；不存 API key；错误信息为静态模板。
 - **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
 - **TUI 约定（其余扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
-- **状态条契约（跨插件，`docs/cross/status-bar.md`）：** ① 时间类状态一律对齐同一墙钟秒边界刷新——各插件带一份 `aligned-ticker.ts`（首跳对齐、自校正、异常吞掉），生产禁用裸 `setInterval` 计时器；非时间类刷新（流式节流/低频轮询/推送）不受约束；② 写入前做文本指纹比对，内容不变跳过 `setStatus`/`setWidget`；③ footer 状态键带两位排序前缀：`10:goal` / `20:provider-quota` / `30:pwr` / `40:solo-mode` / `50:stream-token-speed`（宿主按 key `localeCompare` 拼接，不得改回无前缀键）；④ 编辑器上方 widget 栈顺序 = 根 `package.json` `pi.extensions` 注册顺序（`pwr-runs` → `run-timer` → `loop`）——该顺序只在**首次挂载**时成立；宿主 `setExtensionWidget` 每次刷新都会把 key 移到栈底（周期性刷新 widget 因此逐秒换位），这是宿主行为，本仓库不打补丁（`AGENTS.md` 规则红线·仓库边界），问题走上游（issue 草稿 `docs/pi-widget-order-issue.md`）；改注册顺序须同步根契约测试；⑤ **段分隔与首段定格**：按 key 排序后**最靠前的可见段不加 `│ `**（行首定格），其余段以 `│ `（U+2502+空格）连接；任一段出现/消失时所有已登记段立即重算前缀并重渲染。协调走每插件一份 `status-band.ts`（`Symbol.for("pi.status-bar.bands.v1")` 进程共享登记表 + `writeBand(key, text, writer)`）——不跨插件 import、单目录仍可复制安装；只认识同样使用该模块的写入者（本仓库五个 footer 写入者）。写入边界不得自己拼前缀，且 `session_shutdown` 必须清登记（防 /reload 残留），前缀决策在插件 dim 样式之前且计入指纹；段文本格式（goal 目标 ≤20 显示列、provider-quota 去 provider 前缀与倒计时、pwr 计数式 `pwr N▶ M✓`、stream-token-speed 汇总 `~` 标注平均/无数据清状态）锁定在 `docs/cross/status-bar.md`「段分隔、首段定格与瘦身契约」；根契约测试校验五份 `status-band.ts` 与写入边界接线。
+- **状态条契约（跨插件）：** 唯一权威在 `docs/cross/status-bar.md`——秒对齐 `aligned-ticker.ts`、写入前文本指纹、footer 排序前缀、段分隔与首段定格、widget 栈顺序（宿主行为，本仓库不打补丁，走上游 issue）。改任何状态条/widget 行为前先读该卡。
 - 缩进：`src/extensions/pwr/` 用 tab，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/`、`solo-mode/` 等）与仓库根的 `todo-cli/`、`agent-manager/` 用 2 空格。
 
 
@@ -130,6 +127,6 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **Mock = 进程边界手写 fake：** fake `AgentRunner`（`makeFakeRunner`，`src/extensions/pwr/test/helpers.ts`）、fake pi 子进程（`FakeChild` + `makeFakeSpawn` + `waitForChild`，`src/extensions/pwr/runner/test/helpers.ts`）、`RecordingStatusPort`（`src/extensions/stream-token-speed/test/fixtures.ts`）；fake 只作进程/IO 边界替身，不做被测行为的"纸面替身"。测试目标本身是被测逻辑依赖的宿主组件（如 agent-team viewer 渲染）时，实例化真实组件、只 fake 终端（见 `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 - **集成模式：** 接线真实模块（`PiAgentRunner` + `WorkflowRuntime` + `MemoryPersister`），mock spawn、脚本化子进程事件、轮询 `waitSettled`（10ms × 100）——见 `src/extensions/pwr/runner/test/integration.test.ts`（happy path + `restart_agent` 语义；`handle.records.length` 证明缓存回放不派生进程）。
 - **性能门：** `src/extensions/pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
-- **数量（grep 实测）：** pwr 439 个测试，分布在 35 个 `*.test.ts`（test/ 105、tests/ 233、runtime/test/ 56、runner/test/ 45）；stream-token-speed 45；agent-team 613；run-timer 59；loop 196；goal 63；provider-quota 26；opencode-bridge 114；chatanywhere-provider 32；deep-init 37；human-notify 37；solo-mode 22；agent-manager 37（+4 e2e opt-in）；根契约 3 + 安装冒烟单测 21 + todo CLI 44。
+- **测试数：** 唯一来源是根 `README.md`（AGENTS.md 不再复制数字，防过期）。
 
 - **覆盖缺口：** 全库无 TODO/skip/only 标记。
