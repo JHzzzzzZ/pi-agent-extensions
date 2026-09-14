@@ -6,7 +6,7 @@
 
 ## 问题陈述
 
-`node tools/todo.mjs list --file general` 返回 0 行且退出码 0——沉默错误；只有写全 `<名>-todo` 才正确。
+`node .agents/skills/todo-cli/todo-cli/todo.mjs list --file general` 返回 0 行且退出码 0——沉默错误；只有写全 `<名>-todo` 才正确。
 
 根因：`core.ts` 的 `runList` 把 `resolveTodoPath` 的解析结果只用于文件存在性检查，传给 `applyEntryFilter` 的仍是原始 `opts.file`（如 `general`）；而 `entry.file` 是规范名（`general-todo`），两者精确比较永不相等 → 过滤为空。`query.ts` 头部注释声称「core 负责从 `--file` 归一」，该归一从未实现。
 
@@ -28,7 +28,7 @@
 
 ## 实现决策
 
-- 改点唯一：`todo-cli/core.ts` 的 `runList`（filter 归一 + docs 子集复用同一次查找）。
+- 改点唯一：`core.ts` 的 `runList`（当时的 `todo-cli/core.ts`；filter 归一 + docs 子集复用同一次查找）。
 - `query.ts` 纯函数层不动：只收已归一的 name，本轮不新增 query 层口径。
 - 错误消息沿用既有静态模板「找不到 todo 文件：」，退出码 1 不变。
 
@@ -36,7 +36,7 @@
 
 - 单测（`test/todo-cli.test.ts`）：四写法输出逐字节一致；与 `--status` / `--json` 组合仍生效；不得混入其它文件条目；不存在文件 exit 1。
 - 进程边界 E2E：真实仓库上 `list --file general` 与 `--file general-todo` 输出相等且非空——本 bug 的直接回归锁（修前必红）。
-- 必跑：`npm run test:todo` + `node tools/todo.mjs lint`。
+- 必跑：`npm run test:todo` + `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`。
 
 ## 范围外
 

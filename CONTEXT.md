@@ -62,6 +62,16 @@ _Avoid_: 备注、comment
 条目在文件内的稳定编号，max+1 分配、永不复用/重排；跨分支合并冲突按 id 取并集手工解决。
 _Avoid_: 行号、序号
 
+### 工具与位置
+
+**skill 目录（项目级 skill）**:
+仓库内的 `.agents/skills/<名>/`（Pi 信任项目后扫描的项目级路径之一）：`SKILL.md` 为命令参考卡，其余文件是该 skill 的资产。todo CLI 的入口、实现与测试就住在 `.agents/skills/todo-cli/todo-cli/`。
+_Avoid_: 插件目录（那是 `src/extensions/`）、全局 skill（`~/.pi/agent/skills/`）
+
+**仓库根发现（repo root discovery）**:
+CLI 判定「操作哪个仓库的 `todos/`」的规则：`--root <dir>` > `git rev-parse --show-toplevel`（以 cwd 起）> fail-closed 报错。取代了旧日的「脚本位置即仓库根」——工具位置与仓库根已解耦。决策见 ADR-0004。
+_Avoid_: REPO_ROOT（已删除的常量名）、仓库定位
+
 ### 存储与并发
 
 **方案 C**:
