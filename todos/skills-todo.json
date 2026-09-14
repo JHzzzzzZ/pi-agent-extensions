@@ -97,6 +97,17 @@
       "createdAt": null,
       "claimedAt": null,
       "completedAt": null
+    },
+    {
+      "id": 9,
+      "text": "技能侧配套 todo-cli 目录重构（用户 2026-09-12，与 todos/todo-cli-todo.json #9 同批）：todo-cli 工具迁入 ~/.pi/agent/skills/todo-cli/todo-cli/ 后，把该目录 SKILL.md 改写为「todo-cli 怎么用」的命令参考卡（让出登记/盘点意图词给 todo-add / todo-triage，沿用本条文件 #6 边界决议），同步 scripts/todo.sh 包装器（改为定位内层工具而非仓库 tools/todo.mjs）、skills README 索引与 .zcode/.pi 两镜像。仓库外改动，实施前需用户逐次批准（AGENTS 红线 1）。验收：SKILL.md 命令面与合并后 CLI 逐条一致、触发词与另两 skill 不重叠、两镜像内容一致。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "notes": [],
+      "createdAt": "2026-09-14T14:04:10.962Z",
+      "claimedAt": null,
+      "completedAt": null
     }
   ]
 }

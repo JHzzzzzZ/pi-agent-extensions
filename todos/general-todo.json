@@ -128,6 +128,54 @@
       "createdAt": null,
       "claimedAt": null,
       "completedAt": null
+    },
+    {
+      "id": 12,
+      "text": "AGENTS.md 规则红线新增两条（用户 2026-09-14 提出，插件无关的流程约定）：① 动手写代码前先调用 grill-with-docs 与人类对齐意图，对齐产物落盘（术语/领域词汇进 CONTEXT.md，决策进 docs/adr/），只留在会话里视为没对齐；② 再用 to-spec 把结论转成规格文档落盘（本仓库 issue tracker 取 local files，规格进 docs/specs/），之后才按红线 2 登记 todos/ 进入实现。验收：AGENTS.md 红线 9/10 落地、表述与既有 8 条同构、落盘路径在规则里写死可见。",
+      "status": "done",
+      "branch": "feat/agents-md-align-spec-rules",
+      "tags": [
+        "process",
+        "docs"
+      ],
+      "notes": [
+        "完成于 d517fb7/256b8d8（worktree .worktrees/agents-md-align-rules → dev-laptop merge --no-ff）：AGENTS.md 新增红线 9（/skill:grill-with-docs 对齐意图，产物落盘 CONTEXT.md 术语 + docs/adr 决策）与红线 10（/skill:to-spec 规格落盘 docs/specs/ 后再登记 todos 进入实现）；依赖 mattpocock/skills 库已 pi install（37 个 skill 实测加载，含 grill-with-docs/to-spec/setup-matt-pocock-skills）。自测：根三自检绿（contract 3/3、smoke 21/21、todo 44/44）+ todo lint 通过；纯文档改动未跑各扩展套件。"
+      ],
+      "createdAt": "2026-09-14T14:11:27.608Z",
+      "claimedAt": "2026-09-14T14:11:38.315Z",
+      "completedAt": "2026-09-14T14:12:42.239Z"
+    },
+    {
+      "id": 13,
+      "text": "本仓库跑一次 /skill:setup-matt-pocock-skills（红线 9/10 的前置配置，用户触发）：确定 issue tracker = local files、triage labels 词表、文档落盘位置（规格 docs/specs/、ADR docs/adr/），产出落到仓库内可见位置并同步 CONTEXT.md。",
+      "status": "done",
+      "branch": "feat/agents-md-diet",
+      "tags": [
+        "process",
+        "skills"
+      ],
+      "notes": [
+        "取消（用户 2026-09-14 决定）：不引入 issue tracker / docs/agents / spec-tracker 工作流，需求与问题继续只用 todos/ 记录；AGENTS.md 红线 10 同一变更内已改为「需求跟踪始终以 todos/ 为准，不引入外部 issue tracker」。未创建任何 docs/agents/ 与 tracker 配置。"
+      ],
+      "createdAt": "2026-09-14T14:12:42.364Z",
+      "claimedAt": "2026-09-14T14:19:36.380Z",
+      "completedAt": "2026-09-14T14:23:35.945Z"
+    },
+    {
+      "id": 14,
+      "text": "AGENTS.md 瘦身（用户 2026-09-14 定稿，全按推荐）：① 状态条契约全文（2127 字符）改一行指针，权威 = docs/cross/status-bar.md；② 关键目录删逐插件文件地图，压成「目录 → 卡/README 指针」（agent-manager 保留非扩展边界说明）；③ 测试数与命令细节去重，README 唯一来源（顺手修 19→21 漂移）；④ 红线 2/7 去 todo CLI 机制细节，保留被 docs 直接引用的「id max+1 永不复用/append-only/按 id 取并集」一句；⑤ 删 deep-init 生成头注释（Commit 已过期）。验收：AGENTS.md 明显瘦身且无过期/重复事实、docs 交叉引用仍成立、根三自检绿。",
+      "status": "done",
+      "branch": "feat/agents-md-diet",
+      "tags": [
+        "docs",
+        "process"
+      ],
+      "notes": [
+        "完成于 78c8d22 / merge c151f87：26,261→19,499 字节（133 行）。① 状态条契约 2127 字符→一行指针（权威 docs/cross/status-bar.md）；② 关键目录压成 目录→卡/README 指针；③ 测试数与命令细节去重（README 唯一来源，修 stream-token-speed 43→45、deep-init 32→37 两处实测漂移）；④ 红线 2/7 去 CLI 机制细节、保留 id 约定；⑤ 删 deep-init 生成头注释；⑥ 红线 10 去掉 issue tracker/setup 句（用户：需求跟踪只走 todos/）。自测：根三自检绿（contract 3、smoke 21、todo 44）+ todo lint 通过；docs 交叉引用（红线 2 / 规则名）实测仍成立。"
+      ],
+      "createdAt": "2026-09-14T14:19:36.135Z",
+      "claimedAt": "2026-09-14T14:19:36.259Z",
+      "completedAt": "2026-09-14T14:23:35.821Z"
     }
   ]
 }
