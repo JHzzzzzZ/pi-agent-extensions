@@ -461,7 +461,7 @@ function mountAskHost(): AskHost {
       onInput(data);
     },
     state,
-    port: askPortFrom({ hasUI: true, ui } as never, viewerDialogHooks(state, openViewer)),
+    port: askPortFrom({ hasUI: true, mode: "tui", ui } as never, viewerDialogHooks(state, openViewer)),
     openViewer,
     counters,
     selector: () => selectorComponent,
@@ -610,13 +610,21 @@ test("收起等待上限：viewerClose 缺失时 suspendViewer 约 1.5s 内放�
   const untouched = viewerDialogHooks({ viewerOpen: false }, () => Promise.resolve());
   assert.equal(await untouched.suspendViewer(), false, "viewer 未打开 → 无需收起");
 
-  const started = Date.now();
-  const hooks = viewerDialogHooks({ viewerOpen: true }, () => Promise.resolve());
-  // viewerClose 缺失 = 模拟 custom 未落定（openTranscriptViewer 未回调 onOpen）。
-  assert.equal(await hooks.suspendViewer(), true, "已打开但 close 不落定 → 超时也放行");
-  const elapsed = Date.now() - started;
-  assert.ok(elapsed >= 1400, `应等满收纳上限才放行，实测 ${elapsed}ms`);
-  assert.ok(elapsed < 5000, `放行时间必须有界，实测 ${elapsed}ms`);
+  // suspendViewer 的兜底等待 timer 是 unref 的（生产里 TUI 自身维持事件循环）；
+  // 测试进程没有别的 handle 时事件循环会提前排空，node:test 把用例判成
+  // cancelledByParent——这里显式持有一个 handle，让 1.5s 上限真正跑完。
+  const keepAlive = setInterval(() => {}, 50);
+  try {
+    const started = Date.now();
+    const hooks = viewerDialogHooks({ viewerOpen: true }, () => Promise.resolve());
+    // viewerClose 缺失 = 模拟 custom 未落定（openTranscriptViewer 未回调 onOpen）。
+    assert.equal(await hooks.suspendViewer(), true, "已打开但 close 不落定 → 超时也放行");
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 1400, `应等满收纳上限才放行，实测 ${elapsed}ms`);
+    assert.ok(elapsed < 5000, `放行时间必须有界，实测 ${elapsed}ms`);
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -648,4 +656,43 @@ test("重开位姿：resumeViewer 把最后查看的 run 回填为 viewerRunId�
   hooks.resumeViewer();
   assert.deepEqual(seen, [{ actor: "alice", runId: "run-b" }], "重开应带回最后查看的 run + actor 位姿");
   assert.equal(state.viewerRunId, undefined, "pin 被 openViewer 消费后清空");
+});
+
+// ---------------------------------------------------------------------------
+// 用例 7：长提问（#58）——真实宿主合成路径下走自绘 overlay
+// ---------------------------------------------------------------------------
+
+const LONG_ASK_TITLE = [
+  "[dev-team] 部署方案二选一：",
+  "",
+  ...Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 段：${"细节".repeat(20)}`),
+].join("\n");
+const LONG_ASK_OPTIONS = Array.from({ length: 8 }, (_, index) => `方案 ${index + 1}`);
+
+test("长提问改走自绘 overlay：题面上屏可滚动、选项窗口化、Enter 提交选中项", async () => {
+  const host = mountAskHost();
+  try {
+    const result = host.port.present(
+      { id: "q1", method: "select", title: LONG_ASK_TITLE, options: LONG_ASK_OPTIONS },
+      new AbortController().signal,
+    );
+    await waitFor(() => host.counters.customShown === 1, "长提问应走自绘 overlay");
+    assert.equal(host.counters.selectShown, 0, "不再走宿主 select（题面会把选项顶出屏幕）");
+    host.render();
+    assert.ok(host.screenHas("agent-team 提问"), "自绘帧标题上屏");
+    assert.ok(host.screenHas("部署方案二选一"), "题面开头可见");
+    assert.ok(host.screenHas("可选（共 8 项"), "选项区表头（窗口化，不静默截断）");
+    assert.ok(host.screenHas("› 方案 1"), "选中项带标记");
+    assert.ok(!host.screenHas("第 30 段"), "前置：题面尾部不在首屏");
+
+    for (let index = 0; index < 12; index++) host.dispatch("\x1b[6~"); // PgDn → 题面尾部
+    host.render();
+    assert.ok(host.screenHas("第 30 段"), "滚到底后题面尾部可见（不再被静默裁掉）");
+
+    host.dispatch("\x1b[B"); // ↓ 选到第 2 项
+    host.dispatch("\r");
+    assert.deepEqual(await result, { kind: "answer", value: "方案 2" });
+  } finally {
+    host.stop();
+  }
 });

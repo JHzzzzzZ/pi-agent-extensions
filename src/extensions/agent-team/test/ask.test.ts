@@ -15,6 +15,7 @@ import {
   askResponseLine,
   buildAskDialog,
   buildAskTitle,
+  boundAskQuestion,
   clampAskAnswer,
   formatAskResult,
   outcomeEntryText,
@@ -27,6 +28,8 @@ import {
   type AskRequest,
 } from "../ask.ts";
 import { ASK_TIMEOUT_DEFAULT_MS, ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS } from "../types.ts";
+import { MAX_ASK_ANSWER_BYTES, MAX_ASK_QUESTION_BYTES } from "../ask.ts";
+import { MAX_TRANSCRIPT_ENTRY_BYTES } from "../transcript.ts";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -296,10 +299,21 @@ test("AskChannel swallows write failures and port exceptions", async () => {
 // Leader side (team_ask)
 // ---------------------------------------------------------------------------
 
-test("buildAskTitle flattens the question and prefixes the team, bounded to 300 chars", () => {
+test("buildAskTitle keeps the question verbatim and preserves paragraph structure", () => {
   assert.equal(buildAskTitle("dev-team", "要发到哪个环境？"), "[dev-team] 要发到哪个环境？");
-  assert.equal(buildAskTitle("dev-team", "第一行\n第二行"), "[dev-team] 第一行 第二行");
-  assert.equal(buildAskTitle("dev-team", "x".repeat(400)).length, "[dev-team] ".length + 300 + 1);
+  assert.equal(buildAskTitle("dev-team", "第一行\n\n第二段"), "[dev-team] 第一行\n\n第二段");
+  // 旧的 300 字符硬截取消：400 字符原样通过
+  assert.equal(buildAskTitle("dev-team", "y".repeat(400)), `[dev-team] ${"y".repeat(400)}`);
+});
+
+test("boundAskQuestion bounds an over-long question with an explicit omission note (never silent)", () => {
+  const long = "字".repeat(2000); // 6000 bytes > 4KB
+  const bounded = boundAskQuestion(long);
+  assert.ok(bounded.omittedBytes > 0, "超限必须报告省略字节数");
+  assert.ok(Buffer.byteLength(bounded.text, "utf8") <= MAX_ASK_QUESTION_BYTES);
+  assert.match(bounded.text, /题面过长，已省略 \d+ 字节/);
+  assert.ok(bounded.text.startsWith("字"), "保留题面开头");
+  assert.deepEqual(boundAskQuestion("短问"), { text: "短问", omittedBytes: 0 });
 });
 
 test("buildAskDialog picks select when options are given, input otherwise", () => {
@@ -359,7 +373,7 @@ test("formatAskResult keeps answers bounded and nudges the leader to proceed whe
   assert.deepEqual(unanswered.details, { answered: false });
   assert.match(unanswered.text, /不要重复追问/);
   assert.match(unanswered.text, /最合理的假设/);
-  assert.equal(clampAskAnswer("x".repeat(10_000)).length, 4096);
+  assert.equal(clampAskAnswer("x".repeat(10_000)), "x".repeat(MAX_ASK_ANSWER_BYTES));
   assert.equal(ASK_BACKSTOP_MARGIN_MS, 5000);
 });
 
@@ -374,4 +388,12 @@ test("question/outcome transcript text keeps the question, options and degradati
   assert.deepEqual(outcomeEntryText({ kind: "cancelled" }), { kind: "system", text: "未获回答（用户取消）" });
   assert.deepEqual(outcomeEntryText({ kind: "timeout" }), { kind: "system", text: "未获回答（超时）" });
   assert.deepEqual(outcomeEntryText({ kind: "unavailable" }), { kind: "system", text: "未获回答（主会话无 UI）" });
+});
+
+test("questionEntryText keeps a multi-paragraph question whole and stays inside the transcript entry cap", () => {
+  const long = Array.from({ length: 20 }, (_, index) => `第 ${index + 1} 段方案说明`).join("\n\n");
+  const text = questionEntryText(request({ title: `[dev-team] ${long}` }));
+  assert.ok(text.includes("第 20 段方案说明"), "尾段完整保留（不再压平/300 截断）");
+  assert.ok(text.includes("\n\n"), "段落结构保留");
+  assert.ok(Buffer.byteLength(text, "utf8") <= MAX_TRANSCRIPT_ENTRY_BYTES);
 });

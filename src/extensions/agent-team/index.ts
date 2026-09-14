@@ -25,7 +25,8 @@ import { fileURLToPath } from "node:url";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { archiveRunRecords } from "./archive.ts";
-import { askLeaderQuestion, formatAskResult, type AskPort, type AskToolOutcome } from "./ask.ts";
+import { askLeaderQuestion, formatAskResult, type AskOutcome, type AskPort, type AskRequest, type AskToolOutcome } from "./ask.ts";
+import { fallbackAskTitle, presentAskOverlay, shouldRenderAskOverlay } from "./askview.ts";
 import { discoverTeams, findTeam, parseTeamFile, splitModelThinking } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { resolveExternalCli } from "./external.ts";
@@ -250,11 +251,13 @@ export function viewerDialogHooks(
 
 /**
  * Builds the leader-question port over the main session's ctx.ui: the RPC
- * dialog bridge presents the leader's question as a host dialog and returns
- * the answer. Fail-closed — no UI, stale ctx, host errors and blank answers
- * all degrade to cancelled so the leader never blocks on an impossible ask.
- * 带 hooks 时先收起 viewer（宿主对话框与 overlay 互斥），作答后重开。
- * 导出仅为测试（viewer-ask-host 惯例，同 viewerStopAction）。
+ * dialog bridge presents the leader's question and returns the answer.
+ * Fail-closed — no UI, stale ctx, host errors and blank answers all degrade
+ * to cancelled so the leader never blocks on an impossible ask.
+ * 长题（`shouldRenderAskOverlay`）走自绘 overlay（题面全文可滚动 + 选项窗口，
+ * 宿主对话框装不下），其余走宿主对话框；自绘不可用时回退宿主对话框（题面换
+ * 摘要 + 指路，全文已在转录里）。带 hooks 时先收起 viewer（同一个屏幕），
+ * 作答后重开。导出仅为测试（viewer-ask-host 惯例，同 viewerStopAction）。
  */
 export function askPortFrom(ctx: ExtensionContext, hooks?: ViewerDialogHooks): AskPort {
   return {
@@ -270,28 +273,14 @@ export function askPortFrom(ctx: ExtensionContext, hooks?: ViewerDialogHooks): A
         }
         try {
           if (!ctx.hasUI) return { kind: "unavailable" };
-          const opts = { ...(request.timeoutMs !== undefined ? { timeout: request.timeoutMs } : {}), signal };
-          if (request.method === "select") {
-            const value = await ctx.ui.select(request.title, request.options ?? [], opts);
-            return typeof value === "string" && value.trim().length > 0
-              ? { kind: "answer", value }
-              : { kind: "cancelled" };
+          if (canRenderAskOverlay(ctx) && shouldRenderAskOverlay(request)) {
+            const overlay = await presentAskOverlay(ctx.ui, request, signal);
+            // await（不能直接 return promise）：try/finally 里 return 会让 finally
+            // 立刻执行——viewer 会在对话框还没作答时就重开并盖住它。
+            if (overlay.supported) return answerOutcome(overlay.answer);
+            return await presentHostDialog(ctx, { ...request, title: fallbackAskTitle(request) }, signal);
           }
-          if (request.method === "confirm") {
-            return { kind: "answer", value: await ctx.ui.confirm(request.title, request.message ?? "", opts) };
-          }
-          if (request.method === "editor") {
-            // ctx.ui.editor has no timeout/signal options; the channel backstop
-            // still bounds the wait from the leader's side.
-            const value = await ctx.ui.editor(request.title, request.prefill);
-            return typeof value === "string" && value.trim().length > 0
-              ? { kind: "answer", value }
-              : { kind: "cancelled" };
-          }
-          const value = await ctx.ui.input(request.title, request.placeholder, opts);
-          return typeof value === "string" && value.trim().length > 0
-            ? { kind: "answer", value }
-            : { kind: "cancelled" };
+          return await presentHostDialog(ctx, request, signal);
         } catch {
           return { kind: "cancelled" };
         }
@@ -306,6 +295,39 @@ export function askPortFrom(ctx: ExtensionContext, hooks?: ViewerDialogHooks): A
       }
     },
   };
+}
+
+/** 自绘可用：交互式 TUI 且有 `custom`（RPC 主会话的 custom 立即返回 undefined，
+ * 由 presentAskOverlay 的 factoryRan 兜底判定）。 */
+function canRenderAskOverlay(ctx: ExtensionContext): boolean {
+  return ctx.mode === "tui" && typeof ctx.ui.custom === "function";
+}
+
+/** 自定义视图的答案 → AskOutcome（空白/undefined 一律 cancelled，旧口径）。 */
+function answerOutcome(answer: string | undefined): AskOutcome {
+  return typeof answer === "string" && answer.trim().length > 0
+    ? { kind: "answer", value: answer }
+    : { kind: "cancelled" };
+}
+
+/** 宿主对话框分支（短题与自绘不可用时的回退）：select/confirm/editor/input。 */
+async function presentHostDialog(ctx: ExtensionContext, request: AskRequest, signal: AbortSignal): Promise<AskOutcome> {
+  const opts = { ...(request.timeoutMs !== undefined ? { timeout: request.timeoutMs } : {}), signal };
+  if (request.method === "select") {
+    const value = await ctx.ui.select(request.title, request.options ?? [], opts);
+    return typeof value === "string" && value.trim().length > 0 ? { kind: "answer", value } : { kind: "cancelled" };
+  }
+  if (request.method === "confirm") {
+    return { kind: "answer", value: await ctx.ui.confirm(request.title, request.message ?? "", opts) };
+  }
+  if (request.method === "editor") {
+    // ctx.ui.editor has no timeout/signal options; the channel backstop
+    // still bounds the wait from the leader's side.
+    const value = await ctx.ui.editor(request.title, request.prefill);
+    return typeof value === "string" && value.trim().length > 0 ? { kind: "answer", value } : { kind: "cancelled" };
+  }
+  const value = await ctx.ui.input(request.title, request.placeholder, opts);
+  return typeof value === "string" && value.trim().length > 0 ? { kind: "answer", value } : { kind: "cancelled" };
 }
 
 function clearWidget(ctx: ExtensionContext): void {

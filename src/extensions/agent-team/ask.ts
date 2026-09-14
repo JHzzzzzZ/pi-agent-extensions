@@ -25,6 +25,7 @@ import {
   ASK_TIMEOUT_MIN_MS,
   truncateUtf8,
 } from "./types.ts";
+import { MAX_TRANSCRIPT_ENTRY_BYTES } from "./transcript.ts";
 
 /** Dialog methods the RPC Extension UI protocol expects a response for. */
 export const ASK_METHODS = ["select", "confirm", "input", "editor"] as const;
@@ -36,8 +37,41 @@ export const ASK_BACKSTOP_MARGIN_MS = 5000;
 /** Maximum answer text handed back to the leader (and into transcripts). */
 export const MAX_ASK_ANSWER_BYTES = 4096;
 
-/** Maximum question length embedded in the host dialog title. */
-const MAX_ASK_TITLE_CHARS = 300;
+/**
+ * Maximum question payload embedded in the wire title / dialog / transcript
+ * entry (bytes, UTF-8). The old 300-char flatten-and-truncate silently hid
+ * long plans; this bound is explicit instead: over-long questions keep their
+ * head and get an omission marker (see `boundAskQuestion`). Kept in the same
+ * budget family as the transcript entry cap so "full text" means the same
+ * thing in the dialog and in the run transcript.
+ */
+export const MAX_ASK_QUESTION_BYTES = 4 * 1024;
+
+/** Marker appended when a question payload had to be bounded (never silent). */
+export function omissionNote(omittedBytes: number): string {
+  return `\n…（题面过长，已省略 ${omittedBytes} 字节）`;
+}
+
+/**
+ * Bounds a question payload (question, or a whole transcript entry) to
+ * `maxBytes`: verbatim when it fits, else the head plus an explicit omission
+ * marker that still fits inside the budget. Returns the omitted byte count so
+ * callers can surface it.
+ */
+export function boundAskQuestion(
+  question: string,
+  maxBytes: number = MAX_ASK_QUESTION_BYTES,
+): { text: string; omittedBytes: number } {
+  const total = Buffer.byteLength(question, "utf8");
+  if (total <= maxBytes) return { text: question, omittedBytes: 0 };
+  const budget = (omitted: number): number => Math.max(0, maxBytes - Buffer.byteLength(omissionNote(omitted), "utf8"));
+  // 位数影响 marker 长度：迭代两次收敛（截断字节数只会变小，恒能装下）。
+  let kept = truncateUtf8(question, budget(total));
+  const first = total - Buffer.byteLength(kept, "utf8");
+  kept = truncateUtf8(question, budget(first));
+  const omittedBytes = total - Buffer.byteLength(kept, "utf8");
+  return { text: kept + omissionNote(omittedBytes), omittedBytes };
+}
 
 /** One parsed dialog request from the leader's stdout. */
 export interface AskRequest {
@@ -308,11 +342,14 @@ export interface AskToolResult {
   details: { answered: boolean; answer?: string };
 }
 
-/** `[team] question` one-liner for the host dialog title. */
+/**
+ * `[team] question` dialog title. The question travels verbatim (multi-line
+ * plans keep their paragraph structure — the host `Text` component renders
+ * newlines fine); only the byte budget applies, with an explicit omission
+ * marker instead of the old silent 300-char cut.
+ */
 export function buildAskTitle(teamName: string, question: string): string {
-  const flat = question.replace(/\s+/g, " ").trim();
-  const bounded = flat.length > MAX_ASK_TITLE_CHARS ? `${flat.slice(0, MAX_ASK_TITLE_CHARS)}…` : flat;
-  return `[${teamName}] ${bounded}`;
+  return `[${teamName}] ${boundAskQuestion(question).text}`;
 }
 
 /** Maps tool params onto the dialog shape (options ⇒ select, else input). */
@@ -365,10 +402,16 @@ export function formatAskResult(outcome: AskToolOutcome): AskToolResult {
   };
 }
 
-/** Transcript entry for the question as it reaches the main session. */
+/**
+ * Transcript entry for the question as it reaches the main session. Carries
+ * the full bounded question (multi-line, not flattened) so `/team:view` and
+ * `team_transcript` can re-read it; the entry itself is bounded with the same
+ * explicit marker because the transcript sink caps entries at
+ * `MAX_TRANSCRIPT_ENTRY_BYTES` silently.
+ */
 export function questionEntryText(request: AskRequest): string {
   const options = request.options && request.options.length > 0 ? `\n选项：${request.options.join(" / ")}` : "";
-  return `提问：${request.title}${options}`;
+  return boundAskQuestion(`提问：${request.title}${options}`, MAX_TRANSCRIPT_ENTRY_BYTES).text;
 }
 
 /** Transcript entry for the question outcome (answer or degradation reason). */
