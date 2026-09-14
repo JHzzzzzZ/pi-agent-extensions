@@ -4,7 +4,7 @@
 
 ## 职责与边界
 
-把 AGENTS.md 规则 2 的 `todos/` 工作流（登记 → 领取 → 完成 + 开工/收尾盘点 triage）从「agent 手写 grep + edit」变成可测试的原子命令。**CLI-only**：不注册任何 Pi 扩展 API（无 agent 工具、无冒号命令）、无 npm 依赖、无 Pi/宿主依赖；`node tools/todo.mjs <子命令>` 是唯一入口，任意 cwd 可用。
+把 AGENTS.md 规则 1 的 `todos/` 工作流（登记 → 领取 → 完成 + 开工/收尾盘点 triage）从「agent 手写 grep + edit」变成可测试的原子命令。**CLI-only**：不注册任何 Pi 扩展 API（无 agent 工具、无冒号命令）、无 npm 依赖、无 Pi/宿主依赖；`node tools/todo.mjs <子命令>` 是唯一入口，任意 cwd 可用。
 
 **存储（方案 C，todos/todo-cli-todo.md:17）**：`todos/<名>.json` 是唯一持久真相——无 markdown、无 sqlite 索引层、无降级路径。决策取舍见 `docs/adr/0002-todos-json-storage.md`；术语见根 `CONTEXT.md`。
 
@@ -34,7 +34,7 @@ argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损�
 - **match 唯一定位**：`claim`/`complete` 的 `--match` 是纯描述 text 的子串（notes 不参与匹配）；缺失/多条报错，绝不猜第一条。
 - **查重口径**：归一化文本后 exact/similar（包含方向短边 ≥8）两级；`add` 默认拒绝重复，`--force` 才写入。
 - **动作分离**：`add` 只追加 open 条目（`--tag` 写原生标签）；`claim` 转 processing + `--branch` 写原生 `branch` 字段（已 done 报 `ALREADY_DONE`，已 processing 幂等）；`complete` 转 done + `--note` 逐字进 notes（不解析括号/换行——L16 bug 的根治形态）。
-- **条目 id 稳定**：文件内 max+1 分配、永不复用/重排；entries append-only；跨分支合并冲突按 id 取并集手工解决（约定写在 AGENTS 红线 2）。
+- **条目 id 稳定**：文件内 max+1 分配、永不复用/重排；entries append-only；跨分支合并冲突按 id 取并集手工解决（约定写在 AGENTS 红线 1）。
 - **triage 映射精确相等**：worktree 分支 ↔ 条目 `branch` 字段全等（不再做文本包含匹配）；无 branch 的 processing 归「无分支引用」（人工确认），这是设计而非 bug。
 - **迁移可逆**：`migrate from-md` 自检不过关一个字节不写；`migrate to-md` 只增 md 不删 JSON；回滚到旧 CLI = `migrate to-md` + git 历史切旧版。
 - **lint 单向**：根 manifest 注册的扩展 → 必有同名 `todos/<名>-todo.json`；多余 todo 文件合法不报。

@@ -10,7 +10,7 @@
 
 ## Consequences
 
-- 条目 id 文件内 max+1 永不复用、entries append-only：跨分支合并冲突按 id 取并集手工解决（写进 AGENTS 红线 2），没有合并辅助命令。
+- 条目 id 文件内 max+1 永不复用、entries append-only：跨分支合并冲突按 id 取并集手工解决（写进 AGENTS 红线 1），没有合并辅助命令。
 - 缩进子行不再是独立条目（迁移时并入上一条顶层条目的 notes）：条目数口径从「行级」变为「顶层」，等价口径 = 全部文本零丢失。
 - 迁移前历史条目三时间戳为 null（旧索引不入 git、覆盖面不全，不伪造数据）。
 - `todos/*.json` 经 `.gitattributes` 锁 `text eol=lf`，防 Windows autocrlf 整文件 diff。
