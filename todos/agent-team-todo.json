@@ -751,15 +751,17 @@
     {
       "id": 47,
       "text": "成员交付完成仍被判 CHILD_FAILED（真机 run-1789104779153 实锤）：writer 第 2 轮与 checker 都在产出完整报告与 commit 之后被判 failed（CHILD_FAILED）错误 terminated——runner.ts 的 outcome.errorMessage 一旦置位就不清除（任意一轮 assistant 消息带 errorMessage 即永久生效），dispatch.ts:403 见 errorMessage 即判 failed；风险是 leader 按「环境级失败不重试」规则会丢弃已完成的工作或重复派发（本轮 leader 自行判断保留，属运气）。要求：① 终态判定区分「进行中被终止」与「完成后收尾异常」（最后一轮 stopReason 非 error 且已有最终文本时不应判 failed），或把 errorMessage 按轮次作用域化（仅最后一轮生效）；② 结果对象带 exitCode/终止原因供诊断；③ TDD：真实子进程用例复现「输出完整后进程异常退出/被终止 → 不应判 failed」先红，再实现到绿；④ 验收：同类 run 不再出现完成即 CHILD_FAILED，全量测试 + typecheck 绿。",
-      "status": "aligning",
+      "status": "aligned",
       "branch": "feat/agent-team-child-outcome",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "判定表/诊断面/契约 5 问确认；ADR-0006 落盘"
+      ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.240Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-14T15:52:13.217Z"
     },
     {
       "id": 48,
@@ -872,15 +874,17 @@
     {
       "id": 56,
       "text": "用户插队（steer/排队）输入的 prompt 在界面无显示，需要突出：run 运行中用户发出的消息在 UI 只剩一句 notice（chat.ts「已插话给 X（steer）：不打断当前任务…」），用户输入原文在 viewer 与 run 转录里都看不到，无法确认自己发了什么（用户 2026-09-11 真机反馈）。要求：用户输入原文在可见处突出呈现——viewer 独立高亮块（复用宿主 userMessageBg 类样式，与 agent/leader 输出视觉区分）并落 run 转录（team_transcript / /team:view 可复查），覆盖 steer 即时送达与排队链式两条路径；实现时确认两路径统一呈现（排队消息在派出后也保留在转录）。验收：真机运行中发消息后立即可见原文与高亮样式，回看转录可查到该输入，全量测试 + typecheck 绿。",
-      "status": "aligning",
+      "status": "aligned",
       "branch": "feat/agent-team-steer-echo",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "5 问确认（Q4 notice 不改：原文在 viewer 呈现）"
+      ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.589Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-14T15:54:12.698Z"
     },
     {
       "id": 57,
@@ -1022,15 +1026,17 @@
     {
       "id": 67,
       "text": "httpProxy 环境下外部 claude 成员必挂（本地 BASE_URL 被代理劫持 405 CONNECT only；用户 2026-09-12 真机复现）：v1.26.0 的 leader/成员 env 只做「继承+覆盖」，不合成 NO_PROXY——宿主 applyHttpProxySettings 只注入 HTTP(S)_PROXY，用户的 claude 中继（ANTHROPIC_BASE_URL=http://127.0.0.1:15721）在无 NO_PROXY 时被客户端强制走 10899 CONNECT-only 桥 → 每次派单 405。QA 验收时驱动 env 自带 NO_PROXY，掩盖了该缺口。要求：① 成员/leader 派发对本地回环地址默认注入 NO_PROXY 覆盖（127.0.0.1,localhost；用户显式值优先不覆盖）；或 ② run 预检/doctor 在检测到 httpProxy 且 NO_PROXY 缺失时给出可操作告警；README §7 + docs 卡 + incidents 同步。验收：无 NO_PROXY 且 httpProxy 已设的真实环境，claude 外部成员派单成功；单测锁「默认注入且不覆盖显式值」。",
-      "status": "aligning",
+      "status": "aligned",
       "branch": "feat/agent-team-noproxy",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "5 问按建议走：统一 helper + 双键追加 + 无 doctor 告警 + 上游 issue + 真机验收"
+      ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.417Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-14T15:52:13.376Z"
     },
     {
       "id": 68,
@@ -1054,6 +1060,19 @@
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T15:45:54.909Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 70,
+      "text": "长提问视图的真机观感走查（#58 收尾时 leader 报告点出，无自动化证据项）：自绘 overlay 在极窄终端（<60 列，VIEWER_OVERLAY_OPTIONS minWidth=60）的截断/重影、以及长选项列表键盘导航选中态在真实终端下的观感，只有宿主级 headless 渲染测试（test/viewer-ask-host.test.ts 用例 7）+ 一次真机长提问跑通链路（用户选到第 6 项）作证据，缺人工逐场景走查。要求：在真实终端（含 80/60/40 列三种宽度、Windows Terminal）跑一次长提问：题面折行与段落空行、PgDn 到底部、选项窗口跟随、Enter/Esc 后屏面清理无残行；发现问题按 docs/incidents.md 记事故并修。验收：三种宽度下无残行/无重影、题面尾部可达，结论写入 docs/extensions/agent-team.md 或 incidents。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-14T15:58:25.896Z",
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
