@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "title": "todo-cli TODO",
   "entries": [
     {
@@ -19,7 +19,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -33,7 +34,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -46,7 +48,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
@@ -59,7 +62,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
@@ -72,7 +76,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 6,
@@ -85,7 +90,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": "2026-09-12T09:57:28.878Z"
+      "completedAt": "2026-09-12T09:57:28.878Z",
+      "alignedAt": null
     },
     {
       "id": 7,
@@ -98,7 +104,8 @@
       ],
       "createdAt": null,
       "claimedAt": "2026-09-12T09:57:28.366Z",
-      "completedAt": "2026-09-12T09:57:28.618Z"
+      "completedAt": "2026-09-12T09:57:28.618Z",
+      "alignedAt": null
     },
     {
       "id": 8,
@@ -111,7 +118,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 9,
@@ -122,7 +130,8 @@
       "notes": [],
       "createdAt": "2026-09-14T14:03:57.506Z",
       "claimedAt": "2026-09-14T14:58:40.831Z",
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 10,
@@ -133,18 +142,22 @@
       "notes": [],
       "createdAt": "2026-09-14T14:04:00.954Z",
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 11,
       "text": "状态机扩展为对齐驱动：open → aligning → aligned → processing → done（用户 2026-09-12）。语义：open=未领取；首次领取进入 aligning——此阶段必须与人工达成一致、对齐人类意图、消除模糊地带并产出对齐文档，写代码被禁止；人工确认后进入 aligned=已对齐待开工；在 aligned 上再次领取进入 processing；从 processing 起直到代码上库（merge/commit）全程无需任何人工参与（无人值守闭环）。待对齐（开工前定）：① 对齐文档落点与契约（todos/align/<名>#<id>.md 还是 notes 内，格式与必填字段）；② 命令面（新增 align start/confirm 子命令，还是 claim 分模式；人工确认门的触发方式与 fail-closed 语义）；③ 状态与时间戳字段（是否新增 alignedAt；claimedAt 在 aligning/aligned/processing 三态下如何取值；aligned 重复领取的幂等性）；④ 与\"todo 依赖关系\"条目的交互顺序（依赖检查在进入 aligning 前还是对齐确认后）；⑤ 历史数据（现有 open/processing/done 保持原义不强制回退；历史 processing 是否要求补对齐文档）；⑥ ENTRY_STATUSES/schema 校验、summary/list/triage/lint 输出与统计口径、AGENTS.md 红线 2 的「领取即 processing」表述、todo-add/todo-triage/todo-cli/wrap-up 四个 skill 与 docs/tools/todo-cli.md 同步。验收：状态迁移表显式化（非法迁移明确拒绝并有测试）、aligning 无对齐文档/无人工确认不得进 aligned、aligned 未领取不得进入 processing（提示可断言）、processing→done 无人工门（无人值守闭环）、全链路单测（含真实子进程锁路径）、文档四处同步。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/todo-cli-align-gate",
       "tags": [],
-      "notes": [],
+      "notes": [
+        "feat/todo-cli-align-gate：对齐门五态 + schema v2 + align 子命令 + 对齐文档契约已实现并合并（merge 7db5972）；60 测试全绿 + contract/smoke/lint 全绿；ADR-0003 / docs/specs/todo-cli-align-gate.md / 卡 / INDEX / README / AGENTS / CONTEXT 同一变更同步；skills #10 收口（仓库内指针已清）。"
+      ],
       "createdAt": "2026-09-14T14:04:04.759Z",
       "claimedAt": "2026-09-14T14:45:49.784Z",
-      "completedAt": null
+      "completedAt": "2026-09-14T15:02:13.264Z",
+      "alignedAt": null
     },
     {
       "id": 12,
@@ -157,7 +170,8 @@
       ],
       "createdAt": "2026-09-14T14:04:54.050Z",
       "claimedAt": "2026-09-14T14:32:56.873Z",
-      "completedAt": "2026-09-14T14:37:34.485Z"
+      "completedAt": "2026-09-14T14:37:34.485Z",
+      "alignedAt": null
     },
     {
       "id": 13,
@@ -171,7 +185,8 @@
       "notes": [],
       "createdAt": "2026-09-14T14:31:09.083Z",
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
