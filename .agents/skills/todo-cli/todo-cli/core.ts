@@ -9,20 +9,26 @@
  *
  * 存储形态（方案 C，todos/todo-cli-todo.md:17）：`todos/<名>.json` 是唯一持久真相，
  * markdown 已退出（逃生回滚走 `migrate to-md`）。本模块负责：
- *   - 七个子命令契约不变：summary / list / add / claim / complete / lint / triage；
+ *   - 八个子命令契约不变：summary / list / add / claim / align / complete / lint / triage；
+ *   - 状态机五态对齐门（todo-cli-todo:11，ADR-0003）：open → aligning → aligned →
+ *     processing → done。首次 claim 进 aligning（必须先写对齐文档、经人工确认），
+ *     `align` 结构校验文档后进 aligned，再次 claim 才进 processing；processing 起到
+ *     收口无人值守。对齐文档契约（路径派生/必填小节）在 align.ts；模板在
+ *     docs/tools/todo-cli.md。
  *   - 全部写操作经 `todos/.todo-cli/locks/<名>.lock` 跨进程互斥 + temp+rename 原子落盘
  *     （lock.ts；sqlite 索引层已删除，`--claimed-since` 等时间维度成为一等公民）；
  *   - 只读写仓库 `todos/` 目录内的文件，路径穿越直接拒绝；不自动 commit；
- *   - 登记（add）不做 processing 标注，领取（claim）才改状态——动作显式分离；
+ *   - 登记（add）不做状态标注，领取（claim）才改状态——动作显式分离；
  *   - `lint` 只校验「根 package.json pi.extensions 注册的扩展都有同名 todo 文件」
  *     这一个方向（未实现插件的 todo 文件合法，不报）。
  *
  * 用法（任意 git 仓库任意 cwd；入口固定为 <仓库>/.agents/skills/todo-cli/todo-cli/todo.mjs）：
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
- *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|processing|done] [--file general]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|aligning|aligned|processing|done] [--file general]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs add --file general "需求描述" [--tag 词1,词2]   # 跨全部文件查重
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs align --file general --match "需求描述" [--note "说明"]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
@@ -38,7 +44,8 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { emptyTodoData, nextId, normalizeText, parseTodoJson, serializeTodo } from "./schema.ts";
-import type { TodoFileData } from "./schema.ts";
+import type { EntryStatus, TodoEntry, TodoFileData } from "./schema.ts";
+import { ALIGN_SECTIONS, alignDocPath, alignDocRelPath, validateAlignDoc } from "./align.ts";
 import { atomicWriteFile, installProcessHooks, tmpDirFor, withTodoLock } from "./lock.ts";
 import { migrateFromMd, migrateToMd } from "./migrate.ts";
 import { applyEntryFilter, parseFilterOptions, serializeEntries, sortQueryEntries } from "./query.ts";
@@ -158,13 +165,19 @@ function writeTodoData(repoRoot: string, file: string, data: TodoFileData): void
   atomicWriteFile(file, serializeTodo(data), { tmpDir: tmpDirFor(repoRoot) });
 }
 
-/** 按文件汇总三态计数（name 为不带 .json 的文件名）。 */
+function countStatus(entries: TodoEntry[], status: EntryStatus): number {
+  return entries.filter((entry) => entry.status === status).length;
+}
+
+/** 按文件汇总五态计数（name 为不带 .json 的文件名）。 */
 export function summarizeData(docs: LoadedDoc[]) {
   return docs.map((doc) => ({
     name: doc.name,
-    open: doc.data.entries.filter((entry) => entry.status === "open").length,
-    processing: doc.data.entries.filter((entry) => entry.status === "processing").length,
-    done: doc.data.entries.filter((entry) => entry.status === "done").length,
+    open: countStatus(doc.data.entries, "open"),
+    aligning: countStatus(doc.data.entries, "aligning"),
+    aligned: countStatus(doc.data.entries, "aligned"),
+    processing: countStatus(doc.data.entries, "processing"),
+    done: countStatus(doc.data.entries, "done"),
     total: doc.data.entries.length,
   }));
 }
@@ -278,23 +291,29 @@ export function triageRepo(facts: Record<string, unknown> = {}) {
     });
 
   const liveBranches = new Set(listed.filter((w) => w.branch && w.exists).map((w) => w.branch as string));
-  const processing = pending
-    .filter((entry) => entry.status === "processing")
-    .map((entry) => {
-      const ref = entry.branch;
-      const kind = ref && ref.includes("/") ? (liveBranches.has(ref) ? "active" : "stale") : "no-ref";
-      return { name: entry.name, id: entry.id, text: entry.text, ref, kind };
-    });
+  /** 在途态分段（aligning/aligned/processing 同构）：branch 与存活 worktree 分支精确相等。 */
+  const stageOf = (status: EntryStatus) => {
+    const rows = pending
+      .filter((entry) => entry.status === status)
+      .map((entry) => {
+        const ref = entry.branch;
+        const kind = ref && ref.includes("/") ? (liveBranches.has(ref) ? "active" : "stale") : "no-ref";
+        return { name: entry.name, id: entry.id, text: entry.text, ref, kind };
+      });
+    return {
+      total: rows.length,
+      active: rows.filter((p) => p.kind === "active"),
+      stale: rows.filter((p) => p.kind === "stale"),
+      noRef: rows.filter((p) => p.kind === "no-ref"),
+    };
+  };
 
   return {
     main: main ? { path: main.path, head: main.head, branch: main.branch } : null,
     worktrees: listed,
-    processing: {
-      total: processing.length,
-      active: processing.filter((p) => p.kind === "active"),
-      stale: processing.filter((p) => p.kind === "stale"),
-      noRef: processing.filter((p) => p.kind === "no-ref"),
-    },
+    aligning: stageOf("aligning"),
+    aligned: stageOf("aligned"),
+    processing: stageOf("processing"),
     orphanDirs: (facts.orphanDirs as string[]) ?? [],
   };
 }
@@ -364,6 +383,7 @@ function runAdd(deps: WriteDeps): number {
       createdAt: now(),
       claimedAt: null,
       completedAt: null,
+      alignedAt: null,
     };
     writeTodoData(repoRoot, file, { ...data, entries: [...data.entries, entry] });
     return { ok: true };
@@ -388,12 +408,19 @@ function locateEntry(data: TodoFileData, match: string) {
   return { entry: hits[0] };
 }
 
+/**
+ * 两段式领取（迁移表见 ADR-0003）：open → aligning（写 branch 与 claimedAt，输出对齐
+ * 文档路径 + 必填小节）；aligning/processing 幂等（不写盘）；aligned → processing
+ * （提供了 --branch 才覆盖，未提供保留原引用）；done 拒绝。
+ */
 function runClaim(deps: WriteDeps): number {
   const { repoRoot, opts, now, log } = deps;
   const file = resolveTodoPath(String(opts.file), repoRoot) as string;
   const name = path.basename(file, ".json");
   const match = String(opts.match ?? "");
-  type ClaimOutcome = { ok: true; changed: boolean } | { ok: false; message: string };
+  type ClaimOutcome =
+    | { ok: true; changed: boolean; id: number; status: EntryStatus }
+    | { ok: false; message: string };
   const result = withTodoLock(repoRoot, name, (): ClaimOutcome => {
     if (!fs.existsSync(file)) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
     const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
@@ -404,10 +431,72 @@ function runClaim(deps: WriteDeps): number {
     }
     const entry = located.entry;
     if (entry.status === "done") return { ok: false, message: "ALREADY_DONE：条目已完成，不能再领取" };
-    if (entry.status === "processing") return { ok: true, changed: false };
-    entry.status = "processing";
-    entry.branch = typeof opts.branch === "string" && opts.branch !== "" ? opts.branch : null;
-    entry.claimedAt = now();
+    if (entry.status === "processing" || entry.status === "aligning") {
+      return { ok: true, changed: false, id: entry.id, status: entry.status };
+    }
+    const branch = typeof opts.branch === "string" && opts.branch !== "" ? opts.branch : null;
+    if (entry.status === "open") {
+      entry.status = "aligning";
+      entry.branch = branch;
+      if (entry.claimedAt === null) entry.claimedAt = now();
+    } else {
+      entry.status = "processing";
+      if (branch !== null) entry.branch = branch;
+    }
+    writeTodoData(repoRoot, file, parsed.data);
+    return { ok: true, changed: true, id: entry.id, status: entry.status };
+  });
+  if (!result.ok) {
+    log(result.message);
+    return 1;
+  }
+  if (!result.value.ok) {
+    log(result.value.message);
+    return 1;
+  }
+  const { changed, id, status } = result.value;
+  log(`已领取（${changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  if (status === "aligning") {
+    const sections = ALIGN_SECTIONS.map((section) => `## ${section}`).join("、");
+    log(`下一步：写对齐文档 ${alignDocRelPath(name, id)}（必填小节：${sections}），人工确认后运行 align`);
+  }
+  if (status === "processing") log("对齐已确认，进入 processing（此后无人值守至收口）");
+  return 0;
+}
+
+/**
+ * 对齐确认：aligning + 对齐文档结构校验通过 → aligned（写 alignedAt，--note 逐字进
+ * notes）；aligned 幂等；其余状态 NOT_ALIGNING。文档缺失/不完整均 fail-closed 不写盘。
+ */
+function runAlign(deps: WriteDeps): number {
+  const { repoRoot, opts, now, log } = deps;
+  const file = resolveTodoPath(String(opts.file), repoRoot) as string;
+  const name = path.basename(file, ".json");
+  const match = String(opts.match ?? "");
+  type AlignOutcome = { ok: true; changed: boolean } | { ok: false; message: string };
+  const result = withTodoLock(repoRoot, name, (): AlignOutcome => {
+    if (!fs.existsSync(file)) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
+    const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
+    if (!parsed.ok) return { ok: false, message: parsed.message };
+    const located = locateEntry(parsed.data, match);
+    if (!("entry" in located)) {
+      return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
+    }
+    const entry = located.entry;
+    if (entry.status === "aligned") return { ok: true, changed: false };
+    if (entry.status !== "aligning") return { ok: false, message: "NOT_ALIGNING：条目不在 aligning 状态，无法确认对齐" };
+    const docPath = alignDocPath(repoRoot, name, entry.id);
+    if (!fs.existsSync(docPath)) {
+      return { ok: false, message: `ALIGN_DOC_MISSING：缺少对齐文档 ${alignDocRelPath(name, entry.id)}` };
+    }
+    const validation = validateAlignDoc(fs.readFileSync(docPath, "utf8"), { name, id: entry.id });
+    if (!validation.ok) {
+      return { ok: false, message: `ALIGN_DOC_INCOMPLETE：对齐文档缺少小节：${validation.missing.join("、")}` };
+    }
+    entry.status = "aligned";
+    entry.alignedAt = now();
+    const note = opts.note;
+    if (typeof note === "string" && note !== "") entry.notes.push(note);
     writeTodoData(repoRoot, file, parsed.data);
     return { ok: true, changed: true };
   });
@@ -419,7 +508,7 @@ function runClaim(deps: WriteDeps): number {
     log(result.value.message);
     return 1;
   }
-  log(`已领取（${result.value.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  log(`已对齐（${result.value.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
   return 0;
 }
 
@@ -439,10 +528,15 @@ function runComplete(deps: WriteDeps): number {
     }
     const entry = located.entry;
     if (entry.status === "done") return { ok: true, changed: false };
+    const note = opts.note;
+    const hasNote = typeof note === "string" && note !== "";
+    // 取消/搁置 = 从对齐阶段收口，必须留原因（对齐门的人工留痕）
+    if ((entry.status === "aligning" || entry.status === "aligned") && !hasNote) {
+      return { ok: false, message: "NOTE_REQUIRED：从对齐阶段收口必须带 --note 说明原因" };
+    }
     entry.status = "done";
     entry.completedAt = now();
-    const note = opts.note;
-    if (typeof note === "string" && note !== "") entry.notes.push(note);
+    if (hasNote) entry.notes.push(note as string);
     writeTodoData(repoRoot, file, parsed.data);
     return { ok: true, changed: true };
   });
@@ -583,18 +677,26 @@ function runTriage(repoRoot: string, opts: Record<string, unknown>, deps: Record
     }
   }
   const p = report.processing;
-  log(`processing 条目：${p.total}（有工作台 ${p.active.length} · 引用分支已消失 ${p.stale.length} · 无分支引用 ${p.noRef.length}）`);
-  for (const item of p.stale) log(`  ⚠ ${item.name}#${item.id} 引用 ${item.ref}，已无对应 worktree`);
-  for (const item of p.noRef) log(`  · ${item.name}#${item.id} 无分支引用（人工确认状态）`);
+  const stages: Array<[string, typeof p]> = [
+    ["aligning", report.aligning],
+    ["aligned", report.aligned],
+    ["processing", report.processing],
+  ];
+  for (const [label, stage] of stages) {
+    log(`${label} 条目：${stage.total}（有工作台 ${stage.active.length} · 引用分支已消失 ${stage.stale.length} · 无分支引用 ${stage.noRef.length}）`);
+    for (const item of stage.stale) log(`  ⚠ ${item.name}#${item.id} 引用 ${item.ref}，已无对应 worktree`);
+    for (const item of stage.noRef) log(`  · ${item.name}#${item.id} 无分支引用（人工确认状态）`);
+  }
   log(report.orphanDirs.length === 0 ? "孤儿目录：无" : `孤儿目录：${report.orphanDirs.join("、")}`);
   return 0;
 }
 
 const USAGE = `用法：
   node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
-  node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|processing|done] [--file <name>]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|aligning|aligned|processing|done] [--file <name>]
   node .agents/skills/todo-cli/todo-cli/todo.mjs add --file <name> "需求描述" [--tag 词1,词2]
   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs align --file <name> --match "子串" [--note "说明"]
   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file <name> --match "子串" [--note "说明"]
   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]
@@ -604,7 +706,7 @@ const USAGE = `用法：
 仓库根默认由 git 自动发现（cwd 起）；也可在任意子命令前追加 --root <dir> 显式指定。`;
 
 /** 需要仓库根的子命令（help / 裸调用 / 未知命令都不要求 cwd 在 git 仓库内）。 */
-const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "complete", "lint", "triage", "migrate"]);
+const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "align", "complete", "lint", "triage", "migrate"]);
 
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
@@ -652,7 +754,7 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     }
     const rows = summarizeData(all.docs);
     if (opts.json) log(JSON.stringify(rows, null, 2));
-    else for (const r of rows) log(`${r.name.padEnd(24)} open ${r.open}  processing ${r.processing}  done ${r.done}  total ${r.total}`);
+    else for (const r of rows) log(`${r.name.padEnd(24)} open ${r.open}  aligning ${r.aligning}  aligned ${r.aligned}  processing ${r.processing}  done ${r.done}  total ${r.total}`);
     return 0;
   }
 
@@ -677,7 +779,7 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     return 1;
   }
 
-  if (command === "add" || command === "claim" || command === "complete") {
+  if (command === "add" || command === "claim" || command === "align" || command === "complete") {
     if (!opts.file) {
       log("缺少 --file <name>");
       return 1;
@@ -692,7 +794,9 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
       log('缺少 --match "子串"');
       return 1;
     }
-    return command === "claim" ? runClaim({ repoRoot, opts, now, log }) : runComplete({ repoRoot, opts, now, log });
+    if (command === "claim") return runClaim({ repoRoot, opts, now, log });
+    if (command === "align") return runAlign({ repoRoot, opts, now, log });
+    return runComplete({ repoRoot, opts, now, log });
   }
 
   // REPO_COMMANDS 已在上方穷举，走到这里说明命令表与分派漂移了（防御性兜底，非用户路径）。

@@ -25,8 +25,10 @@ import type { TodoEntry, TodoFileData } from "../schema.ts";
 
 /** 工具目录（入口 + 实现同居）：测试文件的上一级。 */
 const TOOL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-/** 拷进 fixture 的文件清单（不含 test/，避免递归拷测试）。 */
-const TOOL_FILES = ["todo.mjs", "core.ts", "lock.ts", "schema.ts", "query.ts", "migrate.ts"];
+/** 拷进 fixture 的文件：入口 + 全部实现模块（test/ 不拷；按目录枚举，新增模块自动带上）。 */
+function toolFiles(): string[] {
+  return ["todo.mjs", ...fs.readdirSync(TOOL_DIR).filter((name) => name.endsWith(".ts"))];
+}
 const SEED_ENTRIES = 200;
 const STATUS_MARK: Record<string, string> = { done: "[x]", processing: "[~]", open: "[ ]" };
 
@@ -58,6 +60,7 @@ function seedEntries(): TodoEntry[] {
       createdAt: null,
       claimedAt: null,
       completedAt: null,
+      alignedAt: null,
     });
   }
   return entries;
@@ -69,7 +72,7 @@ function makeFixture(): string {
   const toolDir = path.join(root, ".agents", "skills", "todo-cli", "todo-cli");
   fs.mkdirSync(path.join(root, "todos"), { recursive: true });
   fs.mkdirSync(toolDir, { recursive: true });
-  for (const file of TOOL_FILES) fs.copyFileSync(path.join(TOOL_DIR, file), path.join(toolDir, file));
+  for (const file of toolFiles()) fs.copyFileSync(path.join(TOOL_DIR, file), path.join(toolDir, file));
   const data: TodoFileData = { ...emptyTodoData("general-todo"), entries: seedEntries() };
   fs.writeFileSync(path.join(root, "todos", "general-todo.json"), serializeTodo(data));
   return root;
@@ -157,6 +160,7 @@ function withEntry(data: TodoFileData, text: string): TodoFileData {
         createdAt: null,
         claimedAt: null,
         completedAt: null,
+        alignedAt: null,
       },
     ],
   };

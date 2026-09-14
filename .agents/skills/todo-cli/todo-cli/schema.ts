@@ -10,13 +10,21 @@
  * 字段口径（L17「状态/文本/注记/分支引用/标签/三时间戳为原生字段」）：
  *   - text 是纯需求描述，不含任何 `（processing…）`/`（完成…）` 标注；
  *   - 标注进 notes（注记与缩进子行同池，保序）；branch/tags 为结构化字段；
- *   - 三时间戳 ISO 字符串或 null（迁移的历史条目为 null，不回填假数据）。
+ *   - 时间戳（含 v2 的 alignedAt）ISO 字符串或 null（迁移的历史条目为 null，不回填假数据）。
+ *
+ * schema v2（todo-cli-todo:11 对齐门）：状态五态 open/aligning/aligned/processing/done，
+ * 条目新增 alignedAt。**读 v1 兼容、写出一律 v2**：parseTodoJson 接受 version 1 或 2 并在
+ * 内存里归一成 v2（v1 的 alignedAt 视为 null）；任一写操作重写整文件 => 该文件一次性升级，
+ * 不做批量回填。旧版 CLI 读 v2 文件会明确报错（回滚路径见 ADR-0003）。
  */
 
-export const ENTRY_STATUSES = ["open", "processing", "done"] as const;
+export const ENTRY_STATUSES = ["open", "aligning", "aligned", "processing", "done"] as const;
 export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 
-/** 单条待办：schema v1 的完整字段集（原生字段，无 rawText——L17 待决策② 已定）。 */
+/** 持久 schema 当前版本：写出一律此版本；读兼容 1。 */
+export type TodoFileVersion = 1 | 2;
+
+/** 单条待办：schema v2 的完整字段集（原生字段，无 rawText）。 */
 export interface TodoEntry {
   /** 文件内稳定 id（max+1 分配，永不复用/重排）。 */
   id: number;
@@ -32,11 +40,13 @@ export interface TodoEntry {
   createdAt: string | null;
   claimedAt: string | null;
   completedAt: string | null;
+  /** 人工对齐确认时间（align 写入）；未确认/历史条目为 null。 */
+  alignedAt: string | null;
 }
 
 /** 单个 todo 文件的持久形态（`todos/<名>.json` 的 JSON 根对象）。 */
 export interface TodoFileData {
-  version: 1;
+  version: 2;
   /** md 时代文件头标题（迁移保真；新建文件 = `<名> TODO`）。 */
   title: string;
   entries: TodoEntry[];
@@ -73,7 +83,7 @@ function stringArray(value: unknown): string[] | undefined {
 }
 
 /** 单条条目校验；返回错误 reason（静态模板）或 null。未知字段忽略（向前兼容）。 */
-function validateEntry(value: unknown, label: string): string | null {
+function validateEntry(value: unknown, label: string, version: TodoFileVersion): string | null {
   if (!isRecord(value)) return "条目必须是对象";
   if (typeof value.id !== "number" || !Number.isInteger(value.id) || value.id < 1) return "条目 id 必须是正整数";
   if (typeof value.text !== "string") return "条目缺 text 字段";
@@ -84,6 +94,8 @@ function validateEntry(value: unknown, label: string): string | null {
   for (const field of ["createdAt", "claimedAt", "completedAt"] as const) {
     if (stringOrNull(value[field]) === undefined) return `条目 ${field} 必须是字符串或 null`;
   }
+  // v2 的 alignedAt 是必填原生字段；v1 无此字段（读入时归一为 null）。
+  if (version === 2 && stringOrNull(value.alignedAt) === undefined) return "条目 alignedAt 必须是字符串或 null";
   if (label === "") return "缺少文件标签";
   return null;
 }
@@ -102,12 +114,13 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
     return badJson(label, conflict);
   }
   if (!isRecord(parsed)) return badJson(label, false);
-  if (parsed.version !== 1) return badSchema(label, "version 必须是 1");
+  if (parsed.version !== 1 && parsed.version !== 2) return badSchema(label, "version 必须是 1 或 2");
   if (typeof parsed.title !== "string") return badSchema(label, "title 必须是字符串");
   if (!Array.isArray(parsed.entries)) return badSchema(label, "entries 必须是数组");
+  const version: TodoFileVersion = parsed.version;
   const entries: TodoEntry[] = [];
   for (const raw of parsed.entries) {
-    const reason = validateEntry(raw, label);
+    const reason = validateEntry(raw, label, version);
     if (reason !== null) return badSchema(label, reason);
     const record = raw as Record<string, unknown>;
     entries.push({
@@ -120,9 +133,10 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
       createdAt: stringOrNull(record.createdAt) ?? null,
       claimedAt: stringOrNull(record.claimedAt) ?? null,
       completedAt: stringOrNull(record.completedAt) ?? null,
+      alignedAt: version === 2 ? (stringOrNull(record.alignedAt) ?? null) : null,
     });
   }
-  return { ok: true, data: { version: 1, title: parsed.title, entries } };
+  return { ok: true, data: { version: 2, title: parsed.title, entries } };
 }
 
 /** 序列化：两空格缩进 + LF + 尾换行（git 可 diff 的规范形态）。 */
@@ -139,9 +153,9 @@ export function nextId(entries: TodoEntry[]): number {
   return max + 1;
 }
 
-/** 新建 todo 文件的空数据（title 沿旧 add 的 `# <名> TODO` 约定）。 */
+/** 新建 todo 文件的空数据（title 沿旧 add 的 `# <名> TODO` 约定；v2 写下）。 */
 export function emptyTodoData(name: string): TodoFileData {
-  return { version: 1, title: `${name} TODO`, entries: [] };
+  return { version: 2, title: `${name} TODO`, entries: [] };
 }
 
 /**

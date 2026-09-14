@@ -39,7 +39,7 @@ test("SKILL.md：frontmatter 合法（name 规则 + description 非空且 ≤102
 
 test("SKILL.md：命令面与入口/包装器路径齐备（与 core.ts 的 USAGE 同一套）", () => {
   const text = fs.readFileSync(SKILL_MD, "utf8");
-  for (const sub of ["summary", "list", "add", "claim", "complete", "lint", "triage", "migrate"]) {
+  for (const sub of ["summary", "list", "add", "claim", "align", "complete", "lint", "triage", "migrate"]) {
     assert.ok(text.includes(sub), `SKILL.md 缺子命令 ${sub}`);
   }
   assert.ok(text.includes(".agents/skills/todo-cli/todo-cli/todo.mjs"), "必须写明唯一入口路径");

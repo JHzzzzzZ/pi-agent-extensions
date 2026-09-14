@@ -22,8 +22,10 @@ import type { TodoEntry } from "../schema.ts";
 
 /** 工具目录（入口 + 实现同居）：测试文件的上一级。 */
 const TOOL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-/** 拷进 fixture 的文件清单（不含 test/，避免递归拷测试）。 */
-const TOOL_FILES = ["todo.mjs", "core.ts", "lock.ts", "schema.ts", "query.ts", "migrate.ts"];
+/** 拷进 fixture 的文件：入口 + 全部实现模块（test/ 不拷；按目录枚举，新增模块自动带上）。 */
+function toolFiles(): string[] {
+  return ["todo.mjs", ...fs.readdirSync(TOOL_DIR).filter((name) => name.endsWith(".ts"))];
+}
 // 2000 条种子条目：把每次读改写的 parse+stringify 窗口拉到毫秒级，让无锁实现必丢更新。
 const SEED_ENTRIES = 2000;
 
@@ -55,6 +57,7 @@ function seedEntries(): TodoEntry[] {
       createdAt: null,
       claimedAt: null,
       completedAt: null,
+      alignedAt: null,
     });
   }
   return entries;
@@ -66,7 +69,7 @@ function makeFixture(): string {
   const toolDir = path.join(root, ".agents", "skills", "todo-cli", "todo-cli");
   fs.mkdirSync(path.join(root, "todos"), { recursive: true });
   fs.mkdirSync(toolDir, { recursive: true });
-  for (const file of TOOL_FILES) fs.copyFileSync(path.join(TOOL_DIR, file), path.join(toolDir, file));
+  for (const file of toolFiles()) fs.copyFileSync(path.join(TOOL_DIR, file), path.join(toolDir, file));
   const data = { ...emptyTodoData("general-todo"), entries: seedEntries() };
   fs.writeFileSync(path.join(root, "todos", "general-todo.json"), serializeTodo(data));
   return root;
@@ -135,7 +138,7 @@ test("并发写：6 个真实子进程同时 add --file general，6 条全落、
   assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件");
 });
 
-test("并发 claim：2 个真实子进程同时领取不同条目，两个分支引用都在", { timeout: 120_000 }, async (t) => {
+test("并发 claim：2 个真实子进程同时领取不同条目，两个分支引用都在（open → aligning）", { timeout: 120_000 }, async (t) => {
   const root = makeFixture();
   t.after(() => removeFixture(root));
 
@@ -154,9 +157,62 @@ test("并发 claim：2 个真实子进程同时领取不同条目，两个分支
   const data = readJson(root);
   const a = data.entries.find((entry) => entry.text === first);
   const b = data.entries.find((entry) => entry.text === second);
-  assert.equal(a?.status, "processing");
+  assert.equal(a?.status, "aligning");
   assert.equal(a?.branch, "feat/claim-a", "甲条目分支引用必须落盘（丢更新时缺失）");
-  assert.equal(b?.status, "processing");
+  assert.equal(typeof a?.claimedAt, "string", "首次领取写 claimedAt");
+  assert.equal(b?.status, "aligning");
   assert.equal(b?.branch, "feat/claim-b", "乙条目分支引用必须落盘（丢更新时缺失）");
+  assert.deepEqual(leftoverLocks(root), []);
+});
+
+test("并发 align：2 个真实子进程同时确认同一条目——幂等、无丢更新、收尾可再领取进 processing", { timeout: 120_000 }, async (t) => {
+  const root = makeFixture();
+  t.after(() => removeFixture(root));
+
+  const text = "种子条目 0003 供并发测试使用";
+  const claim = await runCli(root, ["claim", "--file", "general", "--match", text, "--branch", "feat/align-seq"]);
+  assert.equal(claim.code, 0, `claim 应 exit 0（stderr=${claim.stderr.slice(0, 200)}）`);
+  const claimed = readJson(root).entries.find((entry) => entry.text === text);
+  assert.equal(claimed?.status, "aligning");
+
+  // 文档路径按条目真实 id 派生（种子文本编号 ≠ id：id 从 1 起、文本从 0000 起）
+  const docPath = path.join(root, "todos", "align", `general-todo#${claimed.id}.md`);
+  fs.mkdirSync(path.dirname(docPath), { recursive: true });
+  fs.writeFileSync(
+    docPath,
+    [
+      `# general-todo#${claimed.id} 并发对齐`,
+      "## 意图",
+      "并发确认同一条目只落一次。",
+      "## 范围",
+      "只测 align 幂等。",
+      "## 验收标准",
+      "终态 aligned 且无锁残留。",
+      "## 人工确认",
+      "确认人：测试。",
+      "",
+    ].join("\n"),
+  );
+
+  const results = await Promise.all([
+    runCli(root, ["align", "--file", "general", "--match", text]),
+    runCli(root, ["align", "--file", "general", "--match", text]),
+  ]);
+  assert.equal(results[0].code, 0, `align 甲 exit ${results[0].code}（stderr=${results[0].stderr.slice(0, 200)}）`);
+  assert.equal(results[1].code, 0, `align 乙 exit ${results[1].code}（stderr=${results[1].stderr.slice(0, 200)}）`);
+  assert.equal(results[0].stderr, "");
+  assert.equal(results[1].stderr, "");
+
+  const aligned = readJson(root).entries.find((entry) => entry.text === text);
+  assert.equal(aligned?.status, "aligned");
+  assert.equal(typeof aligned?.alignedAt, "string", "alignedAt 必须落盘（丢更新时缺失）");
+  assert.equal(aligned?.branch, "feat/align-seq", "幂等分支不得抹掉已落盘的分支引用");
+  assert.deepEqual(leftoverLocks(root), []);
+
+  const reclaim = await runCli(root, ["claim", "--file", "general", "--match", text, "--branch", "feat/align-seq-2"]);
+  assert.equal(reclaim.code, 0, `再领取 exit ${reclaim.code}（stderr=${reclaim.stderr.slice(0, 200)}）`);
+  const processing = readJson(root).entries.find((entry) => entry.text === text);
+  assert.equal(processing?.status, "processing", "aligned → processing 需再次 claim");
+  assert.equal(processing?.branch, "feat/align-seq-2", "提供了 --branch 则覆盖原值");
   assert.deepEqual(leftoverLocks(root), []);
 });
