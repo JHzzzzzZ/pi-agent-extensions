@@ -155,3 +155,10 @@
 - 根因：cockpit 组装 leader 子进程 env 时用**白名单替换**——只注入 run 三键、丢掉父进程环境；宿主 `applyHttpProxySettings` 注入的 `HTTPS_PROXY`/`NO_PROXY` 与 `PI_CODING_AGENT_DIR` 到不了 leader，再由 `stripLeaderEnv()` 传给外部成员时仍是残缺 env，本地 `BASE_URL` 被全局 httpProxy 劫持。
 - 处置（v1.26.0）：leader env 改**继承父进程环境 + 覆盖 run 三键**（`dispatch.ts` `stripRunScopedEnv()`：剥 3 个 leader 键与 resume 谱系键，其余原样保留），与成员侧 `stripLeaderEnv()` 的透传语义对齐；cockpit 4 条 env 继承/覆盖/透传测试锁定（含 NO_PROXY / PI_CODING_AGENT_DIR 透传与父进程残留 leader 键被覆盖）。
 - 教训：① 子进程 env 的默认正确姿势是「继承 + 覆盖」而非「白名单替换」——代理、宿主目录、凭据等进程级配置由宿主注入父进程环境，替换语义会静默切断；② `NO_PROXY` 是本地服务链路的隐性依赖，外部 CLI 走 localhost 时必须透传；③ 该类缺陷只在「父进程有环境 + 子进程走网络」的真实链路显形，纯 fake 测试与本地直连都抓不到。
+
+## askPortFrom 里 `return` promise 让 finally 提前执行，viewer 抢在对话框前重开（agent-team v1.27.0，#58 开发期）
+
+- 症状：长提问改造把宿主对话框分支抽成 `presentHostDialog()` 后，viewer↔对话框互斥的既有宿主级测试立刻转红——提问对话框已挂进 `editorContainer`，但 viewer overlay 又在同一瞬间重开盖住它（屏上只剩 viewer 帧）。
+- 根因：`try { ... return presentHostDialog(...) } finally { if (suspended) hooks.resumeViewer() }`——`return <promise>` 的 `finally` 在**返回语句求值时立即执行**（不等 promise 落定），于是 `resumeViewer()` 在用户还没作答时就重开了 viewer。原实现把 `await ctx.ui.input(...)` 写在 try 内，所以 finally 天然在作答后才跑。
+- 处置（v1.27.0）：所有「try/finally 内返回异步结果」的分支改 `return await …`（`presentHostDialog` 两个调用点 + 注释锁原因）；宿主级真实渲染测试（`test/viewer-ask-host.test.ts` 用例 1/2/3）在合入前就抓到了这次回归。
+- 教训：① `try/finally` 里的 `return promise` 与 `return await promise` 语义不同，凡是 finally 负责「恢复现场」（重开 overlay / 释放锁 / 还原状态）的代码一律 `return await`；② 这类缺陷只会在真实合成路径显形——纯逻辑 fake 看不到 overlay 与基础层的叠放顺序。
