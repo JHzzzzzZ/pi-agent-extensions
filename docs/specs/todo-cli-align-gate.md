@@ -45,7 +45,7 @@ CLI 无法证明「是人敲的」，能证明的只有两件机器可验证的�
 
 ## 实现决策
 
-- 新增 `todo-cli/align.ts`（纯函数、零 IO）：`alignDocPath` / `alignDocRelPath` / `ALIGN_SECTIONS` / `validateAlignDoc`。
+- 新增 `.agents/skills/todo-cli/todo-cli/align.ts`（当时的 `todo-cli/align.ts`；纯函数、零 IO）：`alignDocPath` / `alignDocRelPath` / `ALIGN_SECTIONS` / `validateAlignDoc`。
 - schema 升 v2：条目新增 `alignedAt: string | null`；`ENTRY_STATUSES` 五态；`parseTodoJson` 接受 `version: 1 | 2` 并在内存归一成 v2（v1 的 `alignedAt` 视为 null），写出一律 v2（任一写操作重写整文件 ⇒ 该文件一次性升级；不做批量回填）。
 - 历史语义保留：现存 `open`/`processing`/`done` 原义不变；历史 `processing` 视为「已开工」，不要求补对齐文档、不回退状态。
 - 展示/统计口径：list 行首标记 `[ ]` / `[?]`(aligning) / `[>]`(aligned) / `[~]`(processing) / `[x]`(done)；`summary` 五态 + total；`triage` 保留 `processing` 段语义不变并新增同构的 `aligning`/`aligned` 段；`lint` 不变。
@@ -63,7 +63,7 @@ CLI 无法证明「是人敲的」，能证明的只有两件机器可验证的�
 - migrate：新状态 md 渲染↔解析 round-trip 等价、日志五态计数、`to-md` 保 JSON。
 - 真子进程（concurrency）：claim 断言改 `aligning`；新增「claim → 写文档 → align → 再 claim」序列；两个子进程同时 `align` 同一条目（幂等、无丢更新、无锁残留）。
 - E2E：`--help` 用法含 `align`；`align` 缺 `--match` / 缺 `--file` 提示 + exit 1、stderr 恒空。
-- 必跑门：`npm run test:todo`、`npm run test:contract`、`npm run test:smoke`、`node tools/todo.mjs lint` 全绿。
+- 必跑门：`npm run test:todo`、`npm run test:contract`、`npm run test:smoke`、`node .agents/skills/todo-cli/todo-cli/todo.mjs lint` 全绿。
 
 ## 范围外
 

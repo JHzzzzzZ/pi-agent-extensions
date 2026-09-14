@@ -365,7 +365,7 @@ export function migrateFromMd(repoRoot: string, deps: MigrateDeps & { dryRun: bo
     }
   }
   deps.log(`已迁移 ${built.length} 个文件 · 顶层条目 ${counts.total}（${formatCounts(counts)}）· 注记 ${counts.notes} 条`);
-  deps.log("markdown 权威已删除（回滚：node tools/todo.mjs migrate to-md）");
+  deps.log("markdown 权威已删除（回滚：node .agents/skills/todo-cli/todo-cli/todo.mjs migrate to-md）");
   return 0;
 }
 

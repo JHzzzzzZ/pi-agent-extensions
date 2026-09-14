@@ -528,23 +528,26 @@ node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts   
 
 ## todo-cli
 
-`todos/` 工作流的**仓库级 CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/时间戳都是原生字段；schema v2）。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。唯一入口是仓库根的 `node tools/todo.mjs`（实现源 `todo-cli/schema|align|lock|query|migrate|core.ts`），`REPO_ROOT` 由脚本位置解析，任意 cwd 可用。
+`todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/时间戳都是原生字段；schema v2）。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|lock|query|migrate|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
 
 ```bash
-node tools/todo.mjs summary [--json]                    # 全量盘点（open / aligning / aligned / processing / done）
-node tools/todo.mjs list [--status open|aligning|aligned|processing|done] [--file <name>] [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]   # 按状态/文件/分支/标签/文本/领取时间组合查询（AND；--file 短名/全名等价，查不到报错）
-node tools/todo.mjs add --file <name> "描述" [--tag 词1,词2]   # 追加登记（跨文件查重，重复拒绝；--force 强制）
-node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]   # 两段式领取：open→aligning（写 branch/claimedAt）/ aligned→processing
-node tools/todo.mjs align --file <name> --match "子串" [--note "说明"]     # 对齐确认：校验对齐文档，aligning→aligned（写 alignedAt）
-node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]  # 完成：status→done，--note 逐字进 notes（aligning/aligned 收口必带 --note）
-node tools/todo.mjs lint                                # 单向核对 pi.extensions 扩展 ↔ todo 文件
-node tools/todo.mjs triage [--json]                     # 只读扫描 worktree↔条目关联与遗留（条目 branch 字段 ↔ worktree 分支精确相等；aligning/aligned/processing 三段同构）
-node tools/todo.mjs migrate from-md [--dry-run] [--force] | to-md   # md→JSON 一次性迁移（带逐文件等价自检）/ JSON→md 逃生回滚
-node tools/todo.mjs --help                              # 打印用法
+node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]                    # 全量盘点（open / aligning / aligned / processing / done）
+node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|aligning|aligned|processing|done] [--file <name>] [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]   # 按状态/文件/分支/标签/文本/领取时间组合查询（AND；--file 短名/全名等价，查不到报错）
+node .agents/skills/todo-cli/todo-cli/todo.mjs add --file <name> "描述" [--tag 词1,词2]   # 追加登记（跨文件查重，重复拒绝；--force 强制）
+node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file <name> --match "子串" [--branch feat/x]   # 两段式领取：open→aligning（写 branch/claimedAt）/ aligned→processing
+node .agents/skills/todo-cli/todo-cli/todo.mjs align --file <name> --match "子串" [--note "说明"]     # 对齐确认：校验对齐文档，aligning→aligned（写 alignedAt）
+node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file <name> --match "子串" [--note "说明"]  # 完成：status→done，--note 逐字进 notes（aligning/aligned 收口必带 --note）
+node .agents/skills/todo-cli/todo-cli/todo.mjs lint                                # 单向核对 pi.extensions 扩展 ↔ todo 文件
+node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]                     # 只读扫描 worktree↔条目关联与遗留（条目 branch 字段 ↔ worktree 分支精确相等；aligning/aligned/processing 三段同构）
+node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md   # md→JSON 一次性迁移（带逐文件等价自检）/ JSON→md 逃生回滚
+node .agents/skills/todo-cli/todo-cli/todo.mjs --help                              # 打印用法
+
+# 任意子命令可前置 --root <dir> 显式指定仓库根（跳过 git 发现，对非 git 目录也适用）
+# 或走包装器：sh .agents/skills/todo-cli/scripts/todo.sh <子命令> [参数]
 ```
 
 - **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / complete 收口）；CLI 只保证迁移顺序与对齐文档结构，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 id 取并集手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp 与锁在 gitignore 的 `todos/.todo-cli/`）
-- **测试** — 仓库根 `npm run test:todo`（60 个，含进程边界 E2E + 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **测试** — 仓库根 `npm run test:todo`（69 个，含进程边界 E2E + 根发现 / skill 结构 / 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
@@ -569,6 +572,6 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 ## 开发约定
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与仓库根的 `todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
+- **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`src/extensions/pwr/vendor/acorn.mjs` 为生成文件，勿修改

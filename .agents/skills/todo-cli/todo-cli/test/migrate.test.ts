@@ -173,11 +173,8 @@ test("migrateFromMd：落盘 JSON + 删 md + 清遗留索引；拒绝已存在�
 
   const out: string[] = [];
   assert.equal(migrateFromMd(root, { now: NOW, log: (l) => out.push(l), dryRun: false, force: false }), 0);
-  assert.match(
-    out.join("\n"),
-    /已迁移 2 个文件 · 顶层条目 3（open 2 \/ aligning 0 \/ aligned 0 \/ processing 0 \/ done 1）· 注记 1 条/,
-  );
-  assert.match(out.join("\n"), /回滚：node tools\/todo\.mjs migrate to-md/);
+  assert.match(out.join("\n"), /已迁移 2 个文件 · 顶层条目 3（open 2 \/ aligning 0 \/ aligned 0 \/ processing 0 \/ done 1）· 注记 1 条/);
+  assert.match(out.join("\n"), /回滚：node \.agents\/skills\/todo-cli\/todo-cli\/todo\.mjs migrate to-md/);
   assert.equal(fs.existsSync(path.join(root, "todos", "general-todo.md")), false, "迁移后 md 删除");
   assert.equal(fs.existsSync(path.join(root, "todos", ".todo-cli", "index.db")), false, "遗留索引清理");
 

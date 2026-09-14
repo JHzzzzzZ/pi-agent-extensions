@@ -2,8 +2,10 @@
  * todo-cli 并发写边界测试（方案 C 重写版）。
  *
  * 为什么必须真实进程 + 真实文件系统：跨进程锁互斥、丢更新在单进程注入下不可见——
- * 本文件把 `todo-cli/` 与 `tools/todo.mjs` 拷进真实临时仓库 fixture，用
- * `node tools/todo.mjs add/claim/align` 驱动 N 个真实子进程同时读改写同一 JSON 文件。
+ * 本文件把工具（todo.mjs + *.ts）拷进真实临时仓库 fixture 的
+ * `.agents/skills/todo-cli/todo-cli/`，用 `--root <fixture>` 显式指定仓库根，
+ * 驱动 N 个真实子进程同时读改写同一 JSON 文件（git 自动发现路径另见
+ * root-discovery.test.ts，避免重 fixture 依赖 .git 目录）。
  * 锁（lock.ts，O_EXCL + 重试）串行化临界区：并发全落、stderr 恒空、收尾无锁残留。
  */
 
@@ -18,7 +20,12 @@ import { fileURLToPath } from "node:url";
 import { emptyTodoData, parseTodoJson, serializeTodo } from "../schema.ts";
 import type { TodoEntry } from "../schema.ts";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+/** 工具目录（入口 + 实现同居）：测试文件的上一级。 */
+const TOOL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** 拷进 fixture 的文件：入口 + 全部实现模块（test/ 不拷；按目录枚举，新增模块自动带上）。 */
+function toolFiles(): string[] {
+  return ["todo.mjs", ...fs.readdirSync(TOOL_DIR).filter((name) => name.endsWith(".ts"))];
+}
 // 2000 条种子条目：把每次读改写的 parse+stringify 窗口拉到毫秒级，让无锁实现必丢更新。
 const SEED_ENTRIES = 2000;
 
@@ -56,16 +63,20 @@ function seedEntries(): TodoEntry[] {
   return entries;
 }
 
-/** 真实临时仓库 fixture：自带 tools/todo.mjs + todo-cli/，REPO_ROOT 由脚本位置解析到 fixture。 */
+/** 真实临时仓库 fixture：工具落 `<root>/.agents/skills/todo-cli/todo-cli/`，仓库根用 `--root` 指定。 */
 function makeFixture(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-concurrency-"));
+  const toolDir = path.join(root, ".agents", "skills", "todo-cli", "todo-cli");
   fs.mkdirSync(path.join(root, "todos"), { recursive: true });
-  fs.mkdirSync(path.join(root, "tools"), { recursive: true });
-  fs.cpSync(path.join(REPO_ROOT, "todo-cli"), path.join(root, "todo-cli"), { recursive: true });
-  fs.copyFileSync(path.join(REPO_ROOT, "tools", "todo.mjs"), path.join(root, "tools", "todo.mjs"));
+  fs.mkdirSync(toolDir, { recursive: true });
+  for (const file of toolFiles()) fs.copyFileSync(path.join(TOOL_DIR, file), path.join(toolDir, file));
   const data = { ...emptyTodoData("general-todo"), entries: seedEntries() };
   fs.writeFileSync(path.join(root, "todos", "general-todo.json"), serializeTodo(data));
   return root;
+}
+
+function cliPath(root: string): string {
+  return path.join(root, ".agents", "skills", "todo-cli", "todo-cli", "todo.mjs");
 }
 
 function removeFixture(root: string): void {
@@ -74,7 +85,7 @@ function removeFixture(root: string): void {
 
 function runCli(root: string, args: string[], timeoutMs = 60_000): Promise<CliResult> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [path.join(root, "tools", "todo.mjs"), ...args], {
+    const child = spawn(process.execPath, [cliPath(root), "--root", root, ...args], {
       cwd: root,
       env: cleanEnv(),
       timeout: timeoutMs,

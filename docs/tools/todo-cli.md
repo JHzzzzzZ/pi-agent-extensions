@@ -1,10 +1,14 @@
-# todo-cli — todos/ 工作流仓库 CLI
+# todo-cli — todos/ 工作流 CLI（仓库内 skill 资产）
 
-> last verified @ fa630a3
+> last verified @ 1ace21e
 
 ## 职责与边界
 
-把 AGENTS.md 规则 1 的 `todos/` 工作流（登记 → 领取 → 对齐 → 完成 + 开工/收尾盘点 triage）从「agent 手写 grep + edit」变成可测试的原子命令。**CLI-only**：不注册任何 Pi 扩展 API（无 agent 工具、无冒号命令）、无 npm 依赖、无 Pi/宿主依赖；`node tools/todo.mjs <子命令>` 是唯一入口，任意 cwd 可用。
+把 AGENTS.md 规则 1 的 `todos/` 工作流（登记 → 领取 → 对齐 → 完成 + 开工/收尾盘点 triage）从「agent 手写 grep + edit」变成可测试的原子命令。**CLI-only**：不注册任何 Pi 扩展 API（无 agent 工具、无冒号命令）、无 npm 依赖、无 Pi/宿主依赖。
+
+**位置（todo-cli-todo:9）**：工具是仓库内**项目级 skill** 的资产，入口与实现同居：`<仓库>/.agents/skills/todo-cli/todo-cli/todo.mjs`（技能根另有 `SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器）。仓库根曾平铺的 `tools/todo.mjs` + `todo-cli/` 已删除，没保留转发壳。
+
+**仓库根发现**：`deps.repoRoot`（测试注入）> `--root <dir>`（相对 cwd 解析、必须是已存在目录）> `git rev-parse --show-toplevel`（以 `process.cwd()` 为工作目录，仓库子目录亦可）> **fail-closed**（静态消息 + exit 1，绝不静默回退 cwd）。因此任意 git 仓库任意 cwd 都作用于**当前 cwd 所属仓库**的 `todos/`（在 `.worktrees/<名>` 里调用 → 该 worktree 的台账，不再是旧日的「脚本所在主仓」）。`--help` / 裸调用 / 未知命令不触发根发现。
 
 **存储（方案 C，todos/todo-cli-todo.md:17）**：`todos/<名>.json` 是唯一持久真相——无 markdown、无 sqlite 索引层、无降级路径。决策取舍见 `docs/adr/0002-todos-json-storage.md`；术语见根 `CONTEXT.md`。
 
@@ -14,19 +18,19 @@
 
 ## 文件地图
 
-- `todo-cli/schema.ts` — JSON schema 纯函数：`parseTodoJson`（fail-closed：非法 JSON/合并冲突标记/字段缺失都明确报错）、`serializeTodo`（两空格缩进 + LF 尾换行）、`nextId`、`emptyTodoData`、`normalizeText`。**schema v2**：`{version, title, entries[{id,text,status,branch,tags,notes,createdAt,claimedAt,completedAt,alignedAt}]}`；读接受 `version: 1|2` 并归一成 v2（v1 的 alignedAt 视为 null），写出一律 v2，v2 条目缺 `alignedAt` 即 fail-closed。
-- `todo-cli/align.ts` — 对齐文档契约纯函数（零 IO）：`alignDocRelPath`/`alignDocPath`（固定派生 `todos/align/<文件基名>#<id>.md`）、`ALIGN_SECTIONS`（意图/范围/验收标准/人工确认）、`validateAlignDoc`（条目标记 `<名>#<id>` + 四小节各需非空正文；返回缺项清单）。
-- `todo-cli/lock.ts` — 并发安全原语：`acquireTodoLock`/`withTodoLock`（每文件一把 O_EXCL 锁 `todos/.todo-cli/locks/<名>.lock`，内容 `{pid, startedAt}`；busy 静默重试 100ms/30s 上限；残留锁按「内容损坏 / pid 已死 / 超 stale 阈值 60s」抢占；同进程重入放行；`installProcessHooks` 在 exit/SIGINT/SIGTERM 清自持锁——SIGKILL 靠 stale 抢占兜底）；`atomicWriteFile`（temp+rename，tmp 在 `todos/.todo-cli/tmp/`，写前清理 10 分钟过期残留）。
-- `todo-cli/query.ts` — 纯函数查询引擎（`applyEntryFilter`/`sortQueryEntries`/`serializeEntries`/`parseFilterOptions`/`statusMark`），零 IO；五态标记 `[ ]`/`[?]`/`[>]`/`[~]`/`[x]`。
-- `todo-cli/migrate.ts` — markdown ↔ JSON 双向迁移：旧 md 解析（顶层条目 + 括号组剥 `aligning`/`aligned`/`processing`/`完成` 标注 + 缩进子行归并进 notes）、`buildTodoData`（标注 → status/branch/notes，产 v2）、`renderMarkdown`（规范形态，五态标注还原）、`migrateFromMd`（逐文件「渲染→再解析→再构建」等价自检，全过后落盘 + 删 md + 清遗留 index.db*）/`migrateToMd`（逃生回滚，只写 md 绝不删 JSON）。
-- `todo-cli/core.ts` — CLI 调度 `main(argv, deps)`（`repoRoot`/`log`/`now`/`execGit` 可注入）+ 查重/路径安全/lint/triage 纯函数 + 八子命令与 migrate 接线。
-- `tools/todo.mjs` — 唯一 CLI 入口（薄壳）：`export * from "../todo-cli/core.ts"` + 直接运行时转发 `main`；根测试 import 此路径。
-- 根 `test/todo-cli.test.ts` — 21 个测试：命令闭环（两段式 claim / align 门 / complete 收口门 / list / summary / lint / triage，临时 fixture 上跑 `main(deps)`）+ fail-closed + 进程边界 E2E。
-- `todo-cli/test/` — `schema.test.ts`(7)、`align.test.ts`(6)、`lock.test.ts`(8，含真子进程持锁/exit 释放)、`query.test.ts`(5)、`migrate.test.ts`(9，roundtrip 恒等/编排/时间戳回填)、`concurrency.test.ts`(3，真实子进程并发 add/claim/align)、`interrupt.test.ts`(1，SIGKILL 轮次 + stale 自愈 + tmp 清理)。
+- `.agents/skills/todo-cli/todo-cli/schema.ts` — JSON schema 纯函数：`parseTodoJson`（fail-closed：非法 JSON/合并冲突标记/字段缺失都明确报错）、`serializeTodo`（两空格缩进 + LF 尾换行）、`nextId`、`emptyTodoData`、`normalizeText`。**schema v2**：`{version, title, entries[{id,text,status,branch,tags,notes,createdAt,claimedAt,completedAt,alignedAt}]}`；读接受 `version: 1|2` 并归一成 v2（v1 的 alignedAt 视为 null），写出一律 v2，v2 条目缺 `alignedAt` 即 fail-closed。
+- `.agents/skills/todo-cli/todo-cli/align.ts` — 对齐文档契约纯函数（零 IO）：`alignDocRelPath`/`alignDocPath`（固定派生 `todos/align/<文件基名>#<id>.md`）、`ALIGN_SECTIONS`（意图/范围/验收标准/人工确认）、`validateAlignDoc`（条目标记 `<名>#<id>` + 四小节各需非空正文；返回缺项清单）。
+- `.agents/skills/todo-cli/todo-cli/lock.ts` — 并发安全原语：`acquireTodoLock`/`withTodoLock`（每文件一把 O_EXCL 锁 `todos/.todo-cli/locks/<名>.lock`，内容 `{pid, startedAt}`；busy 静默重试 100ms/30s 上限；残留锁按「内容损坏 / pid 已死 / 超 stale 阈值 60s」抢占；同进程重入放行；`installProcessHooks` 在 exit/SIGINT/SIGTERM 清自持锁——SIGKILL 靠 stale 抢占兜底）；`atomicWriteFile`（temp+rename，tmp 在 `todos/.todo-cli/tmp/`，写前清理 10 分钟过期残留）。
+- `.agents/skills/todo-cli/todo-cli/query.ts` — 纯函数查询引擎（`applyEntryFilter`/`sortQueryEntries`/`serializeEntries`/`parseFilterOptions`/`statusMark`），零 IO；五态标记 `[ ]`/`[?]`/`[>]`/`[~]`/`[x]`。
+- `.agents/skills/todo-cli/todo-cli/migrate.ts` — markdown ↔ JSON 双向迁移：旧 md 解析（顶层条目 + 括号组剥 `aligning`/`aligned`/`processing`/`完成` 标注 + 缩进子行归并进 notes）、`buildTodoData`（标注 → status/branch/notes，产 v2）、`renderMarkdown`（规范形态，五态标注还原）、`migrateFromMd`（逐文件「渲染→再解析→再构建」等价自检，全过后落盘 + 删 md + 清遗留 index.db*）/`migrateToMd`（逃生回滚，只写 md 绝不删 JSON）。
+- `.agents/skills/todo-cli/todo-cli/core.ts` — CLI 调度 `main(argv, deps)`（`repoRoot`/`cwd`/`log`/`now`/`execGit` 可注入）+ `resolveRepoRoot`（根发现纯函数）+ 查重/路径安全/lint/triage 纯函数 + 八子命令与 migrate 接线。
+- `.agents/skills/todo-cli/todo-cli/todo.mjs` — 唯一 CLI 入口（与实现同目录）：`export * from "./core.ts"` + 直接运行时转发 `main`。
+- `.agents/skills/todo-cli/SKILL.md` + `scripts/todo.sh` — 技能面：命令参考卡（frontmatter 合法即被 Pi 当项目级 skill 加载）与包装器（定位内层工具，不指向已删除的旧入口）。
+- `test/`（同一 `todo-cli/` 目录内）— `todo-cli.test.ts`(21，命令闭环：两段式 claim / align 门 / complete 收口门 / list / summary / lint / triage + fail-closed + 4 个只读进程边界 E2E)、`root-discovery.test.ts`(6，`--root`/git/失败路径纯测 + 真实 `git init` 子目录发现 E2E)、`skill.test.ts`(2，SKILL.md frontmatter 与命令面 + 包装器指向)、`schema.test.ts`(7)、`align.test.ts`(6)、`lock.test.ts`(8)、`query.test.ts`(5)、`migrate.test.ts`(9)、`concurrency.test.ts`(3，真子进程并发 add/claim/align)、`interrupt.test.ts`(1，SIGKILL 轮次 + stale 自愈 + tmp 清理)。
 
 ## 核心数据流
 
-argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损坏整体 fail-closed）→ 纯函数编排 → 写路径 = `withTodoLock(名)` 临界区内 read-parse-mutate-`serializeTodo` → `atomicWriteFile`（temp+rename）。所有输出走 `log`，**stderr 恒空**（锁忙重试静默；超时是 stdout 静态消息 + exit 1）。`REPO_ROOT` 由脚本位置解析，任意 cwd 调用都作用于本仓库；`.gitattributes` 锁 `todos/*.json` 与 `todos/align/*.md` 的 `text eol=lf`；`.gitignore` 盖 `todos/.todo-cli/`。
+argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repoRoot` > `--root` > `git rev-parse --show-toplevel`；失败即中止，不碰文件）→ 读 `todos/*.json`（任一损坏整体 fail-closed）→ 纯函数编排 → 写路径 = `withTodoLock(名)` 临界区内 read-parse-mutate-`serializeTodo` → `atomicWriteFile`（temp+rename）。所有输出走 `log`，**stderr 恒空**（锁忙重试静默；发现失败/超时是 stdout 静态消息 + exit 1；git 调用的 stderr 被吞）。`.gitattributes` 锁 `todos/*.json` 与 `todos/align/*.md` 的 `text eol=lf`（另：`*.sh` 锁 LF，避免 Windows 检出把 `scripts/todo.sh` 变 CRLF）；`.gitignore` 盖 `todos/.todo-cli/`。
 
 ## 状态机迁移表（对齐门）
 
@@ -65,6 +69,7 @@ argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损�
 - **JSON 是唯一真相**：不手工编辑 `todos/*.json`；损坏（非法 JSON/合并冲突标记）→ 明确报错 exit 1，绝不静默修复或猜。写出一律 v2；v1 文件被写一次即整体升级（不做批量回填）。
 - **退出码语义**：`--help` → 0；裸调用 → USAGE、1；未知命令/子命令 → 提示 + USAGE、1；成功 → 0；门不过/缺文档/锁超时/文件损坏 → 静态消息 + 1。`main` 不抛异常（除依赖注入的原生异常）。
 - **路径安全**：`resolveTodoPath` 拒绝穿越；输入 `x`/`x-todo`/`x-todo.md`/`x-todo.json` 都归一到 `todos/x-todo.json`；`list --file` 按同一归一（core 用 docs 里的真实归属名回填 filter），查不到 → 明确报错 exit 1，绝不倒向空结果。对齐文档路径固定派生（无 `--doc` 自由路径 ⇒ 无穿越面）。
+- **根发现唯一规则**：`--root` 显式 > git 自动发现；`--root` 只接受已存在目录（相对 cwd 解析）。删除了模块级 `REPO_ROOT` 常量与「脚本位置即仓库根」的隐式契约——工具位置与仓库根已解耦。
 - **match 唯一定位**：`claim`/`align`/`complete` 的 `--match` 是纯描述 text 的子串（notes 不参与）；缺失/多条报错，绝不猜第一条。
 - **查重口径**：归一化文本后 exact/similar（包含方向短边 ≥8）两级；`add` 默认拒绝重复，`--force` 才写入。
 - **动作分离**：`add` 只追加 open 条目（`--tag` 写原生标签）；`claim` 两段式（open→aligning / aligned→processing，aligning/processing 幂等不写盘）；`align` 只做 aligning→aligned（文档结构校验 fail-closed）；`complete` 转 done + `--note` 逐字进 notes，从 aligning/aligned 收口必须带 `--note`。
@@ -91,10 +96,13 @@ argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损�
 - **锁残留与 stale 抢占**：进程挂起超 60s 后其锁可被抢占（恢复后写失败，重跑即可）；Windows SIGKILL 不跑 exit 钩子、锁文件残留，pid 已死即被下一次写抢占，无需人工清理。
 - **时间戳 null 的含义**：迁移前历史条目三时间戳为 null（`--claimed-since` 对 null 不命中）；历史 `processing` 视为「已开工」，不要求补对齐文档、不回退状态。
 - **合并冲突**：两个 worktree 各自 add/claim 后合并，JSON 冲突需手工按 id 取并集（文本 diff 可读）；解决前所有命令 fail-closed 报「合并冲突」。
+- **cwd 决定仓库（行为变更，#9）**：在 `.worktrees/<名>` 内调用作用于该 worktree 的 `todos/`（旧版恒指向工具所在的主仓）；在另一个仓库里用绝对路径调用则作用于**那个**仓库。要跨目录指定目标仓库就显式 `--root`。
+- **非 git 目录不是错误场景**：无 `--root` 且 cwd 不在仓库内 → 静态报错退出 1（仅 `--help`/裸调用/未知命令例外）；`--root` 指到 git 不可用的目录时，只读命令可跑，`triage` 报「不是 git 仓库」而不抛栈。
+- **「非 git 目录」很稀缺**：本机 `~`（`C:\Users\<用户>`）本身就是 git 仓库，`os.tmpdir()` 下建的目录往往仍在某个仓库内——所以「cwd 不在仓库」的进程级 E2E 不可移植（改用注入 execGit 的单测锁定），要确定作用于哪个仓库就显式 `--root`。
 
 ## 改动清单
 
-- 必跑：`npm run test:todo`（glob = `test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`；60 个，2026-09-14 实测全绿）+ `node tools/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
-- 改行为：同步根 `test/todo-cli.test.ts` + 本卡；改命令面：同步 `core.ts` 的 `USAGE` + 本卡。
+- 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；69 个，2026-09-14 实测全绿）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
+- 改行为：同步 `test/todo-cli.test.ts`（命令面）/ `test/root-discovery.test.ts`（根发现）+ 本卡；改命令面：同步 `core.ts` 的 `USAGE` + `SKILL.md` + 本卡。
 - 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0002`/`0003` 同步。
-- 新增子命令/flags：先补根测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变。
+- 新增子命令/flags：先补测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变（`REPO_COMMANDS` 同步，否则新命令会被当未知命令）。

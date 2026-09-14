@@ -14,13 +14,13 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 
 ### 需求生命周期（按序执行）
 
-1. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建同名文件；通用/跨插件需求 → `todos/general-todo.json`；仓库级工具 → 该工具专门文件（现 `todo-cli-todo.json`、`agent-manager-todo.json`）。`todos/` 唯一读写入口是 todo CLI（`node tools/todo.mjs`，手工编辑 JSON 视为破坏存储；命令面/锁/查重口径见 `docs/tools/todo-cli.md`）：已有条目 `claim` 领取（`--branch` 写入分支引用；两段式——首次领取进 `aligning`，对齐确认后再次 `claim` 才进 `processing`），没有则 `add` 追加；取消/搁置用 `complete --note "<原因>"` 收口（从 `aligning`/`aligned` 收口必带 `--note`）——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 id 取并集手工解决。
+1. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建同名文件；通用/跨插件需求 → `todos/general-todo.json`；仓库级工具 → 该工具专门文件（现 `todo-cli-todo.json`、`agent-manager-todo.json`）。`todos/` 唯一读写入口是 todo CLI（`node .agents/skills/todo-cli/todo-cli/todo.mjs`，手工编辑 JSON 视为破坏存储；命令面/锁/查重口径见 `docs/tools/todo-cli.md`）：已有条目 `claim` 领取（`--branch` 写入分支引用；两段式——首次领取进 `aligning`，对齐确认后再次 `claim` 才进 `processing`），没有则 `add` 追加；取消/搁置用 `complete --note "<原因>"` 收口（从 `aligning`/`aligned` 收口必带 `--note`）——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 id 取并集手工解决。
 2. **先对齐意图（grill-with-docs）**——登记后、动手前，先跑 `/skill:grill-with-docs`（mattpocock/skills 库：内部为 grilling 访谈 + domain-modeling 建模）与人类把意图、边界、术语问清，**对齐产物必须落盘**：逐条对齐文档落 `todos/align/<名>#<id>.md`（四小节 `意图/范围/验收标准/人工确认`，由 `align` 做结构校验；门形态见 `docs/adr/0003-todo-align-gate.md`）、术语与领域词汇进 `CONTEXT.md`、决策进 `docs/adr/`；只留在会话里的对齐视为没对齐。
 3. **规格落盘（to-spec）**——对齐后用 `/skill:to-spec` 把结论综合成规格文档（问题陈述/方案/用户故事/实现决策/测试决策/范围外）落盘到 `docs/specs/`；规格与实现同变更同步，不许只活在会话或工单里。需求跟踪始终以 `todos/` 为准（第 1 步），不引入外部 issue tracker。
 4. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记（自测、合并与清理在第 7 步）。
 5. **TDD 测试先行**——新能力、bug 修复与重构一律测试先行：先写能复现问题或锁定新行为的失败测试（红），再实现到绿；没有保护网不动被测代码。
 6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
-7. **交付四处同步 + 收尾**——自测达标（全量测试绿 + `npm run typecheck` 零错误）才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`，并确认对齐门已过（对齐文档 + 人工确认）后 `complete --note` 收口 `todos/` 条目。任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node tools/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
+7. **交付四处同步 + 收尾**——自测达标（全量测试绿 + `npm run typecheck` 零错误）才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`，并确认对齐门已过（对齐文档 + 人工确认）后 `complete --note` 收口 `todos/` 条目。任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node .agents/skills/todo-cli/todo-cli/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
 
 ### 全程硬约束（任何阶段都适用）
 
@@ -31,8 +31,9 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 ## 关键目录
 
 - `docs/` — agent 知识库，入口是 [`docs/INDEX.md`](docs/INDEX.md) 路由表：`extensions/<插件名>.md` 每插件一卡、`cross/` 横切契约、`tools/<工具名>.md` 仓库工具卡、`adr/` 决策记录、`specs/` 规格（红线 3）、`incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；每卡 ≤100 行、头部带 `last verified @ <commit>`，改代码须同步对应卡片与该行。
-- `test/` — 仓库根三层自检（契约 / 安装冒烟纯逻辑 / todo CLI），命令见下节。
-- `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 12 扩展加载）、`todo.mjs`（todo CLI 唯一入口）。用法见脚本头与 `docs/tools/`。
+- `test/` — 仓库根自检（状态条契约 / 安装冒烟纯逻辑）；todo CLI 的测试随工具住在 `.agents/skills/todo-cli/todo-cli/test/`，由根脚本 `npm run test:todo` 指向该 glob（命令见下节）。
+- `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 12 扩展加载）。用法见脚本头与 `docs/tools/`。
+- `.agents/skills/todo-cli/` — 仓库内项目级 skill：`SKILL.md`（命令参考卡）+ `scripts/todo.sh` 包装器 + `todo-cli/`（todo CLI 入口与实现同居，任意 git 仓库任意 cwd 可用；仓库根解析 = `--root` > `git rev-parse --show-toplevel`，见 `docs/tools/todo-cli.md`）。
 - `src/extensions/<插件名>/` — 12 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
 - `agent-manager/` — 独立 Node 工具，**非扩展**：不 import 宿主 SDK、不注册 pi 扩展点、已从根 `pi.extensions` 注销，仅 listen `127.0.0.1`；边界与数据流见 `docs/tools/agent-manager.md`。
 
@@ -54,8 +55,8 @@ node --test runtime/test/scheduler.test.ts
 ```bash
 npm run test:contract   # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke      # 安装冒烟工具的纯逻辑单测
-npm run test:todo       # todo CLI 单测（含进程边界 E2E）
-node tools/todo.mjs summary                            # todo 全量盘点
+npm run test:todo       # todo CLI 单测（随工具住在 .agents/skills/todo-cli/todo-cli/test/，含进程边界 E2E）
+node .agents/skills/todo-cli/todo-cli/todo.mjs summary # todo 全量盘点
 node tools/install-smoke.mjs                           # 端到端：临时配置目录 + 真实 pi，验 12 扩展加载（需已装 pi）
 node tools/install-smoke.mjs --task                    # 追加真实模型任务（需鉴权 + 网络）
 node tools/install-smoke.mjs --install <pi install 源> # 真跑 README 推荐安装路径（联网）
@@ -99,7 +100,7 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
 - **TUI 约定（其余扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
 - **状态条契约（跨插件）：** 唯一权威在 `docs/cross/status-bar.md`——秒对齐 `aligned-ticker.ts`、写入前文本指纹、footer 排序前缀、段分隔与首段定格、widget 栈顺序（宿主行为，本仓库不打补丁，走上游 issue）。改任何状态条/widget 行为前先读该卡。
-- 缩进：`src/extensions/pwr/` 用 tab，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/`、`solo-mode/` 等）与仓库根的 `todo-cli/`、`agent-manager/` 用 2 空格。
+- 缩进：`src/extensions/pwr/` 用 tab，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格。
 
 
 ## 编码规范（Clean Code）

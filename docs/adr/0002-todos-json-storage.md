@@ -1,6 +1,6 @@
 # todos 存储改为 JSON 唯一权威（方案 C），去掉 markdown 与 sqlite 索引
 
-2026-09-12，todos/todo-cli-todo.md:17（用户 2026-09-11 指定登记）。todos 的持久层经历了三代：markdown 手工编辑（格式破坏/漏查重频发）→ markdown 权威 + node:sqlite 派生索引（L14，引入实验依赖、降级路径、stat 漂移、时间戳不入 git 四个新问题）→ 本决策：`todos/<名>.json` 是唯一持久真相，CLI（`node tools/todo.mjs`）是唯一读写入口，状态/文本/注记/分支引用/标签/三时间戳都是原生字段，并发互斥用自研每文件 O_EXCL 锁 + temp+rename 原子写替代 sqlite 事务。markdown 彻底退出（`migrate from-md` 一次性迁入，`migrate to-md` 常驻逃生回滚但不是视图）。
+2026-09-12，todos/todo-cli-todo.md:17（用户 2026-09-11 指定登记）。todos 的持久层经历了三代：markdown 手工编辑（格式破坏/漏查重频发）→ markdown 权威 + node:sqlite 派生索引（L14，引入实验依赖、降级路径、stat 漂移、时间戳不入 git 四个新问题）→ 本决策：`todos/<名>.json` 是唯一持久真相，CLI（`node .agents/skills/todo-cli/todo-cli/todo.mjs`）是唯一读写入口，状态/文本/注记/分支引用/标签/三时间戳都是原生字段，并发互斥用自研每文件 O_EXCL 锁 + temp+rename 原子写替代 sqlite 事务。markdown 彻底退出（`migrate from-md` 一次性迁入，`migrate to-md` 常驻逃生回滚但不是视图）。
 
 ## Considered Options
 

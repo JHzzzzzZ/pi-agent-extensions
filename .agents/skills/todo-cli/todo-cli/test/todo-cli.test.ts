@@ -1,11 +1,11 @@
 /**
- * todo CLI 的纯逻辑 + 临时目录功能单测（工具本体见 tools/todo.mjs；方案 C 存储）。
+ * todo CLI 的纯逻辑 + 临时目录功能单测（工具本体与测试同居：`.agents/skills/todo-cli/todo-cli/`）。
  *
  * 边界说明：这里覆盖查重/路径解析/命令闭环/triage 可在文件系统边界内验证的行为；
  * 存储是 `todos/<名>.json`（方案 C：JSON 唯一权威；v2 = 对齐门五态），写操作走锁 +
- * temp+rename 原子落盘——并发/中断边界在 todo-cli/test/{lock,concurrency,interrupt}.test.ts
- * 用真实进程覆盖。本文件只在临时 fixture 目录演练写操作，不触碰仓库真实 todos/；末尾
- * 进程边界 E2E 只跑只读命令（summary/--help/未知命令/缺参报错）。
+ * temp+rename 原子落盘——并发/中断边界在 test/{lock,concurrency,interrupt}.test.ts 用
+ * 真实进程覆盖，仓库根发现（--root / git）在 test/root-discovery.test.ts 覆盖。本文件
+ * 只在临时 fixture 目录演练写操作，不触碰仓库真实 todos/；末尾的进程边界 E2E 只跑只读命令。
  */
 
 import test from "node:test";
@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -24,11 +24,13 @@ import {
   parseWorktrees,
   resolveTodoPath,
   triageRepo,
-} from "../tools/todo.mjs";
-import { emptyTodoData, parseTodoJson, serializeTodo } from "../todo-cli/schema.ts";
+} from "../todo.mjs";
+import { emptyTodoData, parseTodoJson, serializeTodo } from "../schema.ts";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TODO_CLI = path.join(REPO_ROOT, "tools", "todo.mjs");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const TODO_CLI = path.join(HERE, "..", "todo.mjs");
+/** 本仓库根：工具住在 skill 目录里，从测试文件位置推断已不可靠，改问 git。 */
+const REPO_ROOT = path.resolve(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: HERE, encoding: "utf8" }).trim());
 const runCli = (args, cwd) =>
   spawnSync(process.execPath, [TODO_CLI, ...args], { cwd, encoding: "utf8", timeout: 30_000 });
 
@@ -668,18 +670,18 @@ test("main triage：fake git 事实驱动只读报告，只读不写、--json �
 });
 
 // ---------------------------------------------------------------------------
-// 进程边界 E2E：真实子进程 + 陌生 cwd 跑 CLI 入口（只读，不写真实 todos/）
+// 进程边界 E2E：真实子进程 + 仓库/非仓库 cwd 跑 CLI 入口（只读，不写真实 todos/）
 // ---------------------------------------------------------------------------
 
-test("CLI E2E：任意 cwd 跑 summary 退出 0 且有输出、stderr 恒空", () => {
-  const res = runCli(["summary"], os.tmpdir());
+test("CLI E2E：仓库子目录 cwd 跑 summary（git 自动发现到仓库根）退出 0、stderr 恒空", () => {
+  const res = runCli(["summary"], path.join(REPO_ROOT, ".agents"));
   assert.equal(res.status, 0);
   assert.equal(res.stderr, "");
   assert.ok(res.stdout.trim().length > 0, "summary 输出非空");
   assert.match(res.stdout, /-todo/);
 });
 
-test("CLI E2E：--help 退出 0 且含完整用法（migrate 替代 db，align 是第八子命令）", () => {
+test("CLI E2E：--help 在非仓库 cwd 也退出 0 且含完整用法（migrate 替代 db，align 是第八子命令）", () => {
   const res = runCli(["--help"], os.tmpdir());
   assert.equal(res.status, 0);
   assert.match(res.stdout, /用法/);
@@ -688,6 +690,7 @@ test("CLI E2E：--help 退出 0 且含完整用法（migrate 替代 db，align �
   }
   assert.match(res.stdout, /--status open\|aligning\|aligned\|processing\|done/);
   assert.equal(res.stdout.includes("db "), false, "db 子命令已删除");
+  assert.match(res.stdout, /--root/, "用法说明含 --root");
 });
 
 test("CLI E2E：align 缺 --file / 缺 --match 均提示 + exit 1、stderr 恒空", () => {
@@ -703,15 +706,15 @@ test("CLI E2E：align 缺 --file / 缺 --match 均提示 + exit 1、stderr 恒�
 });
 
 test("CLI E2E：真实仓库 list --file 短名与全名输出一致且非空（#12 回归锁）", () => {
-  const short = runCli(["list", "--file", "general"], os.tmpdir());
-  const full = runCli(["list", "--file", "general-todo"], os.tmpdir());
+  const short = runCli(["list", "--file", "general"], REPO_ROOT);
+  const full = runCli(["list", "--file", "general-todo"], REPO_ROOT);
   assert.equal(short.status, 0);
   assert.equal(full.status, 0);
   assert.ok(short.stdout.trim().length > 0, "短名不得静默返回空结果");
   assert.equal(short.stdout, full.stdout);
 });
 
-test("CLI E2E：未知命令退出 1 并提示", () => {
+test("CLI E2E：未知命令退出 1 并提示（非仓库 cwd 也不需要仓库根）", () => {
   const res = runCli(["definitely-not-a-command"], os.tmpdir());
   assert.equal(res.status, 1);
   assert.match(res.stdout, /未知命令：definitely-not-a-command/);
