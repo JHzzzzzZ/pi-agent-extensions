@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流仓库 CLI
 
-> last verified @ <pending: 本次合并 commit>
+> last verified @ fa630a3
 
 ## 职责与边界
 
