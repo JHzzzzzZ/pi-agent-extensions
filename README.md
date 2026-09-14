@@ -532,7 +532,7 @@ node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts   
 
 ```bash
 node tools/todo.mjs summary [--json]                    # 全量盘点（open / processing / done）
-node tools/todo.mjs list [--status open|processing|done] [--file <name>] [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]   # 按状态/文件/分支/标签/文本/领取时间组合查询（AND）
+node tools/todo.mjs list [--status open|processing|done] [--file <name>] [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]   # 按状态/文件/分支/标签/文本/领取时间组合查询（AND；--file 短名/全名等价，查不到报错）
 node tools/todo.mjs add --file <name> "描述" [--tag 词1,词2]   # 追加登记（跨文件查重，重复拒绝；--force 强制）
 node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]   # 领取：status→processing，--branch 写入原生字段
 node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]  # 完成：status→done，--note 逐字进 notes
@@ -543,7 +543,7 @@ node tools/todo.mjs --help                              # 打印用法
 ```
 
 - **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝）、绝不自动 commit；登记（`add`）不改状态，领取（`claim`）才转 processing（动作显式分离）；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 id 取并集手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp 与锁在 gitignore 的 `todos/.todo-cli/`）
-- **测试** — 仓库根 `npm run test:todo`（44 个，含 3 个进程边界 E2E + 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **测试** — 仓库根 `npm run test:todo`（46 个，含 4 个进程边界 E2E + 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
