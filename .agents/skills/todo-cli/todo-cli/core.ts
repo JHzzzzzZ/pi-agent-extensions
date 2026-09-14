@@ -1,8 +1,11 @@
 /**
- * todo-cli/core.ts — agentic todo 核心（GOAL.md §2「自己这把」+ AGENTS.md 需求登记纪律）
+ * .agents/skills/todo-cli/todo-cli/core.ts — agentic todo 核心（GOAL.md §2「自己这把」+ AGENTS.md 需求登记纪律）
  *
- * 本文件是仓库 CLI（`node tools/todo.mjs`）的唯一实现源：导出纯函数 + `main(argv, deps)`，
- * 无任何 Pi/宿主依赖，任意 cwd 可调用（REPO_ROOT 由脚本位置解析）。
+ * 本文件是 CLI 的唯一实现源：导出纯函数 + `main(argv, deps)`，无任何 Pi/宿主依赖。
+ * 工具住在仓库内的 skill 目录里（不再在仓库根的 tools/ 或 todo-cli/），所以仓库根不能
+ * 再靠脚本位置推断：解析顺序 = `deps.repoRoot`（测试注入）→ `--root <dir>` →
+ * `git rev-parse --show-toplevel`（以 `process.cwd()` 为工作目录，仓库子目录亦可）→
+ * 都拿不到就 fail-closed 中止（静态消息 + exit 1）。命令面其余部分与 cwd 无关。
  *
  * 存储形态（方案 C，todos/todo-cli-todo.md:17）：`todos/<名>.json` 是唯一持久真相，
  * markdown 已退出（逃生回滚走 `migrate to-md`）。本模块负责：
@@ -14,25 +17,25 @@
  *   - `lint` 只校验「根 package.json pi.extensions 注册的扩展都有同名 todo 文件」
  *     这一个方向（未实现插件的 todo 文件合法，不报）。
  *
- * 用法（仓库根）：
- *   node tools/todo.mjs summary [--json]
- *   node tools/todo.mjs list [--status open|processing|done] [--file general]
- *   node tools/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
- *   node tools/todo.mjs add --file general "需求描述" [--tag 词1,词2]   # 跨全部文件查重
- *   node tools/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
- *   node tools/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
- *   node tools/todo.mjs lint
- *   node tools/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
- *   node tools/todo.mjs migrate from-md [--dry-run] [--force] | to-md
+ * 用法（任意 git 仓库任意 cwd；入口固定为 <仓库>/.agents/skills/todo-cli/todo-cli/todo.mjs）：
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|processing|done] [--file general]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs add --file general "需求描述" [--tag 词1,词2]   # 跨全部文件查重
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md
+ * 任意子命令前置 `--root <dir>` 可显式指定仓库根（跳过 git 发现；对非 git 目录也适用）。
  *
  * 纯函数（findDuplicateHits / resolveTodoPath / parseWorktrees / parseMergedBranches /
- * triageRepo）导出给单测；`main` 同时供测试在临时目录上闭环演练。
+ * triageRepo / resolveRepoRoot）导出给单测；`main` 同时供测试在临时目录上闭环演练。
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 
 import { emptyTodoData, nextId, normalizeText, parseTodoJson, serializeTodo } from "./schema.ts";
 import type { TodoFileData } from "./schema.ts";
@@ -41,10 +44,47 @@ import { migrateFromMd, migrateToMd } from "./migrate.ts";
 import { applyEntryFilter, parseFilterOptions, serializeEntries, sortQueryEntries } from "./query.ts";
 import type { QueryEntry } from "./query.ts";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const REPO_ROOT = path.resolve(HERE, "..");
-
 export { normalizeText } from "./schema.ts";
+
+// ---------------------------------------------------------------------------
+// 仓库根发现（工具在 skill 目录里 → 脚本位置不再等于仓库根）
+// ---------------------------------------------------------------------------
+
+/** git 默认执行器：`git -C <cwd> …`；stderr 吞掉（非 git 目录不该往终端喷 fatal）。 */
+function defaultExecGit(args: string[], cwd: string): string {
+  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+}
+
+/**
+ * 解析仓库根：`--root <dir>`（相对 cwd 解析、必须是已存在目录）优先，否则用
+ * `git rev-parse --show-toplevel`（cwd 起）。失败返回静态消息，由调用方 fail-closed。
+ * 纯入口：cwd / execGit 均可注入。
+ */
+export function resolveRepoRoot(
+  input: { rootFlag?: unknown; cwd?: string; execGit?: (args: string[], cwd: string) => string } = {},
+): { ok: true; root: string } | { ok: false; message: string } {
+  const cwd = input.cwd ?? process.cwd();
+  if (input.rootFlag !== undefined) {
+    if (typeof input.rootFlag !== "string" || input.rootFlag.trim() === "") {
+      return { ok: false, message: "缺少 --root 的目录（用法：--root <dir>）" };
+    }
+    const root = path.resolve(cwd, input.rootFlag);
+    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+      return { ok: false, message: `--root 指向的目录不存在：${input.rootFlag}` };
+    }
+    return { ok: true, root };
+  }
+  const execGit = input.execGit ?? defaultExecGit;
+  let stdout: string;
+  try {
+    stdout = execGit(["rev-parse", "--show-toplevel"], cwd);
+  } catch {
+    return { ok: false, message: "找不到仓库根：当前目录不在 git 仓库内（可用 --root <dir> 指定）" };
+  }
+  const trimmed = String(stdout).trim();
+  if (trimmed === "") return { ok: false, message: "找不到仓库根：git 未返回仓库路径（可用 --root <dir> 指定）" };
+  return { ok: true, root: path.resolve(trimmed) };
+}
 
 // ---------------------------------------------------------------------------
 // 查重（口径与 markdown 时代逐字节一致，仅 line → id）
@@ -80,7 +120,7 @@ export function findDuplicateHits(text: string, entries: Array<{ name: string; i
  * todo 文件路径解析：只允许 `todos/` 下的一层文件名，拒绝穿越。
  * 兼容四种输入：`general` / `general-todo` / `general-todo.md`（旧引用）/ `general-todo.json`。
  */
-export function resolveTodoPath(nameOrFile: string, repoRoot = REPO_ROOT): string | null {
+export function resolveTodoPath(nameOrFile: string, repoRoot: string): string | null {
   const clean = String(nameOrFile).trim();
   if (clean === "" || clean.includes("/") || clean.includes("\\") || clean.includes("..")) return null;
   let base = clean;
@@ -130,7 +170,7 @@ export function summarizeData(docs: LoadedDoc[]) {
 }
 
 /** lint：根 package.json 注册的扩展都应有同名 todo 文件。返回问题清单。 */
-export function lintTodos(repoRoot = REPO_ROOT): string[] {
+export function lintTodos(repoRoot: string): string[] {
   const manifestPath = path.join(repoRoot, "package.json");
   if (!fs.existsSync(manifestPath)) return ["找不到根 package.json"];
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -430,8 +470,13 @@ function parseArgs(argv: string[]) {
       const key = arg.slice(2);
       if (key === "json" || key === "force" || key === "help" || key === "dry-run") opts[key] = true;
       else {
-        opts[key] = argv[i + 1];
-        i += 1;
+        // 值标志：下一个 token 作为值；缺失或以 -- 开头则记空串（让下游报「缺少」而非静默 undefined）。
+        const value = argv[i + 1];
+        if (value === undefined || value.startsWith("--")) opts[key] = "";
+        else {
+          opts[key] = value;
+          i += 1;
+        }
       }
     } else opts._.push(arg);
   }
@@ -472,10 +517,21 @@ function runList(repoRoot: string, opts: Record<string, unknown>, log: (line: st
 function runTriage(repoRoot: string, opts: Record<string, unknown>, deps: Record<string, unknown>, log: (line: string) => void): number {
   const execGit =
     (deps.execGit as ((args: string[], cwd?: string) => string) | undefined) ??
-    ((args: string[], cwd?: string) => execFileSync("git", ["-C", cwd ?? repoRoot, ...args], { encoding: "utf8" }));
-  const worktrees = parseWorktrees(execGit(["worktree", "list", "--porcelain"]));
-  const main = worktrees.find((w) => !w.bare) ?? null;
-  const mergedBranches = main?.branch ? parseMergedBranches(execGit(["branch", "--merged", String(main.branch)])) : [];
+    ((args: string[], cwd?: string) =>
+      execFileSync("git", ["-C", cwd ?? repoRoot, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+  // triage 的事实全部来自 git；根不是仓库（--root 指到非 git 目录）时 fail-closed 而非抛栈。
+  let worktrees: ReturnType<typeof parseWorktrees> = [];
+  let mergedBranches: string[] = [];
+  try {
+    worktrees = parseWorktrees(execGit(["worktree", "list", "--porcelain"]));
+    const mainWorktree = worktrees.find((w) => !w.bare) ?? null;
+    mergedBranches = mainWorktree?.branch
+      ? parseMergedBranches(execGit(["branch", "--merged", String(mainWorktree.branch)]))
+      : [];
+  } catch {
+    log(`triage 失败：${repoRoot} 不是 git 仓库（或 git 不可用）`);
+    return 1;
+  }
   const registered = new Set(worktrees.map((w) => normalizePath(String(w.path))));
   const wtDir = path.join(repoRoot, ".worktrees");
   const orphanDirs = !fs.existsSync(wtDir)
@@ -535,15 +591,20 @@ function runTriage(repoRoot: string, opts: Record<string, unknown>, deps: Record
 }
 
 const USAGE = `用法：
-  node tools/todo.mjs summary [--json]
-  node tools/todo.mjs list [--status open|processing|done] [--file <name>]
-  node tools/todo.mjs add --file <name> "需求描述" [--tag 词1,词2]
-  node tools/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
-  node tools/todo.mjs complete --file <name> --match "子串" [--note "说明"]
-  node tools/todo.mjs lint
-  node tools/todo.mjs triage [--json]
-  node tools/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
-  node tools/todo.mjs migrate from-md [--dry-run] [--force] | to-md`;
+  node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|processing|done] [--file <name>]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs add --file <name> "需求描述" [--tag 词1,词2]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file <name> --match "子串" [--note "说明"]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs lint
+  node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md
+
+仓库根默认由 git 自动发现（cwd 起）；也可在任意子命令前追加 --root <dir> 显式指定。`;
+
+/** 需要仓库根的子命令（help / 裸调用 / 未知命令都不要求 cwd 在 git 仓库内）。 */
+const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "complete", "lint", "triage", "migrate"]);
 
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
@@ -551,7 +612,6 @@ const USAGE = `用法：
  * 被测行为本身，不做注入替身）。
  */
 export function main(argv: string[], deps: Record<string, unknown> = {}): number {
-  const repoRoot = (deps.repoRoot as string | undefined) ?? REPO_ROOT;
   const log = (deps.log as ((line: string) => void) | undefined) ?? ((line: string) => console.log(line));
   const now = (deps.now as (() => string) | undefined) ?? (() => new Date().toISOString());
   installProcessHooks();
@@ -562,6 +622,27 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     log(USAGE);
     return command === "" && !opts.help ? 1 : 0;
   }
+
+  if (!REPO_COMMANDS.has(command)) {
+    log(`未知命令：${command}\n${USAGE}`);
+    return 1;
+  }
+
+  // 仓库根：deps.repoRoot（测试注入）> --root <dir> > git 自动发现；都拿不到就 fail-closed。
+  const injectedRoot = deps.repoRoot as string | undefined;
+  const resolvedRoot =
+    injectedRoot === undefined
+      ? resolveRepoRoot({
+          rootFlag: opts.root,
+          cwd: deps.cwd as string | undefined,
+          execGit: deps.execGit as ((args: string[], cwd: string) => string) | undefined,
+        })
+      : { ok: true as const, root: injectedRoot };
+  if (!resolvedRoot.ok) {
+    log(resolvedRoot.message);
+    return 1;
+  }
+  const repoRoot = resolvedRoot.root;
 
   if (command === "summary") {
     const all = readTodoDocs(repoRoot);
@@ -614,6 +695,7 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     return command === "claim" ? runClaim({ repoRoot, opts, now, log }) : runComplete({ repoRoot, opts, now, log });
   }
 
+  // REPO_COMMANDS 已在上方穷举，走到这里说明命令表与分派漂移了（防御性兜底，非用户路径）。
   log(`未知命令：${command}\n${USAGE}`);
   return 1;
 }

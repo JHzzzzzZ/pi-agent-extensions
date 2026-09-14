@@ -7,7 +7,7 @@
  *   - tmp 残留只能来自被杀进程，过期（>10 分钟）后必须被下一次成功写入清理；
  *   - 末次 add 成功且 `list` 输出与 JSON 投影逐行一致。
  *
- * 击杀时机：本机（Windows / Node 24）`node tools/todo.mjs` 冷启动实测 ~400ms，随机
+ * 击杀时机：本机（Windows / Node 24）`node <tool>/todo.mjs` 冷启动实测 ~400ms，随机
  * 区间取 [1, 1500]ms 覆盖启动/读改写/写回各阶段；无论命中哪个阶段，「旧版或完整新版」
  * 的断言都必须成立。
  */
@@ -23,7 +23,10 @@ import { fileURLToPath } from "node:url";
 import { emptyTodoData, parseTodoJson, serializeTodo } from "../schema.ts";
 import type { TodoEntry, TodoFileData } from "../schema.ts";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+/** 工具目录（入口 + 实现同居）：测试文件的上一级。 */
+const TOOL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** 拷进 fixture 的文件清单（不含 test/，避免递归拷测试）。 */
+const TOOL_FILES = ["todo.mjs", "core.ts", "lock.ts", "schema.ts", "query.ts", "migrate.ts"];
 const SEED_ENTRIES = 200;
 const STATUS_MARK: Record<string, string> = { done: "[x]", processing: "[~]", open: "[ ]" };
 
@@ -60,12 +63,13 @@ function seedEntries(): TodoEntry[] {
   return entries;
 }
 
+/** 真实临时仓库 fixture：工具落 `<root>/.agents/skills/todo-cli/todo-cli/`，仓库根用 `--root` 指定。 */
 function makeFixture(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-interrupt-"));
+  const toolDir = path.join(root, ".agents", "skills", "todo-cli", "todo-cli");
   fs.mkdirSync(path.join(root, "todos"), { recursive: true });
-  fs.mkdirSync(path.join(root, "tools"), { recursive: true });
-  fs.cpSync(path.join(REPO_ROOT, "todo-cli"), path.join(root, "todo-cli"), { recursive: true });
-  fs.copyFileSync(path.join(REPO_ROOT, "tools", "todo.mjs"), path.join(root, "tools", "todo.mjs"));
+  fs.mkdirSync(toolDir, { recursive: true });
+  for (const file of TOOL_FILES) fs.copyFileSync(path.join(TOOL_DIR, file), path.join(toolDir, file));
   const data: TodoFileData = { ...emptyTodoData("general-todo"), entries: seedEntries() };
   fs.writeFileSync(path.join(root, "todos", "general-todo.json"), serializeTodo(data));
   return root;
@@ -76,7 +80,7 @@ function removeFixture(root: string): void {
 }
 
 function cliPath(root: string): string {
-  return path.join(root, "tools", "todo.mjs");
+  return path.join(root, ".agents", "skills", "todo-cli", "todo-cli", "todo.mjs");
 }
 
 function jsonPath(root: string): string {
@@ -107,7 +111,11 @@ function collect(child: import("node:child_process").ChildProcess): { stdout: st
 
 function runCli(root: string, args: string[], timeoutMs = 60_000): Promise<CliResult> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath(root), ...args], { cwd: root, env: cleanEnv(), timeout: timeoutMs });
+    const child = spawn(process.execPath, [cliPath(root), "--root", root, ...args], {
+      cwd: root,
+      env: cleanEnv(),
+      timeout: timeoutMs,
+    });
     const captured = collect(child);
     child.on("error", () => resolve({ code: -1, signal: null, ...captured }));
     child.on("close", (code, signal) => resolve({ code, signal, ...captured }));
@@ -117,7 +125,7 @@ function runCli(root: string, args: string[], timeoutMs = 60_000): Promise<CliRe
 /** 启动 add 并延迟 SIGKILL；返回内容快照与退出信息（Windows 上 SIGKILL = TerminateProcess）。 */
 function runCliKilled(root: string, args: string[], delayMs: number): Promise<{ result: CliResult; killed: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath(root), ...args], { cwd: root, env: cleanEnv() });
+    const child = spawn(process.execPath, [cliPath(root), "--root", root, ...args], { cwd: root, env: cleanEnv() });
     const captured = collect(child);
     let killed = false;
     const timer = setTimeout(() => {
