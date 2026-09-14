@@ -10,6 +10,8 @@
 
 **仓库根发现**：`deps.repoRoot`（测试注入）> `--root <dir>`（相对 cwd 解析、必须是已存在目录）> `git rev-parse --show-toplevel`（以 `process.cwd()` 为工作目录，仓库子目录亦可）> **fail-closed**（静态消息 + exit 1，绝不静默回退 cwd）。因此任意 git 仓库任意 cwd 都作用于**当前 cwd 所属仓库**的 `todos/`（在 `.worktrees/<名>` 里调用 → 该 worktree 的台账，不再是旧日的「脚本所在主仓」）。`--help` / 裸调用 / 未知命令不触发根发现。
 
+**skill 加载核验（无头可复现）**：`printf '{"type":"get_commands"}\n' | pi --mode rpc --no-session --approve` 的响应里应出现 `"name":"skill:todo-cli"` 且 `scope: project`（路径 = `.agents/skills/todo-cli/SKILL.md`）。项目级 skill **只在项目被信任时加载**（交互式信任或 `--approve`），未信任时静默缺席。
+
 **存储（方案 C，todos/todo-cli-todo.md:17）**：`todos/<名>.json` 是唯一持久真相——无 markdown、无 sqlite 索引层、无降级路径。决策取舍见 `docs/adr/0002-todos-json-storage.md`；术语见根 `CONTEXT.md`。
 
 **对齐门（schema v2，todo-cli-todo:11 / `docs/adr/0003-todo-align-gate.md`）**：状态机五态 `open → aligning → aligned → processing → done`。首次 `claim` 只进 aligning（此阶段写逐条对齐文档、与人工确认，禁止写代码），`align` 结构校验文档后进 aligned，再次 `claim` 才进 processing（此后到 merge 无人值守）。CLI 只保证迁移顺序与文档结构，人工门本身靠文档 `## 人工确认` 小节 + 红线 10 审批留痕。

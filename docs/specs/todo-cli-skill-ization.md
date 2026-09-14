@@ -57,6 +57,7 @@ CLI 的入口在仓库根 `tools/todo.mjs`、实现在仓库根 `todo-cli/`：�
 - 新增 `test/skill.test.ts`（2）：`SKILL.md` frontmatter 合法性（Pi 对非法 skill 只 warning 且静默不加载，靠测试兜住）与命令面/入口路径/`--root` 齐备、包装器指向内层工具。
 - 既有 60 个测试一条不删（含 #11 的 align 用例），迁移只改路径与 fixture 形态。
 - 门：`npm run test:todo`（69）+ `npm run test:contract` + `npm run test:smoke` + `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`。
+- 真机核验（无头可复现）：`printf '{"type":"get_commands"}\n' | pi --mode rpc --no-session --approve` 应返回 `skill:todo-cli`（`scope: project`）——证明 Pi 真把它当项目级 skill 加载（未加 `--approve` 时缺席，因为项目未信任）。
 
 ## 范围外
 
