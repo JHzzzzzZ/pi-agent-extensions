@@ -56,7 +56,7 @@ CLI 的入口在仓库根 `tools/todo.mjs`、实现在仓库根 `todo-cli/`：�
 - 新增 `test/root-discovery.test.ts`（6）：`resolveRepoRoot` 的 `--root` 胜出 / 非法 `--root` / git 成功 / git 失败 / 空输出的纯测，`main` 级「--help/裸调用/未知命令不要求仓库根」，失败路径「不写任何文件」，以及**真实 `git init` 仓库子目录调用**的进程边界 E2E + `--root` 覆盖 cwd 仓库 + `--root` 不存在/缺值的退出码与 stderr。
 - 新增 `test/skill.test.ts`（2）：`SKILL.md` frontmatter 合法性（Pi 对非法 skill 只 warning 且静默不加载，靠测试兜住）与命令面/入口路径/`--root` 齐备、包装器指向内层工具。
 - 既有 60 个测试一条不删（含 #11 的 align 用例），迁移只改路径与 fixture 形态。
-- 门：`npm run test:todo`（68）+ `npm run test:contract` + `npm run test:smoke` + `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`。
+- 门：`npm run test:todo`（69）+ `npm run test:contract` + `npm run test:smoke` + `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`。
 
 ## 范围外
 

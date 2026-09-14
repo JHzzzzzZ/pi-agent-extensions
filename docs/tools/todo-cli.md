@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流 CLI（仓库内 skill 资产）
 
-> last verified @ 2dd82ab
+> last verified @ 1ace21e
 
 ## 职责与边界
 
@@ -102,7 +102,7 @@ argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repo
 
 ## 改动清单
 
-- 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；68 个，2026-09-14 实测全绿）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
+- 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；69 个，2026-09-14 实测全绿）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
 - 改行为：同步 `test/todo-cli.test.ts`（命令面）/ `test/root-discovery.test.ts`（根发现）+ 本卡；改命令面：同步 `core.ts` 的 `USAGE` + `SKILL.md` + 本卡。
 - 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0002`/`0003` 同步。
 - 新增子命令/flags：先补测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变（`REPO_COMMANDS` 同步，否则新命令会被当未知命令）。

@@ -547,7 +547,7 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs --help                           
 ```
 
 - **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / complete 收口）；CLI 只保证迁移顺序与对齐文档结构，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 id 取并集手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp 与锁在 gitignore 的 `todos/.todo-cli/`）
-- **测试** — 仓库根 `npm run test:todo`（68 个，含进程边界 E2E + 根发现 / skill 结构 / 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **测试** — 仓库根 `npm run test:todo`（69 个，含进程边界 E2E + 根发现 / skill 结构 / 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
