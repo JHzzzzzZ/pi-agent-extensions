@@ -109,13 +109,15 @@
     {
       "id": 9,
       "text": "技能侧配套 todo-cli 目录重构（用户 2026-09-12，与 todos/todo-cli-todo.json #9 同批）：todo-cli 工具迁入 ~/.pi/agent/skills/todo-cli/todo-cli/ 后，把该目录 SKILL.md 改写为「todo-cli 怎么用」的命令参考卡（让出登记/盘点意图词给 todo-add / todo-triage，沿用本条文件 #6 边界决议），同步 scripts/todo.sh 包装器（改为定位内层工具而非仓库 tools/todo.mjs）、skills README 索引与 .zcode/.pi 两镜像。仓库外改动，实施前需用户逐次批准（AGENTS 红线 1）。验收：SKILL.md 命令面与合并后 CLI 逐条一致、触发词与另两 skill 不重叠、两镜像内容一致。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/todo-cli-skill-placement",
       "tags": [],
-      "notes": [],
+      "notes": [
+        "f454160：仓库内半程完成——SKILL.md（命令参考卡，含 align/五态）+ scripts/todo.sh 随工具落在 <repo>/.agents/skills/todo-cli/；.zcode/.pi 两镜像与另机全局 skill 库不在本机、属范围外，已另立接力条目"
+      ],
       "createdAt": "2026-09-14T14:04:10.962Z",
       "claimedAt": "2026-09-14T14:58:40.831Z",
-      "completedAt": null,
+      "completedAt": "2026-09-14T15:10:57.322Z",
       "alignedAt": null
     },
     {
@@ -130,6 +132,21 @@
       "createdAt": "2026-09-14T14:58:08.367Z",
       "claimedAt": null,
       "completedAt": "2026-09-14T14:58:08.482Z",
+      "alignedAt": null
+    },
+    {
+      "id": 11,
+      "text": "另机全局 skill 库同步新入口（用户 2026-09-14，承接 #9 范围外部分）：本仓库 #9 已把 todo CLI 内迁为项目级 skill（入口固定 node .agents/skills/todo-cli/todo-cli/todo.mjs，仓库根 = --root > git rev-parse --show-toplevel，fail-closed）。另一台机器上的全局技能库（~/.pi/agent/skills/todo-cli/ 的 SKILL.md 与 scripts/todo.sh，以及 todo-add / todo-triage 里引用的旧入口 node tools/todo.mjs）仍是旧路径：需要在该机把命令面同步到新入口，并决定全局 skill 与仓库内 skill 的关系（复制一份 / 指向仓库内目录 / 旧路径兜底）。本机无该库且改动在仓库外，实施前需用户逐次批准（红线 8）。验收：另机三个 skill 的命令面与本仓库 SKILL.md 及 USAGE 逐条一致、在该机跑 node <新入口> summary 与 lint exit 0。",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "skills",
+        "out-of-repo"
+      ],
+      "notes": [],
+      "createdAt": "2026-09-14T15:11:03.915Z",
+      "claimedAt": null,
+      "completedAt": null,
       "alignedAt": null
     }
   ]
