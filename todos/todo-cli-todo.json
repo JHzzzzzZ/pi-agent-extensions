@@ -116,12 +116,12 @@
     {
       "id": 9,
       "text": "目录重构 + skill 化（用户 2026-09-12）：① CLI 入口 tools/todo.mjs 移入实现目录（todo-cli/todo.mjs，入口与实现同居）；② 整个 todo-cli/ 搬进全局 skill 目录 ~/.pi/agent/skills/todo-cli/todo-cli/（用户原话 .agent/skills/todo-cli/todo-cli）；③ 基于搬入的工具新建/改写 ~/.pi/agent/skills/todo-cli/SKILL.md，描述 todo-cli 怎么用（命令参考卡，边界沿用 skills-todo #6 决议：让出登记/盘点意图词给 todo-add / todo-triage）。待对齐（开工前定）：a) 仓库是否彻底移除 todo-cli（含 test/todo-cli.test.ts、todo-cli/test/*、根 package.json 的 test:todo 脚本）还是保留镜像/软链，仓库侧测试门怎么办；b) REPO_ROOT 解析——现由脚本位置 path.resolve(HERE,\"..\") 得仓库根，搬出仓库后必须改为 cwd/`git rev-parse --show-toplevel` 自动发现（或 --root 覆盖），保证任意 git 仓库任意 cwd 可用；c) 既有 skills-todo #5/#6/#8 描述的 ~/.pi/agent/skills/todo-cli/（SKILL.md + scripts/todo.sh）是更新还是重建，.zcode/.pi 两镜像与 skills README 索引如何同步；d) AGENTS.md 红线 2/7、docs/tools/todo-cli.md（含 INDEX 路由）、README、.gitattributes（todos/*.json LF）等引用点全部同步。仓库外改动需用户逐次批准（红线 1）。验收：任意 git 仓库任意 cwd 跑通七子命令 + list 查询 flags；SKILL.md 命令面与 CLI 实际行为逐条一致、触发词不与 todo-add/todo-triage 重叠；本仓库 AGENTS/README/docs 引用零残留（或明确单点入口）；真实 todos/ 上 summary/lint 零破坏。",
-      "status": "open",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/todo-cli-skill-placement",
       "tags": [],
       "notes": [],
       "createdAt": "2026-09-14T14:03:57.506Z",
-      "claimedAt": null,
+      "claimedAt": "2026-09-14T14:58:40.831Z",
       "completedAt": null
     },
     {
