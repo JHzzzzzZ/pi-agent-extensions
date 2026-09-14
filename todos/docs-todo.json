@@ -95,6 +95,23 @@
       "createdAt": null,
       "claimedAt": null,
       "completedAt": null
+    },
+    {
+      "id": 8,
+      "text": "根 README 安装章节增加「按需安装（只装部分扩展）」：默认 pi install 加载 manifest 全部 12 个扩展，把只装其中几个的官方做法写进文档。推荐 pi config 交互勾选（Tab 切全局/项目，结果写回 settings.json 的 packages 过滤）；备选 A 直接编辑 packages 对象形式（白名单普通路径 / -path 精确排除 / !glob / [] 全禁 / 「只写 +path 不收窄」陷阱 / extensions-skills-prompts-themes 四字段）；备选 B 手动复制（指向方式二）。含真机实测证据（临时 PI_CODING_AGENT_DIR + 真 pi --mode rpc get_commands：字符串源 51 命令、白名单 2 条 5 命令、纯 + 两条仍 51 命令、- 排除 10 条 5 命令）。验收：README 安装节含该小节且 pi config [-l]/Tab 语义与 pi --help 一致；根三自检 + install-smoke 12/12 全绿。",
+      "status": "done",
+      "branch": "feat/docs-readme-ondemand-install",
+      "tags": [
+        "readme",
+        "安装",
+        "按需"
+      ],
+      "notes": [
+        "完成 feat/docs-readme-ondemand-install → dev-laptop merge 831f09d：README 安装节新增「只装其中几个扩展（按需安装）」小节（推荐 pi config [-l]/Tab 交互勾选；备选 packages 对象形式过滤：普通路径白名单 / -path 精确排除 / [] 全禁 / !glob / 「只写 +path 不收窄」陷阱；备选手动复制指向方式二；尾注「只决定加载哪些资源，克隆与依赖仍按整仓」），并把「安装后由 pi 统一管理」里 pi config 一条交叉引用到新节。自测：根三自检绿（contract 3/3、smoke 21/21、todo 44/44）+ install-smoke 12/12@51 命令 + 真机过滤实测（文档示例 pwr+solo-mode：20 扩展命令（总 21 含内置 llama）、uiKeys 30:pwr/pwr-runs/40:solo-mode；对照：字符串源 51 命令、纯 + 两条仍 51 命令、- 排除 10 条 5 命令）；纯文档改动未跑各扩展套件。"
+      ],
+      "createdAt": "2026-09-14T14:12:10.009Z",
+      "claimedAt": "2026-09-14T14:12:13.235Z",
+      "completedAt": "2026-09-14T14:14:32.840Z"
     }
   ]
 }
