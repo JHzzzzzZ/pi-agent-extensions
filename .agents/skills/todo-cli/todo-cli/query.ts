@@ -6,7 +6,9 @@
  * 三时间戳都是 schema 原生字段，不再有「文本派生 vs DB 列」双口径，也没有降级路径。
  *
  * 人读行格式：`${statusMark} ${file}#${id}  ${text}`（file 为去 `.json` 的归属名，
- * id 为文件内稳定编号，id 与文本间两空格）；标记五态见 STATUS_MARKS。
+ * id 为文件内稳定编号，id 与文本间两空格）；标记五态见 STATUS_MARKS；阻塞条目行尾追加
+ * `（阻塞：等待 <引用清单>）`（todo-cli-todo:10）——阻塞与否由 core 算好（blockedBy 非空），
+ * query 层不查台账、不解析依赖图。
  */
 
 import type { EntryStatus } from "./schema.ts";
@@ -22,6 +24,10 @@ export interface QueryEntry {
   text: string;
   branch: string | null;
   tags: string[];
+  /** 原生依赖引用（规范形态 `文件基名#id`，保序）。 */
+  dependsOn: string[];
+  /** 派生：未完成的直接依赖引用（空 = 可开工）；非空即阻塞。只有一个派生字段，不另设布尔位。 */
+  blockedBy: string[];
   createdAt: string | null;
   claimedAt: string | null;
   completedAt: string | null;
@@ -89,13 +95,18 @@ export function sortQueryEntries(entries: QueryEntry[]): QueryEntry[] {
 
 /**
  * json=true → `[JSON.stringify(sorted, null, 2)]`（整体一行交给 log）；否则每条
- * `${statusMark(s)} ${file}#${id}  ${text}`。输出前复用 sortQueryEntries 的稳定排序，
- * 任何输入序下都与 list 排序字节一致。
+ * `${statusMark(s)} ${file}#${id}  ${text}`，阻塞条目再追加 ` （阻塞：等待 a#1, b#2）`
+ * （非阻塞行字节不变）。输出前复用 sortQueryEntries 的稳定排序，任何输入序下与 list 排序一致。
  */
 export function serializeEntries(entries: QueryEntry[], opts: { json: boolean }): string[] {
   const sorted = sortQueryEntries(entries);
   if (opts.json) return [JSON.stringify(sorted, null, 2)];
-  return sorted.map((entry) => `${statusMark(entry.status)} ${entry.file}#${entry.id}  ${entry.text}`);
+  return sorted.map(
+    (entry) =>
+      `${statusMark(entry.status)} ${entry.file}#${entry.id}  ${entry.text}${
+        entry.blockedBy.length > 0 ? ` （阻塞：等待 ${entry.blockedBy.join(", ")}）` : ""
+      }`,
+  );
 }
 
 const BAD_CLAIMED_SINCE = "--claimed-since 需要 YYYY-MM-DD 日期";

@@ -12,6 +12,7 @@
 | --- | --- |
 | `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径、JSON schema 与锁 | `tools/todo-cli.md` |
 | todo 对齐门状态机（open → aligning → aligned → processing → done）与对齐文档契约 | `tools/todo-cli.md` + `adr/0003-todo-align-gate.md` |
+| todos 依赖门（dependsOn 引用 / 阻塞条目 / 环与悬空校验）与开工门的关系 | `tools/todo-cli.md` + `adr/0005-todo-depends-on.md` |
 | todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0002-todos-json-storage.md` |
 | 已实现需求的规格（问题陈述 / 方案 / 实现与测试决策 / 范围外） | `specs/<名>.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |

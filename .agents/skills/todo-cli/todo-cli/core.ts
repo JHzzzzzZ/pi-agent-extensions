@@ -9,12 +9,16 @@
  *
  * 存储形态（方案 C，todos/todo-cli-todo.md:17）：`todos/<名>.json` 是唯一持久真相，
  * markdown 已退出（逃生回滚走 `migrate to-md`）。本模块负责：
- *   - 八个子命令契约不变：summary / list / add / claim / align / complete / lint / triage；
+ *   - 九个子命令：summary / list / add / claim / align / complete / dep / lint / triage；
  *   - 状态机五态对齐门（todo-cli-todo:11，ADR-0003）：open → aligning → aligned →
  *     processing → done。首次 claim 进 aligning（必须先写对齐文档、经人工确认），
  *     `align` 结构校验文档后进 aligned，再次 claim 才进 processing；processing 起到
  *     收口无人值守。对齐文档契约（路径派生/必填小节）在 align.ts；模板在
  *     docs/tools/todo-cli.md。
+ *   - 开工依赖门（todo-cli-todo:10，ADR-0005）：条目可声明 `dependsOn`（规范引用
+ *     `文件基名#id`，`add --dep` 登记、`dep add/remove` 增删）。依赖未完成（status ≠ done）
+ *     时第二次 claim fail-closed（DEP_BLOCKED，条目留在 aligned）；首次 claim 与 align
+ *     不受阻。引用归一/环检测/阻塞判定全在 depends.ts（纯函数）。
  *   - 全部写操作经 `todos/.todo-cli/locks/<名>.lock` 跨进程互斥 + temp+rename 原子落盘
  *     （lock.ts；sqlite 索引层已删除，`--claimed-since` 等时间维度成为一等公民）；
  *   - 只读写仓库 `todos/` 目录内的文件，路径穿越直接拒绝；不自动 commit；
@@ -26,10 +30,11 @@
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|aligning|aligned|processing|done] [--file general]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
- *   node .agents/skills/todo-cli/todo-cli/todo.mjs add --file general "需求描述" [--tag 词1,词2]   # 跨全部文件查重
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs add --file general "需求描述" [--tag 词1,词2] [--dep 文件#id,...]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs align --file general --match "需求描述" [--note "说明"]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file general --match "需求描述" --on 文件#id,...
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md
@@ -43,9 +48,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { emptyTodoData, nextId, normalizeText, parseTodoJson, serializeTodo } from "./schema.ts";
+import { emptyTodoData, nextId, normalizeText, normalizeTodoName, parseTodoJson, serializeTodo } from "./schema.ts";
 import type { EntryStatus, TodoEntry, TodoFileData } from "./schema.ts";
 import { ALIGN_SECTIONS, alignDocPath, alignDocRelPath, validateAlignDoc } from "./align.ts";
+import { blockedByMap, blockingDeps, checkDepWrite, DepProblemCodes, dependentsOf, findDepProblems, normalizeDepRef } from "./depends.ts";
+import type { DepEntry, DepProblem } from "./depends.ts";
 import { atomicWriteFile, installProcessHooks, tmpDirFor, withTodoLock } from "./lock.ts";
 import { migrateFromMd, migrateToMd } from "./migrate.ts";
 import { applyEntryFilter, parseFilterOptions, serializeEntries, sortQueryEntries } from "./query.ts";
@@ -126,15 +133,11 @@ export function findDuplicateHits(text: string, entries: Array<{ name: string; i
 /**
  * todo 文件路径解析：只允许 `todos/` 下的一层文件名，拒绝穿越。
  * 兼容四种输入：`general` / `general-todo` / `general-todo.md`（旧引用）/ `general-todo.json`。
+ * 归一规则单源在 schema.ts 的 normalizeTodoName（依赖引用解析共用同一口径）。
  */
 export function resolveTodoPath(nameOrFile: string, repoRoot: string): string | null {
-  const clean = String(nameOrFile).trim();
-  if (clean === "" || clean.includes("/") || clean.includes("\\") || clean.includes("..")) return null;
-  let base = clean;
-  if (base.endsWith(".json")) base = base.slice(0, -5);
-  else if (base.endsWith(".md")) base = base.slice(0, -3);
-  else if (!base.endsWith("-todo")) base = `${base}-todo`;
-  return path.join(repoRoot, "todos", `${base}.json`);
+  const base = normalizeTodoName(nameOrFile);
+  return base === null ? null : path.join(repoRoot, "todos", `${base}.json`);
 }
 
 export interface LoadedDoc {
@@ -169,6 +172,49 @@ function countStatus(entries: TodoEntry[], status: EntryStatus): number {
   return entries.filter((entry) => entry.status === status).length;
 }
 
+/** 全量 docs → 依赖图节点投影（跨文件引用靠它解析）。 */
+function depIndex(docs: LoadedDoc[]): DepEntry[] {
+  return docs.flatMap((doc) =>
+    doc.data.entries.map((entry) => ({ file: doc.name, id: entry.id, status: entry.status, dependsOn: entry.dependsOn })),
+  );
+}
+
+/** 写入路径的依赖问题 → 静态终止消息（与 --dep/--on 的引用错误同一模板族）。 */
+function depProblemMessage(problem: DepProblem): string {
+  if (problem.code === DepProblemCodes.notFound) return `DEP_NOT_FOUND：依赖目标不存在 ${problem.detail}`;
+  if (problem.code === DepProblemCodes.self) return `DEP_SELF：条目不能依赖自身 ${problem.detail}`;
+  return `DEP_CYCLE：依赖成环 ${problem.detail}`;
+}
+
+/** lint 的问题行（带归属条目，供人读扫描）。 */
+function depProblemLine(problem: DepProblem): string {
+  const label =
+    problem.code === DepProblemCodes.notFound
+      ? "依赖目标不存在"
+      : problem.code === DepProblemCodes.self
+        ? "自引用依赖"
+        : "依赖成环";
+  return `✗ ${problem.owner} ${label}：${problem.detail}`;
+}
+
+/**
+ * `--dep a#1,b#2` / `--on a#1,b#2` → 归一引用清单（去重保序）；任一项非法即整体失败。
+ * 逗号分隔与 --tag 同构（parseArgs 对重复 flag 只留最后一个，不预留重复 flag 形态）。
+ */
+function parseDepRefsOption(value: unknown, flag: string): { ok: true; refs: string[] } | { ok: false; message: string } {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const refs: string[] = [];
+  for (const piece of raw.split(",")) {
+    const trimmed = piece.trim();
+    if (trimmed === "") continue;
+    const ref = normalizeDepRef(trimmed);
+    if (ref === null) return { ok: false, message: `DEP_REF_INVALID：${flag} 需要 文件#id 引用（如 general-todo#11）` };
+    if (!refs.includes(ref)) refs.push(ref);
+  }
+  if (refs.length === 0) return { ok: false, message: `DEP_REF_INVALID：${flag} 需要 文件#id 引用（如 general-todo#11）` };
+  return { ok: true, refs };
+}
+
 /** 按文件汇总五态计数（name 为不带 .json 的文件名）。 */
 export function summarizeData(docs: LoadedDoc[]) {
   return docs.map((doc) => ({
@@ -182,7 +228,7 @@ export function summarizeData(docs: LoadedDoc[]) {
   }));
 }
 
-/** lint：根 package.json 注册的扩展都应有同名 todo 文件。返回问题清单。 */
+/** lint：根 package.json 注册的扩展都应有同名 todo 文件 + 依赖图全量扫描（悬空/自引用/环）。 */
 export function lintTodos(repoRoot: string): string[] {
   const manifestPath = path.join(repoRoot, "package.json");
   if (!fs.existsSync(manifestPath)) return ["找不到根 package.json"];
@@ -192,6 +238,10 @@ export function lintTodos(repoRoot: string): string[] {
   for (const dir of dirs) {
     if (!fs.existsSync(path.join(repoRoot, "todos", `${dir}-todo.json`))) problems.push(`扩展 ${dir} 缺少 todos/${dir}-todo.json`);
   }
+  // 依赖图兜底：跨分支合并能造出写路径没见过的悬空引用与环（ADR-0005）。
+  const all = readTodoDocs(repoRoot);
+  if (!all.ok) problems.push(all.message);
+  else problems.push(...findDepProblems(depIndex(all.docs)).map(depProblemLine));
   return problems;
 }
 
@@ -347,6 +397,13 @@ function runAdd(deps: WriteDeps): number {
     log("缺少需求描述");
     return 1;
   }
+  const depOption = opts.dep;
+  const parsedDeps =
+    depOption === undefined || depOption === "" ? { ok: true as const, refs: [] as string[] } : parseDepRefsOption(depOption, "--dep");
+  if (!parsedDeps.ok) {
+    log(parsedDeps.message);
+    return 1;
+  }
   const all = readTodoDocs(repoRoot);
   if (!all.ok) {
     log(all.message);
@@ -363,6 +420,8 @@ function runAdd(deps: WriteDeps): number {
   }
   const file = resolveTodoPath(String(opts.file), repoRoot) as string;
   const name = path.basename(file, ".json");
+  // 依赖校验只在真的声明了依赖时才建索引（普通登记不得为此变慢）。
+  const entryIndex = parsedDeps.refs.length > 0 ? depIndex(all.docs) : [];
   type WriteOutcome = { ok: true } | { ok: false; message: string };
   const locked = withTodoLock(repoRoot, name, (): WriteOutcome => {
     let data: TodoFileData;
@@ -373,12 +432,17 @@ function runAdd(deps: WriteDeps): number {
     } else {
       data = emptyTodoData(name);
     }
+    const id = nextId(data.entries);
+    // 依赖写在落盘前校验（目标存在 / 非自身 / 不成环）——_fail-closed，不给 --force 旁路。
+    const problems = checkDepWrite({ file: name, id, dependsOn: parsedDeps.refs }, entryIndex);
+    if (problems.length > 0) return { ok: false, message: problems.map(depProblemMessage).join("\n") };
     const entry = {
-      id: nextId(data.entries),
+      id,
       text,
       status: "open" as const,
       branch: null,
       tags: parseTagsOption(opts.tag),
+      dependsOn: parsedDeps.refs,
       notes: [],
       createdAt: now(),
       claimedAt: null,
@@ -396,7 +460,8 @@ function runAdd(deps: WriteDeps): number {
     log(locked.value.message);
     return 1;
   }
-  log(`已登记到 todos/${name}.json：${text}`);
+  const depSuffix = parsedDeps.refs.length > 0 ? `（依赖 ${parsedDeps.refs.join(", ")}）` : "";
+  log(`已登记到 todos/${name}.json：${text}${depSuffix}`);
   return 0;
 }
 
@@ -409,9 +474,9 @@ function locateEntry(data: TodoFileData, match: string) {
 }
 
 /**
- * 两段式领取（迁移表见 ADR-0003）：open → aligning（写 branch 与 claimedAt，输出对齐
- * 文档路径 + 必填小节）；aligning/processing 幂等（不写盘）；aligned → processing
- * （提供了 --branch 才覆盖，未提供保留原引用）；done 拒绝。
+ * 两段式领取（迁移表见 ADR-0003；开工依赖门见 ADR-0005）：open → aligning（写 branch 与
+ * claimedAt，输出对齐文档路径 + 必填小节）；aligning/processing 幂等（不写盘）；
+ * aligned → processing（依赖全部 done 才放行；提供了 --branch 才覆盖），done 拒绝。
  */
 function runClaim(deps: WriteDeps): number {
   const { repoRoot, opts, now, log } = deps;
@@ -422,10 +487,12 @@ function runClaim(deps: WriteDeps): number {
     | { ok: true; changed: boolean; id: number; status: EntryStatus }
     | { ok: false; message: string };
   const result = withTodoLock(repoRoot, name, (): ClaimOutcome => {
-    if (!fs.existsSync(file)) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
-    const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
-    if (!parsed.ok) return { ok: false, message: parsed.message };
-    const located = locateEntry(parsed.data, match);
+    // 依赖门要解析跨文件引用——读全量台账（任一文件损坏整体 fail-closed，与其它命令同口径）。
+    const all = readTodoDocs(repoRoot);
+    if (!all.ok) return { ok: false, message: all.message };
+    const doc = all.docs.find((item) => item.name === name);
+    if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
+    const located = locateEntry(doc.data, match);
     if (!("entry" in located)) {
       return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
     }
@@ -440,10 +507,15 @@ function runClaim(deps: WriteDeps): number {
       entry.branch = branch;
       if (entry.claimedAt === null) entry.claimedAt = now();
     } else {
+      const blocking = blockingDeps(entry, depIndex(all.docs));
+      if (blocking.length > 0) {
+        const waits = blocking.map((item) => `  ${item.ref}（${item.status ?? "不存在"}）`);
+        return { ok: false, message: ["DEP_BLOCKED：依赖未完成，不能开工", ...waits].join("\n") };
+      }
       entry.status = "processing";
       if (branch !== null) entry.branch = branch;
     }
-    writeTodoData(repoRoot, file, parsed.data);
+    writeTodoData(repoRoot, file, doc.data);
     return { ok: true, changed: true, id: entry.id, status: entry.status };
   });
   if (!result.ok) {
@@ -512,22 +584,27 @@ function runAlign(deps: WriteDeps): number {
   return 0;
 }
 
+/**
+ * 收口：→ done（对齐阶段收口必带 --note）；完成后反查直接依赖本条目且未完成的条目，
+ * 输出一行提示——done 即解锁（含取消/搁置），下游的前提是否仍成立要人工重判（ADR-0005）。
+ */
 function runComplete(deps: WriteDeps): number {
   const { repoRoot, opts, now, log } = deps;
   const file = resolveTodoPath(String(opts.file), repoRoot) as string;
   const name = path.basename(file, ".json");
   const match = String(opts.match ?? "");
-  type CompleteOutcome = { ok: true; changed: boolean } | { ok: false; message: string };
+  type CompleteOutcome = { ok: true; changed: boolean; dependents: DepEntry[] } | { ok: false; message: string };
   const result = withTodoLock(repoRoot, name, (): CompleteOutcome => {
-    if (!fs.existsSync(file)) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
-    const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
-    if (!parsed.ok) return { ok: false, message: parsed.message };
-    const located = locateEntry(parsed.data, match);
+    const all = readTodoDocs(repoRoot);
+    if (!all.ok) return { ok: false, message: all.message };
+    const doc = all.docs.find((item) => item.name === name);
+    if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
+    const located = locateEntry(doc.data, match);
     if (!("entry" in located)) {
       return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
     }
     const entry = located.entry;
-    if (entry.status === "done") return { ok: true, changed: false };
+    if (entry.status === "done") return { ok: true, changed: false, dependents: [] };
     const note = opts.note;
     const hasNote = typeof note === "string" && note !== "";
     // 取消/搁置 = 从对齐阶段收口，必须留原因（对齐门的人工留痕）
@@ -537,8 +614,8 @@ function runComplete(deps: WriteDeps): number {
     entry.status = "done";
     entry.completedAt = now();
     if (hasNote) entry.notes.push(note as string);
-    writeTodoData(repoRoot, file, parsed.data);
-    return { ok: true, changed: true };
+    writeTodoData(repoRoot, file, doc.data);
+    return { ok: true, changed: true, dependents: dependentsOf(`${name}#${entry.id}`, depIndex(all.docs)) };
   });
   if (!result.ok) {
     log(result.message);
@@ -549,6 +626,75 @@ function runComplete(deps: WriteDeps): number {
     return 1;
   }
   log(`已完成（${result.value.changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  if (result.value.dependents.length > 0) {
+    const list = result.value.dependents.map((item) => `${item.file}#${item.id}（${item.status}）`).join("、");
+    log(`提示：以下未完成条目依赖本条目：${list}`);
+  }
+  return 0;
+}
+
+/**
+ * dep add / dep remove：增删直接依赖（todo-cli-todo:10）。与 add/claim 同一条锁 + 原子写；
+ * add 去重保序追加且落盘前校验（悬空/自引用/环），remove 只删已声明的引用（否则 DEP_ABSENT）；
+ * 两者都不动时间戳，变更后无变化则幂等返回「状态未变」。
+ */
+function runDep(deps: WriteDeps): number {
+  const { repoRoot, opts, log } = deps;
+  const sub = String((opts._ as string[])[1] ?? "");
+  if (sub !== "add" && sub !== "remove") {
+    log(`未知 dep 子命令：${sub}（可用：add --file <名> --match "子串" --on a#1,b#2 | remove ...）`);
+    return 1;
+  }
+  const on = opts.on;
+  if (on === undefined || on === "") {
+    log("缺少 --on <文件#id>（逗号分隔多个）");
+    return 1;
+  }
+  const parsed = parseDepRefsOption(on, "--on");
+  if (!parsed.ok) {
+    log(parsed.message);
+    return 1;
+  }
+  const file = resolveTodoPath(String(opts.file), repoRoot) as string;
+  const name = path.basename(file, ".json");
+  const match = String(opts.match ?? "");
+  type DepOutcome = { ok: true; changed: boolean; id: number } | { ok: false; message: string };
+  const result = withTodoLock(repoRoot, name, (): DepOutcome => {
+    const all = readTodoDocs(repoRoot);
+    if (!all.ok) return { ok: false, message: all.message };
+    const doc = all.docs.find((item) => item.name === name);
+    if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
+    const located = locateEntry(doc.data, match);
+    if (!("entry" in located)) {
+      return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
+    }
+    const entry = located.entry;
+    const before = entry.dependsOn;
+    if (sub === "add") {
+      const merged = [...before];
+      for (const ref of parsed.refs) if (!merged.includes(ref)) merged.push(ref);
+      if (merged.length === before.length) return { ok: true, changed: false, id: entry.id };
+      const problems = checkDepWrite({ file: name, id: entry.id, dependsOn: merged }, depIndex(all.docs));
+      if (problems.length > 0) return { ok: false, message: problems.map(depProblemMessage).join("\n") };
+      entry.dependsOn = merged;
+    } else {
+      const absent = parsed.refs.find((ref) => !before.includes(ref));
+      if (absent !== undefined) return { ok: false, message: `DEP_ABSENT：该条目未声明依赖 ${absent}` };
+      entry.dependsOn = before.filter((ref) => !parsed.refs.includes(ref));
+    }
+    writeTodoData(repoRoot, file, doc.data);
+    return { ok: true, changed: true, id: entry.id };
+  });
+  if (!result.ok) {
+    log(result.message);
+    return 1;
+  }
+  if (!result.value.ok) {
+    log(result.value.message);
+    return 1;
+  }
+  const verb = sub === "add" ? "已更新依赖" : "已移除依赖";
+  log(`${verb}（${result.value.changed ? "已写入" : "状态未变"}）：${name}#${result.value.id} · ${parsed.refs.join(", ")}`);
   return 0;
 }
 
@@ -600,8 +746,14 @@ function runList(repoRoot: string, opts: Record<string, unknown>, log: (line: st
     return 1;
   }
   if (doc !== undefined) parsed.filter.file = doc.name;
+  const blocked = blockedByMap(depIndex(all.docs));
   const entries: QueryEntry[] = docs.flatMap((doc) =>
-    doc.data.entries.map((entry) => ({ ...entry, file: doc.name })),
+    doc.data.entries.map((entry) => ({
+      ...entry,
+      file: doc.name,
+      // 阻塞是派生字段：非 done 且存在未完成（或悬空）的直接依赖；done 条目不算阻塞。
+      blockedBy: entry.status === "done" ? [] : (blocked.get(`${doc.name}#${entry.id}`) ?? []),
+    })),
   );
   const sorted = sortQueryEntries(applyEntryFilter(entries, parsed.filter));
   for (const line of serializeEntries(sorted, { json: parsed.json })) log(line);
@@ -694,10 +846,11 @@ function runTriage(repoRoot: string, opts: Record<string, unknown>, deps: Record
 const USAGE = `用法：
   node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|aligning|aligned|processing|done] [--file <name>]
-  node .agents/skills/todo-cli/todo-cli/todo.mjs add --file <name> "需求描述" [--tag 词1,词2]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs add --file <name> "需求描述" [--tag 词1,词2] [--dep 文件#id,...]
   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
   node .agents/skills/todo-cli/todo-cli/todo.mjs align --file <name> --match "子串" [--note "说明"]
   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file <name> --match "子串" [--note "说明"]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file <name> --match "子串" --on 文件#id,...
   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]
   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
@@ -706,7 +859,7 @@ const USAGE = `用法：
 仓库根默认由 git 自动发现（cwd 起）；也可在任意子命令前追加 --root <dir> 显式指定。`;
 
 /** 需要仓库根的子命令（help / 裸调用 / 未知命令都不要求 cwd 在 git 仓库内）。 */
-const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "align", "complete", "lint", "triage", "migrate"]);
+const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "align", "complete", "dep", "lint", "triage", "migrate"]);
 
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
@@ -779,7 +932,7 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     return 1;
   }
 
-  if (command === "add" || command === "claim" || command === "align" || command === "complete") {
+  if (command === "add" || command === "claim" || command === "align" || command === "complete" || command === "dep") {
     if (!opts.file) {
       log("缺少 --file <name>");
       return 1;
@@ -794,6 +947,7 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
       log('缺少 --match "子串"');
       return 1;
     }
+    if (command === "dep") return runDep({ repoRoot, opts, log });
     if (command === "claim") return runClaim({ repoRoot, opts, now, log });
     if (command === "align") return runAlign({ repoRoot, opts, now, log });
     return runComplete({ repoRoot, opts, now, log });

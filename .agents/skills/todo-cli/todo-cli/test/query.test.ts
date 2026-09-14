@@ -1,8 +1,9 @@
 /**
  * todo-cli/query.test.ts — list 查询纯函数单测（方案 C：原生字段投影，无降级口径；
- * 五态标记与对齐字段见 todo-cli-todo:11）。
+ * 五态标记与对齐字段见 todo-cli-todo:11，阻塞标记与 dependsOn 见 todo-cli-todo:10）。
  *
- * 边界：零 IO 纯函数；QueryEntry 由测试内联构造（字段口径见 schema.ts）。
+ * 边界：零 IO 纯函数；QueryEntry 由测试内联构造（字段口径见 schema.ts）；
+ * 阻塞是 core 算好的派生字段（query 不查台账、不解析依赖图）。
  */
 
 import test from "node:test";
@@ -19,6 +20,8 @@ function entry(overrides: Partial<QueryEntry>): QueryEntry {
     text: "一条需求",
     branch: null,
     tags: [],
+    dependsOn: [],
+    blockedBy: [],
     createdAt: null,
     claimedAt: null,
     completedAt: null,
@@ -89,6 +92,31 @@ test("serializeEntries：人读行 `${mark} ${file}#${id}  ${text}`；--json 带
   assert.equal(rows[0].status, "aligned");
   assert.equal(rows[0].alignedAt, "2026-09-12T02:00:00.000Z");
   assert.equal(rows[0].branch, "feat/a");
+});
+
+test("blocked 条目：人读行尾追加阻塞标记，非阻塞行字节不变；--json 带 dependsOn/blockedBy", () => {
+  const fixture: QueryEntry[] = [
+    entry({ id: 1, status: "processing", text: "前提" }),
+    entry({
+      id: 2,
+      status: "aligned",
+      text: "被阻塞条目",
+      dependsOn: ["general-todo#1", "zzz-todo#9"],
+      blockedBy: ["general-todo#1", "zzz-todo#9"],
+    }),
+    entry({ id: 3, status: "open", text: "无依赖" }),
+  ];
+  assert.deepEqual(serializeEntries(fixture, { json: false }), [
+    "[~] general-todo#1  前提",
+    "[>] general-todo#2  被阻塞条目 （阻塞：等待 general-todo#1, zzz-todo#9）",
+    "[ ] general-todo#3  无依赖",
+  ]);
+
+  const rows = JSON.parse(serializeEntries(fixture, { json: true })[0]);
+  assert.deepEqual(rows[1].dependsOn, ["general-todo#1", "zzz-todo#9"], "原生字段进 JSON");
+  assert.deepEqual(rows[1].blockedBy, ["general-todo#1", "zzz-todo#9"], "派生字段：非空即阻塞（不另设布尔位）");
+  assert.deepEqual(rows[0].blockedBy, []);
+  assert.deepEqual(rows[2].blockedBy, []);
 });
 
 test("parseFilterOptions：--claimed-since 校验格式与真实日期；其余 flag 透传", () => {
