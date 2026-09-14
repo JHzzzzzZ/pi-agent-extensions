@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "title": "todo-cli TODO",
   "entries": [
     {
@@ -8,6 +8,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ feat/todo-cli-extension，根 2.29.0",
         "能力：list 盘点（未领取/processing/阻塞）、add 登记（查重 + 路由到唯一落点）、claim 领取（标 processing）、complete 完成（改 `- [x]` 并去标注）、triage 只读扫描（活跃 worktree、processing 遗留、合并遗留）",
@@ -28,6 +29,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ merge 1fce323，根 2.30.1 / todo-cli 1.0.1：工具名改 `todos`，命令面不变；`index.test.ts` 加回归锁（不得再注册 `todo`）；真机复现→验证（临时配置目录 + 真实 pi --mode rpc，our 14 扩展 + npm 形态 rpiv-todo 同装）：修前报 `Tool \"todo\" conflicts with ...\\todo-cli\\index.ts` 且 exit 1，修后 exit 0、stderr 空、双方命令面齐全（62 条）；install-smoke 14/14 扩展 61 命令",
         "进展（2026-09-11 @ feat/todo-cli-extension，根 2.29.0）：Pi 扩展形态落地——`todo-cli/`（`index.ts` 注册 agent 工具 `todo`（summary/list/add/claim/complete/triage/lint 七动作）+ 裸 `/todo` 与六条冒号命令 `/todo:list|add|claim|complete|triage|lint`，旧空格写法只提示改名）；核心逻辑从 `tools/todo.mjs` 迁入 `todo-cli/core.ts`（CLI 变为薄入口再导出，既有 13 个 CLI 测试路径与行为不变），扩展目录自包含、可整目录复制安装；5 个接线测试（fake pi 捕获注册面 + 临时仓库真文件写入 + 注入 git 事实的 triage）；根 `package.json` 2.29.0 注册 13 扩展、`tools/install-smoke.mjs` 期望表同步、README/AGENTS/docs 卡四同步。"
@@ -43,6 +45,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ team-run-1789100633429（any-dev）：仓库侧转换完成——todo-cli/ 仅剩 core.ts（CLI-only 头注释，导出/行为零变化）、tools/todo.mjs 唯一入口（7 子命令+--help 不变、无 --root）、根 package.json 注销 pi.extensions（14→13）+ 版本 2.31.0、install-smoke 期望表删 todo-cli 条目、知识卡 git mv 至 docs/tools/todo-cli.md 并重写、README/AGENTS/INDEX/session-manager 四处同步；实测 test:contract 3 / test:smoke 19 / test:todo 16（含 3 个进程边界 E2E，任意 cwd spawnSync 真实 node）全绿，install-smoke 真跑 13/13（注意：agent-team 派生会话需先清 PI_AGENT_TEAM_FILE 再跑，否则 9 条 /team* 断言环境性失败，详见 history/team-runs/run-1789100633429/50-acceptance.md），任意 cwd（仓库根与 C:\\Users\\12967）只读命令全过；产出分支 team-run-1789100633429（四写线 --no-ff 合入，末次 merge 7c4f53c），运行记录 history/team-runs/run-1789100633429/（00/10/20×4/30/40/50/90）；配套 skill 为主会话后续（todos/skills-todo.md ecb70e9 已登记）；遗留：general-todo src/ 收纳条目仍列 todo-cli 于 14 插件目录（口径待主会话修）"
       ],
@@ -57,6 +60,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ team-run-run-1789118829730：markdown 权威 + node:sqlite 索引 todos/.todo-cli/ 已 gitignore，db status/rebuild/drop，迁移可逆，测试 16→50；history/team-runs/run-1789118829730/"
       ],
@@ -71,6 +75,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ team-run-run-1789118829730：list --branch/--tag/--text/--claimed-since/--json AND 组合 + db 子命令；组合查询一条命令；降级环境文本维度可用；history/team-runs/run-1789118829730/"
       ],
@@ -85,6 +90,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "随方案 C 根治：note 为 JSON 原生字段（complete --note 逐字进 notes，不解析括号/换行），md 行尾拼接路径删除；单测覆盖含「（）」、换行、超长备注（test/todo-cli.test.ts complete --note 用例）"
       ],
@@ -99,6 +105,7 @@
       "status": "done",
       "branch": "feat/todo-cli-json-store",
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "feat/todo-cli-json-store：JSON 唯一权威落地（根 2.41.0，merge 0eacb8d）——todo-cli 重构为 schema/lock/query/migrate/core 五模块（删 store.ts sqlite 层），44 测试全绿（并发/中断真子进程 + 迁移 roundtrip）；18 个 md → 18 个 JSON 零丢失验证 18/18（174 顶层条目 open 27/processing 9/done 138、注记 272 条、缩进子行并入 notes）；AGENTS/README/docs 卡/INDEX/ADR-0002/CONTEXT 同步；仓库外 todo-add/todo-triage(survey.sh 委托 CLI)/todo-cli/wrap-up 四 skill × .zcode/.pi 两镜像同步（备份 *.bak-migration）；complete --note 逐字进 notes（L16 bug 根治）"
       ],
@@ -113,6 +120,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "03bffa8 已合并；test:todo 50 pass；卡片 last verified @ a44c102"
       ],
@@ -127,6 +135,7 @@
       "status": "done",
       "branch": "feat/todo-cli-skill-placement",
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "f454160：工具内迁 .agents/skills/todo-cli/todo-cli/（入口与实现、测试同居；tools/todo.mjs 删除不留壳），仓库根改 --root > git rev-parse --show-toplevel > fail-closed，新增 SKILL.md + scripts/todo.sh 与 root-discovery/skill 结构测试（69 全绿）；核实：本机无全局 skill 库，故落点在仓库内（ADR-0004），跨机同步另立接力条目"
       ],
@@ -138,14 +147,17 @@
     {
       "id": 10,
       "text": "todo 依赖关系（用户 2026-09-12）：条目之间可声明依赖——todo1 依赖 todo2 时，todo2 未完成（status ≠ done）则 todo1 不可领取，claim 失败并输出阻塞提示（指明未完成依赖的文件#id 与状态）。待对齐（开工前定）：① 依赖引用形态（同文件数值 id vs 跨文件 文件名#id，是否允许跨文件依赖）；② 声明入口（add --dep 与后续增删依赖的子命令形态）；③ 阻塞语义边界（只拦 claim，还是同时影响 list/summary/triage 的排序与展示；被阻塞条目的状态显示与退出码）；④ 环检测（A→B→A 拒绝登记还是 lint 报错）与悬空依赖（指向不存在条目）如何处理；⑤ schema 演进（新增 dependsOn 字段，旧文件缺字段按空数组容错，不回填、是否 bump version）。验收：依赖未完成时 claim 非零退出且提示可断言；依赖完成后同一命令可领取；环/悬空依赖被拒绝且有测试；旧 todos/*.json 解析零破坏（18 文件全量可读）；单测覆盖含跨文件与锁路径。",
-      "status": "open",
-      "branch": null,
+      "status": "done",
+      "branch": "feat/todo-cli-depends-on",
       "tags": [],
-      "notes": [],
+      "dependsOn": [],
+      "notes": [
+        "完成 #10 @ merge 7dca0bf（分支 feat/todo-cli-depends-on：3ed8604 代码 + 6dff1ae 文档）：schema v3（dependsOn 原生字段，读 v1/v2 归一空数组、写出一律 v3）；开工门插在第二次 claim（aligned→processing），阻塞报 DEP_BLOCKED 并逐条列等待对象与状态、不写盘；首次 claim 与 align 不受阻；声明入口 add --dep + 新子命令 dep add|remove（写前拒绝悬空/自引用/环，环回显路径）；lint 加依赖图全量扫描（合并产物兜底）；list 行尾阻塞标记 + list --json 的 dependsOn/blockedBy、triage 明细、complete 依赖者提示；悬空引用按阻塞处理；ADR-0005 + 规格 docs/specs/todo-cli-depends-on.md + CONTEXT 五术语 + SKILL/README/卡同步；88 测试全绿（depends 纯函数 7 + CLI 闭环 9 + 并发 dep add 1）、test:contract 3 / test:smoke 21 / lint exit 0；worktree 已 remove。实测教训：依赖校验给 add 的锁临界区加约 1ms 即把 Windows 并发 add 的 rename 争用（EPERM）从 0/8 抬到 4/8，已加空依赖快路径回到同级（2/8 vs 2/8，环境性偶发，见 #13）"
+      ],
       "createdAt": "2026-09-14T14:04:00.954Z",
-      "claimedAt": null,
-      "completedAt": null,
-      "alignedAt": null
+      "claimedAt": "2026-09-14T15:16:42.549Z",
+      "completedAt": "2026-09-14T15:37:37.611Z",
+      "alignedAt": "2026-09-14T15:23:06.514Z"
     },
     {
       "id": 11,
@@ -153,6 +165,7 @@
       "status": "done",
       "branch": "feat/todo-cli-align-gate",
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "feat/todo-cli-align-gate：对齐门五态 + schema v2 + align 子命令 + 对齐文档契约已实现并合并（merge 7db5972）；60 测试全绿 + contract/smoke/lint 全绿；ADR-0003 / docs/specs/todo-cli-align-gate.md / 卡 / INDEX / README / AGENTS / CONTEXT 同一变更同步；skills #10 收口（仓库内指针已清）。"
       ],
@@ -167,6 +180,7 @@
       "status": "done",
       "branch": "feat/todo-cli-list-file-normalize",
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "merge e5235eb（fix bb27c5b + docs 15c7b53）：core 侧归一——runList 改为按 resolveTodoPath 解析后到 docs 取真实归属名回填 filter，查不到（含 Windows 大小写不符）明确报错 exit 1、不再静默空结果；测试 44→46（四写法逐字节一致 + AND 组合 + 真实仓库短名回归锁，修前两条必红）；规格落盘 docs/specs/todo-cli-list-file-normalize.md（本仓首个）；docs/tools/todo-cli.md 契约与 last verified、README 测试数、INDEX 增 specs 路由行同步；根三自检 contract 3 / smoke 21 / todo 46 + lint 全绿。"
       ],
@@ -184,6 +198,7 @@
         "tests",
         "flaky"
       ],
+      "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T14:31:09.083Z",
       "claimedAt": null,
