@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "title": "TODO（用户级 · skills/ 全局技能）",
   "entries": [
     {
@@ -11,7 +11,8 @@
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -24,7 +25,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -35,7 +37,8 @@
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
@@ -48,7 +51,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
@@ -59,7 +63,8 @@
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 6,
@@ -70,7 +75,8 @@
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 7,
@@ -83,7 +89,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 8,
@@ -96,7 +103,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 9,
@@ -107,7 +115,22 @@
       "notes": [],
       "createdAt": "2026-09-14T14:04:10.962Z",
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 10,
+      "text": "废弃 todo-add / todo-triage / wrap-up 三个 todo skill，只保留 todo-cli 命令参考卡（用户 2026-09-14 随 #11 对齐门选定）：三者机械步骤已被仓库 CLI（add/claim/align/complete/triage）覆盖，AGENTS.md 首行 wrap-up 指针与红线 1 的 skill todo-add 指针已删；仓库侧只清指针，不新建/不重建仓库外文件。",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "notes": [
+        "2026-09-14 实测：本机 ~/.pi/agent/skills/ 不存在（无文件可删、仓库外未改任何文件）；残留风险 = 其它机器/备份里的旧 skill 副本，待人工确认；仓库内指针（AGENTS.md 首行与红线 1）已清。"
+      ],
+      "createdAt": "2026-09-14T14:58:08.367Z",
+      "claimedAt": null,
+      "completedAt": "2026-09-14T14:58:08.482Z",
+      "alignedAt": null
     }
   ]
 }
