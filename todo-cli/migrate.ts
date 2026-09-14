@@ -7,17 +7,17 @@
  *     「渲染 → 再解析 → 再构建」与首次构建 deepEqual（文本/状态/分支/注记零丢失），
  *     任何文件不过关就整体中止、一个字节都不写。
  *   - `migrate to-md`（常驻逃生回滚，不是视图）：todos/*.json → 规范形态 md（条目 +
- *     `（processing…）`标记 + 注记作缩进子行），JSON 保留不动；配合 git 历史里的旧版
- *     CLI 即可回到纯 markdown 工作流。规范形态 ≠ 迁移前原文件（rawText 已按方案 C
- *     放弃，手写标注由 notes 承载）。
+ *     `（aligning|aligned|processing…）`标记 + 注记作缩进子行），JSON 保留不动；配合 git
+ *     历史里的旧版 CLI 即可回到纯 markdown 工作流。规范形态 ≠ 迁移前原文件（rawText 已按
+ *     方案 C 放弃，手写标注由 notes 承载）。
  *
  * 解析规则（等价口径 = 「全部文本零丢失」）：
  *   - 顶层条目 = 行首 `- [x]/[ ]`；一切缩进行（带不带 checkbox）并入上一条顶层条目
  *     的 notes（L17「缩进子行迁移进 notes」；此前带 checkbox 的缩进行被旧解析器
  *     计为独立条目，方案 C 起条目只指顶层，顶层 211 → 171）；
- *   - 正文里以 `processing` / `完成` 开头的顶层括号组是标注：processing 组 → 状态与
- *     branch（纯 `@ feat/x` 形态入 branch 字段，其余内容进 notes 保真），完成组 → notes；
- *     其余括号组是正文，原地保留；
+ *   - 正文里以 `aligning` / `aligned` / `processing` / `完成` 开头的顶层括号组是标注：
+ *     三个阶段组 → 状态与 branch（纯 `@ feat/x` 形态入 branch 字段，其余内容进 notes
+ *     保真），完成组 → notes；其余括号组是正文，原地保留；
  *   - 时间戳尽力回填：node:sqlite 可读的遗留 index.db 按（文件，归一化文本）匹配；
  *     不可读/无记录 → null（绝不伪造）。
  */
@@ -41,8 +41,8 @@ export interface LegacyEntry {
   /** 剥掉标注括号组后的纯描述（serializeTodo 的 text 字段口径）。 */
   text: string;
   checked: boolean;
-  /** 是否出现 processing 标注组（open/processing 判定依据）。 */
-  processing: boolean;
+  /** 是否出现阶段标注（aligning/aligned/processing）。 */
+  state: "open" | "aligning" | "aligned" | "processing";
   /** 纯 `@ feat/x` 形态的 processing 标注（或组内容里首个含 `/` 的 @ 引用）。 */
   branch: string | null;
   /** 标注内容注记（processing 非纯引用的内容 + 完成组内容，按出现序）。 */
@@ -84,7 +84,9 @@ function scanParenGroups(text: string): ParenGroup[] {
   return groups;
 }
 
-const ANNOTATION_RE = /^(processing|完成)/;
+const ANNOTATION_RE = /^(processing|aligning|aligned|完成)/;
+const STAGE_RE = /^(processing|aligning|aligned)\s*/;
+type Stage = Exclude<LegacyEntry["state"], "open">;
 const PURE_REF_RE = /^@\s*(\S+)$/;
 const REF_TOKEN_RE = /@\s*([^\s：:，,）)（(]+)/g;
 
@@ -148,15 +150,16 @@ export function parseLegacyMarkdown(content: string): LegacyDoc {
     const raw = entryMatch[2].trim();
     const groups = scanParenGroups(raw).filter((group) => isAnnotationGroup(group.inner));
     let text = raw;
-    let processing = false;
+    let state: LegacyEntry["state"] = "open";
     let branch: string | null = null;
     const annotationNotes: string[] = [];
     for (const group of [...groups].reverse()) {
       text = `${text.slice(0, group.start)}${text.slice(group.end)}`;
       const content = group.inner.trim();
-      if (content.startsWith("processing")) {
-        processing = true;
-        const payload = content.replace(/^processing\s*/, "").trim();
+      const stage = STAGE_RE.exec(content);
+      if (stage) {
+        state = stage[1] as Stage;
+        const payload = content.slice(stage[0].length).trim();
         const pure = payload === "" ? null : PURE_REF_RE.exec(payload);
         if (pure) {
           if (pure[1].includes("/") && branch === null) branch = pure[1];
@@ -172,7 +175,7 @@ export function parseLegacyMarkdown(content: string): LegacyDoc {
     }
     // 标注按文本出现序入 notes（倒序剥离后恢复）
     annotationNotes.reverse();
-    current = { raw, text: text.trim(), checked: entryMatch[1] !== " ", processing, branch, annotationNotes, sublines: [] };
+    current = { raw, text: text.trim(), checked: entryMatch[1] !== " ", state, branch, annotationNotes, sublines: [] };
     doc.entries.push(current);
   }
   return doc;
@@ -188,29 +191,31 @@ export function buildTodoData(name: string, doc: LegacyDoc, timestamps?: Readonl
     entries.push({
       id,
       text: legacy.text,
-      status: legacy.checked ? "done" : legacy.processing ? "processing" : "open",
+      status: legacy.checked ? "done" : legacy.state,
       branch: legacy.checked ? null : legacy.branch,
       tags: [],
       notes: [...legacy.annotationNotes, ...legacy.sublines],
       createdAt: seeded?.createdAt ?? null,
       claimedAt: seeded?.claimedAt ?? null,
       completedAt: seeded?.completedAt ?? null,
+      alignedAt: null,
     });
   }
-  return { version: 1, title: doc.title ?? `${name} TODO`, entries };
+  return { version: 2, title: doc.title ?? `${name} TODO`, entries };
 }
 
 // ---------------------------------------------------------------------------
 // 规范 markdown 渲染（to-md 回滚形态）
 // ---------------------------------------------------------------------------
 
-/** JSON → 规范 md：条目行 + processing 标记还原 + notes 作缩进子行（roundtrip 稳定）。 */
+/** JSON → 规范 md：条目行 + 在途态标记还原（aligning/aligned/processing + branch）+ notes 作缩进子行。 */
 export function renderMarkdown(data: TodoFileData): string {
   const lines: string[] = [`# ${data.title}`, ""];
   for (const entry of data.entries) {
     const mark = entry.status === "done" ? "[x]" : "[ ]";
-    const suffix =
-      entry.status === "processing" ? (entry.branch ? `（processing @ ${entry.branch}）` : "（processing）") : "";
+    const staged =
+      entry.status === "processing" || entry.status === "aligning" || entry.status === "aligned";
+    const suffix = staged ? (entry.branch ? `（${entry.status} @ ${entry.branch}）` : `（${entry.status}）`) : "";
     lines.push(`- ${mark} ${entry.text}${suffix}`);
     for (const note of entry.notes) lines.push(`  - ${note}`);
   }
@@ -271,8 +276,18 @@ function roundTripEqual(name: string, doc: LegacyDoc, data: TodoFileData): boole
   return JSON.stringify(strip(rebuilt)) === JSON.stringify(strip(data)) && rebuilt.title === data.title;
 }
 
-function countEntries(docs: TodoFileData[]): { total: number; open: number; processing: number; done: number; notes: number } {
-  const counts = { total: 0, open: 0, processing: 0, done: 0, notes: 0 };
+interface StatusCounts {
+  total: number;
+  open: number;
+  aligning: number;
+  aligned: number;
+  processing: number;
+  done: number;
+  notes: number;
+}
+
+function countEntries(docs: TodoFileData[]): StatusCounts {
+  const counts: StatusCounts = { total: 0, open: 0, aligning: 0, aligned: 0, processing: 0, done: 0, notes: 0 };
   for (const data of docs) {
     for (const entry of data.entries) {
       counts.total += 1;
@@ -281,6 +296,10 @@ function countEntries(docs: TodoFileData[]): { total: number; open: number; proc
     }
   }
   return counts;
+}
+
+function formatCounts(counts: StatusCounts): string {
+  return `open ${counts.open} / aligning ${counts.aligning} / aligned ${counts.aligned} / processing ${counts.processing} / done ${counts.done}`;
 }
 
 /** md → JSON：校验（json 已存在则中止）→ 逐文件构建 + 等价自检 → 落盘 → 删 md 与遗留索引。 */
@@ -314,7 +333,7 @@ export function migrateFromMd(repoRoot: string, deps: MigrateDeps & { dryRun: bo
 
   const counts = countEntries(built.map((item) => item.data));
   if (deps.dryRun) {
-    deps.log(`演练：将迁移 ${built.length} 个文件 · 顶层条目 ${counts.total}（open ${counts.open} / processing ${counts.processing} / done ${counts.done}）· 注记 ${counts.notes} 条`);
+    deps.log(`演练：将迁移 ${built.length} 个文件 · 顶层条目 ${counts.total}（${formatCounts(counts)}）· 注记 ${counts.notes} 条`);
     return 0;
   }
 
@@ -345,7 +364,7 @@ export function migrateFromMd(repoRoot: string, deps: MigrateDeps & { dryRun: bo
       // 遗留索引清理失败不影响迁移结果
     }
   }
-  deps.log(`已迁移 ${built.length} 个文件 · 顶层条目 ${counts.total}（open ${counts.open} / processing ${counts.processing} / done ${counts.done}）· 注记 ${counts.notes} 条`);
+  deps.log(`已迁移 ${built.length} 个文件 · 顶层条目 ${counts.total}（${formatCounts(counts)}）· 注记 ${counts.notes} 条`);
   deps.log("markdown 权威已删除（回滚：node tools/todo.mjs migrate to-md）");
   return 0;
 }

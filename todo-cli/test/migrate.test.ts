@@ -55,15 +55,15 @@ test("parseLegacyMarkdown：标题/顶层条目/缩进子行/标注剥出", () =
   assert.equal(doc.entries[0].checked, false);
   assert.deepEqual(doc.entries[0].sublines, ["子说明一（缩进无 checkbox）", "带勾的缩进子行也并入 notes"]);
 
-  assert.equal(doc.entries[1].processing, true);
+  assert.equal(doc.entries[1].state, "processing");
   assert.equal(doc.entries[1].branch, null);
 
-  assert.equal(doc.entries[2].processing, true);
+  assert.equal(doc.entries[2].state, "processing");
   assert.equal(doc.entries[2].branch, "feat/branch-x");
   assert.deepEqual(doc.entries[2].annotationNotes, []);
 
   // 手写注解：ref 无 / 不入 branch；内容整体进 notes 保真
-  assert.equal(doc.entries[3].processing, true);
+  assert.equal(doc.entries[3].state, "processing");
   assert.equal(doc.entries[3].branch, null);
   assert.deepEqual(doc.entries[3].annotationNotes, ["2026-09-10 @ route A：材料已备，待提交上游"]);
 
@@ -89,6 +89,31 @@ test("parseLegacyMarkdown：嵌套括号的完成注记整体剥出；非标注�
   assert.ok(doc.entries[3].text.includes("（完成 半态 ——"));
 });
 
+test("parseLegacyMarkdown：aligning / aligned 标注识别（纯引用入 branch，杂注进 notes）", () => {
+  const doc = parseLegacyMarkdown(
+    [
+      "- [ ] 对齐中（aligning）",
+      "- [ ] 对齐中有引用（aligning @ feat/align-x）",
+      "- [ ] 已对齐（aligned @ feat/align-y）",
+      "- [ ] aligned 带说明（aligned 2026-09-14 @ feat/align-z：已与人工确认）",
+      "- [ ] 普通条目",
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    doc.entries.map((entry) => [entry.state, entry.branch]),
+    [
+      ["aligning", null],
+      ["aligning", "feat/align-x"],
+      ["aligned", "feat/align-y"],
+      ["aligned", "feat/align-z"],
+      ["open", null],
+    ],
+  );
+  assert.deepEqual(doc.entries[0].annotationNotes, []);
+  assert.deepEqual(doc.entries[1].annotationNotes, []);
+  assert.deepEqual(doc.entries[3].annotationNotes, ["2026-09-14 @ feat/align-z：已与人工确认"]);
+});
+
 test("parseLegacyMarkdown：CRLF 与无标题文件；前无条目的孤立说明行兜底为顶层条目", () => {
   const doc = parseLegacyMarkdown("# t\r\n\r\n- [ ] 一条\r\n  - 子行\r\n");
   assert.equal(doc.entries.length, 1);
@@ -100,22 +125,30 @@ test("parseLegacyMarkdown：CRLF 与无标题文件；前无条目的孤立说�
   assert.equal(noHeader.entries[0].text, "孤立说明行在最前");
 });
 
-test("renderMarkdown → parseLegacyMarkdown → buildTodoData：roundtrip 语义恒等（时间戳除外）", () => {
+test("renderMarkdown → parseLegacyMarkdown → buildTodoData：五态 roundtrip 语义恒等（时间戳除外）", () => {
   const md = [
     "# 通用 TODO",
     "",
     "- [ ] 未领取的条目：做点事情",
     "  - 子说明一",
+    "- [ ] 对齐中的条目（aligning @ feat/branch-x）",
+    "- [ ] 已对齐的条目（aligned）",
     "- [ ] 进行中的条目（processing @ feat/branch-x）",
     "  - 旧注解留在 notes",
     "- [x] 已完成的条目",
     "  - feat/x：做完",
   ].join("\n");
   const first = buildTodoData("general-todo", parseLegacyMarkdown(md));
+  assert.equal(first.version, 2, "buildTodoData 产出 v2");
+  assert.deepEqual(first.entries.map((e) => e.alignedAt), [null, null, null, null, null]);
+  assert.deepEqual(
+    first.entries.map((e) => e.status),
+    ["open", "aligning", "aligned", "processing", "done"],
+  );
   const second = buildTodoData("general-todo", parseLegacyMarkdown(renderMarkdown(first)));
   assert.deepEqual(second, first);
   // id 重新分配恒等（数组序不变）
-  assert.deepEqual(second.entries.map((e) => e.id), [1, 2, 3]);
+  assert.deepEqual(second.entries.map((e) => e.id), [1, 2, 3, 4, 5]);
 });
 
 test("migrateFromMd：落盘 JSON + 删 md + 清遗留索引；拒绝已存在的 json；--dry-run 不写", () => {
@@ -140,7 +173,10 @@ test("migrateFromMd：落盘 JSON + 删 md + 清遗留索引；拒绝已存在�
 
   const out: string[] = [];
   assert.equal(migrateFromMd(root, { now: NOW, log: (l) => out.push(l), dryRun: false, force: false }), 0);
-  assert.match(out.join("\n"), /已迁移 2 个文件 · 顶层条目 3（open 2 \/ processing 0 \/ done 1）· 注记 1 条/);
+  assert.match(
+    out.join("\n"),
+    /已迁移 2 个文件 · 顶层条目 3（open 2 \/ aligning 0 \/ aligned 0 \/ processing 0 \/ done 1）· 注记 1 条/,
+  );
   assert.match(out.join("\n"), /回滚：node tools\/todo\.mjs migrate to-md/);
   assert.equal(fs.existsSync(path.join(root, "todos", "general-todo.md")), false, "迁移后 md 删除");
   assert.equal(fs.existsSync(path.join(root, "todos", ".todo-cli", "index.db")), false, "遗留索引清理");
@@ -194,9 +230,11 @@ test("migrateToMd：JSON → 规范 md（processing 标记还原、notes 作缩�
       version: 1,
       title: "通用 TODO",
       entries: [
-        { id: 1, text: "进行中条目", status: "processing", branch: "feat/x", tags: [], notes: ["注记一"], createdAt: null, claimedAt: null, completedAt: null },
-        { id: 2, text: "完成条目", status: "done", branch: null, tags: [], notes: ["收尾说明"], createdAt: null, claimedAt: null, completedAt: null },
-        { id: 3, text: "无分支进行中", status: "processing", branch: null, tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
+        { id: 1, text: "对齐中条目", status: "aligning", branch: "feat/x", tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null, alignedAt: null },
+        { id: 2, text: "已对齐条目", status: "aligned", branch: "feat/x", tags: [], notes: ["待开工"], createdAt: null, claimedAt: null, completedAt: null, alignedAt: "2026-09-14T00:00:00.000Z" },
+        { id: 3, text: "进行中条目", status: "processing", branch: "feat/x", tags: [], notes: ["注记一"], createdAt: null, claimedAt: null, completedAt: null, alignedAt: null },
+        { id: 4, text: "完成条目", status: "done", branch: null, tags: [], notes: ["收尾说明"], createdAt: null, claimedAt: null, completedAt: null, alignedAt: null },
+        { id: 5, text: "无分支进行中", status: "processing", branch: null, tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null, alignedAt: null },
       ],
     }),
   );
@@ -209,6 +247,9 @@ test("migrateToMd：JSON → 规范 md（processing 标记还原、notes 作缩�
     [
       "# 通用 TODO",
       "",
+      "- [ ] 对齐中条目（aligning @ feat/x）",
+      "- [ ] 已对齐条目（aligned @ feat/x）",
+      "  - 待开工",
       "- [ ] 进行中条目（processing @ feat/x）",
       "  - 注记一",
       "- [x] 完成条目",
@@ -220,6 +261,8 @@ test("migrateToMd：JSON → 规范 md（processing 标记还原、notes 作缩�
   assert.ok(fs.existsSync(path.join(root, "todos", "general-todo.json")), "to-md 不删 JSON");
   // 还原的 md 再迁移回去必须语义恒等（roundtrip 稳定）
   const round = buildTodoData("general-todo", parseLegacyMarkdown(md));
+  assert.equal(round.version, 2);
+  assert.deepEqual(round.entries.map((e) => e.alignedAt), [null, null, null, null, null]);
   const original = parseTodoJson(fs.readFileSync(path.join(root, "todos", "general-todo.json"), "utf8"), "t");
   assert.equal(original.ok, true);
   if (original.ok) {

@@ -6,7 +6,7 @@
  * 三时间戳都是 schema 原生字段，不再有「文本派生 vs DB 列」双口径，也没有降级路径。
  *
  * 人读行格式：`${statusMark} ${file}#${id}  ${text}`（file 为去 `.json` 的归属名，
- * id 为文件内稳定编号，id 与文本间两空格）。
+ * id 为文件内稳定编号，id 与文本间两空格）；标记五态见 STATUS_MARKS。
  */
 
 import type { EntryStatus } from "./schema.ts";
@@ -25,6 +25,7 @@ export interface QueryEntry {
   createdAt: string | null;
   claimedAt: string | null;
   completedAt: string | null;
+  alignedAt: string | null;
 }
 
 /** AND 组合过滤条件：未设字段不参与过滤；非法 status 沿旧 list 语义给空结果。 */
@@ -43,7 +44,13 @@ export interface EntryFilter {
   claimedSince?: string;
 }
 
-const STATUS_MARKS: Record<EntryStatus, string> = { done: "[x]", processing: "[~]", open: "[ ]" };
+const STATUS_MARKS: Record<EntryStatus, string> = {
+  done: "[x]",
+  processing: "[~]",
+  aligned: "[>]",
+  aligning: "[?]",
+  open: "[ ]",
+};
 
 /** 状态标记：人读行首列。 */
 export function statusMark(status: EntryStatus): string {

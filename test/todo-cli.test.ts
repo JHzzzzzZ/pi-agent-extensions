@@ -2,10 +2,10 @@
  * todo CLI 的纯逻辑 + 临时目录功能单测（工具本体见 tools/todo.mjs；方案 C 存储）。
  *
  * 边界说明：这里覆盖查重/路径解析/命令闭环/triage 可在文件系统边界内验证的行为；
- * 存储是 `todos/<名>.json`（方案 C：JSON 唯一权威），写操作走锁 + temp+rename 原子
- * 落盘——并发/中断边界在 todo-cli/test/{lock,concurrency,interrupt}.test.ts 用真实
- * 进程覆盖。本文件只在临时 fixture 目录演练写操作，不触碰仓库真实 todos/；末尾三个
- * 进程边界 E2E 只跑只读命令（summary/--help/未知命令）。
+ * 存储是 `todos/<名>.json`（方案 C：JSON 唯一权威；v2 = 对齐门五态），写操作走锁 +
+ * temp+rename 原子落盘——并发/中断边界在 todo-cli/test/{lock,concurrency,interrupt}.test.ts
+ * 用真实进程覆盖。本文件只在临时 fixture 目录演练写操作，不触碰仓库真实 todos/；末尾
+ * 进程边界 E2E 只跑只读命令（summary/--help/未知命令/缺参报错）。
  */
 
 import test from "node:test";
@@ -49,6 +49,51 @@ function readRepoData(root, name) {
   return parsed.ok ? parsed.data : null;
 }
 
+/** 写一份结构完整的对齐文档（内容可按测试覆盖；空串正文用于制造缺小节）。 */
+function writeAlignDoc(root, name, id, overrides = {}) {
+  const parts = {
+    heading: `${name}#${id} 对齐文档`,
+    intent: "意图：把边界与术语问清。",
+    scope: "范围：只改被测模块，不做范围外。",
+    acceptance: "验收标准：测试全绿。",
+    confirm: "人工确认：确认人、日期、方式。",
+    ...overrides,
+  };
+  const lines = [`# ${parts.heading}`, ""];
+  for (const [title, body] of [
+    ["意图", parts.intent],
+    ["范围", parts.scope],
+    ["验收标准", parts.acceptance],
+    ["人工确认", parts.confirm],
+  ]) {
+    lines.push(`## ${title}`);
+    if (body !== "") lines.push(body);
+    lines.push("");
+  }
+  const dir = path.join(root, "todos", "align");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${name}#${id}.md`);
+  fs.writeFileSync(file, lines.join("\n"));
+  return file;
+}
+
+/** 内联条目构造：默认 v2 全字段（alignedAt 原生）。 */
+function entry(id, text, status, extra = {}) {
+  return {
+    id,
+    text,
+    status,
+    branch: null,
+    tags: [],
+    notes: [],
+    createdAt: null,
+    claimedAt: null,
+    completedAt: null,
+    alignedAt: null,
+    ...extra,
+  };
+}
+
 test("normalizeText / findDuplicateHits：归一化查重口径不变（标注/空白/大小写/句读差异不算新）", () => {
   assert.equal(normalizeText("做点事情（processing）"), normalizeText("做点事情"));
   const entries = [
@@ -73,13 +118,14 @@ test("resolveTodoPath：四种输入归一到 todos/<名>.json，拒绝路径穿
   assert.equal(resolveTodoPath("", root), null);
 });
 
-test("main：add/dup/claim/complete 在临时仓库上闭环，JSON 字段原生落盘", () => {
+test("main：add/dup/claim/align/complete 在临时仓库上闭环，JSON 字段原生落盘", () => {
   const root = makeRepo({ "general-todo": undefined });
   const out = [];
   const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-12T00:00:00.000Z" };
 
   assert.equal(main(["add", "--file", "general", "第一条需求"], deps), 0);
   let data = readRepoData(root, "general-todo");
+  assert.equal(data.version, 2, "新建文件即 v2");
   assert.equal(data.entries.length, 1);
   assert.deepEqual(data.entries[0], {
     id: 1,
@@ -91,20 +137,26 @@ test("main：add/dup/claim/complete 在临时仓库上闭环，JSON 字段原生
     createdAt: "2026-09-12T00:00:00.000Z",
     claimedAt: null,
     completedAt: null,
+    alignedAt: null,
   });
   assert.match(out.join("\n"), /已登记到 todos\/general-todo\.json：第一条需求/);
 
   assert.equal(main(["add", "--file", "general", "第一条需求"], deps), 1, "查重拒绝");
   assert.match(out.join("\n"), /重复（exact）：general-todo#1/);
-  assert.equal(data.entries.length, 1, "拒绝时不写入");
+  assert.equal(readRepoData(root, "general-todo").entries.length, 1, "拒绝时不写入");
   assert.equal(main(["add", "--file", "general", "第二条需求", "--force"], deps), 0, "--force 放行");
   assert.equal(readRepoData(root, "general-todo").entries[1].id, 2, "id 取 max+1");
 
+  // 第一段：open → aligning（写分支引用与首次领取时间，并提示对齐文档）
+  out.length = 0;
   assert.equal(main(["claim", "--file", "general", "--match", "第一条需求", "--branch", "feat/first"], deps), 0);
   data = readRepoData(root, "general-todo");
-  assert.equal(data.entries[0].status, "processing");
+  assert.equal(data.entries[0].status, "aligning", "首次领取进 aligning，不直接开工");
   assert.equal(data.entries[0].branch, "feat/first");
   assert.equal(data.entries[0].claimedAt, "2026-09-12T00:00:00.000Z");
+  assert.equal(data.entries[0].alignedAt, null);
+  assert.match(out.join("\n"), /todos\/align\/general-todo#1\.md/, "输出派生的对齐文档路径");
+  assert.match(out.join("\n"), /## 意图、## 范围、## 验收标准、## 人工确认/, "输出必填小节名");
 
   assert.equal(main(["claim", "--file", "general", "--match", "第一条需求"], deps), 0);
   assert.match(out.join("\n"), /已领取（状态未变）/);
@@ -112,6 +164,26 @@ test("main：add/dup/claim/complete 在临时仓库上闭环，JSON 字段原生
   assert.match(out.join("\n"), /NOT_FOUND：没有匹配条目/);
   assert.equal(main(["claim", "--file", "general", "--match", "条"], deps), 1);
   assert.match(out.join("\n"), /AMBIGUOUS：匹配到多条/);
+
+  // 对齐门：无文档不放行 → 补文档 → aligned
+  out.length = 0;
+  assert.equal(main(["align", "--file", "general", "--match", "第一条需求"], deps), 1);
+  assert.match(out.join("\n"), /ALIGN_DOC_MISSING：缺少对齐文档 todos\/align\/general-todo#1\.md/);
+  assert.equal(readRepoData(root, "general-todo").entries[0].status, "aligning", "门没过不写盘");
+  writeAlignDoc(root, "general-todo", 1);
+  assert.equal(main(["align", "--file", "general", "--match", "第一条需求"], deps), 0);
+  data = readRepoData(root, "general-todo");
+  assert.equal(data.entries[0].status, "aligned");
+  assert.equal(data.entries[0].alignedAt, "2026-09-12T00:00:00.000Z");
+  assert.equal(main(["align", "--file", "general", "--match", "第一条需求"], deps), 0);
+  assert.match(out.join("\n"), /已对齐（状态未变）/);
+
+  // 第二段：aligned → processing（无人值守开工）
+  assert.equal(main(["claim", "--file", "general", "--match", "第一条需求"], deps), 0);
+  data = readRepoData(root, "general-todo");
+  assert.equal(data.entries[0].status, "processing");
+  assert.equal(data.entries[0].branch, "feat/first", "未提供 --branch 时保留原引用");
+  assert.match(out.join("\n"), /进入 processing/);
 
   assert.equal(main(["complete", "--file", "general", "--match", "第一条需求"], deps), 0);
   data = readRepoData(root, "general-todo");
@@ -123,6 +195,140 @@ test("main：add/dup/claim/complete 在临时仓库上闭环，JSON 字段原生
   assert.match(out.join("\n"), /ALREADY_DONE：条目已完成，不能再领取/);
   assert.equal(main(["complete", "--file", "general", "--match", "第一条需求"], deps), 0);
   assert.match(out.join("\n"), /已完成（状态未变）/);
+});
+
+test("main：claim 两段式迁移表——aligning/processing 幂等，aligned 覆盖或保留 branch", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 2,
+      title: "t",
+      entries: [
+        entry(1, "对齐中条目", "aligning", { branch: "feat/old", claimedAt: "2026-09-01T00:00:00.000Z" }),
+        entry(2, "已对齐覆盖分支", "aligned", { branch: "feat/old", alignedAt: "2026-09-02T00:00:00.000Z" }),
+        entry(3, "已对齐保留分支", "aligned", { branch: "feat/keep", alignedAt: "2026-09-02T00:00:00.000Z" }),
+        entry(4, "已对齐无分支", "aligned", { alignedAt: "2026-09-02T00:00:00.000Z" }),
+        entry(5, "进行中条目", "processing", { branch: "feat/wip" }),
+        entry(6, "完成条目", "done", { completedAt: "2026-09-03T00:00:00.000Z" }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["claim", "--file", "general", "--match", "对齐中条目", "--branch", "feat/ignored"], deps), 0);
+  assert.match(out.join("\n"), /已领取（状态未变）/);
+  let data = readRepoData(root, "general-todo");
+  assert.equal(data.entries[0].status, "aligning");
+  assert.equal(data.entries[0].branch, "feat/old", "aligning 幂等不覆盖 branch");
+  assert.equal(data.entries[0].claimedAt, "2026-09-01T00:00:00.000Z", "claimedAt 首次领取后不再覆盖");
+
+  assert.equal(main(["claim", "--file", "general", "--match", "已对齐覆盖分支", "--branch", "feat/new"], deps), 0);
+  data = readRepoData(root, "general-todo");
+  assert.equal(data.entries[1].status, "processing", "aligned → processing 需再次 claim");
+  assert.equal(data.entries[1].branch, "feat/new", "提供了 --branch 就覆盖");
+  assert.equal(data.entries[1].alignedAt, "2026-09-02T00:00:00.000Z", "alignedAt 保留");
+
+  assert.equal(main(["claim", "--file", "general", "--match", "已对齐保留分支"], deps), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[2].branch, "feat/keep", "未提供 --branch 保留原值");
+
+  assert.equal(main(["claim", "--file", "general", "--match", "已对齐无分支"], deps), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[3].branch, null, "无引用 + 未提供 → 仍为 null");
+
+  out.length = 0;
+  assert.equal(main(["claim", "--file", "general", "--match", "进行中条目"], deps), 0);
+  assert.match(out.join("\n"), /已领取（状态未变）/);
+  assert.equal(readRepoData(root, "general-todo").entries[4].branch, "feat/wip");
+
+  assert.equal(main(["claim", "--file", "general", "--match", "完成条目"], deps), 1);
+  assert.match(out.join("\n"), /ALREADY_DONE/);
+});
+
+test("main：align 失败路径——NOT_ALIGNING / ALIGN_DOC_MISSING / ALIGN_DOC_INCOMPLETE 均不写盘", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 2,
+      title: "t",
+      entries: [
+        entry(1, "未领取条目", "open"),
+        entry(2, "对齐中条目", "aligning", { branch: "feat/a", claimedAt: "2026-09-01T00:00:00.000Z" }),
+        entry(3, "进行中条目", "processing"),
+        entry(4, "完成条目", "done", { completedAt: "2026-09-03T00:00:00.000Z" }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  for (const [match, label] of [
+    ["未领取条目", "open"],
+    ["进行中条目", "processing"],
+    ["完成条目", "done"],
+  ]) {
+    out.length = 0;
+    assert.equal(main(["align", "--file", "general", "--match", match], deps), 1, `${label} 不可确认对齐`);
+    assert.match(out.join("\n"), /NOT_ALIGNING：条目不在 aligning 状态/);
+  }
+  const snapshot = JSON.stringify(readRepoData(root, "general-todo"));
+
+  out.length = 0;
+  assert.equal(main(["align", "--file", "general", "--match", "对齐中条目"], deps), 1);
+  assert.match(out.join("\n"), /ALIGN_DOC_MISSING：缺少对齐文档 todos\/align\/general-todo#2\.md/);
+
+  writeAlignDoc(root, "general-todo", 2, { heading: "别的条目", acceptance: "", confirm: "" });
+  out.length = 0;
+  assert.equal(main(["align", "--file", "general", "--match", "对齐中条目"], deps), 1);
+  assert.match(
+    out.join("\n"),
+    /ALIGN_DOC_INCOMPLETE：对齐文档缺少小节：general-todo#2、## 验收标准、## 人工确认/,
+  );
+  assert.equal(JSON.stringify(readRepoData(root, "general-todo")), snapshot, "校验失败不写盘（状态/alignedAt 不变）");
+
+  writeAlignDoc(root, "general-todo", 2);
+  const note = "feat/a：已与人工逐条确认（含边界）";
+  assert.equal(main(["align", "--file", "general", "--match", "对齐中条目", "--note", note], deps), 0);
+  const aligned = readRepoData(root, "general-todo").entries[1];
+  assert.equal(aligned.status, "aligned");
+  assert.equal(aligned.alignedAt, "2026-09-14T00:00:00.000Z");
+  assert.deepEqual(aligned.notes, [note], "align --note 逐字进 notes");
+  assert.equal(aligned.claimedAt, "2026-09-01T00:00:00.000Z", "claimedAt 不被 align 覆盖");
+});
+
+test("main：complete 收口门——aligning/aligned 必带 --note，open/processing 可选", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 2,
+      title: "t",
+      entries: [
+        entry(1, "未领取条目", "open"),
+        entry(2, "对齐中条目", "aligning", { branch: "feat/a" }),
+        entry(3, "已对齐条目", "aligned", { branch: "feat/a", alignedAt: "2026-09-02T00:00:00.000Z" }),
+        entry(4, "进行中条目", "processing", { branch: "feat/a" }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["complete", "--file", "general", "--match", "未领取条目"], deps), 0, "open 无 note 可完成");
+  assert.equal(readRepoData(root, "general-todo").entries[0].status, "done");
+
+  out.length = 0;
+  assert.equal(main(["complete", "--file", "general", "--match", "对齐中条目"], deps), 1);
+  assert.match(out.join("\n"), /NOTE_REQUIRED：从对齐阶段收口必须带 --note 说明原因/);
+  assert.equal(readRepoData(root, "general-todo").entries[1].status, "aligning", "缺 note 不写盘");
+  assert.equal(main(["complete", "--file", "general", "--match", "对齐中条目", "--note", "搁置：范围太大"], deps), 0);
+  assert.deepEqual(readRepoData(root, "general-todo").entries[1].notes, ["搁置：范围太大"]);
+  assert.equal(readRepoData(root, "general-todo").entries[1].status, "done");
+
+  out.length = 0;
+  assert.equal(main(["complete", "--file", "general", "--match", "已对齐条目"], deps), 1);
+  assert.match(out.join("\n"), /NOTE_REQUIRED/);
+  assert.equal(readRepoData(root, "general-todo").entries[2].status, "aligned");
+  assert.equal(main(["complete", "--file", "general", "--match", "已对齐条目", "--note", "取消：优先级变化"], deps), 0);
+  assert.deepEqual(readRepoData(root, "general-todo").entries[2].notes, ["取消：优先级变化"]);
+
+  assert.equal(main(["complete", "--file", "general", "--match", "进行中条目"], deps), 0, "processing → done 无人工门");
+  assert.equal(readRepoData(root, "general-todo").entries[3].status, "done");
 });
 
 test("main：complete --note 原样进 notes——含全角括号、换行、超长备注都不解析不吞字（L16 收口）", () => {
@@ -151,15 +357,17 @@ test("main：add --tag 原生标签字段 + list --tag 精确过滤", () => {
   assert.deepEqual(out, ["[ ] general-todo#1  标签条目"]);
 });
 
-test("main：list 人读行 `${mark} ${file}#${id}  text`；--status/--text/--claimed-since 组合", () => {
+test("main：list 五态标记与过滤；--status/--branch/--text/--claimed-since 组合", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 1,
+      version: 2,
       title: "通用 TODO",
       entries: [
-        { id: 1, text: "未领取", status: "open", branch: null, tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
-        { id: 2, text: "进行中", status: "processing", branch: "feat/a", tags: [], notes: [], createdAt: null, claimedAt: "2026-09-12T00:00:00.000Z", completedAt: null },
-        { id: 3, text: "已完成", status: "done", branch: null, tags: [], notes: ["收尾"], createdAt: null, claimedAt: "2026-09-11T00:00:00.000Z", completedAt: "2026-09-11T00:00:00.000Z" },
+        entry(1, "未领取", "open"),
+        entry(2, "对齐中", "aligning", { branch: "feat/a", claimedAt: "2026-09-12T00:00:00.000Z" }),
+        entry(3, "已对齐", "aligned", { branch: "feat/a", claimedAt: "2026-09-12T00:00:00.000Z", alignedAt: "2026-09-12T01:00:00.000Z" }),
+        entry(4, "进行中", "processing", { branch: "feat/a", claimedAt: "2026-09-12T00:00:00.000Z", alignedAt: "2026-09-12T01:00:00.000Z" }),
+        entry(5, "已完成", "done", { notes: ["收尾"], claimedAt: "2026-09-11T00:00:00.000Z", completedAt: "2026-09-11T00:00:00.000Z" }),
       ],
     },
   });
@@ -167,22 +375,37 @@ test("main：list 人读行 `${mark} ${file}#${id}  text`；--status/--text/--cl
   const deps = { repoRoot: root, log: (l) => out.push(l) };
 
   assert.equal(main(["list"], deps), 0);
-  assert.deepEqual(out, ["[ ] general-todo#1  未领取", "[~] general-todo#2  进行中", "[x] general-todo#3  已完成"]);
+  assert.deepEqual(out, [
+    "[ ] general-todo#1  未领取",
+    "[?] general-todo#2  对齐中",
+    "[>] general-todo#3  已对齐",
+    "[~] general-todo#4  进行中",
+    "[x] general-todo#5  已完成",
+  ]);
+
+  out.length = 0;
+  assert.equal(main(["list", "--status", "aligning"], deps), 0);
+  assert.deepEqual(out, ["[?] general-todo#2  对齐中"]);
+
+  out.length = 0;
+  assert.equal(main(["list", "--status", "aligned"], deps), 0);
+  assert.deepEqual(out, ["[>] general-todo#3  已对齐"]);
 
   out.length = 0;
   assert.equal(main(["list", "--status", "done"], deps), 0);
-  assert.deepEqual(out, ["[x] general-todo#3  已完成"]);
+  assert.deepEqual(out, ["[x] general-todo#5  已完成"]);
 
   out.length = 0;
-  assert.equal(main(["list", "--branch", "feat/a", "--json"], deps), 0);
+  assert.equal(main(["list", "--branch", "feat/a", "--status", "aligned", "--json"], deps), 0);
   const rows = JSON.parse(out.join("\n"));
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].id, 2);
+  assert.equal(rows[0].id, 3);
+  assert.equal(rows[0].alignedAt, "2026-09-12T01:00:00.000Z", "list --json 带 alignedAt");
   assert.equal(rows[0].claimedAt, "2026-09-12T00:00:00.000Z");
 
   out.length = 0;
   assert.equal(main(["list", "--claimed-since", "2026-09-12"], deps), 0, "时间维度是一等公民（无降级）");
-  assert.deepEqual(out, ["[~] general-todo#2  进行中"]);
+  assert.deepEqual(out, ["[?] general-todo#2  对齐中", "[>] general-todo#3  已对齐", "[~] general-todo#4  进行中"]);
 
   out.length = 0;
   assert.equal(main(["list", "--text", "注记内容不存在"], deps), 0);
@@ -249,34 +472,30 @@ test("main：损坏 JSON fail-closed——summary/list/add 都明确报错退出
   assert.equal(fs.readFileSync(path.join(root, "todos", "bad-todo.json"), "utf8").includes("<<<<<<<"), true, "不写入不修复");
 });
 
-test("summary：按文件三态计数（.json 文件名）", () => {
+test("summary：按文件五态计数（.json 文件名）", () => {
   const root = makeRepo({
     "a-todo": {
-      version: 1,
+      version: 2,
       title: "a",
-      entries: [
-        { id: 1, text: "甲", status: "open", branch: null, tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
-        { id: 2, text: "乙", status: "done", branch: null, tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
-      ],
+      entries: [entry(1, "甲", "open"), entry(2, "乙", "done")],
     },
     "b-todo": {
-      version: 1,
+      version: 2,
       title: "b",
-      entries: [
-        { id: 1, text: "丙", status: "processing", branch: "feat/x", tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
-      ],
+      entries: [entry(1, "丙", "aligning"), entry(2, "丁", "aligned"), entry(3, "戊", "processing")],
     },
   });
   const out = [];
   assert.equal(main(["summary"], { repoRoot: root, log: (l) => out.push(l) }), 0);
-  assert.match(out.join("\n"), /a-todo\s+open 1  processing 0  done 1  total 2/);
-  assert.match(out.join("\n"), /b-todo\s+open 0  processing 1  done 0  total 1/);
+  assert.match(out.join("\n"), /a-todo\s+open 1  aligning 0  aligned 0  processing 0  done 1  total 2/);
+  assert.match(out.join("\n"), /b-todo\s+open 0  aligning 1  aligned 1  processing 1  done 0  total 3/);
 
   const json = [];
   assert.equal(main(["summary", "--json"], { repoRoot: root, log: (l) => json.push(l) }), 0);
   const rows = JSON.parse(json.join("\n"));
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].name, "a-todo");
+  assert.deepEqual(rows[0], { name: "a-todo", open: 1, aligning: 0, aligned: 0, processing: 0, done: 1, total: 2 });
+  assert.deepEqual(rows[1], { name: "b-todo", open: 0, aligning: 1, aligned: 1, processing: 1, done: 0, total: 3 });
 });
 
 test("lint：注册扩展 ↔ todos/<名>-todo.json 一一对应（一个方向）", () => {
@@ -327,13 +546,18 @@ const TRIAGE_DOCS = [
   {
     name: "a-todo",
     data: {
-      version: 1,
+      version: 2,
       title: "a",
       entries: [
-        { id: 1, text: "在做的需求", status: "processing", branch: "feat/live-thing", tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
-        { id: 2, text: "已完成", status: "done", branch: null, tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
-        { id: 3, text: "无分支引用的进行中", status: "processing", branch: null, tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
-        { id: 4, text: "引用已消失的", status: "processing", branch: "feat/vanished", tags: [], notes: [], createdAt: null, claimedAt: null, completedAt: null },
+        entry(1, "在做的需求", "processing", { branch: "feat/live-thing" }),
+        entry(2, "已完成", "done", { completedAt: "2026-09-11T00:00:00.000Z" }),
+        entry(3, "无分支引用的进行中", "processing"),
+        entry(4, "引用已消失的", "processing", { branch: "feat/vanished" }),
+        entry(5, "对齐中有工作台", "aligning", { branch: "feat/live-thing" }),
+        entry(6, "对齐中引用消失", "aligning", { branch: "feat/vanished" }),
+        entry(7, "对齐中无引用", "aligning"),
+        entry(8, "已对齐有工作台", "aligned", { branch: "feat/live-thing", alignedAt: "2026-09-12T00:00:00.000Z" }),
+        entry(9, "已对齐无引用", "aligned", { alignedAt: "2026-09-12T00:00:00.000Z" }),
       ],
     },
   },
@@ -361,7 +585,7 @@ test("parseWorktrees / parseMergedBranches：porcelain 与 merged 解析不变",
   ]);
 });
 
-test("triageRepo：worktree 状态判定 + processing 分类（branch 精确相等）+ 孤儿目录透传", () => {
+test("triageRepo：worktree 状态判定 + 五态中三个在途态分类（branch 精确相等）+ 孤儿目录透传", () => {
   const report = triageRepo({
     worktrees: parseWorktrees(PORCELAIN),
     mergedBranches: ["dev-laptop", "feat/merged-thing", "feat/dirty-thing"],
@@ -382,12 +606,26 @@ test("triageRepo：worktree 状态判定 + processing 分类（branch 精确相�
       [null, "missing"],
     ],
   );
-  assert.deepEqual(report.worktrees[0].entries.map((e) => [e.name, e.id]), [["a-todo", 1]]);
+  assert.deepEqual(report.worktrees[0].entries.map((e) => [e.name, e.id]), [
+    ["a-todo", 1],
+    ["a-todo", 5],
+    ["a-todo", 8],
+  ]);
 
   assert.equal(report.processing.total, 3);
   assert.deepEqual(report.processing.active.map((p) => p.ref), ["feat/live-thing"]);
   assert.deepEqual(report.processing.stale.map((p) => [p.id, p.ref]), [[4, "feat/vanished"]]);
   assert.deepEqual(report.processing.noRef.map((p) => p.id), [3]);
+
+  assert.equal(report.aligning.total, 3);
+  assert.deepEqual(report.aligning.active.map((p) => [p.id, p.ref]), [[5, "feat/live-thing"]]);
+  assert.deepEqual(report.aligning.stale.map((p) => [p.id, p.ref]), [[6, "feat/vanished"]]);
+  assert.deepEqual(report.aligning.noRef.map((p) => p.id), [7]);
+
+  assert.equal(report.aligned.total, 2);
+  assert.deepEqual(report.aligned.active.map((p) => p.id), [8]);
+  assert.deepEqual(report.aligned.stale, []);
+  assert.deepEqual(report.aligned.noRef.map((p) => p.id), [9]);
   assert.deepEqual(report.orphanDirs, [".worktrees/orphan"]);
 });
 
@@ -424,7 +662,9 @@ test("main triage：fake git 事实驱动只读报告，只读不写、--json �
   assert.equal(main(["triage"], { repoRoot: root, execGit, log: (l) => text.push(l) }), 0);
   assert.match(text.join("\n"), /feat\/live-thing/);
   assert.match(text.join("\n"), /active/);
-  assert.match(text.join("\n"), /无分支引用 1/);
+  assert.match(text.join("\n"), /aligning 条目：3（有工作台 1 · 引用分支已消失 1 · 无分支引用 1）/);
+  assert.match(text.join("\n"), /aligned 条目：2（有工作台 1 · 引用分支已消失 0 · 无分支引用 1）/);
+  assert.match(text.join("\n"), /processing 条目：3（有工作台 1 · 引用分支已消失 1 · 无分支引用 1）/);
 });
 
 // ---------------------------------------------------------------------------
@@ -439,14 +679,27 @@ test("CLI E2E：任意 cwd 跑 summary 退出 0 且有输出、stderr 恒空", (
   assert.match(res.stdout, /-todo/);
 });
 
-test("CLI E2E：--help 退出 0 且含完整用法（migrate 替代 db）", () => {
+test("CLI E2E：--help 退出 0 且含完整用法（migrate 替代 db，align 是第八子命令）", () => {
   const res = runCli(["--help"], os.tmpdir());
   assert.equal(res.status, 0);
   assert.match(res.stdout, /用法/);
-  for (const sub of ["summary", "list", "add", "claim", "complete", "lint", "triage", "migrate"]) {
+  for (const sub of ["summary", "list", "add", "claim", "align", "complete", "lint", "triage", "migrate"]) {
     assert.ok(res.stdout.includes(sub), `用法含子命令 ${sub}`);
   }
+  assert.match(res.stdout, /--status open\|aligning\|aligned\|processing\|done/);
   assert.equal(res.stdout.includes("db "), false, "db 子命令已删除");
+});
+
+test("CLI E2E：align 缺 --file / 缺 --match 均提示 + exit 1、stderr 恒空", () => {
+  const noFile = runCli(["align", "--match", "随便"], os.tmpdir());
+  assert.equal(noFile.status, 1);
+  assert.match(noFile.stdout, /缺少 --file <name>/);
+  assert.equal(noFile.stderr, "");
+
+  const noMatch = runCli(["align", "--file", "general"], os.tmpdir());
+  assert.equal(noMatch.status, 1);
+  assert.match(noMatch.stdout, /缺少 --match "子串"/);
+  assert.equal(noMatch.stderr, "");
 });
 
 test("CLI E2E：真实仓库 list --file 短名与全名输出一致且非空（#12 回归锁）", () => {
