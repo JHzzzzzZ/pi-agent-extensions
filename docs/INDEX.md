@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 775638d
+> last verified @ bb27c5b
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -12,6 +12,7 @@
 | --- | --- |
 | `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径、JSON schema 与锁 | `tools/todo-cli.md` |
 | todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0002-todos-json-storage.md` |
+| 已实现需求的规格（问题陈述 / 方案 / 实现与测试决策 / 范围外） | `specs/<名>.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |

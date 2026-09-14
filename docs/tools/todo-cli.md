@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流仓库 CLI
 
-> last verified @ a0f23f3
+> last verified @ bb27c5b
 
 ## 职责与边界
 
@@ -18,7 +18,7 @@
 - `todo-cli/migrate.ts` — markdown ↔ JSON 双向迁移：旧 md 解析（顶层条目 + 括号组扫描剥 `processing`/`完成` 标注 + 缩进子行归并进 notes）、`buildTodoData`（标注 → status/branch/notes，遗留 index.db 尽力回填时间戳）、`renderMarkdown`（规范形态）、`migrateFromMd`（逐文件「渲染→再解析→再构建」等价自检，全过后落盘 JSON + 删 md + 清遗留 index.db*）/`migrateToMd`（逃生回滚，只写 md 绝不删 JSON）。
 - `todo-cli/core.ts` — CLI 调度 `main(argv, deps)`（`repoRoot`/`log`/`now`/`execGit` 可注入）+ 查重/路径安全/lint/triage 纯函数 + 七子命令与 migrate 接线。
 - `tools/todo.mjs` — 唯一 CLI 入口（薄壳）：`export * from "../todo-cli/core.ts"` + 直接运行时转发 `main`；根测试 import 此路径。
-- 根 `test/todo-cli.test.ts` — 15 个测试：命令闭环（add/claim/complete/list/summary/lint/triage，临时 fixture 上跑 `main(deps)`）+ fail-closed + 3 个进程边界 E2E。
+- 根 `test/todo-cli.test.ts` — 17 个测试：命令闭环（add/claim/complete/list/summary/lint/triage，临时 fixture 上跑 `main(deps)`）+ fail-closed + 4 个进程边界 E2E（含真实仓库 `list --file` 短名回归锁）。
 - `todo-cli/test/` — `schema.test.ts`(4)、`lock.test.ts`(8，含真子进程持锁/exit 释放)、`query.test.ts`(5)、`migrate.test.ts`(7，roundtrip 恒等/编排/时间戳回填)、`concurrency.test.ts`(2，真实子进程并发 add/claim)、`interrupt.test.ts`(1，SIGKILL 轮次 + stale 自愈 + tmp 清理)。
 
 ## 核心数据流
@@ -30,7 +30,7 @@ argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损�
 - **命令面冻结**：七子命令 `summary/list/add/claim/complete/lint/triage` + `migrate` + `--help` 的用法、退出码、stdout/stderr 约定不变；`db` 子命令已删除。
 - **JSON 是唯一真相**：不手工编辑 `todos/*.json`（视为破坏存储）；损坏（非法 JSON/合并冲突标记）→ 明确报错 exit 1，绝不静默修复或猜。
 - **退出码语义**：`--help` → 0；裸调用 → USAGE、1；未知命令/子命令 → 提示 + USAGE、1；成功 → 0；锁超时/文件损坏 → 静态消息 + 1。`main` 不抛异常（除依赖注入的原生异常）。
-- **路径安全**：`resolveTodoPath` 拒绝穿越；输入 `x`/`x-todo`/`x-todo.md`/`x-todo.json` 四种写法都归一到 `todos/x-todo.json`。
+- **路径安全**：`resolveTodoPath` 拒绝穿越；输入 `x`/`x-todo`/`x-todo.md`/`x-todo.json` 四种写法都归一到 `todos/x-todo.json`；`list --file` 按同一归一（core 用 docs 里的真实归属名回填 filter），查不到 → 明确报错 exit 1，绝不倒向空结果（大小写不符同理；不做大小写不敏感匹配，避免同名仅大小写不同的歧义）。
 - **match 唯一定位**：`claim`/`complete` 的 `--match` 是纯描述 text 的子串（notes 不参与匹配）；缺失/多条报错，绝不猜第一条。
 - **查重口径**：归一化文本后 exact/similar（包含方向短边 ≥8）两级；`add` 默认拒绝重复，`--force` 才写入。
 - **动作分离**：`add` 只追加 open 条目（`--tag` 写原生标签）；`claim` 转 processing + `--branch` 写原生 `branch` 字段（已 done 报 `ALREADY_DONE`，已 processing 幂等）；`complete` 转 done + `--note` 逐字进 notes（不解析括号/换行——L16 bug 的根治形态）。
@@ -41,7 +41,7 @@ argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损�
 
 ## list 查询 flags（AND 组合）
 
-`--status open|processing|done` / `--file <name>` / `--branch <子串>` / `--tag <词>` / `--text <关键词>` / `--claimed-since <YYYY-MM-DD>`（真实日期校验）/ `--json`。`--json` 输出 `{file,id,status,text,branch,tags,createdAt,claimedAt,completedAt}` 行对象数组（file→id 稳定排序）。人读行格式：`<mark> <file>#<id>  <text>`（mark：done `[x]` / processing `[~]` / open `[ ]`）。无降级分支：时间维度恒可用（历史迁移条目时间戳为 null）。
+`--status open|processing|done` / `--file <name>`（短名/全名等价，见上「路径安全」）/ `--branch <子串>` / `--tag <词>` / `--text <关键词>` / `--claimed-since <YYYY-MM-DD>`（真实日期校验）/ `--json`。`--json` 输出 `{file,id,status,text,branch,tags,createdAt,claimedAt,completedAt}` 行对象数组（file→id 稳定排序）。人读行格式：`<mark> <file>#<id>  <text>`（mark：done `[x]` / processing `[~]` / open `[ ]`）。无降级分支：时间维度恒可用（历史迁移条目时间戳为 null）。
 
 ## migrate 子命令
 
@@ -59,7 +59,7 @@ argv → `parseArgs` → `main(argv, deps)` → 读 `todos/*.json`（任一损�
 
 ## 改动清单
 
-- 必跑：`npm run test:todo`（glob = `test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`；44 个，2026-09-12 实测全绿）+ `node tools/todo.mjs lint`（exit 0）。
+- 必跑：`npm run test:todo`（glob = `test/todo-cli.test.ts` + `todo-cli/test/*.test.ts`；46 个，2026-09-14 实测全绿）+ `node tools/todo.mjs lint`（exit 0）。
 - 改行为：同步根 `test/todo-cli.test.ts` + 本卡；改命令面：同步 `core.ts` 的 `USAGE` + 本卡。
 - 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0002-todos-json-storage.md` 同步。
 - 新增子命令/flags：先补根测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变。
