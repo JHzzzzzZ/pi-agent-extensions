@@ -48,7 +48,7 @@ pi install ./pi-agent-extensions
 安装后由 pi 统一管理：
 
 - **升级**：仓库 push 后执行 `pi update --extensions`（或 `pi update --all`）拉取最新即可——分支 ref 跟随分支头更新，tag/commit ref 则固定不动
-- `pi list` 查看已装包；`pi config` 可单独启停包内的某个扩展
+- `pi list` 查看已装包；`pi config` 可单独启停包内的某个扩展（只想装其中几个见下方「只装其中几个扩展」）
 - 如需锁定版本，可带 tag 安装（如 `pi install git:...@v1.0.0`）；此时 `pi update` 只把克隆对齐到该 ref，不会自动跳新版本，升级需重新 `pi install git:...@新tag`
 
 ### 方式二：手动复制（开发调试）
@@ -62,6 +62,39 @@ pi install ./pi-agent-extensions
 ```
 
 > 两种方式不要混用同一扩展，否则会重复加载（命令/状态条重复注册）。从手动复制切换到 `pi install` 时，先删除 `extensions/` 下的旧拷贝。
+
+### 只装其中几个扩展（按需安装）
+
+默认安装会把根 `package.json` `pi.extensions` 里的 12 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
+
+```bash
+pi config        # 全局作用域（~/.pi/agent/settings.json）
+pi config -l     # 项目作用域（.pi/settings.json），也可在里面按 Tab 切换两种作用域
+```
+
+进去后取消勾选不要的扩展即可；结果以过滤规则写回 `settings.json` 的 `packages` 条目，重启 Pi 或在 Pi 内执行 `/reload` 生效。
+
+**备选：直接编辑 `settings.json` 的 `packages` 对象形式**（过滤路径相对仓库根；本仓库入口是 `src/extensions/<扩展名>/index.ts`）：
+
+```json
+{
+  "packages": [
+    {
+      "source": "git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop",
+      "extensions": ["src/extensions/pwr/index.ts", "src/extensions/solo-mode/index.ts"]
+    }
+  ]
+}
+```
+
+- 普通路径 = 白名单：只加载列出的这些（代价是仓库以后新增的扩展不会自动加载，需手动加进列表）；`[]` = 该类资源一个都不加载
+- `-src/extensions/xxx/index.ts` 精确排除（`pi config` 写的就是这种形式，此时新增扩展仍会自动加载）；`!pattern` 按 glob 排除；`+path` 精确强制包含
+- ⚠️ 只写 `+path` **不会**收窄：列表里没有任何普通路径时按「全量」处理，`extensions: ["+a", "+b"]` 仍会全部加载
+- 同类字段还有 `skills` / `prompts` / `themes`（本仓库只声明了 extensions）；字段语义见 Pi 文档 `docs/packages.md` → Package Filtering
+
+**备选：手动复制**只复制要用的目录，见上方「方式二」（面最小，但失去 `pi install` / `pi update --extensions` 管理，且不要与包安装混用）。
+
+> 按需安装只决定**加载哪些资源**：git 包的克隆与依赖安装仍按整仓进行，`pi list` / `pi update --extensions` / `pi remove` 照常可用。
 
 ### 安装自检（可选）
 
