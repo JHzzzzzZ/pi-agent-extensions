@@ -974,15 +974,17 @@
     {
       "id": 63,
       "text": "团队文件 description 含 ASCII「: 」时 frontmatter 解析失败被吞、团队静默从 /team:list 消失（v1.26.0 QA 真机发现）：要求解析失败可见（列表/doctor 显示「定义不可用 + 原因」）或容忍含冒号标量；补单测覆盖含「: 」/引号/多行块标量。",
-      "status": "aligning",
+      "status": "aligned",
       "branch": "feat/agent-team-frontmatter",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "5 问按建议走：容忍裸冒号 + 可操作报错 + run 路径可见"
+      ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.751Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-14T16:01:43.410Z"
     },
     {
       "id": 64,

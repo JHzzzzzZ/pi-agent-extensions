@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "title": "TODO（通用领域 · 跨插件）",
   "entries": [
     {
@@ -8,10 +8,12 @@
       "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -19,12 +21,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ feat/install-smoke：`tools/install-smoke.mjs`（纯校验函数导出 + CLI）+ `test/install-smoke.test.ts` 8 个单测；端到端实测 12/12 扩展、50 条命令、9 个 TUI 键全部来自本次临时安装目录；README「安装自检」节 + AGENTS 开发命令 + 根 `smoke`/`test:smoke` npm 脚本"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -32,12 +36,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ feat/install-deep-smoke：`buildDeepArgs`/`parseJsonEvents`/`checkDeepRun`/`deepModelFromSettings` 纯函数 + 6 个新单测（共 14）；端到端实测 12/12 扩展 + 模型 `opencode-go/deepseek-flash` 调用全新安装的 `loop_list` 成功，全程 ~10s；README/AGENTS/incidents 同步"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
@@ -45,10 +51,12 @@
       "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
@@ -56,12 +64,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ feat/install-package-smoke，根 2.26.0：`--install <源>` 真跑真实 `pi install` → `findPiPackage` 定位落地产物（git 源在 `<configDir>/git`、npm 源在 `<configDir>/npm/node_modules`、本地路径指回源目录）→ 复用 `get_commands` 校验并报告包名@版本/扩展清单/命令/TUI 键；`checkInstallRun` 以退出码 + stdout `Installed <源>` 为判据（实测发现 git 克隆进度写 stderr，不能当失败信号）；新增 5 个纯函数单测（14→19），`checkSmoke` 支持多根来源校验；真机验证：远端 `@dev-laptop` → `pi-agent-extensions@2.24.1` 12 扩展 50 命令 9 键全过、本地路径 → 2.25.0 全过、`--install . --task` 模型经全新安装的 `loop_list` 执行成功；README/AGENTS 同步"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 6,
@@ -69,10 +79,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 7,
@@ -80,10 +92,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 8,
@@ -91,10 +105,12 @@
       "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 9,
@@ -102,10 +118,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 10,
@@ -113,21 +131,27 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 11,
       "text": "优化全量测试速度（用户 2026-09-11 提出）：全量测试规模已到 pwr 439 + agent-team 512 + loop 196 + opencode-bridge 114 + 其余卫星插件与根三套脚本（契约/冒烟/todo CLI），约 1900+ 用例；目前按目录串行跑，单次收尾核对与多 worktree 并行开发时固定成本偏高。目标先量化再优化：① 建基线——逐目录计时（各插件测试命令 + 根 `test:contract`/`test:smoke`/`test:todo`）与总耗时，落盘成可复算的记录，避免凭感觉优化；② 定位大头——慢用例排序（逐文件计时 / `--test-reporter`），区分「真慢逻辑」与「固定启动成本」（每个测试文件一次进程启动、worktree 内重复 `npm ci`）；③ 候选手段按性价比评估、不预设结论：`--test-concurrency` 分片并行、合并碎小测试文件减少启动次数、与宿主边界无关的用例降级为纯函数测试、依赖预装复用（注意 fast-dev 已明令禁止 worktree 内建 junction 复用 node_modules——`git worktree remove` 会穿透删主干，见 docs/incidents.md 两次事故）；④ 红线：不得以删测试、跳过用例、放宽断言换速度，覆盖只增不减（等价重构需说明）。跨插件 + 仓库工具需求，落 general。验收：优化前后同机同命令的全量耗时对照表 + 每个改动的收益解释 + 各插件全量测试与 typecheck 全绿 + 根三套自检全绿。相邻条目：agent-manager:10（单个性能看门用例负载敏感，属局部问题，不重复覆盖）。",
-      "status": "open",
-      "branch": null,
+      "status": "aligned",
+      "branch": "feat/test-speed-baseline",
       "tags": [],
-      "notes": [],
+      "dependsOn": [],
+      "notes": [
+        "5 问按建议走：test-all.mjs 统一入口 + serial 标注 + 安装加速；覆盖只增不减"
+      ],
       "createdAt": null,
-      "claimedAt": null,
-      "completedAt": null
+      "claimedAt": "2026-09-14T15:42:47.894Z",
+      "completedAt": null,
+      "alignedAt": "2026-09-14T15:58:46.979Z"
     },
     {
       "id": 12,
@@ -138,12 +162,14 @@
         "process",
         "docs"
       ],
+      "dependsOn": [],
       "notes": [
         "完成于 d517fb7/256b8d8（worktree .worktrees/agents-md-align-rules → dev-laptop merge --no-ff）：AGENTS.md 新增红线 9（/skill:grill-with-docs 对齐意图，产物落盘 CONTEXT.md 术语 + docs/adr 决策）与红线 10（/skill:to-spec 规格落盘 docs/specs/ 后再登记 todos 进入实现）；依赖 mattpocock/skills 库已 pi install（37 个 skill 实测加载，含 grill-with-docs/to-spec/setup-matt-pocock-skills）。自测：根三自检绿（contract 3/3、smoke 21/21、todo 44/44）+ todo lint 通过；纯文档改动未跑各扩展套件。"
       ],
       "createdAt": "2026-09-14T14:11:27.608Z",
       "claimedAt": "2026-09-14T14:11:38.315Z",
-      "completedAt": "2026-09-14T14:12:42.239Z"
+      "completedAt": "2026-09-14T14:12:42.239Z",
+      "alignedAt": null
     },
     {
       "id": 13,
@@ -154,12 +180,14 @@
         "process",
         "skills"
       ],
+      "dependsOn": [],
       "notes": [
         "取消（用户 2026-09-14 决定）：不引入 issue tracker / docs/agents / spec-tracker 工作流，需求与问题继续只用 todos/ 记录；AGENTS.md 红线 10 同一变更内已改为「需求跟踪始终以 todos/ 为准，不引入外部 issue tracker」。未创建任何 docs/agents/ 与 tracker 配置。"
       ],
       "createdAt": "2026-09-14T14:12:42.364Z",
       "claimedAt": "2026-09-14T14:19:36.380Z",
-      "completedAt": "2026-09-14T14:23:35.945Z"
+      "completedAt": "2026-09-14T14:23:35.945Z",
+      "alignedAt": null
     },
     {
       "id": 14,
@@ -170,12 +198,14 @@
         "docs",
         "process"
       ],
+      "dependsOn": [],
       "notes": [
         "完成于 78c8d22 / merge c151f87：26,261→19,499 字节（133 行）。① 状态条契约 2127 字符→一行指针（权威 docs/cross/status-bar.md）；② 关键目录压成 目录→卡/README 指针；③ 测试数与命令细节去重（README 唯一来源，修 stream-token-speed 43→45、deep-init 32→37 两处实测漂移）；④ 红线 2/7 去 CLI 机制细节、保留 id 约定；⑤ 删 deep-init 生成头注释；⑥ 红线 10 去掉 issue tracker/setup 句（用户：需求跟踪只走 todos/）。自测：根三自检绿（contract 3、smoke 21、todo 44）+ todo lint 通过；docs 交叉引用（红线 2 / 规则名）实测仍成立。"
       ],
       "createdAt": "2026-09-14T14:19:36.135Z",
       "claimedAt": "2026-09-14T14:19:36.259Z",
-      "completedAt": "2026-09-14T14:23:35.821Z"
+      "completedAt": "2026-09-14T14:23:35.821Z",
+      "alignedAt": null
     },
     {
       "id": 15,
@@ -186,12 +216,14 @@
         "docs",
         "process"
       ],
+      "dependsOn": [],
       "notes": [
         "完成并 merge（97ff670）：AGENTS.md 规则红线改为两组——需求生命周期 1-7（1 登记 → 2 grill-with-docs 对齐 → 3 to-spec 规格落盘 → 4 worktree → 5 TDD → 6 docs 卡同步 → 7 交付四处同步+收尾），全程硬约束 8-10（仓库边界 / 命令超时 / 团队方案审批）。原红线 3 的 merge/worktree remove 并入第 7 步；编号引用同步：docs/tools/todo-cli.md 规则 2→1、docs/adr/0002 红线 2→1。字节 19499→19707（+208：两组小标题与链式引用换来的顺序显式化，不是净删）。自测：contract 3 / smoke 21 / todo 44（首次复跑 42+2 失败系并发负载偶发，后两次 44/44）+ lint 通过。"
       ],
       "createdAt": "2026-09-14T14:29:39.668Z",
       "claimedAt": "2026-09-14T14:29:39.798Z",
-      "completedAt": "2026-09-14T14:31:08.964Z"
+      "completedAt": "2026-09-14T14:31:08.964Z",
+      "alignedAt": null
     }
   ]
 }
