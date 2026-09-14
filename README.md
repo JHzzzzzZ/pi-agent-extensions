@@ -340,7 +340,7 @@ TTFT — │ tok72% mcp40%(14:30) │ pwr 2▶ 1✓   ← 多段同屏：最前�
 
 ```bash
 cd src/extensions/stream-token-speed
-node --experimental-strip-types --test test/*.test.ts   # 43 个测试
+node --experimental-strip-types --test test/*.test.ts   # 45 个测试
 node e2e/run-e2e.mjs                                    # 真实 pi 进程端到端自测
 ```
 
@@ -460,7 +460,7 @@ node --experimental-strip-types --test src/extensions/goal/index.test.ts src/ext
 - 写铁律：已存在用 `edit`、不存在用 `write`；子不复父、电报体；完成照发 `=== init-deep Complete ===` 报告
 
 ```bash
-cd src/extensions/deep-init && npm install && npm test   # 32 个测试；另有 npm run typecheck
+cd src/extensions/deep-init && npm install && npm test   # 37 个测试；另有 npm run typecheck
 ```
 
 ---
