@@ -119,15 +119,17 @@
     {
       "id": 9,
       "text": "loop 后台模式（mode=background / /loop --bg）允许同一任务重叠运行（用户 2026-09-15 提出）：现状为硬性跳过——startBgRun 用 bgEntries.has(t.id) 守卫，同一任务上一轮后台子进程未结束时本次触发只发一条 warning「上一轮后台仍在运行，本次触发跳过」（src/extensions/loop/index.ts:220；docs/extensions/loop.md:43 已把该跳过登记为不变量）。后果：单轮耗时 > 间隔时（如 15m/30m 巡检 + 单轮 40 分钟）实际执行轮次远少于触发轮次，用户只能从 warning 察觉被丢弃。要求：后台触发不再因上一轮在跑而丢弃，允许并发轮次；并发上限/开关形态待对齐（默认全放开 / 默认 1 轮且显式 opt-in / 带上限配置三选一）。重叠期的状态呈现必须区分多条并发运行：任务 lastRun 目 前是单对象（startedAt/finishedAt/status/sessionId/sessionPath/summary，tasks.ts 序列化）、widget 每任务一行、/loop:list 展示单一 lastRun，重叠后需明确显示口径（运行中计数 + 各自会话 id/状态，或最近一轮 + 运行记录列表）；stopSession 的 interrupted 收口、7 天过期清理、bgDoneMessage 通知文案都要在并发下给出确定语义（每轮一条通知 vs 聚合）。验收（待 align 细化）：同一任务两轮后台真实重叠运行、各自独立 session id 与完成通知；widget 与 /loop:list 能看出并发轮次；会话结束时在途各轮均被终止并标记 interrupted；方案有真实子进程边界测试（非纸面单测）+ 全量测试与 typecheck 绿。",
-      "status": "open",
-      "branch": null,
+      "status": "done",
+      "branch": "feat/loop-bg-overlap",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "完成 2026-09-15 @ merge 2af48cd（feat 689354a / 版本 4015a26 loop 1.8.0+根 2.50.0 / docs c081b04 卡 last verified @ 689354a；loop 205 测试绿 + typecheck 0，根 test:all 16/17（唯一红为既有环境问题 agent-team#69，基线同红））。实现：删除 startBgRun 的在途守卫（丢弃路径消失，不设并发上限）；bgEntries 改按 runId 跟踪、每轮独立 AbortController；轮次记录 LoopTask.runs[] 取代单对象 lastRun，白名单序列化让快照只装运行中轮次（activeRuns），终态逐条写 append-only 条目 loop-run-v1（避免全量快照×全量轮次的 O(n²) 会话文件膨胀）；session_start 回放条目重建全量历史并补写快照恢复出的轮次（旧 lastRun 迁移 + 宿主中断的在途轮次转 interrupted）；session_shutdown 逐轮 abort + 逐轮 interrupted 条目；通知口径=启动仅 0→1、在途首次≥3 一条 info 提示、完成每轮一条带轮次时刻；widget 改「N 轮（M 个任务）」；/loop:list 运行中全部 + 最近 10 条 + 折叠计数；runner 新增 onSessionId（运行中即可 resume）与 --name 轮次标签、piEntry 覆盖（node 下直调不再递归——实测撞过一次进程风暴，已清理）。真机：opt-in 冒烟 test/bg-overlap-smoke.mjs 两轮真实 pi 子进程并发通过（峰值 2、两个独立 session id 与会话文件、6s）。偏差记录见 todos/align/loop-todo#9.md。"
+      ],
       "createdAt": "2026-09-15T05:57:54.415Z",
-      "claimedAt": null,
-      "completedAt": null,
-      "alignedAt": null
+      "claimedAt": "2026-09-15T15:01:52.551Z",
+      "completedAt": "2026-09-15T15:45:08.190Z",
+      "alignedAt": "2026-09-15T15:09:12.378Z"
     },
     {
       "id": 10,
