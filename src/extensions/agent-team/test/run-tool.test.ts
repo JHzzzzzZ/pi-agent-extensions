@@ -161,6 +161,14 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
+/** #63：裸 `": "` 会被容忍，`members: [` 不行 —— 真失败文案（修法提示 + 原始 YAML 错误）。 */
+const BROKEN_TEAM_MD = `---
+name: broken-team
+description: 全栈开发: 小队
+members: [
+---
+`;
+
 /** 外部 CLI fixture JSONL 行（跳过注释/空行）——fake child 逐行回放用。 */
 function fixtureLines(name: string): string[] {
   return fs
@@ -169,6 +177,22 @@ function fixtureLines(name: string): string[] {
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("#"));
 }
+
+test("team_run 的 TEAM_NOT_FOUND 带出不可用团队文件与原因首行（#63）", async () => {
+  const { spawn, run, ctx, cleanup } = await setup();
+  try {
+    fs.writeFileSync(path.join(ctx.cwd, ".pi", "teams", "broken-team.md"), BROKEN_TEAM_MD);
+    const result = await run({ team: "broken-team", task: "x" });
+    assert.equal(result.isError, true);
+    assert.equal((result.details as { code?: string }).code, "TEAM_NOT_FOUND");
+    assert.match(result.content[0].text, /available: [^\n]*proj-team/);
+    assert.match(result.content[0].text, /另有 \d+ 个定义不可用/);
+    assert.match(result.content[0].text, /broken-team\.md（第 3 行的值含 ": "，请加引号/);
+    assert.equal(spawn.records.length, 0, "坏团队文件不启动 leader");
+  } finally {
+    cleanup();
+  }
+});
 
 test("team_run defaults to background: returns while the child runs, report arrives as followUp", async () => {
   const { pi, spawn, run, cleanup } = await setup();
@@ -620,6 +644,14 @@ test("team_resume typed errors: missing/unknown/idle states never spawn", async 
     fs.rmSync(path.join(ctx.cwd, ".pi", "teams", "proj-team.md"));
     const gone = await tool.execute("c", { runId: parent.runId }, undefined, undefined, ctx);
     assert.equal((gone.details as { code?: string }).code, "TEAM_NOT_FOUND");
+
+    // A broken definition (same name, bad YAML) names the file + reason first line (#63).
+    fs.writeFileSync(path.join(ctx.cwd, ".pi", "teams", "proj-team.md"), BROKEN_TEAM_MD);
+    const broken = await tool.execute("c", { runId: parent.runId }, undefined, undefined, ctx);
+    assert.equal((broken.details as { code?: string }).code, "TEAM_NOT_FOUND");
+    assert.match(broken.content[0].text, /另有 \d+ 个定义不可用/);
+    assert.match(broken.content[0].text, /proj-team\.md（第 3 行的值含 ": "/);
+    assert.equal(spawn.records.length, 2, "坏团队文件不足以启动续跑");
   } finally {
     cleanup();
   }
