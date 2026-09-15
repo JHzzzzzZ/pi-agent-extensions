@@ -751,8 +751,8 @@
     {
       "id": 47,
       "text": "成员交付完成仍被判 CHILD_FAILED（真机 run-1789104779153 实锤）：writer 第 2 轮与 checker 都在产出完整报告与 commit 之后被判 failed（CHILD_FAILED）错误 terminated——runner.ts 的 outcome.errorMessage 一旦置位就不清除（任意一轮 assistant 消息带 errorMessage 即永久生效），dispatch.ts:403 见 errorMessage 即判 failed；风险是 leader 按「环境级失败不重试」规则会丢弃已完成的工作或重复派发（本轮 leader 自行判断保留，属运气）。要求：① 终态判定区分「进行中被终止」与「完成后收尾异常」（最后一轮 stopReason 非 error 且已有最终文本时不应判 failed），或把 errorMessage 按轮次作用域化（仅最后一轮生效）；② 结果对象带 exitCode/终止原因供诊断；③ TDD：真实子进程用例复现「输出完整后进程异常退出/被终止 → 不应判 failed」先红，再实现到绿；④ 验收：同类 run 不再出现完成即 CHILD_FAILED，全量测试 + typecheck 绿。",
-      "status": "aligned",
-      "branch": "feat/agent-team-child-outcome",
+      "status": "processing",
+      "branch": "feat/agent-team-child-failed",
       "tags": [],
       "dependsOn": [],
       "notes": [
@@ -874,16 +874,17 @@
     {
       "id": 56,
       "text": "用户插队（steer/排队）输入的 prompt 在界面无显示，需要突出：run 运行中用户发出的消息在 UI 只剩一句 notice（chat.ts「已插话给 X（steer）：不打断当前任务…」），用户输入原文在 viewer 与 run 转录里都看不到，无法确认自己发了什么（用户 2026-09-11 真机反馈）。要求：用户输入原文在可见处突出呈现——viewer 独立高亮块（复用宿主 userMessageBg 类样式，与 agent/leader 输出视觉区分）并落 run 转录（team_transcript / /team:view 可复查），覆盖 steer 即时送达与排队链式两条路径；实现时确认两路径统一呈现（排队消息在派出后也保留在转录）。验收：真机运行中发消息后立即可见原文与高亮样式，回看转录可查到该输入，全量测试 + typecheck 绿。",
-      "status": "aligned",
-      "branch": "feat/agent-team-steer-echo",
+      "status": "done",
+      "branch": "feat/agent-team-steer-input-visible",
       "tags": [],
       "dependsOn": [],
       "notes": [
-        "5 问确认（Q4 notice 不改：原文在 viewer 呈现）"
+        "5 问确认（Q4 notice 不改：原文在 viewer 呈现）",
+        "（完成 2026-09-15 @ merge d1ad985 / agent-team 1.28.0 / 根 2.44.0 / 测试 629→643：转录新增 user kind（白名单 + reader 读回）+ 提交时刻落目标 actor 与 leader 各一条**原文**（steer / 排队 / 立即派单同口径，不带 【用户消息】 wire 包装），排队条目结局补 system 行（已派出（新 run <id>）/ 未派出三态：run 已停止、队列已清空、派出失败），排队中不建第二个事实源；viewer 独立亮块（首行 ▌用户 · <ts> accent + 正文整行铺 userMessageBg，与 agent/leader 输出视觉区分）、team_transcript 转储 [user] <ts>；chat.ts 新增 appendEntry 端口 + index 接线（FileTranscriptSink best-effort）；新增真实宿主渲染锁 viewer-user-host（样式追踪 VT 屏断言背景分类/连续等宽/assistant 无底色）与三路径转录锁（chat/viewer-chat-host/transcript），共 +14 测试；docs 卡 last verified @ a126c07 + tui-sync §3.23/§4/§5 + README×2 + 插件 AGENTS；notice 文案不变（用户决议）。遗留：failure-delivery 的 worktree 预检用例本机必红（临时目录落在用户 home——C:\\Users\\蒋晗 本身是 git 仓库，git rev-parse 命中），改动前后一致（环境既有，非本次引入）；真机目检待用户）"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.589Z",
-      "completedAt": null,
+      "completedAt": "2026-09-15T02:00:16.268Z",
       "alignedAt": "2026-09-14T15:54:12.698Z"
     },
     {
@@ -974,16 +975,17 @@
     {
       "id": 63,
       "text": "团队文件 description 含 ASCII「: 」时 frontmatter 解析失败被吞、团队静默从 /team:list 消失（v1.26.0 QA 真机发现）：要求解析失败可见（列表/doctor 显示「定义不可用 + 原因」）或容忍含冒号标量；补单测覆盖含「: 」/引号/多行块标量。",
-      "status": "aligned",
-      "branch": "feat/agent-team-frontmatter",
+      "status": "done",
+      "branch": "feat/team-frontmatter",
       "tags": [],
       "dependsOn": [],
       "notes": [
-        "5 问按建议走：容忍裸冒号 + 可操作报错 + run 路径可见"
+        "5 问按建议走：容忍裸冒号 + 可操作报错 + run 路径可见",
+        "完成 2026-09-15 @ merge 9f47626 / agent-team 1.29.0 / 根 2.45.0 / 654 测试（+11）。parseTeamFile 解析失败时只对 frontmatter 块内「值含 \": \" 的裸标量行」（团队级/成员级 description 等，含列表项）按写盘口径 yamlScalar 加引号重试一次（引号值/块标量/CRLF/值内引号走原路径；块标量内容行与 markdown 正文绝不重写，磁盘文件不改写），仍失败回落首次解析的原始错误 + 前置修法提示「第 N 行的值含 \": \"，请加引号（\"…\"）或改用 | 块标量」（N 按团队文件行号，首行 --- 计 1；无裸 \": \" 行不给提示，不猜）；findTeam 的 TEAM_NOT_FOUND 追加「另有 N 个定义不可用：<file>（<原因首行>）」——team_run 与 team_resume 两条入口同源可见，list/doctor 展示照旧。测试：新增 test/frontmatter-tolerance.test.ts（10 例）+ run-tool 两处（team_run / team_resume 的 TEAM_NOT_FOUND 带文件与原因）；TDD 先红后绿，块标量内容行守卫另有「去掉守卫即红」的变异验证。docs 卡 last verified @ ee160b7 + 插件 README/AGENTS + 根 README（表行 629→654 修正 #56 漏更、命令块 643→654）。遗留：failure-delivery「worktree 预检」用例本机照旧必红（临时目录落在用户 home——C:\\Users\\蒋晗 本身是 git 仓库，git rev-parse 命中），改动前后一致、环境既有（#56 note 已登记）；台账 branch 字段仍写作 feat/team-frontmatter（本次实际分支 feat/agent-team-frontmatter-parse）；docs 卡 107 行（改前 106，本就超 ≤100 指引）。"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.751Z",
-      "completedAt": null,
+      "completedAt": "2026-09-15T02:24:57.132Z",
       "alignedAt": "2026-09-14T16:01:43.410Z"
     },
     {

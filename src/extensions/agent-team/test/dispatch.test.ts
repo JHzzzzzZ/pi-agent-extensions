@@ -16,12 +16,15 @@ import {
   parseDispatchMemberResults,
   parseDispatchRequest,
   stripLeaderEnv,
+  stripRunScopedEnv,
+  withLoopbackBypass,
 } from "../dispatch.ts";
 import { defaultSpawn, runChildPi } from "../runner.ts";
 import type { TranscriptEntryKind } from "../transcript.ts";
 import {
   DERIVED_AGENT_TOOL_DENYLIST,
   LEADER_ENV_FILE,
+  LEADER_ENV_MEMBER_MODELS,
   LEADER_ENV_NAME,
   LEADER_ENV_RUNID,
   truncateUtf8,
@@ -419,6 +422,34 @@ function seedLeaderEnv(): void {
   process.env.AGENT_TEAM_STRIP_SENTINEL = "1";
 }
 
+/** 回环豁免缺省值（`withLoopbackBypass` 的注入项，顺序即实现口径）。 */
+const LOOPBACK_BYPASS = "127.0.0.1,localhost,::1";
+
+/**
+ * 临时移除大小写两份代理放行变量——模拟用户现场「宿主 httpProxy 已设、
+ * NO_PROXY 缺失」（#67）。Windows 的 process.env 大小写不敏感，按枚举到的
+ * 实际键恢复，避免把还原写成第二份键。
+ */
+function clearProxyBypassEnv(): () => void {
+  const saved = Object.keys(process.env)
+    .filter((key) => key.toUpperCase() === "NO_PROXY")
+    .map((key) => [key, process.env[key] ?? ""] as const);
+  for (const key of Object.keys(process.env)) {
+    if (key.toUpperCase() === "NO_PROXY") delete process.env[key];
+  }
+  return () => {
+    for (const [key, value] of saved) process.env[key] = value;
+  };
+}
+
+/** 断言回环豁免齐备（进程 env 大小写键的存活表现随平台而异，只看集合）。 */
+function assertLoopbackBypass(value: string | undefined, label: string): void {
+  const entries = (value ?? "").split(",");
+  for (const host of LOOPBACK_BYPASS.split(",")) {
+    assert.ok(entries.includes(host), `${label} 缺回环项 ${host}：${value ?? "(undefined)"}`);
+  }
+}
+
 test("stripLeaderEnv drops the three leader keys and keeps the rest of the environment", () => {
   const source: NodeJS.ProcessEnv = {
     PATH: "/usr/bin",
@@ -436,6 +467,64 @@ test("stripLeaderEnv drops the three leader keys and keeps the rest of the envir
   assert.equal(stripped.PATH, "/usr/bin");
   // Shallow copy: the caller's object is never mutated.
   assert.equal(source[LEADER_ENV_FILE], "/tmp/teams/dev-team.md");
+});
+
+test("withLoopbackBypass 缺省给两个大小写键注入回环豁免，且不改动入参", () => {
+  const source: NodeJS.ProcessEnv = { PATH: "/usr/bin", HTTPS_PROXY: "http://127.0.0.1:10899" };
+  const bypassed = withLoopbackBypass(source);
+
+  assert.equal(bypassed.NO_PROXY, LOOPBACK_BYPASS);
+  assert.equal(bypassed.no_proxy, LOOPBACK_BYPASS);
+  assert.equal(bypassed.HTTPS_PROXY, "http://127.0.0.1:10899", "代理变量本身不动");
+  assert.equal(bypassed.PATH, "/usr/bin");
+  assert.equal(source.NO_PROXY, undefined, "浅拷贝：调用方对象不被修改");
+});
+
+test("withLoopbackBypass 保留用户显式值前缀，只追加缺失的回环项", () => {
+  const bypassed = withLoopbackBypass({ NO_PROXY: "corp.example.com,127.0.0.1" });
+
+  assert.equal(bypassed.NO_PROXY, "corp.example.com,127.0.0.1,localhost,::1", "原值前缀不动 + 只补缺失项");
+  assert.equal(bypassed.no_proxy, LOOPBACK_BYPASS, "未显式设置的键按缺省补齐");
+});
+
+test("withLoopbackBypass 已含回环项时不重复追加（大小写不敏感）且重复调用不增字节", () => {
+  const existing = "corp.example.com,127.0.0.1,LOCALHOST,::1";
+  const once = withLoopbackBypass({ NO_PROXY: existing, no_proxy: existing });
+
+  assert.equal(once.NO_PROXY, existing, "用户值逐字节保留");
+  assert.equal(once.no_proxy, existing);
+  const twice = withLoopbackBypass(once);
+  assert.equal(twice.NO_PROXY, existing, "幂等：再跑一次不增字节");
+  assert.equal(twice.no_proxy, existing);
+});
+
+test("withLoopbackBypass 只设小写键时大写补齐，且不覆盖小写内容", () => {
+  const bypassed = withLoopbackBypass({ no_proxy: "corp.example.com" });
+
+  assert.equal(bypassed.no_proxy, "corp.example.com,127.0.0.1,localhost,::1", "小写键是追加不是覆盖");
+  assert.equal(bypassed.NO_PROXY, LOOPBACK_BYPASS, "大写键补齐缺省回环项");
+});
+
+test("stripLeaderEnv 给成员 env 补回环豁免（父进程没有 NO_PROXY 的 httpProxy 环境）", () => {
+  const stripped = stripLeaderEnv({ PATH: "/usr/bin", HTTPS_PROXY: "http://127.0.0.1:10899" });
+
+  assert.equal(stripped.NO_PROXY, LOOPBACK_BYPASS);
+  assert.equal(stripped.no_proxy, LOOPBACK_BYPASS);
+  assert.equal(stripped.HTTPS_PROXY, "http://127.0.0.1:10899", "继承语义不变");
+  assert.equal(stripped.PATH, "/usr/bin");
+});
+
+test("stripRunScopedEnv 给 leader env 补回环豁免并保留用户显式值", () => {
+  const stripped = stripRunScopedEnv({
+    NO_PROXY: "corp.example.com",
+    [LEADER_ENV_FILE]: "/x/team.md",
+    [LEADER_ENV_MEMBER_MODELS]: "{}",
+  });
+
+  assert.equal(stripped.NO_PROXY, "corp.example.com,127.0.0.1,localhost,::1");
+  assert.equal(stripped.no_proxy, LOOPBACK_BYPASS);
+  assert.equal(stripped[LEADER_ENV_FILE], undefined, "原有剥键语义不变");
+  assert.equal(stripped[LEADER_ENV_MEMBER_MODELS], undefined);
 });
 
 test("derived-agent denylist bans nested agent tools but leaves team_dispatch to the leader", () => {
@@ -502,6 +591,61 @@ test("real child process spawns at the OS level without the leader keys", async 
     assert.equal(childEnv.AGENT_TEAM_STRIP_SENTINEL, "1");
     assert.equal(childEnv.PATH, process.env.PATH);
   } finally {
+    restoreEnv();
+  }
+});
+
+test("真实子进程拿到回环代理豁免（无 NO_PROXY 的 httpProxy 现场，#67）", async () => {
+  const restoreEnv = snapshotMemberEnv();
+  const restoreProxyEnv = clearProxyBypassEnv();
+  seedLeaderEnv();
+  try {
+    const outcome = await runChildPi({
+      command: process.execPath,
+      args: ["-e", "process.stderr.write(JSON.stringify(process.env))"],
+      env: stripLeaderEnv(),
+      spawn: defaultSpawn(),
+    });
+    assert.equal(outcome.exitCode, 0);
+    const jsonLine = outcome.stderr
+      .split(/\r?\n/)
+      .reverse()
+      .find((line) => line.startsWith("{"));
+    assert.ok(jsonLine, `child env JSON missing in stderr: ${outcome.stderr}`);
+    const childEnv = JSON.parse(jsonLine) as Record<string, string>;
+
+    // OS 级证据：真实 spawn 出去的进程里回环豁免键必须存在且值完整（
+    // Windows 进程环境大小写不敏感，两个键可能只存活一个，值一致）。
+    const bypass = childEnv.NO_PROXY ?? childEnv.no_proxy;
+    assert.equal(bypass, LOOPBACK_BYPASS);
+  } finally {
+    restoreProxyEnv();
+    restoreEnv();
+  }
+});
+
+test("pi 成员子进程 env 带回环豁免（父进程无 NO_PROXY）", async () => {
+  const restoreEnv = snapshotMemberEnv();
+  const restoreProxyEnv = clearProxyBypassEnv();
+  seedLeaderEnv();
+  try {
+    const { deps, spawn } = baseDeps();
+    const executor = createDispatchExecutor(deps);
+    const promise = executor({ tasks: [{ agent: "frontend", task: "写登录页" }] }, undefined, undefined);
+    const child = await waitForChild(spawn, 0);
+    const record = spawn.records.find((r) => r.args[r.args.length - 1] === "Task: 写登录页");
+    assert.ok(record);
+
+    // 成员子进程（pi 后端与外部 CLI 后端同一出口）也要放行回环——
+    // 本地中继/本地模型服务经宿主 httpProxy 会被 CONNECT-only 桥劫持。
+    assert.equal(record.env?.NO_PROXY, LOOPBACK_BYPASS);
+    assert.equal(record.env?.no_proxy, LOOPBACK_BYPASS);
+    assert.equal(record.env?.PATH, process.env.PATH, "其余 env 仍原样继承");
+
+    child.autoRespond([assistantLine("done")], 0, 5);
+    await unwrap(promise);
+  } finally {
+    restoreProxyEnv();
     restoreEnv();
   }
 });
@@ -835,8 +979,9 @@ test("外部成员 worktree:true 在隔离 worktree 中启动", async () => {
   assert.deepEqual(outcome.results[0].worktree, { path: expectedPath, branch: "team/run-1/coder" });
 });
 
-test("外部成员 env 透传：保留父进程 NO_PROXY，只剥 leader 三键", async () => {
+test("外部成员 env 透传：保留父进程 NO_PROXY 并补上缺失的回环项", async () => {
   const restoreEnv = snapshotMemberEnv();
+  const restoreProxyEnv = clearProxyBypassEnv();
   seedLeaderEnv();
   process.env.NO_PROXY = "127.0.0.1,localhost";
   try {
@@ -851,8 +996,10 @@ test("外部成员 env 透传：保留父进程 NO_PROXY，只剥 leader 三键"
     const record = spawn.records[0];
 
     // F1 修复链路的下半段：leader 子进程继承到的 NO_PROXY 必须能穿过
-    // stripLeaderEnv 到达外部成员（claude 访问 localhost BASE_URL 放行）。
-    assert.equal(record.env?.NO_PROXY, "127.0.0.1,localhost", "父进程代理放行变量透传到外部成员");
+    // stripLeaderEnv 到达外部成员；#67 再补上缺失的回环项（用户显式
+    // 值前缀原样保留，只追加没有的 ::1）。
+    assert.equal(record.env?.NO_PROXY, "127.0.0.1,localhost,::1", "显式值前缀原样 + 追加缺失回环项");
+    assertLoopbackBypass(record.env?.no_proxy, "no_proxy");
     assert.equal(record.env?.[LEADER_ENV_FILE], undefined);
     assert.equal(record.env?.[LEADER_ENV_NAME], undefined);
     assert.equal(record.env?.[LEADER_ENV_RUNID], undefined);
@@ -861,6 +1008,38 @@ test("外部成员 env 透传：保留父进程 NO_PROXY，只剥 leader 三键"
     const outcome = await unwrap(promise);
     assert.equal(outcome.results[0].status, "done");
   } finally {
+    restoreProxyEnv();
+    restoreEnv();
+  }
+});
+
+test("claude 外部成员子进程 env 带回环豁免（本地中继 405 现场，#67）", async () => {
+  const restoreEnv = snapshotMemberEnv();
+  const restoreProxyEnv = clearProxyBypassEnv();
+  seedLeaderEnv();
+  try {
+    const { deps, spawn } = baseDeps();
+    const executor = createDispatchExecutor({
+      ...deps,
+      team: fixtureTeam({ members: [{ ...CLAUDE_MEMBER }] }),
+      resolveExternalCli: fixedResolver(EXTERNAL_CLAUDE_BIN),
+    });
+    const promise = executor({ tasks: [{ agent: "coder", task: "读文件" }] }, undefined, undefined);
+    const child = await waitForChild(spawn, 0);
+    const record = spawn.records[0];
+
+    // 用户现场：宿主 httpProxy 只注入 HTTP(S)_PROXY，父进程没有 NO_PROXY——
+    // ANTHROPIC_BASE_URL=http://127.0.0.1:15721 的本地中继被 10899 桥劫持
+    // （每次派单 405 CONNECT only）。出口必须自己合成豁免。
+    assert.equal(record.env?.NO_PROXY, LOOPBACK_BYPASS);
+    assert.equal(record.env?.no_proxy, LOOPBACK_BYPASS);
+    assert.equal(record.env?.HTTPS_PROXY, process.env.HTTPS_PROXY, "代理变量继承语义不变");
+
+    child.autoRespond(fixtureLines("external-claude-success.jsonl"), 0, 5);
+    const outcome = await unwrap(promise);
+    assert.equal(outcome.results[0].status, "done");
+  } finally {
+    restoreProxyEnv();
     restoreEnv();
   }
 });

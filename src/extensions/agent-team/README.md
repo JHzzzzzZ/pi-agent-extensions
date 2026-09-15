@@ -74,6 +74,7 @@ members:
 - **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team-run-<runId>`，连字符形式——避免与成员分支 `team/<runId>/<member>` 构成 git ref 文件/目录冲突）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；成员自建分支且工作树干净、期望分支存在且空闲时自动 `git switch` 切回，报告中标注「已从 <旧> 切回」；其余不匹配报 `WORKTREE_UNAVAILABLE` 并附非破坏可操作提示 `git -C … switch …`，不再建议 `remove --force`；路径被非 worktree 占用等才报错）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
 - **模型预检**：派单前会先对 leader + 全体成员的 `provider/id` 做一次注册表预检——引用不存在的模型直接报 `MODEL_NOT_FOUND`（不启动任何子进程，提示先调 `team_models`）；存在但未配置鉴权的模型放行并警告。成员不配 model 则用 pi 默认模型（无从预检）。
 - **外部 CLI 后端成员（v1.26.0）**：成员可声明 `backend: codex|claude` 改用对应 CLI 非交互执行（语法/口径/限制见 §7）；leader 不可声明 backend（run 预检 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed）。
+- **裸 `": "` 值容忍（v1.29.0，#63）**：frontmatter 里值含 `": "` 的裸标量（如 `description: 全栈开发: 小队`，YAML 判定非法）不再让整份团队文件加载失败——解析只对这类行（团队级/成员级 `description`、`prompt` 等）按写盘口径加引号**重试一次**（不是通用宽松解析：引号值、`|`/`>` 块标量、CRLF、值内引号照旧；块标量内容行与正文一个都不动，也**不写回磁盘**）。重试仍失败时错误信息前置修法提示（`第 N 行的值含 ": "，请加引号（"…"）或改用 | 块标量`，行号按团队文件），原始 YAML 错误作为细节保留；`/team:list`、`team_list`、`/team:doctor` 照旧列出不可用文件与原因，`team_run`/`team_resume` 的 `TEAM_NOT_FOUND` 文案追加 `另有 N 个定义不可用：<file>（<原因首行>）`——坏团队文件在派单与续跑两个入口都看得见。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（下次派单/列表即生效，无注册缓存）。
 
 ### 3. 派单与复用
@@ -161,7 +162,7 @@ agent-team count-duet · ↓/← 查看详情
 
 ### 5. 会话记录查看器（/team:view）与成员 transcript
 
-派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的五行元信息头（`Run:` / `State:` / `成员:` / `模型:` / `活动:`——续跑 run 的 `Run:` 行追加 `（续跑自 <parentRunId>）`（v1.21.0），行数不变；模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`；活动行为选中 actor 的当前活动（v1.17.0）：`思考中` / `工具调用 <tool>` / `排队中` / `已完成`/`失败`/`已中止` / `run 已结束`，活动已知时附 ` · 距上次输出 <age>`（age 5 秒分桶：`0s`/`5s`…，≥60s 如 `2m5s`；分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘），live 阶段由 leader/member 子进程事件驱动（tool start/update/end、assistant message_end），无 live progress 时从 transcript 末条推导），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
+派单后随时执行 `/team:view`（仅交互式 TUI）打开**全屏分栏查看器**（fleet inspector 同款布局：左栏成员 roster，右栏运行详情，约 85% 终端高、95% 宽，完整边框与主 agent 界面明确分割；终端窄于 36 列时仅提示不渲染）。左栏是成员 roster（选中行 `›` 标记 + 状态图标 + 名称 + actor id，右对齐状态文本；选中滚出可见区时列表跟随滚动）。右栏顶部是固定的五行元信息头（`Run:` / `State:` / `成员:` / `模型:` / `活动:`——续跑 run 的 `Run:` 行追加 `（续跑自 <parentRunId>）`（v1.21.0），行数不变；模型为选中 actor 的后端，统一为 `provider/id` 口径（v1.15.2）：声明含 provider 前缀时用「声明前缀 + 子进程实际上报 id」组合（实际跑了别的模型也如实显示；成员跑过后优先 dispatch 折入的实际上报值（`usage.model`，v1.16.0）、否则团队文件声明值），实际值自带 `/` 原样用、无声明不造假前缀（裸 id 就裸 id）、无实际回退声明值，两者皆无显示 `（默认）`；模型行追加 ` · 思考 <level>`——子进程 `providerThinkingLevel` 实际值优先，未上报回退模型尾缀（仅宿主有效级别 off/minimal/low/medium/high/xhigh/max），级别缺省显示 ` · 思考 （默认）`、模型与级别均缺省显示 `（默认）`；活动行为选中 actor 的当前活动（v1.17.0）：`思考中` / `工具调用 <tool>` / `排队中` / `已完成`/`失败`/`已中止` / `run 已结束`，活动已知时附 ` · 距上次输出 <age>`（age 5 秒分桶：`0s`/`5s`…，≥60s 如 `2m5s`；分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘），live 阶段由 leader/member 子进程事件驱动（tool start/update/end、assistant message_end），无 live progress 时从 transcript 末条推导），下方是选中成员的完整连续会话流：派发的任务（用户气泡样式）→ 用户自己发的消息（v1.28.0：独立亮块，首行 `▌用户 · <时间>` + 正文整行铺宿主主题 `userMessageBg` 背景，与 agent/leader 输出视觉区分）→ assistant 回复全文（主 agent 同款 Markdown 渲染，带 dim 小标签）→ 连续合并的工具调用行 → 错误与结束状态，实时刷新（run 结束后仍可查看）。参考 pi-subagents 的 fleet inspector 交互：
 
 | 按键 | 作用 |
 |---|---|
@@ -180,7 +181,7 @@ v1.8.0 起旧键 `←→/h/l/Tab/1-9/g/G` 退役（按下忽略不改状态）�
 
 实现机制（run artifacts）：每个 run 在 `~/.pi/agent/teams/runs/<runId>/` 下保留每个成员一份有界 JSONL 流水（leader 为 `_leader.jsonl`）——leader 侧事件由驾驶舱从 leader 子进程 JSON 流写入，成员侧由 leader 进程内的 dispatch 执行器实时写入，查看器与工具按需读取。单条记录封顶 4KB、单文件 2MB、目录保留 7 天（session 启动时自动清理）。全部落盘 best-effort，记录失败绝不影响 run 本身。
 
-**与成员/leader 直接对话（`m` 发消息，v1.6.0；leader 运行中插话 v1.15.0）**：选中某个 actor 后按 `m` 进入右栏头部下方单行输入（`❯ <内容>▏`），可打印字符（含 CJK）追加、backspace 删字、`Esc`/`ctrl+c` 只退出输入（不关查看器）、`Enter` 提交。**目标 = leader 且 run 运行中**：leader 子进程以 `--mode rpc` 拉起，cockpit 持有其 stdin，消息以 RPC `steer` 发出——pi 在当前助手回合执行完工具调用后、下次 LLM 调用前送达（当前任务不被打断），回复出现在本 run 的 transcript 里；提交 notice 为「已插话给 leader（steer）：不打断当前任务，leader 会在当前回合结束后尽快回应」。其余情况走**派单语义**：每条消息编成一个新 run 的 task（leader 直发；成员则指示 leader 转派并附该成员 transcript 尾部 ~2000 字节作上文，派出时刻现读不缓存）——成员子进程归 leader 派生、驾驶舱无通道注入，因此仍走此路径；复用 `startBackgroundRun`（含 model 预检）派出；当前 run 在跑则消息**排队**，run 落定（completed）后自动链式派出，run failed/aborted 则清空队列（用户变卦语义，与 `team_stop`/viewer `D`/`/team:clear` 一致——显式停止也清队列并提示丢弃条数）。回复经新 run 的 transcript 在查看器里展示（选中页跟随最新 run），报告照常 followUp 送达主会话。队列驻留在会话内存不落盘，`/reload` 后丢失可接受。
+**与成员/leader 直接对话（`m` 发消息，v1.6.0；leader 运行中插话 v1.15.0）**：选中某个 actor 后按 `m` 进入右栏头部下方单行输入（`❯ <内容>▏`），可打印字符（含 CJK）追加、backspace 删字、`Esc`/`ctrl+c` 只退出输入（不关查看器）、`Enter` 提交。**目标 = leader 且 run 运行中**：leader 子进程以 `--mode rpc` 拉起，cockpit 持有其 stdin，消息以 RPC `steer` 发出——pi 在当前助手回合执行完工具调用后、下次 LLM 调用前送达（当前任务不被打断），回复出现在本 run 的 transcript 里；提交 notice 为「已插话给 leader（steer）：不打断当前任务，leader 会在当前回合结束后尽快回应」。其余情况走**派单语义**：每条消息编成一个新 run 的 task（leader 直发；成员则指示 leader 转派并附该成员 transcript 尾部 ~2000 字节作上文，派出时刻现读不缓存）——成员子进程归 leader 派生、驾驶舱无通道注入，因此仍走此路径；复用 `startBackgroundRun`（含 model 预检）派出；当前 run 在跑则消息**排队**，run 落定（completed）后自动链式派出，run failed/aborted 则清空队列（用户变卦语义，与 `team_stop`/viewer `D`/`/team:clear` 一致——显式停止也清队列并提示丢弃条数）。回复经新 run 的 transcript 在查看器里展示（选中页跟随最新 run），报告照常 followUp 送达主会话。队列驻留在会话内存不落盘，`/reload` 后丢失可接受。**用户输入原文可见（v1.28.0，#56）**：两条通道都在**提交时刻**把用户原文落本 run 的转录（`user` 条目：目标 actor + leader 各一条，**不带** `【用户消息】` wire 包装——那是送给 leader 的指令标记），viewer 里以独立亮块即时呈现（首行 `▌用户 · <时间>`，正文整行铺 `userMessageBg` 背景，与 agent/leader 输出明显区分），`team_transcript` 转储带 `[user] <时间>` 行首标记——「我发了什么」随时可复查；排队条目的结局再补一条 `system` 行（`已派出（新 run <id>）`；未派出三态：`run 已停止` / `队列已清空` / `派出失败`），排队中不建第二个事实源（队列仍不落盘）。提交 notice 文案不变（用户 2026-09-14 决议：原文在 viewer 里呈现，通知不必再复述）。
 
 对话内查看：主 agent 可调用 `team_transcript` 工具（`member` 参数指定成员名或 `leader`）读取同样的记录并转述要点；`team_status` 之外想深入某个成员"到底做了什么"时用它。统一路由下不存在动态命令覆盖问题：首 token 是保留词即子命令，否则才是团队名。
 
@@ -229,6 +230,7 @@ members:
 - **预检与环境**：CLI 未安装（PATH 与 npm 全局布局都找不到可直接 spawn 的原生可执行文件）→ run 预检 `CLI_NOT_FOUND` 拦截，不拉起任何子进程；逃生门 `PI_AGENT_TEAM_CODEX_BIN` / `PI_AGENT_TEAM_CLAUDE_BIN` 给可执行文件绝对路径（无效值 fail-closed、不回退 PATH）。**未登录不做预检**：运行时失败按成员 `CHILD_FAILED` 呈现——codex 先 `codex login`，claude 交互运行一次 `claude` 完成登录（或配好 API key）。
 - **leader 不能声明 `backend`**：外部 CLI 没有 `team_dispatch` 工具面、无法协调成员，run 预检以 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed（v1 限制）；`backend` 仅可用于成员（`team_create` v1 也不产出 backend，请手写/手改团队文件；非法值域报 `INVALID_TEAM_FILE`）。
 - **Windows 解析策略**：`.cmd`/`.ps1` shim 无法 `shell:false` spawn（EINVAL），解析层只返回真实可执行文件（`codex.exe`/`claude.exe`，含 npm vendor 布局）；**永不**经 `node codex.js` 包装器间接 spawn——Windows 的 SIGTERM 只杀直子进程，`codex.exe` 孙进程会孤儿化继续烧 API。
+- **代理与回环地址（v1.30.0，#67）**：宿主的 `httpProxy` 设置只注入 `HTTP_PROXY`/`HTTPS_PROXY`（`applyHttpProxySettings` **从不**注入 `NO_PROXY`），本地中继/本地模型服务（如 `ANTHROPIC_BASE_URL=http://127.0.0.1:15721`）若被送进 CONNECT-only 代理桥就会每次派单 405。因此派给 leader 与全部成员（pi 与外部 CLI）的子进程 env 一律在出口补上回环豁免：`NO_PROXY` 与 `no_proxy` **两个大小写键都写**（Node/undici 与各 CLI 读取口径不同），值为「用户已有值 + 缺失的 `127.0.0.1,localhost,::1`」——显式值原样保留（前缀不动）、已含项不重复追加、重复调用幂等；`HTTP(S)_PROXY` 的继承与覆盖语义不变，不做代理是否已设的判定（子进程可能在自身配置里配代理，豁免对无代理环境无害）。宿主侧**不打补丁**（仓库边界），上游 issue 稿见仓库根 `docs/pi-http-proxy-loopback-issue.md`。
 
 可运行示例见 [examples/external-cli.example.md](examples/external-cli.example.md)。
 
@@ -257,7 +259,7 @@ members:
 ```bash
 cd src/extensions/agent-team
 npm install
-npm test          # node --test test/*.test.ts（613 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
+npm test          # node --test test/*.test.ts（664 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```

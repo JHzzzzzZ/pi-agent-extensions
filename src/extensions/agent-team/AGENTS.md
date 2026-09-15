@@ -7,21 +7,23 @@
 ## WHERE TO LOOK
 | 任务 | 位置 |
 |---|---|
-| 团队文件格式 | `~/.pi/agent/teams/*.md` 或受信项目 `.pi/teams/`（项目优先），frontmatter `leader` + `members[]` |
+| 团队文件格式 | `~/.pi/agent/teams/*.md` 或受信项目 `.pi/teams/`（项目优先），frontmatter `leader` + `members[]`；值含 `": "` 的裸标量（`description: 全栈开发: 小队`）按写盘口径加引号重试一次（`config.ts`，v1.29.0，块标量内容行/正文不动） |
 | 成员字段 | 每成员 `provider/model` + `tools` + `worktree` + 块标量 `prompt`，见 `examples/dev-team.example.md` |
 | 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（`team_dispatch` + `team_ask`），无则 cockpit 模式（`team_create/list/run/resume/status/stop` + `/team*`） |
 | leader 提问（人工澄清） | leader 侧 `ask.ts` `askLeaderQuestion`（team_ask 工具）；cockpit 侧 `AskChannel` + `index.ts` `askPortFrom(ctx)` 宿主对话框；RPC 协议 = pi stdout `extension_ui_request` ↔ stdin `extension_ui_response` |
 | 续跑/换模型 | `resume.ts`（父 status/会话镜像/cwd/override 纯函数 + `restoreWorktree` 在 `worktree.ts`）+ `cockpit.ts` `start({resume})`（`--session <父文件>` 原地续写 + 父 worktree 恢复）+ `team_resume` 工具//`/team:resume`；leader 会话落盘 `<runsRoot>/<runId>/session/`（v1.21.0） |
 | 停止/终态 | `cockpit.ts` `TeamRunCoordinator.stop()`（同步 abort）/`stopAndSettle()`（有界等待落定返回终态记录）+ `team_stop` 工具（runId 可选三态：恰 1 活跃停它 / 0 活跃提示 / ≥2 活跃 `RUN_ID_REQUIRED`；aborted 记录补全 roster 成员） |
+| viewer 发消息 / 用户输入可见 | `chat.ts`（task 模板 + FIFO 队列 + 链式派出 + `appendEntry` 端口：提交时刻落 `user` 原文到目标 actor + leader、排队条目结局补 `system` 行）+ `index.ts` 接线（`FileTranscriptSink` best-effort）+ `transcript.ts` `TRANSCRIPT_ENTRY_KINDS`（含 `user`）+ `viewer.ts` `blockLines`（`▌用户 · <ts>` + `userMessageBg` 整行；`team_transcript` 转储带 `[user]`） |
 | 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，8 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
-| 子进程 env / 工具面 | 成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`，exclude 优先于 `--tools`） |
+| 子进程 env / 工具面 | 成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`；leader（`stripRunScopedEnv()`）与成员（含外部 CLI 成员）统一经 `withLoopbackBypass()` 补回环代理豁免（`NO_PROXY` + `no_proxy` 双键，用户显式值只追加缺失项，v1.30.0）；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`，exclude 优先于 `--tools`） |
 | 隔离分支 | `worktree.ts`（每次 run 独立分支；同 run 重派复用已注册 worktree / 空闲同名分支，不碰当前目录） |
 | 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界，契约 `<仓库根>/docs/cross/status-bar.md`）；数据驱动挂载：controller 每会话挂一次，运行中有帧、落定 `setWidget(undefined)` 自动卸载；未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`，选中态 = `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（末行恒为成员行；v1.13.0，任务摘要 v1.13.1 并入）；连接符 `├─ `/`╰─ `（末项圆角，v1.15.4），每行带背景（普通行 `rowBg`、选中行 `rowSelectedBg`，按宿主内容宽补齐，v1.15.4） |
 | 错误码 | `types.ts` `TeamErrorCodes` |
 
 ## CONVENTIONS
 - 团队文件每次使用重扫，无缓存 —— 加缓存则项目覆盖用户优先级失效。
+- 团队文件 frontmatter 的宽松只有「值含 `": "` 的裸标量」一种模式（v1.29.0，#63）：整块加引号重试一次，失败回落首次解析的错误 + 修法提示；块标量内容行与 markdown 正文绝不重写，也不改写磁盘文件 —— 通用宽松解析器会让「文件即事实来源」失效。
 - leader prompt 经 `leader-prompt.ts` 组装，自包含任务上下文 —— 直传用户原话则成员看不到约束。
 - 结果 ≤50KB、摘要 ≤8KB，与 pwr 同限不同码 —— 超限截断，违则 cockpit entry 溢出。
 - cockpit/widget/entry 键 `agent-team-run-v1` —— 改键则旧会话渲染器失配。
@@ -45,7 +47,7 @@
 
 ## COMMANDS
 ```bash
-cd src/extensions/agent-team && npm install && npm test   # 564 测试（node --test test/*.test.ts）
+cd src/extensions/agent-team && npm install && npm test   # 664 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```

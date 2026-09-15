@@ -5,9 +5,9 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）） | 629 个 |
+| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）） | 664 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
-| [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
+| [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
 | [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
 | [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；管理走 `/loop:*` 冒号子命令） | 196 个（node:test） |
@@ -307,17 +307,19 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 - **派单与复用** — `/team:run <团队> <任务>`（统一派单入口）、`team_run` 工具（默认后台，返回含 runId；报告或失败摘要完成后自动送达主会话——failed 状态/错误/成员结果/部分报告同通道必达，主 agent 可重试或如实转告用户）；同一团队反复使用；`/team:stop [runId]` 或 `team_stop` 工具中止（settle-aware：停止后拿到 aborted 终态记录，报告 followUp 不再送达，可立即重新派单）；团队名可与子命令同名（保留词概念已退役）
 - **多 run 并发（v1.25.0）** — 同一会话最多同时推进 **3 个 run**（协议常量，不可配；第 4 个同步回 `RUN_IN_PROGRESS` 并列出活跃 runId；同毫秒派单自动 `run-<ms>-n` 后缀）；各 run 的进度/预算/停止/RPC 插话/提问独立，跨 run 互不串写。`team_status { runId }` 与 `/team:status [runId]` 定位单个 run（省略 = 全部活跃分节 + 最近终态；再附「近期 run」尾注），`team_stop`/`/team:stop` 省略 runId 三态（恰 1 活跃停它 / 0 活跃提示 / ≥2 活跃要求显式指定并列 runId）；viewer 按 `[`/`]` 环形切 run（多 run 时图例追加 ` · [/] 切 run`）；widget 多 run 折叠行 `agent-team · N run 并行 · ↓/← 查看详情`、展开为单 `main` 根 + 每 run 一棵子树；终态记录保留最近 5 条（`/reload` 逐条水合）
 - **外部 CLI 成员（v1.26.0）** — 成员可声明 `backend: codex|claude`，任务改由对应 CLI 的非交互模式执行（codex `exec --json` / claude `-p --output-format stream-json`），usage/结果折回既有 run 记录、followUp 与 viewer/status 链路；与 pi 成员同池、同停止语义（SIGTERM→SIGKILL）、同 50KB/8KB 上限；CLI 缺失或 leader 声明 backend → run 预检 fail-closed（`CLI_NOT_FOUND` / `EXTERNAL_LEADER_UNSUPPORTED`，不 spawn）；codex 费用恒 0、不入 cost 预算（token 照折）；`tools:` 白名单对外部成员忽略
+- **团队文件容错（v1.29.0，#63）** — frontmatter 里值含 `": "` 的裸标量（`description: 全栈开发: 小队`）不再让整份团队文件加载失败：仅对这类行（团队级/成员级）按写盘口径加引号重试一次（引号值、块标量、CRLF、值内引号照旧；块标量内容行与正文不动，也不写回磁盘）；重试仍失败时错误前置「第 N 行的值含 ": "，请加引号或改用 | 块标量」提示并保留原始 YAML 错误；`team_run`/`team_resume` 的 `TEAM_NOT_FOUND` 追加「另有 N 个定义不可用：<file>（<原因首行>）」——坏团队文件在列表/doctor 之外的两个入口也看得见
+- **代理与回环地址（v1.30.0，#67）** — 宿主 `httpProxy` 只注入 `HTTP(S)_PROXY`、从不注入 `NO_PROXY`，本地中继/本地模型服务（如 `ANTHROPIC_BASE_URL=http://127.0.0.1:15721`）会被 CONNECT-only 代理桥劫持（真机每次派单 405）；leader 与全体成员（pi + 外部 CLI）的子进程 env 出口统一补上回环豁免（`NO_PROXY` 与 `no_proxy` 双键，值为用户已有值 + 缺失的 `127.0.0.1,localhost,::1`——显式值原样保留、去重、幂等），不改宿主、不动 `HTTP(S)_PROXY` 语义
 - **隔离与统计** — 成员可选 `worktree: true` 独立 git worktree（分支 `team/<runId>/<member>`，不自动合并）；按成员统计 token/费用；运行记录持久化为会话 entry
 - **进度可视（可选中亮块）** — 数据驱动：有活跃 run 才挂亮块，run 落定自动消失（不再常驻终态行）。默认只有一行折叠提示（`agent-team <团队> · ↓/← 查看详情`），`↓`/`←`（焦点在主编辑器且编辑器为空时）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员…` 树（末行恒为成员行：`↓`/`j` 到底即最后一个成员；成员行连接符 `├─`（非末项）/ `╰─`（末项圆角）、带状态图标与最新活动尾注，多行文本先压平成单行；每行按宿主内容宽补齐并包背景，选中行用更强背景），再按 `↑`/`↓`/`j`/`k` 移动，第 0 行再按 `↑`/`k` 收回折叠；`enter` 在 `main` 行只收起选中、在 leader/成员行直接打开查看器并定位该 actor、`esc`/其它键退出并放行编辑器；`/login`、`/model` 等选择器/对话框打开时焦点不在编辑器，widget 完全不介入（方向键原样让给选择器，选中态自动退出）；状态变化（leader 事件/派发起止）即时刷新，1s tick 仅兜底。`/team:clear` 用于丢弃排队的 viewer 对话消息（无内容时提示亮块随 run 结束自动隐藏）。TUI 行为对照 pi-subagents fleet 代码级同步（见 [src/extensions/agent-team/docs/tui-sync.md](src/extensions/agent-team/docs/tui-sync.md））
 - **防失控与崩溃恢复** — 派发预算可配（frontmatter `budget:` 块：dispatch/成员运行次数 + 可选费用/token 硬上限，超限自动中止 `BUDGET_EXCEEDED`）；派单前 model 预检（引用不存在的模型直接拒绝，不启动任何子进程）；每 run 元数据快照落盘，主会话中断后下次启动自动 reconcile 残留 run 并诊断孤儿 leader（只报告不杀）；`/team:doctor` 自检报告
 - **续跑（v1.21.0）** — leader 会话随 run 产物落盘（`runs/<runId>/session/`，7 天保留）。额度耗尽等原因落 failed/aborted 后，`/team:resume <runId> [补充指示]` 或 `team_resume` 工具以**新 run 原地续写父 leader 会话**（完整对话上下文，无交接摘要）并复用父 run 的 worktree（含未提交改动）；`team_resume` 支持 `leaderModel`/`memberModels` 只对本次续跑换模型（不改团队文件，支持 `provider/id:level`）。仅 failed/aborted 可续（completed → `RUN_ALREADY_FINISHED`、进行中 → `RUN_NOT_TERMINAL`、无会话镜像 → `RESUME_UNAVAILABLE`、worktree 不可恢复 → `WORKTREE_UNAVAILABLE` 硬失败）；新 run 记录 `parentRunId`，`/team:status` 与查看器 `Run:` 行展示「续跑自 …」
 - **会话记录查看器** - `/team:view` 全屏左右分栏(fleet inspector 同款:左栏成员 roster 带选中标记与状态,右栏 Run/State/成员/模型/活动 五行元信息头 + 选中成员的连续会话流--任务气泡 + 主 agent 同款 Markdown 回复 + 合并工具行;活动行为选中 actor 当前活动（思考中 / 工具调用 <tool> / 排队中 / 已完成/失败/已中止 / run 已结束）+ 5 秒分桶的 `距上次输出` 时长（分桶文本计入刷新指纹，时钟重绘至多每桶一次、终态零时钟重绘）；≈85% 终端高,窄于 36 列仅提示),run artifacts 落盘、run 结束后仍可查;`D` 停止整个 run（两步确认，确认后中止 leader 与全体成员、报告不再送达，与 `team_stop` 同语义）、`r`/`R` 手动刷新、`q`/`Esc`/`ctrl+c` 关闭；按键（v1.8.0）全面对齐 fleet：`↑↓/j/k` 切成员、`Shift+J/K` 滚正文、`Home/End` 首末成员、`PgUp/PgDn` 翻页、`x/X/ctrl+o` 工具行，仅 `m` 发消息是特有键；主 agent 可用 `team_transcript` 工具转述记录要点
-- **查看器内直接对话（`m` 发消息）** — 选中成员/leader 后按 `m` 进入单行输入（右栏输入行），`Enter` 提交；**目标 = leader 且 run 运行中 → RPC steer 插话**（v1.15.0：leader 子进程以 `--mode rpc` 拉起，消息在当前回合边界送达、不打断任务，回复出现在本 run 的 transcript 里）；其余情况（成员目标 / run 已落定 / 通道不可用）走派单语义：消息编成新 run 的 task（附目标 actor transcript 尾部作上文），run 运行中则排队、落定后自动链式派出（failed/aborted 清空）；报告照常 followUp 送达
+- **查看器内直接对话（`m` 发消息）** — 选中成员/leader 后按 `m` 进入单行输入（右栏输入行），`Enter` 提交；**目标 = leader 且 run 运行中 → RPC steer 插话**（v1.15.0：leader 子进程以 `--mode rpc` 拉起，消息在当前回合边界送达、不打断任务，回复出现在本 run 的 transcript 里）；其余情况（成员目标 / run 已落定 / 通道不可用）走派单语义：消息编成新 run 的 task（附目标 actor transcript 尾部作上文），run 运行中则排队、落定后自动链式派出（failed/aborted 清空）；报告照常 followUp 送达。**用户输入原文可见（v1.28.0，#56）**：两条通道都在**提交时刻**把原文落本 run 转录（`user` 条目：目标 actor + leader 各一条，不带 `【用户消息】` wire 包装），viewer 里以独立亮块即时呈现（首行 `▌用户 · <时间>`、正文整行铺宿主主题 `userMessageBg` 背景，与 agent/leader 输出视觉区分），`team_transcript` 输出带 `[user]` 行首标记；排队条目的结局补一条 `system` 行（已派出/未派出三态），排队中不建第二个事实源
 - **长提问完整呈现（v1.27.0，#58）** — `team_ask` 的题面不再压平成单行、也不再硬截 300 字符（多段方案结构原样保留，上限 4KB 且超限附显式省略标注，绝不静默）：短题仍走宿主对话框（零回归），长题（>200 字符 / 空行分段 / 选项 >5 或单项 >60 字符）改走自绘全屏视图——题面按显示宽度折行全文呈现、`J/K`/`PgUp/PgDn` 滚动，选项窗口跟随选中项（不再被长题面顶出屏幕只能盲选），`Esc` 取消、超时以静态文案提示；自绘不可用时回退宿主对话框（摘要 + 全文见 `/team:view` 的「提问：」块）
 
 ```bash
 cd src/extensions/agent-team
-npm install && npm test        # 629 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
+npm install && npm test        # 664 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
@@ -572,6 +574,17 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 ---
 
 ## 开发约定
+
+全仓测试一条命令（17 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
+
+```bash
+npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 / --jobs 4 更高并发）
+node tools/test-all.mjs --install # 新 worktree：先并行 npm install（--prefer-offline）再跑
+npm run test:contract             # 状态条契约（doc → docs/cross/status-bar.md）
+npm run test:smoke                # 安装冒烟工具纯逻辑
+npm run test:todo                 # todo CLI（88 个）
+node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi）
+```
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
 - **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常

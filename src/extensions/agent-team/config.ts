@@ -21,6 +21,11 @@
  * the leader system prompt. Discovery re-scans on every use (no caching) so
  * conversation-created teams and hand edits take effect on the next run.
  * Project scope files override global files on name conflicts.
+ *
+ * Hand-written files may use bare values containing ": "
+ * (`description: 全栈开发: 小队`) — invalid YAML, which the host parser
+ * rejects. Those files are tolerated by retrying once with the offending
+ * values quoted (agent-team-todo #63); see `parseTeamFile`.
  */
 
 import * as fs from "node:fs";
@@ -236,18 +241,118 @@ export function validateTeam(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Bare ": " tolerance (agent-team-todo #63)
+// ---------------------------------------------------------------------------
+
+/**
+ * 裸标量行：`key: value`（含列表项 `- key: value`、任意缩进）。键限 ASCII
+ * 标识符——CJK 开头的列表项（`- 全栈开发: 小队`，值本身是映射）不会被误判。
+ */
+const BARE_SCALAR_LINE = /^([ \t]*(?:-[ \t]+)?[A-Za-z0-9_][\w.-]*[ \t]*:[ \t]+)(\S.*?)[ \t]*$/;
+
+/** 块标量头（`key: |` / `key: >`，可带 chomping/缩进指示）。 */
+const BLOCK_SCALAR_HEAD = /^[ \t]*(?:-[ \t]+)?[^ \t:][^:]*:[ \t]*[|>][+-]?[0-9]*[ \t]*$/;
+
+function leadingWhitespace(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+interface BareColonValue {
+  /** 团队文件里的 1-based 行号（首行 `---` 是第 1 行）。 */
+  line: number;
+  /** 行首（缩进 + `- ` + 键 + `: `），重写时原样保留。 */
+  prefix: string;
+  value: string;
+}
+
+function normalizeNewlines(content: string): string {
+  return content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
+ * frontmatter 块结束行（以 `---` 开头的第一个后续行），无块时 -1。按行口径
+ * 等价于宿主 `extractFrontmatter` 的 `indexOf("\n---", 3)`（`utils/frontmatter.js`）:
+ * 首行必须也以 `---` 开头，否则根本没有 frontmatter。重写只允许落在块内——
+ * 正文（团队备注，会被追加进 leader prompt）里的冒号一个都不许动。
+ */
+function frontmatterBlockEnd(lines: string[]): number {
+  const first = (lines[0] ?? "").replace(/^\uFEFF/, "");
+  if (!first.startsWith("---")) return -1;
+  for (let i = 1; i < lines.length; i++) {
+    if ((lines[i] ?? "").startsWith("---")) return i;
+  }
+  return -1;
+}
+
+/**
+ * frontmatter 块内「值含 `": "` 的裸标量行」——已加引号的值、`|`/`>` 块标量
+ * 不需要（也不能）加引号，原样跳过。块标量**内容行**同样跳过：它们不是映射的
+ * 裸标量，重写一行等于悄悄改 prompt 正文（即使这行长得像 `Note: 说明`）。
+ */
+function bareColonValues(content: string): BareColonValue[] {
+  const lines = normalizeNewlines(content).split("\n");
+  const end = frontmatterBlockEnd(lines);
+  if (end < 0) return [];
+  const found: BareColonValue[] = [];
+  let blockIndent = -1; // 当前块标量头的缩进；< 0 = 不在块标量里
+  for (let i = 1; i < end; i++) {
+    const line = lines[i] ?? "";
+    if (blockIndent >= 0) {
+      if (line.trim().length === 0 || leadingWhitespace(line) > blockIndent) continue;
+      blockIndent = -1;
+    }
+    if (BLOCK_SCALAR_HEAD.test(line)) {
+      blockIndent = leadingWhitespace(line);
+      continue;
+    }
+    const match = BARE_SCALAR_LINE.exec(line);
+    if (!match) continue;
+    const value = match[2] ?? "";
+    if (!value.includes(": ") || /^["'|>]/.test(value)) continue;
+    found.push({ line: i + 1, prefix: match[1] ?? "", value });
+  }
+  return found;
+}
+
+/** 重写：目标行值加引号（转义口径复用写盘路径的 `yamlScalar`）。 */
+function quoteBareColonValues(content: string, values: BareColonValue[]): string {
+  const lines = normalizeNewlines(content).split("\n");
+  for (const entry of values) lines[entry.line - 1] = `${entry.prefix}${yamlScalar(entry.value)}`;
+  return lines.join("\n");
+}
+
+/**
+ * 解析失败文案：能定位到裸 `": "` 行时前置单行修法提示（行号按团队文件计），
+ * 原始 YAML 错误原样保留作细节；没有这种行就不猜（避免给出误导性提示）。
+ */
+function frontmatterErrorMessage(error: unknown, values: BareColonValue[]): string {
+  const detail = `failed to parse frontmatter: ${error instanceof Error ? error.message : String(error)}`;
+  if (values.length === 0) return detail;
+  return `第 ${values[0].line} 行的值含 ": "，请加引号（"…"）或改用 | 块标量\n${detail}`;
+}
+
 /** Parses one team definition file's content. */
 export function parseTeamFile(
   content: string,
   meta: { filePath: string; source: "global" | "project" },
 ): Result<TeamConfig> {
-  let parsed: { frontmatter: unknown; body: string };
   try {
-    parsed = parseFrontmatter<Record<string, unknown>>(content);
+    const parsed = parseFrontmatter<Record<string, unknown>>(content);
+    return validateTeam(parsed.frontmatter, { ...meta, body: parsed.body });
   } catch (e) {
-    return invalid(`failed to parse frontmatter: ${e instanceof Error ? e.message : String(e)}`);
+    const values = bareColonValues(content);
+    if (values.length > 0) {
+      // 容忍裸 `": "`：整块加引号后重试一次；仍失败则回落原错误（细节以首次失败为准）。
+      try {
+        const retried = parseFrontmatter<Record<string, unknown>>(quoteBareColonValues(content, values));
+        return validateTeam(retried.frontmatter, { ...meta, body: retried.body });
+      } catch {
+        /* fall through to the original error + hint */
+      }
+    }
+    return invalid(frontmatterErrorMessage(e, values));
   }
-  return validateTeam(parsed.frontmatter, { ...meta, body: parsed.body });
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +443,21 @@ export function discoverTeams(options: { cwd: string; scope: "global" | "both"; 
   return { teams: Array.from(byName.values()), invalid: [...global.invalid, ...project.invalid] };
 }
 
+/** 错误/原因文案首行（多行解析错误里首行才是可操作的那句）。 */
+function firstLine(text: string): string {
+  return (text.split("\n")[0] ?? "").trim();
+}
+
+/**
+ * TEAM_NOT_FOUND 追加「另有 N 个定义不可用：<file>（<原因首行>）」(#63)：run/resume
+ * 路径过去只报 available 列表，坏文件等于隐身（用户视角是「团队不见了」）。
+ */
+function invalidDefinitionsSuffix(invalid: TeamFileError[]): string {
+  if (invalid.length === 0) return "";
+  const listed = invalid.map((bad) => `${bad.file}（${firstLine(bad.message)}）`).join("；");
+  return `；另有 ${invalid.length} 个定义不可用：${listed}`;
+}
+
 /** Finds a team by name across the requested scopes. */
 export function findTeam(options: {
   cwd: string;
@@ -345,11 +465,12 @@ export function findTeam(options: {
   name: string;
   globalDir?: string;
 }): Result<TeamConfig> {
-  const { teams } = discoverTeams(options);
+  const { teams, invalid } = discoverTeams(options);
   const team = teams.find((t) => t.name === options.name);
   if (!team) {
     const available = teams.map((t) => t.name).join(", ") || "none";
-    return err(TeamErrorCodes.TEAM_NOT_FOUND, `team "${options.name}" not found (available: ${available})`);
+    const message = `team "${options.name}" not found (available: ${available})${invalidDefinitionsSuffix(invalid)}`;
+    return err(TeamErrorCodes.TEAM_NOT_FOUND, message);
   }
   return ok(team);
 }

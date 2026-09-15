@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { serializeTeam } from "../config.ts";
+import { LEADER_ACTOR, readTranscript } from "../transcript.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { isolateRunsDir, makeFakeSpawn, sleep, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
 
@@ -108,6 +109,8 @@ interface HostFixture {
   sessionCtx: ReturnType<typeof sessionCtx>;
   projectDir: string;
   teamFile: string;
+  /** run artifacts 根（status.json + transcripts）；测试直读转录文件。 */
+  runsDir: string;
   cleanup: () => Promise<void>;
 }
 
@@ -129,6 +132,7 @@ async function setupHost(): Promise<HostFixture> {
     sessionCtx: sessionCtxValue,
     projectDir,
     teamFile,
+    runsDir,
     cleanup: async () => {
       await pi.fire("session_shutdown", sessionCtxValue);
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -212,6 +216,7 @@ test("viewer D 停止：排队消息一并丢弃，无链式派出", async () =>
   const host = await setupHost();
   try {
     await startBackgroundRun(host);
+    const runId = host.spawn.records[0]?.env?.PI_AGENT_TEAM_RUN_ID ?? "";
     const viewer = await openViewer(host);
 
     viewer.handleInput("j"); // 成员目标（leader 无队列可丢弃）
@@ -232,6 +237,72 @@ test("viewer D 停止：排队消息一并丢弃，无链式派出", async () =>
     assert.equal(host.spawn.records.length, 1, "aborted 后排队消息丢弃，不链发");
     const frame = viewer.render(100).join("\n");
     assert.match(frame, /run run-\d+ 已停止（aborted/);
+
+    // #56：提交记录留在转录（原文可复查），丢弃结局也如实落一条 system 行
+    // （排队中不建第二个事实源——队列本身不落盘）。
+    const entries = readTranscript(host.runsDir, runId, LEADER_ACTOR);
+    assert.deepEqual(entries.filter((e) => e.kind === "user").map((e) => e.text), ["被停"]);
+    assert.ok(
+      entries.some((e) => e.kind === "system" && e.text === "未派出（run 已停止）"),
+      `应落「未派出」结尾行：${JSON.stringify(entries.map((e) => `${e.kind}:${e.text}`))}`,
+    );
+    viewer.dispose();
+  } finally {
+    await host.cleanup();
+  }
+});
+
+test("用户输入落 run 转录：steer 原文即时可见（无 wire 包装）、排队派出补「已派出」行", async () => {
+  const host = await setupHost();
+  try {
+    await startBackgroundRun(host);
+    const runId = host.spawn.records[0]?.env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    assert.ok(runId, "首 run 有 runId");
+    const viewer = await openViewer(host);
+
+    // leader 目标 + run 运行中 → steer；原文即时落该 run 的 leader 转录。
+    viewer.handleInput("m");
+    viewer.handleInput("插");
+    viewer.handleInput("话");
+    viewer.handleInput("原");
+    viewer.handleInput("文");
+    viewer.handleInput("\r");
+    assert.match(viewer.render(100).join("\n"), /已插话给 leader/);
+    const afterSteer = readTranscript(host.runsDir, runId, LEADER_ACTOR);
+    assert.deepEqual(afterSteer.filter((e) => e.kind === "user").map((e) => e.text), ["插话原文"]);
+    assert.doesNotMatch(
+      afterSteer.find((e) => e.kind === "user")?.text ?? "",
+      /【用户消息/,
+      "落的是用户写的话，不是 wire 标记",
+    );
+
+    // 成员目标 → 排队：提交即落（目标 actor + leader 各一条）。
+    viewer.handleInput("j");
+    viewer.handleInput("m");
+    viewer.handleInput("排");
+    viewer.handleInput("队");
+    viewer.handleInput("\r");
+    assert.match(viewer.render(100).join("\n"), /消息已排队/);
+    assert.deepEqual(
+      readTranscript(host.runsDir, runId, LEADER_ACTOR)
+        .filter((e) => e.kind === "user")
+        .map((e) => e.text),
+      ["插话原文", "排队"],
+    );
+
+    // 首 run 落定 → 链式派出：提交记录保留，并补「已派出（新 run …）」。
+    const first = host.spawn.children[0];
+    assert.ok(first);
+    first.emitClose(0);
+    await waitFor(() => host.spawn.records.length >= 2, "链式派出第二个 leader");
+    const nextRunId = host.spawn.records[1]?.env?.PI_AGENT_TEAM_RUN_ID ?? "";
+    assert.ok(nextRunId && nextRunId !== runId, "链式 run 是新 runId");
+    const entries = readTranscript(host.runsDir, runId, LEADER_ACTOR);
+    assert.deepEqual(entries.filter((e) => e.kind === "user").map((e) => e.text), ["插话原文", "排队"]);
+    assert.ok(
+      entries.some((e) => e.kind === "system" && e.text === `已派出（新 run ${nextRunId}）`),
+      `应落「已派出」结尾行：${JSON.stringify(entries.map((e) => `${e.kind}:${e.text}`))}`,
+    );
     viewer.dispose();
   } finally {
     await host.cleanup();

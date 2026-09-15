@@ -428,12 +428,19 @@ function timestampOf(entry: TranscriptEntry): string {
 
 type Block =
   | { kind: "task"; text: string }
+  | { kind: "user"; text: string; ts: string }
   | { kind: "assistant"; text: string; ts: string }
   | { kind: "tools"; lines: string[] }
   | { kind: "error"; text: string; ts: string }
   | { kind: "question"; text: string; ts: string }
   | { kind: "answer"; text: string; ts: string }
   | { kind: "system"; text: string; ts: string };
+
+/**
+ * Rendering target for one block: `frame` = `/team:view` 分栏帧（带样式/补齐）；
+ * `text` = `team_transcript` 纯文本转储（正文不铺底、行首用 `[kind]` 标记）。
+ */
+export type BlockRenderMode = "frame" | "text";
 
 /** Old artifacts baked ▶/✓ icons into tool text; strip them for uniform styling. */
 function stripLegacyToolPrefix(text: string): string {
@@ -442,9 +449,9 @@ function stripLegacyToolPrefix(text: string): string {
 
 /**
  * Groups entries into continuous blocks: consecutive tool rows merge into
- * one block, every assistant message is its own block, task/error/system
- * stand alone. The renderer separates blocks with a single blank line —
- * one chronological flow per agent page.
+ * one block, every assistant message is its own block, task/user/error/
+ * system/question/answer stand alone. The renderer separates blocks with a
+ * single blank line — one chronological flow per agent page.
  */
 export function buildBlocks(entries: TranscriptEntry[], showTools: boolean): Block[] {
   const blocks: Block[] = [];
@@ -462,6 +469,8 @@ export function buildBlocks(entries: TranscriptEntry[], showTools: boolean): Blo
       blocks.push({ kind: "assistant", text: entry.text, ts: timestampOf(entry) });
     } else if (entry.kind === "task") {
       blocks.push({ kind: "task", text: entry.text });
+    } else if (entry.kind === "user") {
+      blocks.push({ kind: "user", text: entry.text, ts: timestampOf(entry) });
     } else if (entry.kind === "error") {
       blocks.push({ kind: "error", text: entry.text, ts: timestampOf(entry) });
     } else if (entry.kind === "question") {
@@ -481,11 +490,26 @@ export function blockLines(
   width: number,
   styles: Styles,
   renderMarkdown?: (text: string, width: number) => string[],
+  mode: BlockRenderMode = "frame",
 ): string[] {
   switch (block.kind) {
     case "task": {
       const wrapped = wrapText(block.text, width - 2);
       return wrapped.map((line, i) => styles.bubble(padLine(i === 0 ? `❯ ${line}` : `  ${line}`, width)));
+    }
+    case "user": {
+      // 用户输入原文（#56）：独立亮块，与 agent/leader 输出视觉区分——帧内
+      // 首行 accent 标签 `▌用户 · <时间>`，正文整行铺 `userMessageBg` 背景
+      // （themeStyles 的 bubble 端口，取不到色名则无背景降级）；纯文本转储
+      // 行首改 `[user]` 标记 + 时间（可 grep），正文不铺底、不补齐。
+      const stamp = block.ts ? ` · ${block.ts}` : "";
+      if (mode === "text") {
+        return [`[user]${block.ts ? ` ${block.ts}` : ""}`, ...wrapText(block.text, width)];
+      }
+      return [
+        styles.accent(`▌用户${stamp}`),
+        ...wrapText(block.text, width).map((line) => styles.bubble(padLine(line, width))),
+      ];
     }
     case "assistant": {
       const label = styles.dim(`▸ assistant${block.ts ? ` · ${block.ts}` : ""}`);
@@ -532,12 +556,13 @@ export function bodyLines(
   width: number,
   styles: Styles,
   renderMarkdown?: (text: string, width: number) => string[],
+  mode: BlockRenderMode = "frame",
 ): string[] {
   const blocks = buildBlocks(entries, showTools);
   const lines: string[] = [];
   for (const block of blocks) {
     if (lines.length > 0) lines.push("");
-    lines.push(...blockLines(block, width, styles, renderMarkdown));
+    lines.push(...blockLines(block, width, styles, renderMarkdown, mode));
   }
   if (lines.length === 0) {
     lines.push(styles.dim("（暂无记录，等待子进程事件…）"));
@@ -851,7 +876,7 @@ export function formatTranscriptText(
   const entries = data.entries.get(target.actor) ?? [];
   const lines = [
     `## ${target.label}（${target.status ?? "unknown"}）· run ${data.runId}`,
-    ...bodyLines(entries, true, 100, styles, opts.renderMarkdown),
+    ...bodyLines(entries, true, 100, styles, opts.renderMarkdown, "text"),
   ];
   return lines.join("\n");
 }

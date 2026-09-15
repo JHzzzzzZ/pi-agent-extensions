@@ -42,7 +42,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts`（22 个，仓库根执行）。
+- 必跑：`node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts`（22 个，仓库根执行）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
 - 改命令面/文案：只动 `index.ts` 常量区与 `parseSoloCommand`，同步 `index.test.ts` 的解析与文案断言 + 根 README 小节。
 - 改状态文件契约（路径/字段/判定）：同步 `docs/cross/solo-approval-gate.md` + pwr/opencode-bridge/deep-init 的 `solo-gate.ts` 与其测试——**契约卡与三份实现必须一致**。
 - 新增采纳方：按 `docs/cross/solo-approval-gate.md` 的"新增采纳方步骤"（复制 `solo-gate.ts` + 门处判定 + notify + 两类测试 + 文档）。

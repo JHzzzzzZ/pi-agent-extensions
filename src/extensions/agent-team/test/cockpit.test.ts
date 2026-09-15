@@ -169,12 +169,44 @@ test("leader env 继承父进程环境并覆盖 run 级三键（NO_PROXY/PI_CODI
     const env = spawn.records[0].env;
     assert.equal(env?.FAST_DEV_INHERIT_MARKER, "inherited-from-parent", "父进程标记键必须被 leader 继承");
     assert.ok((env?.[pathKey] ?? "").startsWith(pathPrefix), "父进程 PATH 必须被继承（前缀保留）");
-    assert.equal(env?.NO_PROXY, "127.0.0.1,localhost", "NO_PROXY 必须透传到 leader");
+    assert.equal(env?.NO_PROXY, "127.0.0.1,localhost,::1", "显式值前缀不动 + 补缺失回环项（#67）");
     assert.equal(env?.PI_CODING_AGENT_DIR, "/tmp/parent-agent-dir", "PI_CODING_AGENT_DIR 必须透传到 leader");
     // 本次 run 的三个键仍叠加在继承环境之上（覆盖父进程残留值）。
     assert.equal(env?.PI_AGENT_TEAM_FILE, fixtureTeam().filePath);
     assert.equal(env?.PI_AGENT_TEAM_NAME, "dev-team");
     assert.match(env?.PI_AGENT_TEAM_RUN_ID ?? "", /^run-\d+$/);
+    child.autoRespond(leaderLines(), 0, 5);
+    const result = await promise;
+    assert.ok(result.ok, result.ok ? "" : result.message);
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, envBackup);
+  }
+});
+
+test("leader env 无 NO_PROXY 时合成回环代理豁免（宿主 httpProxy 只注入 HTTP(S)_PROXY，#67）", async () => {
+  const envBackup = { ...process.env };
+  try {
+    // 用户现场：宿主 applyHttpProxySettings 只 `??=` 注入 HTTP(S)_PROXY，
+    // NO_PROXY 缺失——本地中继（127.0.0.1）会被 CONNECT-only 代理桥劫持。
+    for (const key of Object.keys(process.env)) {
+      if (key.toUpperCase() === "NO_PROXY") delete process.env[key];
+    }
+    process.env.HTTPS_PROXY = "http://127.0.0.1:10899";
+    const spawn = makeFakeSpawn();
+    const coordinator = new TeamRunCoordinator({
+      cwd: () => "/repo",
+      worktreeRoot: "/tmp/worktrees",
+      spawn: spawn.spawn,
+      piCommand: "pi",
+    });
+    const promise = coordinator.start({ team: fixtureTeam(), task: "t", ui: fakeUi() });
+    const child = await waitForChild(spawn, 0);
+    const env = spawn.records[0].env;
+
+    assert.equal(env?.HTTPS_PROXY, "http://127.0.0.1:10899", "代理变量本身仍原样继承");
+    assert.equal(env?.NO_PROXY, "127.0.0.1,localhost,::1", "大写键补齐回环豁免");
+    assert.equal(env?.no_proxy, "127.0.0.1,localhost,::1", "小写键同步补齐（CLI 读取口径不同）");
     child.autoRespond(leaderLines(), 0, 5);
     const result = await promise;
     assert.ok(result.ok, result.ok ? "" : result.message);

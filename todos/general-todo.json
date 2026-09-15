@@ -141,16 +141,17 @@
     {
       "id": 11,
       "text": "优化全量测试速度（用户 2026-09-11 提出）：全量测试规模已到 pwr 439 + agent-team 512 + loop 196 + opencode-bridge 114 + 其余卫星插件与根三套脚本（契约/冒烟/todo CLI），约 1900+ 用例；目前按目录串行跑，单次收尾核对与多 worktree 并行开发时固定成本偏高。目标先量化再优化：① 建基线——逐目录计时（各插件测试命令 + 根 `test:contract`/`test:smoke`/`test:todo`）与总耗时，落盘成可复算的记录，避免凭感觉优化；② 定位大头——慢用例排序（逐文件计时 / `--test-reporter`），区分「真慢逻辑」与「固定启动成本」（每个测试文件一次进程启动、worktree 内重复 `npm ci`）；③ 候选手段按性价比评估、不预设结论：`--test-concurrency` 分片并行、合并碎小测试文件减少启动次数、与宿主边界无关的用例降级为纯函数测试、依赖预装复用（注意 fast-dev 已明令禁止 worktree 内建 junction 复用 node_modules——`git worktree remove` 会穿透删主干，见 docs/incidents.md 两次事故）；④ 红线：不得以删测试、跳过用例、放宽断言换速度，覆盖只增不减（等价重构需说明）。跨插件 + 仓库工具需求，落 general。验收：优化前后同机同命令的全量耗时对照表 + 每个改动的收益解释 + 各插件全量测试与 typecheck 全绿 + 根三套自检全绿。相邻条目：agent-manager:10（单个性能看门用例负载敏感，属局部问题，不重复覆盖）。",
-      "status": "aligned",
-      "branch": "feat/test-speed-baseline",
+      "status": "done",
+      "branch": "feat/test-speed",
       "tags": [],
       "dependsOn": [],
       "notes": [
-        "5 问按建议走：test-all.mjs 统一入口 + serial 标注 + 安装加速；覆盖只增不减"
+        "5 问按建议走：test-all.mjs 统一入口 + serial 标注 + 安装加速；覆盖只增不减",
+        "merge fd41c92（根 2.47.0）：新增 tools/test-all.mjs——17 套件一条命令，逐套件计时/失败聚合/退出码 0/1/2，--jobs N 并发（serial 三条 = pwr / agent-manager / root:todo 独占运行，断言不放宽），--install 新 worktree 依赖预装；npm run test:all 接上。实测（node v22.23.1 / win32 / 32 核）：全串行 32.4s → 默认 jobs2 29.0s → jobs4 28.6s → jobs8 28.7s（用例 1902 前后一致，未删/未跳）；from-zero 安装阶段 52s → 34s（复用 npm 用户级缓存 + --prefer-offline；独立缓存目录实测无收益故不落地；junction 复用仍禁）；对照表与收益解释落 docs/tools/test-all.md。新增 test/test-all.test.ts 19 个（纯函数 + fixture 真实子进程：失败聚合不中断 / serial 独占标记顺序 / jobs2 并发重叠 / --install / 退出码 2），并锁定 pi.extensions 全扩展与根三套自检都有登记。文档：docs/tools/test-all.md（62 行，INDEX 登记）+ docs/specs/test-speed.md + README（test:all 命令块、chatanywhere 测试数 32）+ 8 张扩展卡测试命令指针（agent-team 卡 643→664 漂移修正）+ AGENTS.md 开发命令。验证：全量 16/17 套件绿（agent-team 1 例既有环境失败 = agent-team-todo#69，基线同样失败、非本次引入）；6 个有 package.json 的目录 typecheck 0 错误；根三套自检绿；todo lint 通过；主干复跑 test:all 通过。"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.894Z",
-      "completedAt": null,
+      "completedAt": "2026-09-15T04:08:09.760Z",
       "alignedAt": "2026-09-14T15:58:46.979Z"
     },
     {
