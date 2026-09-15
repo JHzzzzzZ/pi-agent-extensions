@@ -751,16 +751,17 @@
     {
       "id": 47,
       "text": "成员交付完成仍被判 CHILD_FAILED（真机 run-1789104779153 实锤）：writer 第 2 轮与 checker 都在产出完整报告与 commit 之后被判 failed（CHILD_FAILED）错误 terminated——runner.ts 的 outcome.errorMessage 一旦置位就不清除（任意一轮 assistant 消息带 errorMessage 即永久生效），dispatch.ts:403 见 errorMessage 即判 failed；风险是 leader 按「环境级失败不重试」规则会丢弃已完成的工作或重复派发（本轮 leader 自行判断保留，属运气）。要求：① 终态判定区分「进行中被终止」与「完成后收尾异常」（最后一轮 stopReason 非 error 且已有最终文本时不应判 failed），或把 errorMessage 按轮次作用域化（仅最后一轮生效）；② 结果对象带 exitCode/终止原因供诊断；③ TDD：真实子进程用例复现「输出完整后进程异常退出/被终止 → 不应判 failed」先红，再实现到绿；④ 验收：同类 run 不再出现完成即 CHILD_FAILED，全量测试 + typecheck 绿。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/agent-team-child-failed",
       "tags": [],
       "dependsOn": [],
       "notes": [
-        "判定表/诊断面/契约 5 问确认；ADR-0006 落盘"
+        "判定表/诊断面/契约 5 问确认；ADR-0006 落盘",
+        "完成 2026-09-15 @ merge 4c760ce（feat 441ac0a / docs 2614d61 / 版本 92035e7；agent-team 1.31.0 / 根 2.48.0 / 688 测试 / 新增 24）。终态判定改「末轮说了算」（ADR-0006，outcome.ts 单一判定函数 decideMemberTerminal）：只看最后一次 assistant message_end 的 stopReason/errorMessage，早轮错误只进 diagnostics.priorErrors（前 3 条 + 计数）不再粘住判定；三态不变，末轮干净而退出码非 0 判 done + warning「收尾异常：exit N」；轮中被打断（未配对 tool_execution_start / close 事件信号）判 failed 并标注「部分产出（可能可用）」；真 failed 消息必带 exit code/信号；失败成员的部分产出 +「已有完整产出 N 字节，可直接取用」进 leader 报告；诊断三处可见（成员转录 system 行 / leader 结果分节标题 / 失败通知成员行）；pi 成员与外部 CLI 成员（codex turn.failed / claude is_error）共用同一判定（后续成功轮清除早轮失败态）；顺手删除死代码 ENVIRONMENT_FAILURE_CODES。测试 +24（outcome 8 = 判定表逐格；dispatch 7；runner 6；external 1；failure-delivery 1；session 1），含真实子进程用例（脚本化 --mode json：前轮 errorMessage + 末轮干净 stop ⇒ done 且 priorErrors 留痕）与外部成员同判定用例；变异验证：把「收尾异常改判 failed」+「errorMessage 粘性」注入实现后 8 个用例转红（含真机冤案最小复现）。全量 agent-team 688（687 绿 + 1 既有环境失败 agent-team-todo#69：本机 HOME 自带 .git、worktree 预检用例的 tmpdir 落在仓库内，基线 dev-laptop 同样失败非本次引入）+ typecheck 零错误。文档：docs/extensions/agent-team.md（last verified @ 441ac0a、outcome.ts 文件地图、判定不变量、删 ENVIRONMENT_FAILURE_CODES 过时引用、测试数 664→688）+ 根/插件 README + 插件 AGENTS + docs/incidents.md 真机事故条目。收尾注：fallback run 接手原 run 7b6ac726 的 worktree 工作（不重做实现/设计），先 merge dev-laptop（#56/#63/#67 + general#11）再收口，版本按 dev-laptop 现状定为 1.31.0 / 2.48.0。"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.240Z",
-      "completedAt": null,
+      "completedAt": "2026-09-15T05:45:10.485Z",
       "alignedAt": "2026-09-14T15:52:13.217Z"
     },
     {
@@ -1030,16 +1031,17 @@
     {
       "id": 67,
       "text": "httpProxy 环境下外部 claude 成员必挂（本地 BASE_URL 被代理劫持 405 CONNECT only；用户 2026-09-12 真机复现）：v1.26.0 的 leader/成员 env 只做「继承+覆盖」，不合成 NO_PROXY——宿主 applyHttpProxySettings 只注入 HTTP(S)_PROXY，用户的 claude 中继（ANTHROPIC_BASE_URL=http://127.0.0.1:15721）在无 NO_PROXY 时被客户端强制走 10899 CONNECT-only 桥 → 每次派单 405。QA 验收时驱动 env 自带 NO_PROXY，掩盖了该缺口。要求：① 成员/leader 派发对本地回环地址默认注入 NO_PROXY 覆盖（127.0.0.1,localhost；用户显式值优先不覆盖）；或 ② run 预检/doctor 在检测到 httpProxy 且 NO_PROXY 缺失时给出可操作告警；README §7 + docs 卡 + incidents 同步。验收：无 NO_PROXY 且 httpProxy 已设的真实环境，claude 外部成员派单成功；单测锁「默认注入且不覆盖显式值」。",
-      "status": "aligned",
-      "branch": "feat/agent-team-noproxy",
+      "status": "done",
+      "branch": "feat/agent-team-http-proxy-no-proxy",
       "tags": [],
       "dependsOn": [],
       "notes": [
-        "5 问按建议走：统一 helper + 双键追加 + 无 doctor 告警 + 上游 issue + 真机验收"
+        "5 问按建议走：统一 helper + 双键追加 + 无 doctor 告警 + 上游 issue + 真机验收",
+        "merge a27ac1c（agent-team 1.30.0 / 根 2.46.0，664 测试）；841f5f4 实现 withLoopbackBypass + ce402f5 docs/incidents/上游 issue 稿 docs/pi-http-proxy-loopback-issue.md + 7bd57f4 版本 bump（原 run 37e0c1f4 被 loop 30 分钟上限误杀，但工作在 11:07-11:09 已全部落地并 merge）；验收 1/2/3/5 经主干代码+单测核对通过；验收 4「真机 claude 成员派单成功」本次未复跑：本机 claude 中继 127.0.0.1:15721 未监听、且驱动 env 自带 NO_PROXY（正是 incidents 记录的掩盖场景），待中继起来后补一次"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.417Z",
-      "completedAt": null,
+      "completedAt": "2026-09-15T05:23:48.453Z",
       "alignedAt": "2026-09-14T15:52:13.376Z"
     },
     {
