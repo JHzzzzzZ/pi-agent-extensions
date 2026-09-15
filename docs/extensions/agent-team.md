@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ a126c07
+> last verified @ ee160b7
 
 ## 职责与边界
 
@@ -9,7 +9,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 ## 文件地图
 
 - `types.ts` — 团队文件格式（frontmatter `leader` + `members[]`，块标量 prompt）、常量（entry / 消息类型 / 环境变量 / 上限）。**改团队文件格式必看这里。**
-- `config.ts` — 团队发现：`~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`，同名项目优先，每次使用重扫；frontmatter `budget:` 块解析（非法值 → `INVALID_TEAM_FILE`）。
+- `config.ts` — 团队发现：`~/.pi/agent/teams/` 或受信任项目 `.pi/teams/`，同名项目优先，每次使用重扫；frontmatter `budget:` 块解析（非法值 → `INVALID_TEAM_FILE`）；值含 `": "` 的裸标量（#63）解析失败时按写盘口径加引号重试一次（仅此一种容忍模式，块标量内容行与正文不动、不写回磁盘），重试仍失败的错误前附修法提示（`第 N 行的值含 ": "，请加引号（"…"）或改用 | 块标量`）；`findTeam` 的 `TEAM_NOT_FOUND` 追加「另有 N 个定义不可用：<file>（<原因首行>）」（run/resume 路径可见坏文件）。
 - `runner.ts` — 子 `pi` 进程契约：**leader 走 `--mode rpc`**（stdin 发 `prompt`/`steer` JSON 行，`agent_settled` 后关 stdin 使进程退出；RPC 只在 stdin 结束时退出）；member 走 `--mode json -p`（一次性，prompt 全在 argv ⇒ stdin 默认 `ignore`）。`team-tmp://` prompt 物化，SIGTERM→SIGKILL；适配器暴露 child pid（`onSpawn`）与 stdin（`onChild`）；`onWire` 转发每行解析后的原始 JSON（RPC 的 `response`/`agent_settled` 只在此层可见）。
 - `runstore.ts` — 每 run `status.json` 元数据快照（落 `teams/runs/<runId>/`，与 transcript 同目录同 7 天 retention）：coordinator claim 即写 running（含 leaderPid + ownerPid），每条退出路径落终态；`session_start` reconcile 只翻「非本进程 in-memory 且 ownerPid 已死/缺失」的 running（属主会话还活着的 run 不动），只报告**不杀**孤儿 leader，避免 PID 复用误杀。
 - `archive.ts` — run 记录终态归档（v1.20.0，纯 fs 直用、不注入）：把 `<worktreeRoot>/<runId>/` 一层子目录（team 共享 worktree 与各成员 worktree）与主会话 cwd 两处的 `.pi/team-runs/<runId>/`（目录，其下文件平铺）与 `<runId>.md`（单文件）复制到主工作区 `history/team-runs/<runId>/`；目标同名异内容 → 既有保留、新记录 `<名>.conflict-<UTC 紧凑时间戳><扩展名>` 另存，同字节幂等跳过；全程异常隔离，返回 `{archived, conflicts, failures}`，永不 throw。
@@ -42,6 +42,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 - 命令面：冒号命令面（v1.12.0）——裸 `/team` 无参=列团队（`/team:list` 同义）、带参=用法提示；`/team:run <团队名> <任务>` 唯一派单入口，`/team:resume <runId> [补充指示]` 续跑入口（v1.21.0），`/team:status|:stop|:view|:clear|:doctor` 各自独立静态注册。旧空格子命令与 `/team <团队名> <任务>` 参数路由只提示改名、绝不执行；不再动态注册 `team:<name>`（v1.9.0）；团队名可与任意子命令同名（保留词概念退役）。
 - 自包含：不引 pwr、不依赖其它扩展目录，独立可复制加载。
+- **团队文件裸 `": "` 容忍边界（v1.29.0，#63）**：宿主 `parseFrontmatter` 抛错（YAML 非法）时，只对 frontmatter 块内「值含 `": "` 的裸标量行」（含列表项）按写盘口径 `yamlScalar`（JSON 双引号）加引号重试**一次**；引号值、`|`/`>` 块标量、CRLF、值内引号走原路径（CRLF 由宿主归一），重试仍失败回落**首次**解析的原始错误（细节保真）+ 前置修法提示行 `第 N 行的值含 ": "，请加引号（"…"）或改用 | 块标量`（N 按团队文件行号，首行 `---` 计 1；没有裸 `": "` 行就不给提示）。**重写范围**：块标量内容行与正文（团队备注，会进 leader prompt）一律不重写；磁盘文件永不改写（读时兼容，不是静默修复）。**run 路径可见**：`findTeam` 的 `TEAM_NOT_FOUND` 末尾追加「另有 N 个定义不可用：<file>（<原因首行>）」，`team_run`/`team_resume` 同源；list/doctor 展示照旧（不重复造第二份事实）。
 - 上限：每 dispatch 8 任务、8 并发、50KB 结果、8KB 摘要（协议级常量，不可配；`TeamErrorCodes` result union）。派发/成员运行预算可配（frontmatter `budget:`，默认 12/40；费用/token 默认无限），schema 级上限不进 budget。**多 run registry 与并发上限（v1.25.0）**：`MAX_CONCURRENT_TEAM_RUNS = 3`（`types.ts` 协议常量，不可配、无环境开关）限制同一会话并行 run 数——超限沿用 `RUN_IN_PROGRESS`（无新错误码）：`team_run`/`team_resume` 同步拒绝并列出活跃 runId（`并发 team run 已达上限（3）：<runId…> 进行中；先 team_stop <runId> 或等任一结束。`）；跨 run 最坏 3×(1 leader + 8 成员) = 27 子进程，不另设第二层上限。每 run 一个 `RunHandle`（controller/pending/progress/leaderStdin/promptError）按 runId 归位，A run 的 dispatch 事件绝不折入 B run（`onEvent` 闭包持本 run progress），预算/停止/steer/提问/终态/报告送达均按 run 独立；`allocateRunId` 对 `run-<ms>` 被占（内存 handle、终态 records 或 `runsRoot/<runId>` 目录）自动加 `-2`、`-3`… 后缀（fs 探测 best-effort，失败退化内存判定），runId 同时是 registry key、`runs/<runId>/` 目录与 worktree 分支段。
 - **外部 CLI 成员（v1.26.0）**：与 pi 成员同池（4 并发）、同停止语义（SIGTERM→SIGKILL）、同 50KB/8KB 上限与 usage 折回链路；`leader.backend` fail-closed（`EXTERNAL_LEADER_UNSUPPORTED`，先于模型注册表与 CLI 探测）；外部成员跳过 provider/id 注册表预检，CLI 探测失败 → `CLI_NOT_FOUND`（入 `ENVIRONMENT_FAILURE_CODES` 环境级失败集，重试无益）；`tools:` 对外部成员忽略（pi 工具名 ≠ CLI 工具名，不造翻译层）。
 - **终态 records 有界与水合（v1.25.0）**：内存 `records[]` 至多 `MAX_RETAINED_RUN_RECORDS = 5` 条，按 runId 去重（同 runId 覆盖）、按 startedAt 新→旧（同一毫秒按落定序，后落定者在前）；`session_start` 对每条 `RUN_ENTRY_TYPE` 逐条 `restoreRecord`（不再只恢复最新一条），`/reload` 后最多恢复 5 条；`/team:status` 无活跃 run 时的默认视图以 `records[0]` 为「最近一次」，records.length > 1 时追加「近期 run」尾注（最多再列 4 条，指向 `/team:status <runId>` 查看详情）。
