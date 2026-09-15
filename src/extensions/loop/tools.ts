@@ -31,7 +31,7 @@ const SCHEDULE_HINT =
   '调度描述："every 5m" / "5m" / "2 hours"（固定间隔循环，最小 1 分钟）、"daily at 09:00"（每天固定时刻循环）、"every 1h from 00:00 to 09:00"（每日时间窗口 [start, end] 闭区间内按间隔循环）、"in 30m"（延时一次性）或 "at 15:00"（本地时刻一次性，已过则排到明天）';
 
 const MODE_HINT =
-  '执行方式："foreground"（默认）到期把任务注入当前会话由主 agent 执行；"background"（v1.3）到期拉起独立后台 pi 进程执行，会话落盘，可用 pi --session <id> 恢复对话记录';
+  '执行方式："foreground"（默认）到期把任务注入当前会话由主 agent 执行；"background"（v1.3，v1.8 起同一任务多轮可重叠运行）到期拉起独立后台 pi 进程执行，会话落盘，可用 pi --session <id> 恢复对话记录';
 
 export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
   pi.registerTool({
@@ -107,7 +107,7 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolDeps): void {
   pi.registerTool({
     name: "loop_list",
     label: "Loop List",
-    description: "列出当前会话的全部定时任务（id、类型、下次触发时刻、任务内容；后台任务附最近一次运行状态与会话 id）。",
+    description: "列出当前会话的全部定时任务（id、类型、下次触发时刻、任务内容；后台任务附运行中轮次（各自会话 id）与最近 10 条已完成轮次）。",
     parameters: Type.Object({}),
     async execute() {
       if (deps.tasks.length === 0) {

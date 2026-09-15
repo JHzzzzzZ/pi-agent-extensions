@@ -110,6 +110,32 @@ describe("runBgAgent — 命令行构造", () => {
     assert.ok(rec.args.includes("-p"));
     assert.equal(rec.args[rec.args.length - 1], "做事情");
   });
+
+  it("带轮次 label：--name loop-<taskId>-<label>（并发轮次在选择器里可区分）", async () => {
+    const { spawn, records, children } = makeSpawn();
+    const p = runBgAgent({ taskId: "ab12cd34", prompt: "做事情", spawn, label: "0841" });
+    children[0]!.writeStdout(`${sessionHeader}\n`);
+    children[0]!.close(0);
+    await p;
+
+    const rec = records[0]!;
+    const nameAt = rec.args.indexOf("--name");
+    assert.equal(rec.args[nameAt + 1], "loop-ab12cd34-0841");
+  });
+
+  it("piEntry 覆盖：node 下直接调用时以 node <pi 入口> 拉起（否则 argv[1] 是调用方脚本，递归）", async () => {
+    const { spawn, records, children } = makeSpawn();
+    const p = runBgAgent({ taskId: "ab12cd34", prompt: "做事情", spawn, piEntry: "C:/pi/cli.js", label: "0841" });
+    children[0]!.writeStdout(`${sessionHeader}\n`);
+    children[0]!.close(0);
+    await p;
+
+    const rec = records[0]!;
+    assert.equal(rec.command, process.execPath);
+    assert.equal(rec.args[0], "C:/pi/cli.js", "第一参数是 pi 入口脚本");
+    assert.equal(rec.args[1], "--mode", "不把调用方脚本当入口");
+    assert.equal(rec.args[rec.args.length - 1], "做事情");
+  });
 });
 
 describe("runBgAgent — 输出解析", () => {
@@ -126,6 +152,20 @@ describe("runBgAgent — 输出解析", () => {
     assert.equal(outcome.exitCode, 0);
     assert.equal(outcome.sessionId, "sess-1234");
     assert.equal(outcome.summary, "最终回复");
+  });
+
+  it("会话头捕获即回调 onSessionId：close 之前就拿到 id，重复会话头不重复回调", async () => {
+    const { spawn, children } = makeSpawn();
+    const seen: string[] = [];
+    const p = runBgAgent({ taskId: "t1", prompt: "x", spawn, onSessionId: (info) => seen.push(info.sessionId) });
+    const c = children[0]!;
+    c.writeStdout(`${sessionHeader}\n`);
+    const beforeClose = [...seen]; // 先取快照再 close，断言失败也不留未决 promise（超时定时器会挂住测试进程）
+    c.writeStdout(`${sessionHeader}\n`);
+    c.close(0);
+    await p;
+    assert.deepEqual(beforeClose, ["sess-1234"], "运行中（close 前）即可拿到会话 id");
+    assert.deepEqual(seen, ["sess-1234"], "重复会话头只回调一次");
   });
 
   it("跨 chunk 的半行缓冲：会话头分两段写入也能解析", async () => {

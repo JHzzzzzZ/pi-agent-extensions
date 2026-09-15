@@ -2,10 +2,12 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import loopFactory from "../index.ts";
 import type { BgRunOutcome } from "../runner.ts";
-import type { LoopTask } from "../tasks.ts";
+import { formatRoundLabel } from "../tasks.ts";
+import type { BgRunEntry, LoopTask, PersistedTask } from "../tasks.ts";
 
 const LOOP_TASKS_ENTRY = "loop-tasks-v1";
 const LOOP_DUE_CUSTOM_TYPE = "loop-task-due";
+const LOOP_RUN_ENTRY = "loop-run-v1";
 
 // 固定"当前时刻"（epoch ms），测试中通过 fakeNow 手动推进
 const BASE = 1_000_000_000_000;
@@ -68,6 +70,16 @@ function rawTask(opts: {
   paused?: boolean;
   schedule?: { kind: "daily"; atMs: number } | { kind: "window"; intervalMs: number; startMs: number; endMs: number };
   background?: boolean;
+  activeRuns?: Array<{
+    runId: string;
+    startedAt: number;
+    finishedAt?: number;
+    status: string;
+    sessionId?: string;
+    sessionPath?: string;
+    summary?: string;
+  }>;
+  /** v1.7 及以前的单条运行记录（迁移兼容测试用） */
   lastRun?: {
     startedAt: number;
     finishedAt?: number;
@@ -77,7 +89,7 @@ function rawTask(opts: {
     summary?: string;
   };
 }) {
-  // 字段顺序与 serializeTasks 输出一致，保证 JSON 快照可比（schedule/background/lastRun 依序追加在末尾）
+  // 键顺序与 serializeTasks 白名单一致，保证 JSON 快照可比（schedule/background/model/activeRuns 依序追加在末尾）
   const base = {
     id: opts.id,
     task: opts.task ?? "种子任务",
@@ -89,6 +101,7 @@ function rawTask(opts: {
   };
   const out: Record<string, unknown> = opts.schedule !== undefined ? { ...base, schedule: opts.schedule } : { ...base };
   if (opts.background) out.background = true;
+  if (opts.activeRuns) out.activeRuns = opts.activeRuns;
   if (opts.lastRun) out.lastRun = opts.lastRun;
   return out;
 }
@@ -215,6 +228,20 @@ type FakePi = ReturnType<typeof createFakePi>;
 
 function seedSnapshot(fake: FakePi, tasks: Array<ReturnType<typeof rawTask>>): void {
   fake._sessionEntries.push({ type: "custom", customType: LOOP_TASKS_ENTRY, data: { tasks } });
+}
+
+/** loop-run-v1 轮次条目（v1.8：全量历史不在快照里，在这里） */
+function runEntries(fake: FakePi): BgRunEntry[] {
+  return fake._persisted.filter((e) => e.type === LOOP_RUN_ENTRY).map((e) => e.data as BgRunEntry);
+}
+
+/** 最后一次快照里的任务形态（activeRuns 而非 runs）；跳过 loop-run-v1 条目 */
+function lastSnapshot(fake: FakePi): PersistedTask[] {
+  for (let i = fake._persisted.length - 1; i >= 0; i--) {
+    const entry = fake._persisted[i]!;
+    if (entry.type === LOOP_TASKS_ENTRY) return (entry.data as { tasks: PersistedTask[] }).tasks;
+  }
+  throw new Error("no loop-tasks-v1 snapshot persisted");
 }
 
 beforeEach(() => {
@@ -841,7 +868,15 @@ describe("loop_list / loop_delete 工具", () => {
 
 // ---------- 后台模式（v1.3） ----------
 
-type RunBgCall = { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal; model?: string };
+type RunBgCall = {
+  taskId: string;
+  prompt: string;
+  cwd?: string;
+  signal?: AbortSignal;
+  model?: string;
+  label?: string;
+  onSessionId?: (info: { sessionId: string }) => void;
+};
 // 用 installMocks 捕获的真实 setTimeout：测试内全局 setTimeout 已被节拍器 mock。
 const flush = () => new Promise((r) => (origSetTimeout ?? globalThis.setTimeout)(r, 0));
 const bgDone: BgRunOutcome = { status: "done", exitCode: 0, summary: "全部通过", stderr: "" };
@@ -898,24 +933,23 @@ describe("后台模式（v1.3）— 创建", () => {
     assert.equal(data2.tasks[1]!.background, undefined);
   });
 
-  it("/loop:list：后台徽标与上次运行行", async () => {
+  it("/loop:list：后台徽标 + 条目回放的轮次历史行", async () => {
     const fake = createFakePi();
     seedSnapshot(fake, [
-      rawTask({
-        id: "bgseed1",
-        recurring: true,
-        nextDueAt: BASE + 60_000,
-        background: true,
-        lastRun: { startedAt: BASE - 5000, finishedAt: BASE - 1000, status: "done", sessionId: "sess-7f2a", summary: "一切\n正常 很好" },
-      }),
+      rawTask({ id: "bgseed1", recurring: true, nextDueAt: BASE + 60_000, background: true }),
       rawTask({ id: "fgseed1", nextDueAt: BASE + 120_000 }),
     ]);
+    fake._sessionEntries.push({
+      type: "custom",
+      customType: LOOP_RUN_ENTRY,
+      data: { taskId: "bgseed1", runId: "r1", startedAt: BASE - 5000, finishedAt: BASE - 1000, status: "done", sessionId: "sess-7f2a", summary: "一切\n正常 很好" },
+    });
     loopFactory(fake as never);
     await fake.fire("session_start");
     await fake.runNamed("loop:list", "");
     const msg = fake.lastNotification()!.message;
     assert.match(msg, /\[后台\]/);
-    assert.match(msg, /└ 上次后台：完成 · 会话 sess-7f2a · 一切 正常 很好/);
+    assert.match(msg, /└ 完成 · \d\d:\d\d:\d\d · 会话 sess-7f2a · 一切 正常 很好/);
   });
 });
 
@@ -939,8 +973,7 @@ describe("后台模式（v1.3）— 触发与完成", () => {
 
     bg.resolveNext({ status: "done", exitCode: 0, sessionId: "sess-42", summary: "检查全部通过", stderr: "" });
     await flush();
-    const afterDone = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
-    assert.equal(afterDone.tasks.length, 0, "一次性任务触发即自删，完成不复活");
+    assert.equal(lastSnapshot(fake).length, 0, "一次性任务触发即自删，完成不复活");
 
     const note = fake.lastNotification()!;
     assert.match(note.message, /后台完成/);
@@ -949,23 +982,27 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     assert.ok(!fake._widgets.has("loop"), "任务自删后 widget 移除");
   });
 
-  it("循环后台任务完成：lastRun 记录会话 id 并落盘", async () => {
+  it("循环后台任务完成：轮次进 loop-run-v1 条目，快照只留任务骨架", async () => {
     const fake = createFakePi();
     const bg = makeBgHarness();
     loopFactory(fake as never, { runBg: bg.runBg });
     await fake.fire("session_start");
     await fake.runCommand("--bg 1m 巡检服务");
+    const id = (fake._persisted[0]!.data as { tasks: LoopTask[] }).tasks[0]!.id;
     fakeNow = BASE + 61_000;
     fireTick();
     assert.equal(bg.calls.length, 1);
-    assert.match(fake._widgets.get("loop")!.content![0]!, /后台运行 1/);
+    assert.match(fake._widgets.get("loop")!.content![0]!, /后台运行 1 轮（1 个任务）/);
 
     bg.resolveNext({ status: "done", exitCode: 0, sessionId: "sess-9abc", summary: "OK", stderr: "" });
     await flush();
-    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
-    assert.equal(last.tasks.length, 1);
-    assert.equal(last.tasks[0]!.lastRun!.status, "done");
-    assert.equal(last.tasks[0]!.lastRun!.sessionId, "sess-9abc");
+    assert.equal(lastSnapshot(fake).length, 1);
+    assert.equal(lastSnapshot(fake)[0]!.activeRuns, undefined, "完成后快照不再装该轮次");
+    const entry = runEntries(fake).at(-1)!;
+    assert.equal(entry.taskId, id);
+    assert.equal(entry.status, "done");
+    assert.equal(entry.sessionId, "sess-9abc");
+    assert.equal(entry.summary, "OK");
     assert.match(fake.lastNotification()!.message, /pi --session sess-9abc/);
   });
 
@@ -995,30 +1032,86 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     assert.match(note.message, /pi --session sess-t1/);
   });
 
-  it("上一轮后台仍在运行：下次到期跳过并警告，不叠加拉起", async () => {
+  it("同一任务两轮真实重叠：并发拉起、各自会话 id、各自完成通知与条目", async () => {
     const fake = createFakePi();
     const bg = makeBgHarness();
     loopFactory(fake as never, { runBg: bg.runBg });
     await fake.fire("session_start");
-    await fake.runCommand("--bg 1m 慢任务");
+    await fake.runCommand("--bg 1m 慢巡检");
+    const base = fake._notifications.length; // 创建回执
 
     fakeNow = BASE + 61_000;
     fireTick();
     assert.equal(bg.calls.length, 1);
+    assert.equal(bg.calls[0]!.label, formatRoundLabel(fakeNow), "子会话名带轮次标签");
+    assert.equal(fake._notifications.length, base + 1, "0→1 才发启动通知");
 
     fakeNow = BASE + 121_000;
     fireTick();
-    assert.equal(bg.calls.length, 1, "在途时不二次拉起");
-    const note = fake.lastNotification()!;
-    assert.equal(note.level, "warning");
-    assert.match(note.message, /仍在运行，本次触发跳过/);
+    assert.equal(bg.calls.length, 2, "在途不再拦截：第二轮照常拉起");
+    assert.equal(fake._notifications.length, base + 1, "重叠轮不重复发启动通知");
+    assert.match(fake._widgets.get("loop")!.content![0]!, /后台运行 2 轮（1 个任务）/);
 
-    bg.resolveNext({ ...bgDone, sessionId: "sess-slow" });
+    // 运行中的两轮各自捕获会话 id 并落盘
+    bg.calls[0]!.onSessionId?.({ sessionId: "sess-a" });
+    bg.calls[1]!.onSessionId?.({ sessionId: "sess-b" });
+    await fake.runNamed("loop:list", "");
+    const list = fake.lastNotification()!.message;
+    assert.match(list, /└ 运行中 · \d\d:\d\d:\d\d · 已跑 1m0s · 会话 sess-a/);
+    assert.match(list, /└ 运行中 · \d\d:\d\d:\d\d · 已跑 0s · 会话 sess-b/);
+    assert.equal(lastSnapshot(fake)[0]!.activeRuns!.length, 2, "运行中的两轮都在快照里");
+
+    bg.resolveNext({ ...bgDone, sessionId: "sess-a", summary: "第一轮完成" });
     await flush();
-    assert.match(fake.lastNotification()!.message, /sess-slow/);
+    assert.match(fake.lastNotification()!.message, /后台完成/);
+    assert.match(fake.lastNotification()!.message, /sess-a/);
+    assert.match(fake.lastNotification()!.message, /第一轮完成/);
+    bg.resolveNext({ ...bgDone, sessionId: "sess-b", summary: "第二轮完成" });
+    await flush();
+    assert.match(fake.lastNotification()!.message, /sess-b/);
+    assert.deepEqual(runEntries(fake).map((e) => [e.sessionId, e.status]), [["sess-a", "done"], ["sess-b", "done"]]);
+    assert.doesNotMatch(fake._widgets.get("loop")!.content![0]!, /后台运行/);
   });
 
-  it("后台运行中任务被删除：完成仅通知、不复活任务", async () => {
+  it("并发提示：同任务第 3 轮在跑时提示一次，回落再穿越仍提示", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 巡检");
+    const base = fake._notifications.length; // 创建回执
+
+    fakeNow = BASE + 61_000;
+    fireTick();
+    fakeNow = BASE + 121_000;
+    fireTick();
+    assert.equal(bg.calls.length, 2);
+    assert.equal(fake._notifications.length, base + 1, "只 0→1 时发启动通知");
+
+    fakeNow = BASE + 181_000;
+    fireTick();
+    assert.equal(bg.calls.length, 3);
+    assert.equal(fake._notifications.length, base + 2, "第 3 轮提示一次");
+    assert.equal(fake.lastNotification()!.level, "info");
+    assert.match(fake.lastNotification()!.message, /3 轮/);
+
+    fakeNow = BASE + 241_000;
+    fireTick();
+    assert.equal(fake._notifications.length, base + 2, "第 4 轮不重复提示（未再穿越阈值）");
+
+    bg.resolveNext({ ...bgDone, sessionId: "s1" });
+    await flush();
+    bg.resolveNext({ ...bgDone, sessionId: "s2" });
+    await flush();
+    assert.equal(bg.calls[2]!.signal?.aborted, false);
+
+    fakeNow = BASE + 301_000;
+    fireTick();
+    assert.equal(fake._notifications.length, base + 5, "完成 2 条 + 重新穿越阈值 1 条");
+    assert.match(fake.lastNotification()!.message, /3 轮/);
+  });
+
+  it("删除在途任务：两轮各自跑完只通知、不复活任务，历史条目仍落盘", async () => {
     const fake = createFakePi();
     const bg = makeBgHarness();
     loopFactory(fake as never, { runBg: bg.runBg });
@@ -1028,13 +1121,18 @@ describe("后台模式（v1.3）— 触发与完成", () => {
 
     fakeNow = BASE + 61_000;
     fireTick();
+    fakeNow = BASE + 121_000;
+    fireTick();
+    assert.equal(bg.calls.length, 2, "删除前的重叠轮照常拉起");
     await fake.runNamed("loop:delete", id.slice(0, 4));
 
     bg.resolveNext({ ...bgDone, sessionId: "sess-gone" });
     await flush();
-    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
-    assert.equal(last.tasks.length, 0, "删除不被完成回调复活");
+    assert.equal(lastSnapshot(fake).length, 0, "删除不被完成回调复活");
     assert.match(fake.lastNotification()!.message, /pi --session sess-gone/);
+    bg.resolveNext({ ...bgDone, sessionId: "sess-gone2" });
+    await flush();
+    assert.deepEqual(runEntries(fake).map((e) => e.sessionId), ["sess-gone", "sess-gone2"]);
   });
 
   it("后台运行抛异常：错误通知且任务标记 failed", async () => {
@@ -1056,8 +1154,8 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     assert.equal(note.level, "error");
     assert.match(note.message, /后台运行异常/);
     assert.match(note.message, /调度器崩溃/);
-    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
-    assert.equal(last.tasks[0]!.lastRun!.status, "failed");
+    assert.equal(runEntries(fake).at(-1)!.status, "failed");
+    assert.equal(lastSnapshot(fake)[0]!.activeRuns, undefined);
   });
 });
 
@@ -1102,8 +1200,8 @@ describe("后台模式（v1.3）— 模型透传（调度路径丢模型修复�
   });
 });
 
-describe("后台模式（v1.3）— 生命周期", () => {
-  it("session_shutdown：在途后台任务标记 interrupted 并 abort，完成回调不再打扰", async () => {
+describe("后台模式（v1.8）— 生命周期", () => {
+  it("session_shutdown：在途多轮逐轮 abort + 各写一条 interrupted 条目，完成回调不再打扰", async () => {
     const fake = createFakePi();
     const bg = makeBgHarness();
     loopFactory(fake as never, { runBg: bg.runBg });
@@ -1112,37 +1210,49 @@ describe("后台模式（v1.3）— 生命周期", () => {
 
     fakeNow = BASE + 61_000;
     fireTick();
-    assert.equal(bg.calls.length, 1);
-    assert.equal(bg.calls[0]!.signal?.aborted, false);
+    fakeNow = BASE + 121_000;
+    fireTick();
+    assert.equal(bg.calls.length, 2);
+    assert.deepEqual(bg.calls.map((c) => c.signal?.aborted), [false, false]);
 
     await fake.fire("session_shutdown");
-    assert.equal(bg.calls[0]!.signal?.aborted, true, "shutdown 中止在途子进程");
-    const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
-    assert.equal(last.tasks[0]!.lastRun!.status, "interrupted");
+    assert.deepEqual(bg.calls.map((c) => c.signal?.aborted), [true, true], "shutdown 中止全部在途轮次");
+    assert.deepEqual(runEntries(fake).map((e) => e.status), ["interrupted", "interrupted"]);
+    assert.equal(lastSnapshot(fake)[0]!.activeRuns, undefined, "快照不再装在途轮次");
 
     const notesBefore = fake._notifications.length;
     bg.resolveNext({ ...bgDone, sessionId: "sess-late" });
     await flush();
+    bg.resolveNext({ ...bgDone, sessionId: "sess-late2" });
+    await flush();
     assert.equal(fake._notifications.length, notesBefore, "关闭后不再通知");
-    const final = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
-    assert.equal(final.tasks[0]!.lastRun!.status, "interrupted", "不被完成回调覆盖");
+    assert.deepEqual(runEntries(fake).map((e) => [e.status, e.sessionId]), [["interrupted", undefined], ["interrupted", undefined]], "不被完成回调覆盖");
   });
 
-  it("恢复快照时 running 的 lastRun 显示为 interrupted", async () => {
+  it("恢复快照：在途轮次转 interrupted、旧 lastRun 迁移为历史轮次并补写条目", async () => {
     const fake = createFakePi();
     seedSnapshot(fake, [
       rawTask({
-        id: "orph0001",
-        recurring: true,
-        nextDueAt: BASE + 60_000,
-        background: true,
-        lastRun: { startedAt: BASE - 600_000, status: "running" },
+        id: "orph0001", recurring: true, nextDueAt: BASE + 60_000, background: true,
+        activeRuns: [{ runId: "r-run", startedAt: BASE - 600_000, status: "running" }],
+      }),
+      rawTask({
+        id: "orph0002", recurring: true, nextDueAt: BASE + 60_000, background: true,
+        lastRun: { startedAt: BASE - 900_000, finishedAt: BASE - 800_000, status: "done", sessionId: "sess-old" },
       }),
     ]);
     loopFactory(fake as never);
     await fake.fire("session_start");
     await fake.runNamed("loop:list", "");
-    assert.match(fake.lastNotification()!.message, /上次后台：中断/);
+    const msg = fake.lastNotification()!.message;
+    assert.match(msg, /└ 中断 · \d\d:\d\d:\d\d/);
+    assert.match(msg, /└ 完成 · \d\d:\d\d:\d\d · 会话 sess-old/);
+    assert.deepEqual(
+      runEntries(fake).map((e) => [e.taskId, e.status]).sort(),
+      [["orph0001", "interrupted"], ["orph0002", "done"]],
+      "恢复出的轮次补写为条目（否则重启即丢历史）",
+    );
+    assert.equal(lastSnapshot(fake).length, 2, "清洗后重写快照仍保留任务");
   });
 });
 

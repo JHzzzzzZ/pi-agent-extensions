@@ -104,6 +104,17 @@ export interface BgRunOptions {
   killGraceMs?: number;
   /** v1.4：模型指定（provider/id 或 pi 模型 pattern），透传子 pi --model；缺省用 pi 默认模型 */
   model?: string;
+  /** v1.8：轮次标签（HHMM）——并发多轮同名会话在选择器里无法区分，拼进 --name */
+  label?: string;
+  /** v1.8：会话头捕获即回调（运行中的轮次行要显示可 resume 的会话 id）；回调异常不影响子进程 */
+  onSessionId?: (info: { sessionId: string }) => void;
+  /**
+   * v1.8：pi 入口脚本覆盖（以 node <入口> 拉起子进程，与宿主自身的启动形态一致）。
+   * 默认由 getPiInvocation 从宿主 argv[1] 推导（扩展跑在 pi 进程内）；真机冒烟脚本在
+   * node 下直接调 runBgAgent 时必须给——否则 argv[1] 是脚本自身，getPiInvocation 会把
+   * 调用方脚本当 pi 入口递归拉起自己（2026-09-15 实测撞到）。
+   */
+  piEntry?: string;
 }
 
 export type BgRunStatus = "done" | "failed" | "timeout";
@@ -175,15 +186,18 @@ export function runBgAgent(options: BgRunOptions): Promise<BgRunOutcome> {
   const spawnFn = options.spawn ?? defaultBgSpawn();
   const timeoutMs = options.timeoutMs ?? BG_RUN_TIMEOUT_MS;
   const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
-  const { command, args } = getPiInvocation([
+  const piArgs = [
     "--mode",
     "json",
     "-p",
     "--name",
-    `loop-${options.taskId}`,
+    `loop-${options.taskId}${options.label ? `-${options.label}` : ""}`,
     ...(options.model ? ["--model", options.model] : []),
     options.prompt,
-  ]);
+  ];
+  const { command, args } = options.piEntry
+    ? { command: process.execPath, args: [options.piEntry, ...piArgs] }
+    : getPiInvocation(piArgs);
 
   return new Promise((resolve) => {
     const signal = options.signal;
@@ -277,7 +291,14 @@ export function runBgAgent(options: BgRunOptions): Promise<BgRunOutcome> {
       const event = parseLine(line);
       if (!event) return;
       if (event.type === "session" && typeof event.id === "string" && event.id) {
-        sessionId = event.id;
+        if (sessionId !== event.id) {
+          sessionId = event.id;
+          try {
+            options.onSessionId?.({ sessionId });
+          } catch {
+            // 观察者异常不影响子进程与结果收集
+          }
+        }
         return;
       }
       const msg = event.message;

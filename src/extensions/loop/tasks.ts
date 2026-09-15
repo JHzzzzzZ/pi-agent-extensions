@@ -8,8 +8,12 @@
  *   - 暂停的任务不触发；恢复时错过的循环间隔直接跳过
  *   - v1.2：daily（每天固定时刻）/ window（每日时间窗口闭区间内按间隔循环）调度，
  *     推进按"now 之后（严格大于）的下一个触发点"计算，跨天用本地 Date rollover
- *   - v1.3：后台模式（background / lastRun）——到期拉起独立子 pi 进程（见 runner.ts），
- *     会话落盘可用 pi --session 恢复；运行记录随任务快照持久化
+ *   - v1.3：后台模式（background）——到期拉起独立子 pi 进程（见 runner.ts），
+ *     会话落盘可用 pi --session 恢复
+ *   - v1.8：同一任务的后台轮次允许重叠（不再「上一轮在跑就跳过」），轮次记录为
+ *     每条 `runs` 数组：内存态装本次会话全部轮次，快照只持久化运行中的轮次
+ *     （activeRuns），已完成轮次由 index.ts 写 append-only 条目 loop-run-v1 承载
+ *     ——否则每次全量快照叠加全量轮次会让会话文件 O(n²) 膨胀
  */
 import {
   DAY_MS,
@@ -34,10 +38,13 @@ export interface LoopTask {
   paused: boolean;
   /** v1.3：后台模式——到期拉起独立子 pi 进程执行（会话落盘可 resume），不注入当前会话 */
   background?: boolean;
-  /** v1.4：后台任务模型指定（provider/id 或 pi 模型 pattern，透传子 pi --model）；缺省用 pi 默认模型 */
+  /** v1.4：后台任务模型指定（provider/id 或 pi model pattern，透传子 pi --model）；缺省用 pi 默认模型 */
   model?: string;
-  /** v1.3：后台任务最近一次运行记录 */
-  lastRun?: BgRunRecord;
+  /**
+   * v1.8：本次会话内的全部后台轮次（升序）。内存态展示用：
+   * 快照只持久化 status==="running" 的轮次（activeRuns），已完成轮次在 loop-run-v1 条目里。
+   */
+  runs?: BgRunRecord[];
 }
 
 /** v1.3：后台任务最近一次运行的状态 */
@@ -46,6 +53,8 @@ export type BgRunStatus = "running" | "done" | "failed" | "timeout" | "interrupt
 const BG_RUN_STATUSES: readonly BgRunStatus[] = ["running", "done", "failed", "timeout", "interrupted"];
 
 export interface BgRunRecord {
+  /** v1.8：轮次标识（并发下唯一；运行中记录、条目回放、去重都靠它关联） */
+  runId: string;
   /** 本次后台运行启动时刻（epoch ms） */
   startedAt: number;
   finishedAt?: number;
@@ -60,6 +69,9 @@ export interface BgRunRecord {
 
 /** 后台运行摘要的持久化上限（超出截断） */
 export const MAX_BG_SUMMARY_LEN = 500;
+
+/** /loop:list 里已完成轮次的展示上限（更早的折成一行计数；历史本身全量保留在条目里） */
+export const BG_HISTORY_DISPLAY = 10;
 
 export const MAX_TASKS = 50;
 export const MAX_TASK_LEN = 2000;
@@ -129,7 +141,7 @@ export function createTask(
     createdAt: input.nowMs,
     paused: false,
   };
-  // schedule/background/model/lastRun 依序追加在末尾，保证键顺序与 sanitizeTask 一致（快照 JSON 稳定可比）
+  // schedule/background/model 依序追加在末尾，键顺序与 hydrate 侧（toSnapshotTask）一致（快照 JSON 稳定可比）
   if (input.schedule !== undefined) task.schedule = input.schedule;
   if (input.background === true) task.background = true;
   if (model) task.model = model;
@@ -254,10 +266,37 @@ export function pollDue(tasks: LoopTask[], nowMs: number): PollResult {
   return { due, changed };
 }
 
-export type TaskSnapshot = { tasks: LoopTask[] };
+export type TaskSnapshot = { tasks: PersistedTask[] };
+
+/**
+ * 快照里的任务形态：runs 只保留运行中的轮次（activeRuns）。
+ * 已完成轮次全量在 loop-run-v1 条目里——all-in-snapshot 会让会话文件随轮次 O(n²) 膨胀。
+ */
+export interface PersistedTask extends Omit<LoopTask, "runs"> {
+  activeRuns?: BgRunRecord[];
+}
+
+/** 白名单序列化：键顺序固定，且 runs 只留运行中的轮次 */
+function toSnapshotTask(t: LoopTask): PersistedTask {
+  const out: PersistedTask = {
+    id: t.id,
+    task: t.task,
+    recurring: t.recurring,
+    intervalMs: t.recurring ? t.intervalMs : undefined,
+    nextDueAt: t.nextDueAt,
+    createdAt: t.createdAt,
+    paused: t.paused,
+  };
+  if (t.schedule !== undefined) out.schedule = t.schedule;
+  if (t.background === true) out.background = true;
+  if (t.model) out.model = t.model;
+  const active = t.runs?.filter((r) => r.status === "running");
+  if (active && active.length > 0) out.activeRuns = active.map((r) => ({ ...r }));
+  return out;
+}
 
 export function serializeTasks(tasks: LoopTask[]): TaskSnapshot {
-  return { tasks: tasks.map((t) => ({ ...t })) };
+  return { tasks: tasks.map(toSnapshotTask) };
 }
 
 /** 从会话条目恢复。防御式清洗：坏条目跳过；过期任务剔除；错过的一次性不再触发；错过的循环间隔跳过 */
@@ -307,12 +346,15 @@ function sanitizeSchedule(raw: unknown): RecurringSchedule | undefined {
 }
 
 /** 防御式清洗后台运行记录：字段非法/越界一律丢弃或截断；恢复时 running 视为 interrupted（宿主中途退出） */
-function sanitizeLastRun(raw: unknown): BgRunRecord | undefined {
+function sanitizeRun(raw: unknown, fallbackRunId?: string): BgRunRecord | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
+  const runId = typeof r.runId === "string" && r.runId ? r.runId : fallbackRunId;
+  if (!runId) return undefined;
   if (typeof r.startedAt !== "number" || !Number.isFinite(r.startedAt)) return undefined;
   if (typeof r.status !== "string" || !BG_RUN_STATUSES.includes(r.status as BgRunStatus)) return undefined;
   const rec: BgRunRecord = {
+    runId,
     startedAt: r.startedAt,
     status: r.status === "running" ? "interrupted" : (r.status as BgRunStatus),
   };
@@ -321,6 +363,45 @@ function sanitizeLastRun(raw: unknown): BgRunRecord | undefined {
   if (typeof r.sessionPath === "string" && r.sessionPath) rec.sessionPath = r.sessionPath;
   if (typeof r.summary === "string" && r.summary) rec.summary = r.summary.slice(0, MAX_BG_SUMMARY_LEN);
   return rec;
+}
+
+/** 清洗快照里的轮次：v1.8 的 activeRuns（数组）+ v1.7 及以前的 lastRun（单对象）两条路径都接 */
+function sanitizeRuns(r: Record<string, unknown>, taskId: string): BgRunRecord[] | undefined {
+  const out: BgRunRecord[] = [];
+  if (Array.isArray(r.activeRuns)) {
+    for (const raw of r.activeRuns) {
+      const rec = sanitizeRun(raw);
+      if (rec) out.push(rec);
+    }
+  }
+  // 旧快照的单条 lastRun：runId 由任务 id 派生（确定性，重复水合按 runId 去重）
+  const legacy = sanitizeRun(r.lastRun, `legacy-${taskId}`);
+  if (legacy) out.push(legacy);
+  return out.length > 0 ? out : undefined;
+}
+
+/** loop-run-v1 条目载荷：轮次记录 + 归属任务 */
+export interface BgRunEntry extends BgRunRecord {
+  taskId: string;
+}
+
+/** 解析 loop-run-v1 条目载荷（index.ts 启动时回放历史轮次） */
+export function parseBgRunEntry(data: unknown): BgRunEntry | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const taskId = (data as { taskId?: unknown }).taskId;
+  if (typeof taskId !== "string" || !taskId) return undefined;
+  const record = sanitizeRun(data);
+  return record ? { taskId, ...record } : undefined;
+}
+
+/** 合并条目回放的历史与快照恢复的轮次：按 runId 去重（终态优先），按开始时刻升序 */
+export function mergeRuns(history: BgRunRecord[], recovered: BgRunRecord[]): BgRunRecord[] {
+  const byId = new Map<string, BgRunRecord>();
+  for (const rec of [...history, ...recovered]) {
+    const prev = byId.get(rec.runId);
+    if (!prev || (prev.status === "running" && rec.status !== "running")) byId.set(rec.runId, rec);
+  }
+  return [...byId.values()].sort((a, b) => a.startedAt - b.startedAt);
 }
 
 function sanitizeTask(raw: unknown): LoopTask | undefined {
@@ -346,12 +427,12 @@ function sanitizeTask(raw: unknown): LoopTask | undefined {
     createdAt: r.createdAt,
     paused: r.paused === true,
   };
-  // 依序追加在末尾，与 createTask 的键顺序一致（快照 JSON 稳定可比）
+  // 依序追加在末尾，与 hydrate 侧（toSnapshotTask）的键顺序一致（快照 JSON 稳定可比）
   if (schedule !== undefined) t.schedule = schedule;
   if (r.background === true) t.background = true;
   if (typeof r.model === "string" && r.model) t.model = r.model;
-  const lastRun = sanitizeLastRun(r.lastRun);
-  if (lastRun !== undefined) t.lastRun = lastRun;
+  const runs = sanitizeRuns(r, t.id);
+  if (runs !== undefined) t.runs = runs;
   return t;
 }
 
@@ -410,17 +491,42 @@ export function formatBgRunStatus(status: BgRunStatus): string {
   }
 }
 
-/** 后台任务的上次运行详情行（缺记录 / 非后台任务返回 undefined） */
-export function formatBgRunLine(t: LoopTask): string | undefined {
-  const run = t.lastRun;
-  if (!run) return undefined;
-  const parts = [`└ 上次后台：${formatBgRunStatus(run.status)}`];
+/** 轮次起始时刻的短标签（本地 HHMM，拼进子会话名：并发多轮同名会话在选择器里分不清） */
+export function formatRoundLabel(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+/** 单轮后台记录的一行（运行中含已跑时长；完成行含会话与摘要） */
+function formatRunLine(run: BgRunRecord, nowMs: number): string {
+  const parts = [`└ ${formatBgRunStatus(run.status)}`, formatClock(run.startedAt)];
+  if (run.status === "running") parts.push(`已跑 ${formatCountdown(nowMs - run.startedAt)}`);
   if (run.sessionId) parts.push(`会话 ${run.sessionId}`);
   if (run.summary) {
     const s = run.summary.replace(/\s+/g, " ");
     parts.push(s.length > 30 ? `${s.slice(0, 29)}…` : s);
   }
   return parts.join(" · ");
+}
+
+/**
+ * 后台任务的轮次行：运行中**全部**列出（并发下每轮都要看得见）；
+ * 已完成只列最近 BG_HISTORY_DISPLAY 条，更早的折成一行计数
+ * （历史本身全量在 loop-run-v1 条目里，这里只是展示口径）。
+ */
+export function formatBgRunLines(t: LoopTask, nowMs: number): string[] {
+  const runs = t.runs;
+  if (!runs || runs.length === 0) return [];
+  const running = runs.filter((r) => r.status === "running");
+  const finished = runs.filter((r) => r.status !== "running");
+  const shown = finished.slice(-BG_HISTORY_DISPLAY);
+  const hidden = finished.length - shown.length;
+  const lines: string[] = [];
+  if (hidden > 0) lines.push(`└ 更早 ${hidden} 轮`);
+  lines.push(...shown.map((r) => formatRunLine(r, nowMs)));
+  lines.push(...running.map((r) => formatRunLine(r, nowMs)));
+  return lines;
 }
 
 /** /loop:list 与裸 /loop 的任务列表行，按触发先后排序 */
@@ -432,7 +538,6 @@ export function formatTaskLines(tasks: LoopTask[], nowMs: number): string[] {
     const taskText = t.task.length > 40 ? `${t.task.slice(0, 39)}…` : t.task;
     const badge = t.background ? "[后台] " : "";
     const line = `${t.id}  ${badge}${schedule}  ${next}  ${taskText}`;
-    const runLine = t.background ? formatBgRunLine(t) : undefined;
-    return runLine ? [line, runLine] : [line];
+    return [line, ...(t.background ? formatBgRunLines(t, nowMs) : [])];
   });
 }
