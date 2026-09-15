@@ -7,7 +7,7 @@ Pi 编码助手的扩展工作区：12 个零构建 TypeScript ESM 插件（pwr 
 ### todos 工作流（todo-cli 域）
 
 **条目（Entry）**:
-`todos/<名>.json` 里的一条待办，schema v2 原生字段 = id / text / status / branch / tags / notes / createdAt / claimedAt / completedAt / alignedAt（读兼容 v1，写出一律 v2）。
+`todos/<名>.json` 里的一条待办，schema v3 原生字段 = id / text / status / branch / tags / dependsOn / notes / createdAt / claimedAt / completedAt / alignedAt（读兼容 v1/v2，写出一律 v3）。
 _Avoid_: todo 行、任务、item
 
 **顶层条目**:
@@ -27,7 +27,7 @@ _Avoid_: 认领、开始做
 _Avoid_: 审批流、gate、人工门（指代不清时用「审批」，红线 10）
 
 **对齐文档（align doc）**:
-`todos/align/<文件基名>#<id>.md` 的逐条对齐记录，四小节 `## 意图`/`## 范围`/`## 验收标准`/`## 人工确认` 各需非空正文，且正文须出现 `<名>#<id>` 标记（防串条目）；路径固定派生、无自由路径参数。模板单源在 `docs/tools/todo-cli.md`。
+`todos/align/<文件基名>#<id>.md` 的逐条对齐记录，四小节 `## 意图`/`## 范围`/`## 验收标准`/`## 人工确认` 各需非空正文，且正文须出现 `<名>#<id>` 标记（防串条目）；路径固定派生、无自由路径参数。模板单源在 `docs/tools/todo-cli.md`。`reopen` 把它归档为同目录的 `.reopened-<UTC 紧凑>.md`（旧留痕保留，规范路径腾空）。
 _Avoid_: 需求文档、设计文档
 
 **aligning**:
@@ -39,8 +39,12 @@ _Avoid_: 对齐中状态、待确认
 _Avoid_: 已批准、ready
 
 **完成（complete）**:
-把条目转 done 的收口动作；`--note` 逐字进 notes（不解析括号/换行）。从 `aligning`/`aligned` 收口必须带 `--note`（取消/搁置留原因），从 `open`/`processing` 收口可选。
-_Avoid_: 勾选、关闭
+把条目转 done 的收口动作；`--note` 逐字进 notes（不解析括号/换行）。从 `aligning`/`aligned` 收口必须带 `--note`（取消/搁置留原因），从 `open`/`processing` 收口可选。取消/搁置也是 done（终态、不可再领取）——与把条目退回未领取的「撤销」是两回事。
+_Avoid_: 勾选、关闭、撤销（撤销是 `reopen`，不是 complete）
+
+**撤销（reopen）**:
+把在途条目退回未领取的回退动作：`aligning`/`aligned`/`processing` 一律 → `open`（清 `branch`/`claimedAt`/`alignedAt`，其余字段与历史 notes 原样），notes 追加 `撤销 <UTC 日期>：从 <源状态> 回到未领取`；从 `aligning`/`aligned` 撤销必须带 `--note`，`done` 拒绝，已是 `open` 幂等。陈旧对齐文档先归档为 `todos/align/<名>#<id>.reopened-<UTC 紧凑>.md`（规范路径腾空 ⇒ 重新 claim 必须重写文档）。决策见 ADR-0007。
+_Avoid_: 取消、搁置、回退状态机（口语可，但命令名与文档统一用 `reopen`/撤销）
 
 **processing**:
 条目五态之一（open / aligning / aligned / processing / done），表示对齐已确认、正式开工；分支引用在 `branch` 字段，从它到 merge/commit 全程无人值守。

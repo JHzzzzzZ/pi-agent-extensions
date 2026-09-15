@@ -12,7 +12,7 @@
 | --- | --- |
 | `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径、JSON schema 与锁 | `tools/todo-cli.md` |
 | 全仓测试怎么跑（17 套件清单 / serial 口径 / 并发与依赖安装加速 / 实测对照） | `tools/test-all.md` |
-| todo 对齐门状态机（open → aligning → aligned → processing → done）与对齐文档契约 | `tools/todo-cli.md` + `adr/0003-todo-align-gate.md` |
+| todo 对齐门状态机（open → aligning → aligned → processing → done）、对齐文档契约与 reopen 回退通道 | `tools/todo-cli.md` + `adr/0003-todo-align-gate.md` + `adr/0007-todo-reopen.md` |
 | todos 依赖门（dependsOn 引用 / 阻塞条目 / 环与悬空校验）与开工门的关系 | `tools/todo-cli.md` + `adr/0005-todo-depends-on.md` |
 | todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0002-todos-json-storage.md` |
 | 已实现需求的规格（问题陈述 / 方案 / 实现与测试决策 / 范围外） | `specs/<名>.md` |
@@ -53,7 +53,7 @@
 
 | 卡 | 一句话 |
 | --- | --- |
-| [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI（仓库内项目级 skill 资产，入口与实现同居在 `.agents/skills/todo-cli/todo-cli/`）：八子命令 + list 结构化查询 flags + migrate 双向迁移子命令；仓库根解析 = `--root` > `git rev-parse --show-toplevel`（fail-closed）；存储 = `todos/<名>.json` 唯一权威（schema v2 五态对齐门 open→aligning→aligned→processing→done，对齐文档 `todos/align/<名>#<id>.md`）+ 每文件 O_EXCL 锁 + 原子写，triage 只读扫描 worktree↔条目；只读写 `todos/`、CLI-only 无 pi 依赖 |
+| [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI（仓库内项目级 skill 资产，入口与实现同居在 `.agents/skills/todo-cli/todo-cli/`）：十子命令（含 reopen 回退与 dep 依赖增删）+ list 结构化查询 flags + migrate 双向迁移子命令；仓库根解析 = `--root` > `git rev-parse --show-toplevel`（fail-closed）；存储 = `todos/<名>.json` 唯一权威（schema v3 五态对齐门 open→aligning→aligned→processing→done、对齐文档 `todos/align/<名>#<id>.md`、reopen 归档 `.reopened-<UTC 紧凑>.md`）+ 每文件 O_EXCL 锁 + 原子写，triage 只读扫描 worktree↔条目；只读写 `todos/`、CLI-only 无 pi 依赖 |
 | [agent-manager](tools/agent-manager.md) | 独立 agent 管理工具（零依赖、非 Pi 扩展）：会话浏览/检索/重命名/可恢复删除 + pi 子进程启动/停止 + 浏览器前端；`node agent-manager/server.ts` |
 | [test-all](tools/test-all.md) | 仓库全量测试入口（`node tools/test-all.mjs` / `npm run test:all`，零依赖）：17 套件逐条计时 + 失败聚合退出码；`--jobs N` 并发（serial 三条负载敏感套件独占）、`--install` 新 worktree 依赖预装（`--prefer-offline`）；测试命令的唯一权威清单 |
 

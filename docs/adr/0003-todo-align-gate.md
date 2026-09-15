@@ -16,7 +16,7 @@ Status: accepted（2026-09-14，todo-cli-todo:11；用户选定门形态 / 文�
 ## Consequences
 
 - `todos/<名>.json` schema v2：条目新增 `alignedAt`；任一写操作重写整文件 ⇒ 被写过一次的文件即一次性升级（`version: 2` + 每条 `alignedAt: null`），不做批量回填。
-- 历史 `open`/`processing`/`done` 原义不变；历史 `processing` 视为「已开工」，不要求补对齐文档、不回退状态。
+- 历史 `open`/`processing`/`done` 原义不变；历史 `processing` 视为「已开工」，不要求补对齐文档。**「不回退状态」已被推翻**：ADR-0007 给状态机加了显式回退通道 `reopen`（在途条目 → open，陈旧对齐文档归档）；本 ADR 只保留指针。
 - `complete` 从 `aligning`/`aligned` 收口必须带 `--note`（取消/搁置要留原因）；从 `open`/`processing` 收口不变。
 - 人工门可审计性有上限：CLI 只保证顺序与文档结构，不能证明确认者身份；确认留痕 = 文档小节 + 审批记录。
 - 回滚边界：旧版 CLI 读 v2 文件明确报错（`version 必须是 1`）；回滚路径 = git 历史 + `migrate to-md`。
