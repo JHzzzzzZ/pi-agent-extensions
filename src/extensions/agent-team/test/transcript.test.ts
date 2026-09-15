@@ -17,6 +17,7 @@ import {
   LEADER_ACTOR,
   MAX_TRANSCRIPT_FILE_BYTES,
   MemoryTranscriptSink,
+  TRANSCRIPT_ENTRY_KINDS,
   actorTranscriptPath,
   listTranscriptActors,
   pruneOldTranscripts,
@@ -24,6 +25,7 @@ import {
   sanitizeActorName,
   sanitizeRunId,
   transcriptRunDir,
+  type TranscriptEntryKind,
 } from "../transcript.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { makeFakeSpawn, messageEndLine, toolExecutionEndLine, toolExecutionStartLine, waitForChild } from "./helpers.ts";
@@ -102,6 +104,27 @@ test("question and answer entries round-trip through the sink and reader", () =>
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("user entries (viewer 输入原文) round-trip through the sink and reader", () => {
+  const root = tmpRoot();
+  try {
+    const sink = new FileTranscriptSink(root, "run-1", () => "2026-09-06T12:00:00.000Z");
+    sink.append(LEADER_ACTOR, "user", "把标题改短一点\n第二行也要保留");
+    sink.append("frontend", "user", "跑一下测试");
+
+    const leader = readTranscript(root, "run-1", LEADER_ACTOR);
+    assert.deepEqual(leader.map((e) => e.kind), ["user"]);
+    assert.equal(leader[0]?.text, "把标题改短一点\n第二行也要保留", "原文原样落盘（无 wire 包装）");
+    assert.deepEqual(readTranscript(root, "run-1", "frontend").map((e) => e.kind), ["user"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("TRANSCRIPT_ENTRY_KINDS 白名单含 user；白名单外的 kind 仍被 reader 丢弃", () => {
+  assert.ok(TRANSCRIPT_ENTRY_KINDS.includes("user"), "user 必须进白名单（否则 reader 整条丢弃）");
+  assert.ok(!TRANSCRIPT_ENTRY_KINDS.includes("steer" as TranscriptEntryKind), "wire 标记不是转录 kind");
 });
 
 test("FileTranscriptSink stops appending after the file cap and records the truncation notice once", () => {
