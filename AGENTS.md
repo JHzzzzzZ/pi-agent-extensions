@@ -126,6 +126,7 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - 工作区使用的 Pi 扩展 API 面：`pi.on`（`session_start`、`agent_start`、`agent_settled`、`turn_start/end`、`model_select`、`message_start/update/end`、`input`、`before_agent_start`、`tool_call`、`tool_result`）、`pi.registerCommand`、`pi.registerTool`、`pi.registerProvider`、`pi.registerShortcut`、`pi.registerEntryRenderer`、`pi.appendEntry`、`pi.sendMessage`、`ctx.ui.setStatus/setWidget/notify`、`ctx.sessionManager.getEntries`。
 - 配置经环境变量（`CHATANYWHERE_API_KEY`、`CHATANYWHERE_BASE_URL`）或 `~/.pi/agent/auth.json` 按 provider id 键（provider-quota——明确不用环境变量）。
 - 安装形态：所有扩展都是带 `index.ts` 入口的目录（chatanywhere-provider 另在 package.json 声明 `pi.extensions: ["./index.ts"]`）；目录复制进 `extensions/` 后 pi 自动加载。
+  - **package 形态（本项目实际用法）**：`~/.pi/agent/settings.json` 的 `packages` 里是本仓库 git 源（`git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop`），pi 加载的是**包缓存 clone**（`~/.pi/agent/git/github.com/<owner>/<repo>`），**不是**当前工作仓库。因此「本地 commit 了但 pi 里还是旧行为」是常态：改动要生效必须 ① push 到该源分支，再 ② 让 pi 刷新缓存（`pi update` / 重启会话）。2026-09-15 真机教训：按此口径，未 push 的本地 commit 做出的「修复后」验收会跑到修复前的代码上（反向也是礼物——它天然给出修复前的对照组）。
 
 ## 测试与 QA
 
