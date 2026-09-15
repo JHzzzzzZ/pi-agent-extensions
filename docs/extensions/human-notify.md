@@ -42,7 +42,7 @@
 
 ## 改动清单
 
-- 必跑：`node --experimental-strip-types --test src/extensions/human-notify/index.test.ts`（37 个，仓库根执行）+ `tsc --noEmit`（strict + erasableSyntaxOnly）。
+- 必跑：`node --experimental-strip-types --test src/extensions/human-notify/index.test.ts`（37 个，仓库根执行）+ `tsc --noEmit`（strict + erasableSyntaxOnly）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
 - 改脚本拼装（`buildToastScript`/转义/程序集加载）时：除单测外必须在 Windows 真机执行一次产物验证 Show() 实际调用成功（单测只验字符串，验不出 WinRT 绑定问题——d0eda4c 的教训）。
 - 新增等人工具：只动 `WAITING_TOOL_NAMES` + `WAITING_TOOL_LABELS`（`index.ts`）；若该工具 args 携带用户可读问题，扩展 `extractWaitingQuestion` 提取，并按既有模式补“名单命中/args 提取/回退链/非名单零 spawn 且不占窗口”单测。
 - fake 模式（参照 `docs/cross/deps-ports.md` 的 `HumanNotifyDeps`）：注入 `spawn` / `platform` / `nowMs` / `env` 四端口，手写 fake（`makeFakeSpawn` + `makeClock` + `makeFakePi`），不用 mock 库、不派真实进程。
