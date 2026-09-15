@@ -7,7 +7,7 @@
 | [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
 | [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）） | 664 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
-| [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 无 |
+| [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
 | [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
 | [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；管理走 `/loop:*` 冒号子命令） | 196 个（node:test） |
@@ -574,6 +574,17 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 ---
 
 ## 开发约定
+
+全仓测试一条命令（17 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
+
+```bash
+npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 / --jobs 4 更高并发）
+node tools/test-all.mjs --install # 新 worktree：先并行 npm install（--prefer-offline）再跑
+npm run test:contract             # 状态条契约（doc → docs/cross/status-bar.md）
+npm run test:smoke                # 安装冒烟工具纯逻辑
+npm run test:todo                 # todo CLI（88 个）
+node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi）
+```
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
 - **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常

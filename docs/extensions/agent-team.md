@@ -98,7 +98,8 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 改动清单
 
-- 必跑：`cd src/extensions/agent-team && npm install && npm test`（643 个）+ `npm run typecheck`。
+- 必跑：`cd src/extensions/agent-team && npm install && npm test`（664 个）+ `npm run typecheck`。
+- 仓库级：`npm run test:all` 一条命令跑全仓 17 套件（本套件已登记，默认并发运行；逐条计时/失败聚合见 docs/tools/test-all.md）。
 - 改动 viewer 正文块 / 转录 kind / viewer 发消息链路：除单测外必跑 `test/viewer-user-host.test.ts`（真实 TuiMainScreen + 样式追踪 VT 仿真屏：背景分类/连续等宽）与 `test/viewer-chat-host.test.ts`（真实入口 + 真实转录文件）。
 - 真实 pi 宿主契约（opt-in，不调模型）：`node test/resume-host-smoke.mjs` —— 写 fixture 会话后 `pi --mode rpc --session <file>`，断言 `get_state` 的 `messageCount` 保留且 `sessionFile` 指向该文件，stdin 结束后干净退出（续跑功能的宿主前提）。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。

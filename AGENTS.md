@@ -53,6 +53,7 @@ node --test runtime/test/scheduler.test.ts
 仓库根（无任何依赖）：
 
 ```bash
+npm run test:all        # 全仓 17 套件一条命令（逐条计时/失败聚合；--jobs N 调并发；见 docs/tools/test-all.md）
 npm run test:contract   # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke      # 安装冒烟工具的纯逻辑单测
 npm run test:todo       # todo CLI 单测（随工具住在 .agents/skills/todo-cli/todo-cli/test/，含进程边界 E2E）
