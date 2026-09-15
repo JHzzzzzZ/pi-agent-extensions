@@ -7,7 +7,7 @@
 ## WHERE TO LOOK
 | 任务 | 位置 |
 |---|---|
-| 团队文件格式 | `~/.pi/agent/teams/*.md` 或受信项目 `.pi/teams/`（项目优先），frontmatter `leader` + `members[]` |
+| 团队文件格式 | `~/.pi/agent/teams/*.md` 或受信项目 `.pi/teams/`（项目优先），frontmatter `leader` + `members[]`；值含 `": "` 的裸标量（`description: 全栈开发: 小队`）按写盘口径加引号重试一次（`config.ts`，v1.29.0，块标量内容行/正文不动） |
 | 成员字段 | 每成员 `provider/model` + `tools` + `worktree` + 块标量 `prompt`，见 `examples/dev-team.example.md` |
 | 双模式分叉 | `PI_AGENT_TEAM_FILE`：有则 leader 模式（`team_dispatch` + `team_ask`），无则 cockpit 模式（`team_create/list/run/resume/status/stop` + `/team*`） |
 | leader 提问（人工澄清） | leader 侧 `ask.ts` `askLeaderQuestion`（team_ask 工具）；cockpit 侧 `AskChannel` + `index.ts` `askPortFrom(ctx)` 宿主对话框；RPC 协议 = pi stdout `extension_ui_request` ↔ stdin `extension_ui_response` |
@@ -23,6 +23,7 @@
 
 ## CONVENTIONS
 - 团队文件每次使用重扫，无缓存 —— 加缓存则项目覆盖用户优先级失效。
+- 团队文件 frontmatter 的宽松只有「值含 `": "` 的裸标量」一种模式（v1.29.0，#63）：整块加引号重试一次，失败回落首次解析的错误 + 修法提示；块标量内容行与 markdown 正文绝不重写，也不改写磁盘文件 —— 通用宽松解析器会让「文件即事实来源」失效。
 - leader prompt 经 `leader-prompt.ts` 组装，自包含任务上下文 —— 直传用户原话则成员看不到约束。
 - 结果 ≤50KB、摘要 ≤8KB，与 pwr 同限不同码 —— 超限截断，违则 cockpit entry 溢出。
 - cockpit/widget/entry 键 `agent-team-run-v1` —— 改键则旧会话渲染器失配。
@@ -46,7 +47,7 @@
 
 ## COMMANDS
 ```bash
-cd src/extensions/agent-team && npm install && npm test   # 643 测试（node --test test/*.test.ts）
+cd src/extensions/agent-team && npm install && npm test   # 654 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```

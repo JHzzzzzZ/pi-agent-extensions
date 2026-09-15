@@ -74,6 +74,7 @@ members:
 - **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team-run-<runId>`，连字符形式——避免与成员分支 `team/<runId>/<member>` 构成 git ref 文件/目录冲突）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；成员自建分支且工作树干净、期望分支存在且空闲时自动 `git switch` 切回，报告中标注「已从 <旧> 切回」；其余不匹配报 `WORKTREE_UNAVAILABLE` 并附非破坏可操作提示 `git -C … switch …`，不再建议 `remove --force`；路径被非 worktree 占用等才报错）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
 - **模型预检**：派单前会先对 leader + 全体成员的 `provider/id` 做一次注册表预检——引用不存在的模型直接报 `MODEL_NOT_FOUND`（不启动任何子进程，提示先调 `team_models`）；存在但未配置鉴权的模型放行并警告。成员不配 model 则用 pi 默认模型（无从预检）。
 - **外部 CLI 后端成员（v1.26.0）**：成员可声明 `backend: codex|claude` 改用对应 CLI 非交互执行（语法/口径/限制见 §7）；leader 不可声明 backend（run 预检 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed）。
+- **裸 `": "` 值容忍（v1.29.0，#63）**：frontmatter 里值含 `": "` 的裸标量（如 `description: 全栈开发: 小队`，YAML 判定非法）不再让整份团队文件加载失败——解析只对这类行（团队级/成员级 `description`、`prompt` 等）按写盘口径加引号**重试一次**（不是通用宽松解析：引号值、`|`/`>` 块标量、CRLF、值内引号照旧；块标量内容行与正文一个都不动，也**不写回磁盘**）。重试仍失败时错误信息前置修法提示（`第 N 行的值含 ": "，请加引号（"…"）或改用 | 块标量`，行号按团队文件），原始 YAML 错误作为细节保留；`/team:list`、`team_list`、`/team:doctor` 照旧列出不可用文件与原因，`team_run`/`team_resume` 的 `TEAM_NOT_FOUND` 文案追加 `另有 N 个定义不可用：<file>（<原因首行>）`——坏团队文件在派单与续跑两个入口都看得见。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（下次派单/列表即生效，无注册缓存）。
 
 ### 3. 派单与复用
@@ -257,7 +258,7 @@ members:
 ```bash
 cd src/extensions/agent-team
 npm install
-npm test          # node --test test/*.test.ts（643 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
+npm test          # node --test test/*.test.ts（654 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
