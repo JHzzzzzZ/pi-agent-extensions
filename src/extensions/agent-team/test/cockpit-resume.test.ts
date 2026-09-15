@@ -359,8 +359,8 @@ test("续跑 leader env 继承父进程环境：注入键覆盖父进程残留�
     const child = await waitForChild(spawn, 0);
     const record = spawn.records[0];
 
-    // 继承：代理放行变量随父进程进 leader（F1 修复语义）。
-    assert.equal(record.env?.NO_PROXY, "127.0.0.1,localhost");
+    // 继承：代理放行变量随父进程进 leader（F1 修复语义），#67 再补齐缺失的回环项。
+    assert.equal(record.env?.NO_PROXY, "127.0.0.1,localhost,::1");
     // 覆盖：本次续跑注入的别名/成员覆盖必须赢过父进程残留值。
     assert.equal(record.env?.[LEADER_ENV_WORKTREE_RUNID], parentRunId);
     assert.deepEqual(JSON.parse(record.env?.[LEADER_ENV_MEMBER_MODELS] ?? "{}"), {

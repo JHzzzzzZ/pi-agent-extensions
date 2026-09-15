@@ -230,6 +230,7 @@ members:
 - **预检与环境**：CLI 未安装（PATH 与 npm 全局布局都找不到可直接 spawn 的原生可执行文件）→ run 预检 `CLI_NOT_FOUND` 拦截，不拉起任何子进程；逃生门 `PI_AGENT_TEAM_CODEX_BIN` / `PI_AGENT_TEAM_CLAUDE_BIN` 给可执行文件绝对路径（无效值 fail-closed、不回退 PATH）。**未登录不做预检**：运行时失败按成员 `CHILD_FAILED` 呈现——codex 先 `codex login`，claude 交互运行一次 `claude` 完成登录（或配好 API key）。
 - **leader 不能声明 `backend`**：外部 CLI 没有 `team_dispatch` 工具面、无法协调成员，run 预检以 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed（v1 限制）；`backend` 仅可用于成员（`team_create` v1 也不产出 backend，请手写/手改团队文件；非法值域报 `INVALID_TEAM_FILE`）。
 - **Windows 解析策略**：`.cmd`/`.ps1` shim 无法 `shell:false` spawn（EINVAL），解析层只返回真实可执行文件（`codex.exe`/`claude.exe`，含 npm vendor 布局）；**永不**经 `node codex.js` 包装器间接 spawn——Windows 的 SIGTERM 只杀直子进程，`codex.exe` 孙进程会孤儿化继续烧 API。
+- **代理与回环地址（v1.30.0，#67）**：宿主的 `httpProxy` 设置只注入 `HTTP_PROXY`/`HTTPS_PROXY`（`applyHttpProxySettings` **从不**注入 `NO_PROXY`），本地中继/本地模型服务（如 `ANTHROPIC_BASE_URL=http://127.0.0.1:15721`）若被送进 CONNECT-only 代理桥就会每次派单 405。因此派给 leader 与全部成员（pi 与外部 CLI）的子进程 env 一律在出口补上回环豁免：`NO_PROXY` 与 `no_proxy` **两个大小写键都写**（Node/undici 与各 CLI 读取口径不同），值为「用户已有值 + 缺失的 `127.0.0.1,localhost,::1`」——显式值原样保留（前缀不动）、已含项不重复追加、重复调用幂等；`HTTP(S)_PROXY` 的继承与覆盖语义不变，不做代理是否已设的判定（子进程可能在自身配置里配代理，豁免对无代理环境无害）。宿主侧**不打补丁**（仓库边界），上游 issue 稿见仓库根 `docs/pi-http-proxy-loopback-issue.md`。
 
 可运行示例见 [examples/external-cli.example.md](examples/external-cli.example.md)。
 
@@ -258,7 +259,7 @@ members:
 ```bash
 cd src/extensions/agent-team
 npm install
-npm test          # node --test test/*.test.ts（654 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
+npm test          # node --test test/*.test.ts（664 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```

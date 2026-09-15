@@ -51,13 +51,53 @@ export interface DispatchRequest {
 }
 
 /**
- * Copies an environment and removes the three leader-mode keys. Member
- * child processes must not inherit them: agent-team would load in leader
- * mode inside a member and bind its tooling to the parent run. Everything
- * else (PATH, provider keys, credentials) is preserved.
+ * 回环豁免主机：本地中继（如 `ANTHROPIC_BASE_URL=http://127.0.0.1:15721`）与本地
+ * 模型服务必须直连。宿主 `applyHttpProxySettings` 只注入 `HTTP(S)_PROXY`、从不注入
+ * `NO_PROXY`，子进程不显式放行回环就会被 CONNECT-only 代理桥劫持（真机每次派单
+ * 405，见 `docs/incidents.md`）。
+ */
+const LOOPBACK_BYPASS_HOSTS = ["127.0.0.1", "localhost", "::1"] as const;
+
+/**
+ * 放行变量写两份大小写键：Node/undici 与各外部 CLI 的读取口径不同（curl 优先小写、
+ * Go 优先大写），只写一份必然有一侧读不到。
+ */
+const PROXY_BYPASS_KEYS = ["NO_PROXY", "no_proxy"] as const;
+
+/** 已有豁免值里还缺哪些回环主机（大小写不敏感；只看不改，用户值逐字节保留）。 */
+function missingBypassHosts(existing: string): string[] {
+  const entries = existing.split(",").map((entry) => entry.trim().toLowerCase());
+  return LOOPBACK_BYPASS_HOSTS.filter((host) => !entries.includes(host));
+}
+
+/**
+ * 拷贝环境并补上回环代理豁免：`NO_PROXY`/`no_proxy` 缺省写回环项本身，已有值只
+ * **追加**缺失项（显式值原样保留、已含项不重复追加、重复调用幂等）。不判定代理
+ * 是否已设——子进程可能在自身配置里配代理，豁免对无代理环境无害。
+ */
+export function withLoopbackBypass(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const copy = { ...env };
+  for (const key of PROXY_BYPASS_KEYS) {
+    const existing = copy[key];
+    if (existing === undefined || existing.trim().length === 0) {
+      copy[key] = LOOPBACK_BYPASS_HOSTS.join(",");
+      continue;
+    }
+    const missing = missingBypassHosts(existing);
+    if (missing.length > 0) copy[key] = `${existing},${missing.join(",")}`;
+  }
+  return copy;
+}
+
+/**
+ * Copies an environment, removes the three leader-mode keys and adds the
+ * loopback proxy bypass. Member child processes must not inherit the leader
+ * keys: agent-team would load in leader mode inside a member and bind its
+ * tooling to the parent run. Everything else (PATH, provider keys,
+ * credentials, proxy settings) is preserved.
  */
 export function stripLeaderEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const copy = { ...env };
+  const copy = withLoopbackBypass(env);
   delete copy[LEADER_ENV_FILE];
   delete copy[LEADER_ENV_NAME];
   delete copy[LEADER_ENV_RUNID];
@@ -65,11 +105,11 @@ export function stripLeaderEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
 }
 
 /**
- * 拷贝环境并删除全部 run 级键：3 个 leader 键 + 2 个 resume 谱系键
- * （WORKTREE_RUN_ID / MEMBER_MODELS）。leader 派生一个「新 run」时不能继承
- * 任何父进程的 run 绑定，因此这里比成员侧的 `stripLeaderEnv`（只剥 3 个
+ * 拷贝环境、删除全部 run 级键（3 个 leader 键 + 2 个 resume 谱系键
+ * WORKTREE_RUN_ID / MEMBER_MODELS）并补上回环代理豁免。leader 派生一个「新 run」时
+ * 不能继承任何父进程的 run 绑定，因此这里比成员侧的 `stripLeaderEnv`（只剥 3 个
  * leader 键、刻意保留 resume 谱系键）剥得更干净；其余环境（PATH、provider
- * key、凭据）全部继承，新 run 自己的键由调用方叠加。
+ * key、凭据、代理设置）全部继承，新 run 自己的键由调用方叠加。
  */
 export function stripRunScopedEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const copy = stripLeaderEnv(env);
