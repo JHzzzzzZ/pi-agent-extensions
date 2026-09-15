@@ -350,6 +350,159 @@ test("main：complete --note 原样进 notes——含全角括号、换行、超
   assert.deepEqual(readRepoData(root, "general-todo").entries[1].notes, []);
 });
 
+test("main：reopen 三来源回 open——清 branch/claimedAt/alignedAt，注记带源状态，其余字段不动", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "对齐中条目", "aligning", {
+          branch: "feat/a",
+          claimedAt: "2026-09-01T00:00:00.000Z",
+          tags: ["cli"],
+          dependsOn: ["other-todo#9"],
+          notes: ["历史注记"],
+          createdAt: "2026-08-01T00:00:00.000Z",
+        }),
+        entry(2, "已对齐条目", "aligned", {
+          branch: "feat/b",
+          claimedAt: "2026-09-01T00:00:00.000Z",
+          alignedAt: "2026-09-02T00:00:00.000Z",
+        }),
+        entry(3, "进行中条目", "processing", {
+          branch: "feat/c",
+          claimedAt: "2026-09-01T00:00:00.000Z",
+          alignedAt: "2026-09-02T00:00:00.000Z",
+        }),
+      ],
+    },
+    "other-todo": { version: 3, title: "t", entries: [entry(9, "被依赖条目", "done", { completedAt: "2026-09-03T00:00:00.000Z" })] },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+
+  assert.equal(main(["reopen", "--file", "general", "--match", "对齐中条目", "--note", "范围重估：先做最小形态"], deps), 0);
+  assert.match(out.join("\n"), /已撤销（已写入）：general · 对齐中条目/);
+  let data = readRepoData(root, "general-todo");
+  assert.equal(data.entries[0].status, "open");
+  assert.equal(data.entries[0].branch, null, "branch 引用清空");
+  assert.equal(data.entries[0].claimedAt, null, "claimedAt 清空");
+  assert.equal(data.entries[0].alignedAt, null, "alignedAt 清空");
+  assert.equal(data.entries[0].createdAt, "2026-08-01T00:00:00.000Z", "createdAt 保留");
+  assert.equal(data.entries[0].completedAt, null);
+  assert.deepEqual(data.entries[0].tags, ["cli"], "tags 保留");
+  assert.deepEqual(data.entries[0].dependsOn, ["other-todo#9"], "dependsOn 保留（撤销不动依赖语义）");
+  assert.deepEqual(
+    data.entries[0].notes,
+    ["历史注记", "撤销 2026-09-14：从 aligning 回到未领取；范围重估：先做最小形态"],
+    "历史注记保留 + 新注记一条（日期取 now() 的 UTC 日期、原因逐字接在 ； 后）",
+  );
+
+  out.length = 0;
+  assert.equal(main(["reopen", "--file", "general", "--match", "已对齐条目", "--note", "人工推翻对齐"], deps), 0);
+  data = readRepoData(root, "general-todo");
+  assert.equal(data.entries[1].status, "open");
+  assert.equal(data.entries[1].alignedAt, null);
+  assert.deepEqual(data.entries[1].notes, ["撤销 2026-09-14：从 aligned 回到未领取；人工推翻对齐"]);
+
+  out.length = 0;
+  assert.equal(main(["reopen", "--file", "general", "--match", "进行中条目"], deps), 0, "processing 无 --note 可撤销");
+  data = readRepoData(root, "general-todo");
+  assert.equal(data.entries[2].status, "open");
+  assert.deepEqual(data.entries[2].notes, ["撤销 2026-09-14：从 processing 回到未领取"], "无 --note 时注记只有前缀；源状态取 status 字段原值");
+});
+
+test("main：reopen 门与幂等——done 拒绝、note 门、0/多匹配 fail-closed、已是 open 字节不变", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "未领取条目", "open"),
+        entry(2, "完成条目", "done", { completedAt: "2026-09-03T00:00:00.000Z" }),
+        entry(3, "对齐中条目", "aligning", { branch: "feat/a", claimedAt: "2026-09-01T00:00:00.000Z" }),
+        entry(4, "已对齐条目", "aligned", { branch: "feat/b", alignedAt: "2026-09-02T00:00:00.000Z" }),
+        entry(5, "含子串条目", "processing"),
+        entry(6, "含子串条目二", "processing"),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+  const file = path.join(root, "todos", "general-todo.json");
+  const snapshot = JSON.stringify(readRepoData(root, "general-todo"));
+
+  assert.equal(main(["reopen", "--file", "general", "--match", "未领取条目"], deps), 0, "已是 open 幂等通过");
+  assert.match(out.join("\n"), /已撤销（状态未变）/);
+  assert.equal(JSON.stringify(readRepoData(root, "general-todo")), snapshot, "幂等不写盘");
+
+  out.length = 0;
+  assert.equal(main(["reopen", "--file", "general", "--match", "完成条目", "--note", "想撤销"], deps), 1);
+  assert.match(out.join("\n"), /ALREADY_DONE：条目已完成，撤销已完成条目请另条登记/);
+  assert.equal(readRepoData(root, "general-todo").entries[1].status, "done", "done 拒绝且不写盘");
+
+  for (const match of ["对齐中条目", "已对齐条目"]) {
+    out.length = 0;
+    assert.equal(main(["reopen", "--file", "general", "--match", match], deps), 1, `${match} 无 --note 被拒`);
+    assert.match(out.join("\n"), /NOTE_REQUIRED：从对齐阶段撤销必须带 --note 说明原因/);
+  }
+  assert.equal(JSON.stringify(readRepoData(root, "general-todo")), snapshot, "note 门失败不写盘");
+
+  out.length = 0;
+  assert.equal(main(["reopen", "--file", "general", "--match", "没有这个条目"], deps), 1);
+  assert.match(out.join("\n"), /NOT_FOUND：没有匹配条目/);
+  out.length = 0;
+  assert.equal(main(["reopen", "--file", "general", "--match", "含子串条目"], deps), 1);
+  assert.match(out.join("\n"), /AMBIGUOUS：匹配到多条，请缩小范围/);
+  assert.equal(JSON.stringify(readRepoData(root, "general-todo")), snapshot, "匹配失败不写盘");
+  assert.ok(fs.readFileSync(file, "utf8").endsWith("\n"), "文件仍是规范 JSON 形态（未被半写）");
+});
+
+test("main：reopen 归档对齐文档——规范路径腾空、重领必重写；无文档跳过；归档失败不写盘", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "有文档条目", "aligned", { branch: "feat/a", alignedAt: "2026-09-02T00:00:00.000Z" }),
+        entry(2, "无文档条目", "processing"),
+        entry(3, "归档冲突条目", "aligning", { branch: "feat/c" }),
+      ],
+    },
+  });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
+  const alignDir = path.join(root, "todos", "align");
+
+  writeAlignDoc(root, "general-todo", 1);
+  assert.equal(main(["reopen", "--file", "general", "--match", "有文档条目", "--note", "重估"], deps), 0);
+  assert.equal(fs.existsSync(path.join(alignDir, "general-todo#1.md")), false, "规范路径腾空");
+  const archived = path.join(alignDir, "general-todo#1.reopened-20260914T000000Z.md");
+  assert.equal(fs.existsSync(archived), true, "归档为 .reopened-<UTC 紧凑时间戳>.md");
+  assert.match(fs.readFileSync(archived, "utf8"), /general-todo#1/, "归档文件内容原样保留");
+  assert.match(out.join("\n"), /对齐文档已归档：todos\/align\/general-todo#1\.reopened-20260914T000000Z\.md/);
+
+  // 归档的意义：旧文档不能再零人工二次过门。
+  assert.equal(main(["claim", "--file", "general", "--match", "有文档条目", "--branch", "feat/a2"], deps), 0);
+  out.length = 0;
+  assert.equal(main(["align", "--file", "general", "--match", "有文档条目"], deps), 1);
+  assert.match(out.join("\n"), /ALIGN_DOC_MISSING：缺少对齐文档 todos\/align\/general-todo#1\.md/);
+
+  out.length = 0;
+  assert.equal(main(["reopen", "--file", "general", "--match", "无文档条目", "--note", "从未开工"], deps), 0, "无对齐文档跳过归档");
+  assert.doesNotMatch(out.join("\n"), /对齐文档已归档/);
+  assert.equal(readRepoData(root, "general-todo").entries[1].status, "open");
+
+  writeAlignDoc(root, "general-todo", 3);
+  fs.mkdirSync(path.join(alignDir, "general-todo#3.reopened-20260914T000000Z.md"), { recursive: true });
+  const snapshot = JSON.stringify(readRepoData(root, "general-todo"));
+  out.length = 0;
+  assert.equal(main(["reopen", "--file", "general", "--match", "归档冲突条目", "--note", "重估"], deps), 1);
+  assert.match(out.join("\n"), /ALIGN_ARCHIVE_FAILED：归档目标已存在 todos\/align\/general-todo#3\.reopened-20260914T000000Z\.md/);
+  assert.equal(JSON.stringify(readRepoData(root, "general-todo")), snapshot, "归档失败整体中止、JSON 零改动");
+  assert.equal(fs.existsSync(path.join(alignDir, "general-todo#3.md")), true, "原文档未被改名");
+});
+
 test("main：add --tag 原生标签字段 + list --tag 精确过滤", () => {
   const root = makeRepo({ "general-todo": undefined });
   const deps = { repoRoot: root, log: () => {}, now: () => "2026-09-12T00:00:00.000Z" };
@@ -923,11 +1076,11 @@ test("CLI E2E：仓库子目录 cwd 跑 summary（git 自动发现到仓库根�
   assert.match(res.stdout, /-todo/);
 });
 
-test("CLI E2E：--help 在非仓库 cwd 也退出 0 且含完整用法（migrate 替代 db，dep 是第九子命令）", () => {
+test("CLI E2E：--help 在非仓库 cwd 也退出 0 且含完整用法（migrate 替代 db，reopen 是第十子命令）", () => {
   const res = runCli(["--help"], os.tmpdir());
   assert.equal(res.status, 0);
   assert.match(res.stdout, /用法/);
-  for (const sub of ["summary", "list", "add", "claim", "align", "complete", "lint", "triage", "migrate", "dep"]) {
+  for (const sub of ["summary", "list", "add", "claim", "align", "complete", "reopen", "lint", "triage", "migrate", "dep"]) {
     assert.ok(res.stdout.includes(sub), `用法含子命令 ${sub}`);
   }
   assert.match(res.stdout, /--status open\|aligning\|aligned\|processing\|done/);
@@ -943,6 +1096,18 @@ test("CLI E2E：align 缺 --file / 缺 --match 均提示 + exit 1、stderr 恒�
   assert.equal(noFile.stderr, "");
 
   const noMatch = runCli(["align", "--file", "general"], os.tmpdir());
+  assert.equal(noMatch.status, 1);
+  assert.match(noMatch.stdout, /缺少 --match "子串"/);
+  assert.equal(noMatch.stderr, "");
+});
+
+test("CLI E2E：reopen 缺 --file / 缺 --match 均提示 + exit 1、stderr 恒空", () => {
+  const noFile = runCli(["reopen", "--match", "随便"], os.tmpdir());
+  assert.equal(noFile.status, 1);
+  assert.match(noFile.stdout, /缺少 --file <name>/);
+  assert.equal(noFile.stderr, "");
+
+  const noMatch = runCli(["reopen", "--file", "general"], os.tmpdir());
   assert.equal(noMatch.status, 1);
   assert.match(noMatch.stdout, /缺少 --match "子串"/);
   assert.equal(noMatch.stderr, "");
