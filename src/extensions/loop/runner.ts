@@ -20,8 +20,16 @@ import { MAX_BG_SUMMARY_LEN } from "./tasks.ts";
 /** SIGTERM 与 SIGKILL 之间的宽限期 */
 export const KILL_GRACE_MS = 5000;
 
-/** 单次后台运行的超时上限（超时 SIGTERM→SIGKILL） */
-export const BG_RUN_TIMEOUT_MS = 30 * 60 * 1000;
+/**
+ * 单次后台运行的超时上限（超时 SIGTERM→SIGKILL），3 小时。
+ *
+ * 为什么这么大：headless 子 pi 在 `agent_end` 会 auto-drain 自己派出的异步 subagent
+ * （pi-subagents `DEFAULT_AUTO_DRAIN_TIMEOUT_MS` = 30 分钟，从回合结束起算）。loop 的这个
+ * 上限从 spawn 起算、天然早 20~30 秒到点，所以取 30 分钟时派单类任务每轮都在子 agent
+ * 收尾前被杀：round 记 timeout，子 run 被 stale-run 误标 failed（2026-09-15 真机，见
+ * `docs/extensions/loop.md` 与 `todos/align/loop-todo#10.md`）。
+ */
+export const BG_RUN_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 
 export interface BgChildProcess {
   stdout: { on(event: "data", cb: (chunk: Buffer) => void): void };

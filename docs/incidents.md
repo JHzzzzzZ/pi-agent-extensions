@@ -169,6 +169,7 @@
 - 根因：宿主 `applyHttpProxySettings`（0.85.1 `dist/core/http-dispatcher.js:38`）只 `??=` 注入 `HTTP_PROXY`/`HTTPS_PROXY`，**从不注入 `NO_PROXY`**；v1.26.0 的 F1 只修好了「父进程 env 继承」——父进程里根本没这个变量，子进程继承到的仍是「只有代理、没有豁免」的事实。QA 验收时驱动 env 自带 `NO_PROXY=…,127.0.0.1`，F1 用例又只断言「有值就透传」，于是缺口被两端同时掩盖（本地默认环境与 QA 环境不等价）。
 - 处置（v1.30.0）：子进程 env 出口一律合成回环豁免（`dispatch.ts` `withLoopbackBypass`：`NO_PROXY`+`no_proxy` 双键、用户显式值只追加缺失项、去重、幂等），leader/pi 成员/外部 CLI 成员三条 spawn 路径一次覆盖；宿主侧不动（仓库边界），改为提上游 issue（草稿 `docs/pi-http-proxy-loopback-issue.md`）。
 - 教训：① **验收环境必须与被验收的用户环境同形**——驱动 env 里多出来的那个「方便设置」（这里是 `NO_PROXY`），往往正是用户环境缺失的东西；② **透传 ≠ 补齐**——「父进程有的能传下去」只证明链路通，不证明子进程拿到了它缺的变量，用例必须覆盖「缺失时应补齐什么」；③ 代理豁免是本地服务链路的隐性依赖，凡子进程会访问回环（本地中继/本地模型），出口就该显式放行，不能指望用户先配好。
+- 真机复验（2026-09-15，dev-laptop）：三步走通——① 对照组（干净 env：无 `NO_PROXY` + `httpProxy` 已设 + 回环 `ANTHROPIC_BASE_URL`）复现 `API Error: 405 CONNECT only`，外部 claude 成员 `CHILD_FAILED`，回环中继零命中；② 修复后同一场景成员回复 `VERIFY-OK`，请求直达回环中继（`withLoopbackBypass` 注入的 `NO_PROXY` 生效）；③ `httpProxy` 未设时行为不变。做法：本地回环 Anthropic 中继（透明反代到真实上游）+ `CLAUDE_CONFIG_DIR` 把 base URL 指回环 + 驱动 env 去掉 `NO_PROXY`（对照组与实验组唯一差异就是这个变量）。**副产品**：对照组第一次跑在修复前的代码上，原因是 pi 加载的是包缓存 clone 而非工作仓库（见 `AGENTS.md` 安装形态）——真机验收前先确认「pi 真正加载的是哪份代码」。
 
 ## 成员交付完成后仍被判 CHILD_FAILED：早轮错误粘住终态（agent-team v1.31.0，#47，真机 run-1789104779153）
 

@@ -1,6 +1,6 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ 775638d
+> last verified @ e59be87
 
 ## 职责与边界
 
@@ -41,7 +41,7 @@
 - **测试必须同时 mock `setTimeout` 与 Date.now**：test/index.test.ts 用 before/after 捕获节拍回调 + `fakeNow` 手动推进（BASE = 1_000_000_000_000），只 mock 其一会卡在真实时间上；`flush()` 用 installMocks 捕获的真实 setTimeout（模块体可能在 hook 之后才执行，勿在模块顶层捕）。这是仓库里除 run-timer 外又一个 timer 特例。
 - `getPiInvocation`（runner.ts）对 Bun 打包宿主有 `/$bunfs/root/` 虚拟路径特判——换 pi 入口解析策略时必须兼顾 bun 场景，否则打包产物里 spawn 不到 pi。
 - 后台任务无并发防护之外的重入：同一任务上一轮未跑完则本次触发直接跳过并告警（index.ts "上一轮后台仍在运行"）；删除/过期清除的任务只剩通知，无运行记录（tasks.ts 序列化处）。
-- 会话关闭杀子进程是 SIGTERM → 5s（`KILL_GRACE_MS`）→ SIGKILL，单轮超时 30 分钟（`BG_RUN_TIMEOUT_MS`）；宽限期与 PWR 对齐，改一处需检查 pwr 侧契约。
+- 会话关闭杀子进程是 SIGTERM → 5s（`KILL_GRACE_MS`）→ SIGKILL；单轮超时 **3 小时**（`BG_RUN_TIMEOUT_MS`，v1.7.0）。这个值必须**大于 headless 子 pi 在 `agent_end` 的 auto-drain 上限**（pi-subagents `DEFAULT_AUTO_DRAIN_TIMEOUT_MS` = 30 分钟）：两者各从自己的起点计时，loop 从 spawn 起算、天然早 20~30 秒到点，取 30 分钟时派单类任务每轮都在子 agent 收尾前被杀（round 记 timeout + 子 run 被 stale-run 误标 failed，真机见 `todos/align/loop-todo#10.md`）。宽限期与 PWR 对齐，改一处需检查 pwr 侧契约。
 - 模块级 dispose（index.ts 顶层变量）防 `/reload` 双实例计时器叠加——新增顶层可重入状态必须挂进同一 dispose 链，否则 reload 后 tick 双跑。
 
 ## 改动清单

@@ -421,7 +421,7 @@ e5f6g7h8  [后台] every 1h from 00:00 to 09:00  01:00:00  夜间巡检部署
 
 daily/window 调度与固定间隔共用同一套语义：错过的时间点不补跑（跨天/跨窗口只触发一次），暂停后恢复、会话恢复（hydrate）时错过的触发点直接重算到下一个未来时刻；旧格式快照（无 schedule 字段）零迁移兼容。
 
-**后台模式细节**（v1.3.0，`runner.ts`；v1.4.0 起支持模型指定）：子进程 cwd 取宿主会话目录，会话落在该项目的 sessions 目录（`pi -r` 选择器可见，`--name loop-<id>` 可辨识）；JSON 输出首行会话头 `{"type":"session","id":…}` 被捕获记入 `lastRun`；单次运行超时 30 分钟（SIGTERM→SIGKILL）；完成后通知结果摘要与恢复提示。模型经 `--model` 透传（`/loop:list` 的调度列以 `@provider/id` 标注），未知模型由子 pi 报错、任务标记 failed。前台模式行为完全不变。
+**后台模式细节**（v1.3.0，`runner.ts`；v1.4.0 起支持模型指定）：子进程 cwd 取宿主会话目录，会话落在该项目的 sessions 目录（`pi -r` 选择器可见，`--name loop-<id>` 可辨识）；JSON 输出首行会话头 `{"type":"session","id":…}` 被捕获记入 `lastRun`；单次运行超时 3 小时（SIGTERM→SIGKILL；须大于 headless auto-drain 的 30 分钟上限，理由见 `docs/extensions/loop.md`）；完成后通知结果摘要与恢复提示。模型经 `--model` 透传（`/loop:list` 的调度列以 `@provider/id` 标注），未知模型由子 pi 报错、任务标记 failed。前台模式行为完全不变。
 
 **agent 工具**（v1.1.0，v1.2.0 起支持新调度语法，v1.3.0 起支持 `mode: "foreground" | "background"`，v1.4.0 起 `loop_create` 支持可选 `model` 参数——仅 `mode="background"` 生效，前台带 model 返回类型化错误）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"、"后台每小时用便宜模型帮我检查一次部署"这类自然语言请求由 agent 自行建任务。
 

@@ -260,7 +260,12 @@ describe("findSessionFile", () => {
 
 describe("常量", () => {
   it("超时与宽限期默认值", () => {
-    assert.equal(BG_RUN_TIMEOUT_MS, 30 * 60 * 1000);
+    // 3 小时：必须大于 headless pi 在 agent_end 的 auto-drain 上限
+    // （pi-subagents `DEFAULT_AUTO_DRAIN_TIMEOUT_MS` = 30 分钟，从回合结束起算）。
+    // loop 的超时从 spawn 起算、天然比它早 20~30 秒到点：30 分钟曾导致派单类后台任务
+    // 每轮都在子 agent 收尾前被杀（round 记 timeout、子 run 被 stale-run 误标 failed）。
+    assert.equal(BG_RUN_TIMEOUT_MS, 3 * 60 * 60 * 1000);
+    assert.ok(BG_RUN_TIMEOUT_MS > 30 * 60 * 1000, "单轮上限必须大于 headless auto-drain 的 30 分钟上限");
   });
 });
 
