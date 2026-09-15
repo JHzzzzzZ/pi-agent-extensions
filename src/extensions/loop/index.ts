@@ -18,10 +18,15 @@
  * 自定义条目不进入 LLM 上下文。
  *
  * v1.3 后台模式（--bg / loop_create mode="background"）：到期不注入当前会话，
- * 而是拉起独立子 pi 进程执行（runner.ts：pi --mode json -p --name loop-<id>，
+ * 而是拉起独立子 pi 进程执行（runner.ts：pi --mode json -p --name loop-<id>-<HHMM>，
  * 不带 --no-session，会话落盘）；会话 id 从 JSON 输出头部捕获记入任务状态，
- * 用 pi --session <id> 可恢复后台对话记录。同一任务上一轮未跑完则本次跳过；
- * 会话关闭/重载时终止在途子进程并标记 interrupted。
+ * 用 pi --session <id> 可恢复后台对话记录。
+ *
+ * v1.8：同一任务的后台轮次允许重叠（不再「上一轮在跑就跳过」），不设并发上限。
+ * 轮次记录：任务内存态 runs 装本次会话全部轮次，快照只持久化运行中的轮次，
+ * 已结束轮次写 append-only 会话条目 loop-run-v1（不进 LLM 上下文），
+ * session_start 时回放重建——否则每次全量快照叠加全量轮次会让会话文件 O(n²) 膨胀。
+ * 会话关闭/重载时终止全部在途轮次并逐轮标记 interrupted。
  *
  * 计时器生命周期：session_start 启动（无论有无 UI——调度不能依赖界面）、
  * session_shutdown 清理；模块级 dispose 防 /reload 双实例叠加（同 run-timer）。
@@ -38,20 +43,27 @@ import {
   describeRecurrence,
   formatClock,
   formatCountdown,
+  formatRoundLabel,
   formatTaskLines,
   hydrateTasks,
+  mergeRuns,
+  parseBgRunEntry,
   pauseTask,
   pollDue,
   resumeTask,
   serializeTasks,
   MAX_BG_SUMMARY_LEN,
+  type BgRunRecord,
   type LoopTask,
 } from "./tasks.ts";
 
 const WIDGET_ID = "loop";
 const TICK_MS = 1000;
 const LOOP_TASKS_ENTRY = "loop-tasks-v1";
+const LOOP_RUN_ENTRY = "loop-run-v1";
 const LOOP_DUE_CUSTOM_TYPE = "loop-task-due";
+/** 同任务在途轮次达到此值时提示一次（纯可发现性：并发不设上限，但不该静默堆满） */
+const BG_CONCURRENCY_NOTICE = 3;
 
 const USAGE = [
   "用法：",
@@ -70,13 +82,25 @@ const USAGE = [
 
 /** 后台运行注入点：测试替换为假实现；默认拉起真实子 pi 进程（runner.ts） */
 export interface LoopBgOverrides {
-  runBg?: (opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal; model?: string }) => Promise<BgRunOutcome>;
+  runBg?: (opts: {
+    taskId: string;
+    prompt: string;
+    cwd?: string;
+    signal?: AbortSignal;
+    model?: string;
+    label?: string;
+    onSessionId?: (info: { sessionId: string }) => void;
+  }) => Promise<BgRunOutcome>;
 }
 
+/** v1.8：一轮后台运行的跟踪单元（key = runId，同一任务可并存多条） */
 interface BgEntry {
+  runId: string;
+  taskId: string;
   controller: AbortController;
-  startedAt: number;
   aborted: boolean;
+  /** 与任务 runs 里同一条记录共享引用：运行中补会话 id、结束时原地写终态 */
+  record: BgRunRecord;
 }
 
 let dispose: (() => void) | undefined;
@@ -88,13 +112,16 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
 
   const tasks: LoopTask[] = [];
   const bgEntries = new Map<string, BgEntry>();
-  const runBg = overrides?.runBg ?? ((opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal; model?: string }) => runBgAgent(opts));
+  /** 已在阈值上提示过的任务（回落到阈值以下重新武装，下次再穿越再提示） */
+  const concurrencyNoticed = new Set<string>();
+  const runBg = overrides?.runBg ?? ((opts: { taskId: string; prompt: string; cwd?: string; signal?: AbortSignal; model?: string; label?: string; onSessionId?: (info: { sessionId: string }) => void }) => runBgAgent(opts));
   let stopTicker: (() => void) | undefined;
   let savedCtx: ExtensionContext | undefined;
   /** 上次写入 widget 的纯文本指纹：tick 驱动下内容不变就跳过 setWidget。 */
   let lastWidgetLine: string | null = null;
 
   const genId = () => crypto.randomUUID().slice(0, 8);
+  const genRunId = () => crypto.randomUUID().slice(0, 8);
 
   function persist(): void {
     try {
@@ -139,7 +166,11 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
         const nextAt = Math.min(...active.map((t) => t.nextDueAt));
         line += ` · 下次 ${formatCountdown(nextAt - Date.now())}`;
       }
-      if (bgEntries.size > 0) line += ` · 后台运行 ${bgEntries.size}`;
+      if (bgEntries.size > 0) {
+        const rounds = bgEntries.size;
+        const taskCount = new Set([...bgEntries.values()].map((e) => e.taskId)).size;
+        line += ` · 后台运行 ${rounds} 轮（${taskCount} 个任务）`;
+      }
       if (line === lastWidgetLine) return; // 跨秒倒计时文本未变则跳过重绘
       lastWidgetLine = line;
       savedCtx.ui.setWidget(WIDGET_ID, [line]);
@@ -148,30 +179,46 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     }
   }
 
+  /** 轮次终态写 append-only 历史条目（失败不影响任务状态：快照仍装着运行中轮次） */
+  function appendRunEntry(taskId: string, record: BgRunRecord): void {
+    try {
+      pi.appendEntry(LOOP_RUN_ENTRY, { taskId, ...record });
+    } catch {
+      // 持久化失败绝不破坏会话
+    }
+  }
+
+  /** 同任务在途轮次计数 */
+  function runningRounds(taskId: string): number {
+    let n = 0;
+    for (const entry of bgEntries.values()) if (entry.taskId === taskId) n += 1;
+    return n;
+  }
+
+  /** 在途数回落就重新武装阈值提示 */
+  function rearmConcurrencyNotice(taskId: string): void {
+    if (runningRounds(taskId) < BG_CONCURRENCY_NOTICE) concurrencyNoticed.delete(taskId);
+  }
+
   function stopSession(): void {
     if (stopTicker) {
       stopTicker();
       stopTicker = undefined;
     }
     lastWidgetLine = null;
-    // v1.3：终止在途后台子进程，任务标记 interrupted（子进程的会话文件仍在，可 resume 查看）
+    // v1.8：终止全部在途轮次（可能同一任务多轮），逐轮写 interrupted 条目
+    // （子进程的会话文件仍在，可 pi --session 查看）
     if (bgEntries.size > 0) {
-      for (const [id, entry] of bgEntries) {
+      for (const entry of bgEntries.values()) {
         entry.aborted = true;
-        const live = tasks.find((t) => t.id === id);
-        if (live) {
-          live.lastRun = {
-            startedAt: entry.startedAt,
-            finishedAt: Date.now(),
-            status: "interrupted",
-            ...(live.lastRun?.sessionId ? { sessionId: live.lastRun.sessionId } : {}),
-            ...(live.lastRun?.sessionPath ? { sessionPath: live.lastRun.sessionPath } : {}),
-            summary: "会话结束，后台任务被终止",
-          };
-        }
+        entry.record.status = "interrupted";
+        entry.record.finishedAt = Date.now();
+        entry.record.summary ??= "会话结束，后台轮次被终止";
+        appendRunEntry(entry.taskId, entry.record);
         entry.controller.abort();
       }
       bgEntries.clear();
+      concurrencyNoticed.clear();
       persist();
     }
     if (savedCtx?.hasUI) {
@@ -205,67 +252,88 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     }
   }
 
-  function bgDoneMessage(id: string, outcome: BgRunOutcome): string {
+  function bgDoneMessage(id: string, outcome: BgRunOutcome, startedAt: number): string {
     const session = outcome.sessionId
       ? `会话 ${outcome.sessionId}（pi --session ${outcome.sessionId} 恢复查看）`
       : "（未捕获会话 id）";
+    const round = `${formatClock(startedAt)} 轮`;
     const summary = outcome.summary.length > 200 ? `${outcome.summary.slice(0, 199)}…` : outcome.summary;
-    if (outcome.status === "done") return `loop ${id} 后台完成 · ${session}\n结果：${summary}`;
-    if (outcome.status === "timeout") return `loop ${id} 后台运行超时被终止 · ${session}\n部分结果：${summary}`;
-    return `loop ${id} 后台运行失败（退出码 ${outcome.exitCode ?? "?"}）· ${session}\n输出：${summary}`;
+    if (outcome.status === "done") return `loop ${id} 后台完成（${round}）· ${session}\n结果：${summary}`;
+    if (outcome.status === "timeout") return `loop ${id} 后台运行超时被终止（${round}）· ${session}\n部分结果：${summary}`;
+    return `loop ${id} 后台运行失败（退出码 ${outcome.exitCode ?? "?"}，${round}）· ${session}\n输出：${summary}`;
   }
 
+  /**
+   * v1.8：并发不设上限——不再有「上一轮在跑就跳过」守卫，每轮独立 runId/AbortController。
+   * 启动通知只在 0→1（该任务此前无在途轮次）发；在途首次达 BG_CONCURRENCY_NOTICE 时提示一次。
+   */
   function startBgRun(t: LoopTask): void {
-    if (bgEntries.has(t.id)) {
-      notify(savedCtx, `loop ${t.id} 上一轮后台仍在运行，本次触发跳过`, "warning");
-      return;
-    }
     const startedAt = Date.now();
-    t.lastRun = { startedAt, status: "running" };
+    const record: BgRunRecord = { runId: genRunId(), startedAt, status: "running" };
+    (t.runs ??= []).push(record);
     persist();
-    const entry: BgEntry = { controller: new AbortController(), startedAt, aborted: false };
-    bgEntries.set(t.id, entry);
+    const entry: BgEntry = { runId: record.runId, taskId: t.id, controller: new AbortController(), aborted: false, record };
+    bgEntries.set(record.runId, entry);
     refreshWidget();
-    notify(savedCtx, `loop ${t.id} 已转后台执行，完成后通知（会话可用 pi --session 恢复查看）`);
+
+    const running = runningRounds(t.id);
+    if (running === 1) {
+      notify(savedCtx, `loop ${t.id} 已转后台执行，完成后通知（会话可用 pi --session 恢复查看）`);
+    } else if (running >= BG_CONCURRENCY_NOTICE && !concurrencyNoticed.has(t.id)) {
+      concurrencyNoticed.add(t.id);
+      notify(savedCtx, `loop ${t.id} 已有 ${running} 轮后台在跑（并发不受限，单轮上限 3 小时）`);
+    }
+
     // v1.4 模型指定必须从任务透传：丢了它就等于 --bg --model 形同虚设（子 pi 会落回默认模型）
-    runBg({ taskId: t.id, prompt: t.task, cwd: safeCwd(), signal: entry.controller.signal, model: t.model })
-      .then((outcome) => finishBgRun(t.id, entry, outcome))
-      .catch((err) => {
-        bgEntries.delete(t.id);
-        const live = tasks.find((x) => x.id === t.id);
-        if (live && !entry.aborted) {
-          live.lastRun = {
-            startedAt: entry.startedAt,
-            finishedAt: Date.now(),
-            status: "failed",
-            summary: String(err).slice(0, MAX_BG_SUMMARY_LEN),
-          };
-          persist();
-        }
-        if (!entry.aborted) {
-          notify(savedCtx, `loop ${t.id} 后台运行异常：${err instanceof Error ? err.message : String(err)}`, "error");
-        }
-      });
+    runBg({
+      taskId: t.id,
+      prompt: t.task,
+      cwd: safeCwd(),
+      signal: entry.controller.signal,
+      model: t.model,
+      label: formatRoundLabel(startedAt),
+      onSessionId: ({ sessionId }) => {
+        // 运行中就能落盘会话 id：/loop:list 的“运行中”行要能 resume
+        if (entry.aborted || record.sessionId === sessionId) return;
+        record.sessionId = sessionId;
+        persist();
+        refreshWidget();
+      },
+    })
+      .then((outcome) => finishBgRun(entry, outcome))
+      .catch((err) => failBgRun(entry, err));
   }
 
-  function finishBgRun(id: string, entry: BgEntry, outcome: BgRunOutcome): void {
-    bgEntries.delete(id);
-    const live = tasks.find((x) => x.id === id);
-    // aborted 的记录已由 stopSession 写为 interrupted；被删除/过期清除的任务只剩通知
-    if (live && !entry.aborted) {
-      live.lastRun = {
-        startedAt: entry.startedAt,
-        finishedAt: Date.now(),
-        status: outcome.status,
-        ...(outcome.sessionId ? { sessionId: outcome.sessionId } : {}),
-        ...(outcome.sessionPath ? { sessionPath: outcome.sessionPath } : {}),
-        summary: outcome.summary,
-      };
-      persist();
-      refreshWidget();
-    }
+  function finishBgRun(entry: BgEntry, outcome: BgRunOutcome): void {
+    bgEntries.delete(entry.runId);
+    rearmConcurrencyNotice(entry.taskId);
+    // aborted 的轮次已由 stopSession 写成 interrupted 并入了条目，完成回调不再覆盖
     if (entry.aborted) return;
-    notify(savedCtx, bgDoneMessage(id, outcome), outcome.status === "done" ? "info" : "warning");
+    const record = entry.record;
+    record.status = outcome.status;
+    record.finishedAt = Date.now();
+    if (outcome.sessionId) record.sessionId = outcome.sessionId;
+    if (outcome.sessionPath) record.sessionPath = outcome.sessionPath;
+    record.summary = outcome.summary;
+    appendRunEntry(entry.taskId, record);
+    // 任务可能已被删除/过期：只写历史条目与通知，绝不复活任务
+    if (tasks.some((x) => x.id === entry.taskId)) persist();
+    refreshWidget();
+    notify(savedCtx, bgDoneMessage(entry.taskId, outcome, record.startedAt), outcome.status === "done" ? "info" : "warning");
+  }
+
+  function failBgRun(entry: BgEntry, err: unknown): void {
+    bgEntries.delete(entry.runId);
+    rearmConcurrencyNotice(entry.taskId);
+    if (entry.aborted) return;
+    const record = entry.record;
+    record.status = "failed";
+    record.finishedAt = Date.now();
+    record.summary = String(err).slice(0, MAX_BG_SUMMARY_LEN);
+    appendRunEntry(entry.taskId, record);
+    if (tasks.some((x) => x.id === entry.taskId)) persist();
+    refreshWidget();
+    notify(savedCtx, `loop ${entry.taskId} 后台运行异常：${err instanceof Error ? err.message : String(err)}`, "error");
   }
 
   function tick(): void {
@@ -463,12 +531,24 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     stopSession();
     savedCtx = ctx;
 
-    // 恢复会话条目：取最后一条快照（旧快照被新快照覆盖）
+    // 恢复会话条目：取最后一条任务快照（旧快照被新快照覆盖）+ 回放全部轮次条目
     let snapshot: unknown;
+    const historyByTask = new Map<string, BgRunRecord[]>();
     try {
       for (const entry of ctx.sessionManager.getEntries()) {
         const e = entry as { type?: string; customType?: string; data?: unknown };
-        if (e.type === "custom" && e.customType === LOOP_TASKS_ENTRY) snapshot = e.data;
+        if (e.type !== "custom") continue;
+        if (e.customType === LOOP_TASKS_ENTRY) {
+          snapshot = e.data;
+          continue;
+        }
+        if (e.customType !== LOOP_RUN_ENTRY) continue;
+        const parsed = parseBgRunEntry(e.data);
+        if (!parsed) continue;
+        const { taskId, ...record } = parsed;
+        const list = historyByTask.get(taskId) ?? [];
+        list.push(record);
+        historyByTask.set(taskId, list);
       }
     } catch {
       snapshot = undefined;
@@ -476,7 +556,14 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     tasks.length = 0;
     tasks.push(...hydrateTasks(snapshot, Date.now()));
 
-    // hydrate 剔除了过期/失效任务时，把清洗后的快照写回
+    // 快照里恢复出的轮次（旧 lastRun / 宿主中途退出留下的在途轮次）先补写为条目，否则重启即丢
+    for (const t of tasks) {
+      const restored = t.runs ?? [];
+      t.runs = mergeRuns(historyByTask.get(t.id) ?? [], restored);
+      for (const record of restored) appendRunEntry(t.id, record);
+    }
+
+    // hydrate 剔除过期/失效任务、快照形态回写时，把清洗后的快照写回
     if (snapshot !== undefined && JSON.stringify(snapshot) !== JSON.stringify(serializeTasks(tasks))) {
       persist();
     }
