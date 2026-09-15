@@ -68,6 +68,12 @@ export interface ChatCoordinatorDeps {
    * 不可用时返回 false，提交回退到队列语义。
    */
   steerLeader?: (runId: string, message: string) => boolean;
+  /**
+   * 转录写入端口（#56 用户输入可见）：`user` = 用户输入原文（提交时刻落，
+   * 目标 actor + leader 各一条）；`system` = 排队条目的结局（已派出 / 未派出）。
+   * 宿主实现写 FileTranscriptSink；缺失即不落记录（纯逻辑测试 / 降级）。
+   */
+  appendEntry?: (runId: string, actor: string, kind: "user" | "system", text: string) => void;
 }
 
 /**
@@ -103,10 +109,27 @@ export function transcriptContextTail(entries: TranscriptEntry[], maxBytes: numb
 
 /**
  * 插话文本（steer 通道）：带 ``【用户消息·插话】`` 标记，让 leader 能区分
- * 这是会话查看器里的即时插话，不是新任务派单。
+ * 这是会话查看器里的即时插话，不是新任务派单。**只在 wire 上**——落转录的
+ * 是用户原文（`user` 条目），不带这个标记。
  */
 export function buildSteerMessage(message: string): string {
   return `【用户消息·插话】用户在会话查看器里插话，请在不中断当前任务的前提下尽快回应：\n${message}`;
+}
+
+/** 排队条目结局文案：派出成功（带新 runId）/ 三种未派出场景（落 `system` 行）。 */
+function queuedDispatchedText(runId: string): string {
+  return `已派出（新 run ${runId}）`;
+}
+const QUEUE_DROPPED_BY_STOP = "未派出（run 已停止）";
+const QUEUE_DROPPED_BY_CLEAR = "未派出（队列已清空）";
+const QUEUE_DROPPED_BY_FAILURE = "未派出（派出失败）";
+
+/**
+ * 用户输入落转录的 actor 集合：目标 actor + leader 各一条（消息就是交给它
+ * 处理的；目标即 leader 时只落一条，不重复）。
+ */
+function userEntryActors(actor: string): string[] {
+  return actor === LEADER_ACTOR ? [LEADER_ACTOR] : [actor, LEADER_ACTOR];
 }
 
 /**
@@ -131,12 +154,19 @@ export class ChatCoordinator {
    * 提交一条消息：目标是 leader 且 run 运行中、steer 通道可用 → 直接插话
    * （RPC steer，不打断任务、不排队）；否则 run 运行中入队；run 空闲则立即
    * 派单。先入队再判定，run 恰在提交间隙落定时走本路径立即派出，不滞留。
+   *
+   * 两条通道都在**提交时刻**把用户原文落转录（steer / 排队 / 立即派单同
+   * 口径）：这是「我发了什么」的唯一真值，排队中不建第二个事实源（队列本
+   * 身不落盘），结局（已派出/未派出）等派出或丢弃时再补 `system` 行。
    */
   submit(session: ChatSession, target: ChatTarget, message: string): ChatSubmitOutcome {
     this.session = session;
-    if (target.isLeader && this.deps.isRunning() && this.deps.steerLeader?.(target.runId, buildSteerMessage(message))) {
-      return { kind: "steered" };
-    }
+    const steered =
+      target.isLeader &&
+      this.deps.isRunning() &&
+      (this.deps.steerLeader?.(target.runId, buildSteerMessage(message)) ?? false);
+    this.recordUserInput(target, message);
+    if (steered) return { kind: "steered" };
     this.queue.push({ runId: target.runId, targetLabel: target.label, message });
     if (this.deps.isRunning()) return { kind: "queued", pending: this.queue.length };
     return this.dispatchNext(session);
@@ -152,11 +182,11 @@ export class ChatCoordinator {
     if (this.queue.length === 0) return;
     const session = this.session;
     if (status !== "completed") {
-      const before = this.queue.length;
+      const dropped = this.queue.filter((entry) => entry.runId === runId);
       this.queue = this.queue.filter((entry) => entry.runId !== runId);
-      const dropped = before - this.queue.length;
-      if (dropped > 0) {
-        session?.notify(`run ${runId} ${status}（未完成）：已丢弃排队的 ${dropped} 条 viewer 对话消息`, "warning");
+      if (dropped.length > 0) {
+        for (const entry of dropped) this.recordOutcome(entry, QUEUE_DROPPED_BY_STOP);
+        session?.notify(`run ${runId} ${status}（未完成）：已丢弃排队的 ${dropped.length} 条 viewer 对话消息`, "warning");
       }
       return;
     }
@@ -175,16 +205,35 @@ export class ChatCoordinator {
 
   /** 丢弃属于该 run 的排队条目，返回丢弃条数（定向停止路径）。 */
   clearRun(runId: string): number {
-    const before = this.queue.length;
+    const dropped = this.queue.filter((entry) => entry.runId === runId);
     this.queue = this.queue.filter((entry) => entry.runId !== runId);
-    return before - this.queue.length;
+    for (const entry of dropped) this.recordOutcome(entry, QUEUE_DROPPED_BY_STOP);
+    return dropped.length;
   }
 
   /** 显式停止/清除时丢弃整个队列，返回丢弃条数（宿主提示用）。 */
   clear(): number {
     const dropped = this.queue.length;
-    this.queue = [];
+    this.dropAll(QUEUE_DROPPED_BY_CLEAR);
     return dropped;
+  }
+
+  /** 用户原文落转录：目标 actor + leader 各一条（提交时刻调用一次）。 */
+  private recordUserInput(target: ChatTarget, message: string): void {
+    for (const actor of userEntryActors(target.actor)) this.deps.appendEntry?.(target.runId, actor, "user", message);
+  }
+
+  /** 排队条目结局落转录（与提交记录的 actor 集合对称）。 */
+  private recordOutcome(entry: ChatMessage, text: string): void {
+    const { actor } = chatTargetForLabel(entry.targetLabel, entry.runId);
+    for (const target of userEntryActors(actor)) this.deps.appendEntry?.(entry.runId, target, "system", text);
+  }
+
+  /** 清空队列并把被丢弃条目的结局落转录。 */
+  private dropAll(text: string): void {
+    const dropped = this.queue;
+    this.queue = [];
+    for (const entry of dropped) this.recordOutcome(entry, text);
   }
 
   /** 派出队首一条；任何失败都清空队列（简单一致，失败经 notify 明示）。 */
@@ -192,18 +241,20 @@ export class ChatCoordinator {
     const entry = this.queue.shift();
     if (!entry) return { kind: "queued", pending: 0 };
     const team = this.deps.resolveTeam(session.teamName);
-    if (!team.ok) {
-      this.queue = [];
-      return { kind: "rejected", message: team.message };
-    }
+    if (!team.ok) return this.rejectDispatch(entry, team.message);
     const target = chatTargetForLabel(entry.targetLabel, entry.runId);
     const task = buildChatTask(target, entry.message, this.deps.contextTail(target.runId, target.actor));
     const started = this.deps.startRun(session.ctx, team.value, task);
-    if (!started.ok) {
-      this.queue = [];
-      return { kind: "rejected", message: started.message };
-    }
+    if (!started.ok) return this.rejectDispatch(entry, started.message);
+    this.recordOutcome(entry, queuedDispatchedText(started.runId));
     return { kind: "started", runId: started.runId };
+  }
+
+  /** 派出失败：队首与余下条目一并丢弃，各自落一条「未派出」结局行。 */
+  private rejectDispatch(entry: ChatMessage, message: string): ChatSubmitOutcome {
+    this.recordOutcome(entry, QUEUE_DROPPED_BY_FAILURE);
+    this.dropAll(QUEUE_DROPPED_BY_FAILURE);
+    return { kind: "rejected", message };
   }
 }
 

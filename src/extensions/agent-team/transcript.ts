@@ -7,7 +7,9 @@
  * cockpit (main session) streams the leader's own activity there. The
  * full-screen viewer (`/team:view`) and the `team_transcript` tool read
  * these files back — the same run-artifacts pattern pi-subagents uses for
- * its fleet inspector.
+ * its fleet inspector. The cockpit also records the user's own viewer
+ * messages as `user` entries (raw input text, written at submit time) so
+ * both readers can re-show what the user typed (#56).
  *
  * Writes are best-effort and exception-isolated: a transcript failure never
  * breaks a run (mirrors session.ts persistence rules). Files are capped so
@@ -22,7 +24,16 @@ import { truncateUtf8 } from "./types.ts";
 export const LEADER_ACTOR = "_leader";
 
 /** Kinds of transcript entries (viewer renders each differently). */
-export const TRANSCRIPT_ENTRY_KINDS = ["task", "assistant", "tool", "error", "system", "question", "answer"] as const;
+export const TRANSCRIPT_ENTRY_KINDS = [
+  "task",
+  "user",
+  "assistant",
+  "tool",
+  "error",
+  "system",
+  "question",
+  "answer",
+] as const;
 export type TranscriptEntryKind = (typeof TRANSCRIPT_ENTRY_KINDS)[number];
 
 /** One bounded transcript line inside a run artifact file. */

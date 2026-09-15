@@ -108,6 +108,7 @@ function fakeDeps(overrides: {
   const starts: FakeStartRecord[] = [];
   const notes: Array<{ text: string; level: string }> = [];
   const steers: Array<{ runId: string; message: string }> = [];
+  const appends: Array<{ runId: string; actor: string; kind: string; text: string }> = [];
   const deps = {
     resolveTeam: (name: string) =>
       overrides.team ?? { ok: true as const, value: fixtureTeam({ name }) },
@@ -118,6 +119,9 @@ function fakeDeps(overrides: {
       return { ok: true as const, runId: `run-${starts.length}` };
     },
     contextTail: (_runId: string, _actor: string) => overrides.tail ?? "[assistant] 旧上下文",
+    appendEntry: (runId: string, actor: string, kind: "user" | "system", text: string) => {
+      appends.push({ runId, actor, kind, text });
+    },
     ...(overrides.steer
       ? {
           steerLeader: (runId: string, message: string) => {
@@ -127,7 +131,7 @@ function fakeDeps(overrides: {
         }
       : {}),
   };
-  return { deps, starts, notes, steers };
+  return { deps, starts, notes, steers, appends };
 }
 
 const leaderTarget = { actor: LEADER_ACTOR, label: "leader", isLeader: true, runId: "run-1" };
@@ -324,6 +328,99 @@ test("submit：成员目标 — task 指示 leader 转派给该成员", () => {
   chat.submit(session(fake), memberTarget, "跑一下测试");
   assert.match(fake.starts[0]?.task ?? "", /frontend/);
   assert.match(fake.starts[0]?.task ?? "", /请转派/);
+});
+
+// ---------------------------------------------------------------------------
+// 用户输入落转录（#56）：提交时刻记录原文 + 排队结局 system 行
+// ---------------------------------------------------------------------------
+
+test("submit：steer 即时落转录 —— 目标 actor（leader）一条 user 原文，不带 wire 包装", () => {
+  const fake = fakeDeps({ running: true, steer: () => true });
+  const chat = new ChatCoordinator(fake.deps);
+  assert.deepEqual(chat.submit(session(fake), leaderTarget, "数数途中打个招呼"), { kind: "steered" });
+  assert.deepEqual(fake.appends, [
+    { runId: "run-1", actor: LEADER_ACTOR, kind: "user", text: "数数途中打个招呼" },
+  ]);
+  assert.doesNotMatch(fake.appends[0]?.text ?? "", /【用户消息/, "落的是用户写的话，不是 wire 标记");
+});
+
+test("submit：steer 失败回退队列 —— user 记录恰一条（不回退重复落）", () => {
+  const fake = fakeDeps({ running: true, steer: () => false });
+  const chat = new ChatCoordinator(fake.deps);
+  assert.deepEqual(chat.submit(session(fake), leaderTarget, "hello"), { kind: "queued", pending: 1 });
+  assert.deepEqual(fake.appends, [{ runId: "run-1", actor: LEADER_ACTOR, kind: "user", text: "hello" }]);
+});
+
+test("submit：排队消息提交即落转录（目标 actor + leader 各一条），派出后补「已派出」system 行", () => {
+  const fake = fakeDeps({ running: true });
+  const chat = new ChatCoordinator(fake.deps);
+  assert.deepEqual(
+    chat.submit(session(fake), { ...memberTarget, runId: "run-a" }, "跑一下测试"),
+    { kind: "queued", pending: 1 },
+  );
+  assert.deepEqual(fake.appends, [
+    { runId: "run-a", actor: "frontend", kind: "user", text: "跑一下测试" },
+    { runId: "run-a", actor: LEADER_ACTOR, kind: "user", text: "跑一下测试" },
+  ]);
+
+  fake.deps.isRunning = () => false;
+  chat.onRunFinalized("run-a", "completed");
+  assert.equal(fake.starts.length, 1);
+  assert.deepEqual(fake.appends.slice(2), [
+    { runId: "run-a", actor: "frontend", kind: "system", text: "已派出（新 run run-1）" },
+    { runId: "run-a", actor: LEADER_ACTOR, kind: "system", text: "已派出（新 run run-1）" },
+  ]);
+  assert.ok(
+    fake.appends.some((a) => a.kind === "user" && a.text === "跑一下测试"),
+    "派出后提交记录仍留在转录里（append-only）",
+  );
+});
+
+test("submit：run 未运行（立即派单）同样先落 user 原文再落「已派出」", () => {
+  const fake = fakeDeps();
+  const chat = new ChatCoordinator(fake.deps);
+  assert.equal(chat.submit(session(fake), { ...memberTarget, runId: "run-a" }, "继续做").kind, "started");
+  assert.deepEqual(
+    fake.appends.map((a) => `${a.actor}:${a.kind}:${a.text}`),
+    [
+      "frontend:user:继续做",
+      "_leader:user:继续做",
+      "frontend:system:已派出（新 run run-1）",
+      "_leader:system:已派出（新 run run-1）",
+    ],
+  );
+});
+
+test("onRunFinalized：failed/aborted 丢弃排队条目 → 补「未派出（run 已停止）」system 行", () => {
+  const fake = fakeDeps({ running: true });
+  const chat = new ChatCoordinator(fake.deps);
+  chat.submit(session(fake), { ...memberTarget, runId: "run-a" }, "别发了");
+  const before = fake.appends.length;
+  fake.deps.isRunning = () => false;
+  chat.onRunFinalized("run-a", "aborted");
+  assert.equal(fake.starts.length, 0, "中止后不续发");
+  assert.deepEqual(fake.appends.slice(before), [
+    { runId: "run-a", actor: "frontend", kind: "system", text: "未派出（run 已停止）" },
+    { runId: "run-a", actor: LEADER_ACTOR, kind: "system", text: "未派出（run 已停止）" },
+  ]);
+});
+
+test("clearRun/clear 丢弃排队条目时同样落「未派出」system 行", () => {
+  const fake = fakeDeps({ running: true });
+  const chat = new ChatCoordinator(fake.deps);
+  chat.submit(session(fake), { ...leaderTarget, runId: "run-a" }, "run-a 的消息");
+  chat.submit(session(fake), { ...leaderTarget, runId: "run-b" }, "run-b 的消息");
+
+  assert.equal(chat.clearRun("run-a"), 1);
+  assert.deepEqual(fake.appends.filter((a) => a.kind === "system"), [
+    { runId: "run-a", actor: LEADER_ACTOR, kind: "system", text: "未派出（run 已停止）" },
+  ]);
+
+  assert.equal(chat.clear(), 1);
+  assert.deepEqual(fake.appends.filter((a) => a.kind === "system"), [
+    { runId: "run-a", actor: LEADER_ACTOR, kind: "system", text: "未派出（run 已停止）" },
+    { runId: "run-b", actor: LEADER_ACTOR, kind: "system", text: "未派出（队列已清空）" },
+  ]);
 });
 
 test("ChatMessage 队列条目只存 runId/targetLabel 与 message（不缓存上下文）", () => {

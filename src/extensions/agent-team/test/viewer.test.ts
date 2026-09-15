@@ -195,6 +195,57 @@ test("blockLines renders question/answer with distinct labels", () => {
   assert.equal(noTs[0], "❓ 提问");
 });
 
+test("buildBlocks keeps user entries as their own block（原位插入 body 流）", () => {
+  const blocks = buildBlocks(
+    [
+      entry("task", "修复登录 bug"),
+      entry("assistant", "先拆解"),
+      entry("user", "那先不要动数据库"),
+      entry("assistant", "好的，改前端"),
+    ],
+    true,
+  );
+  assert.deepEqual(blocks.map((b) => b.kind), ["task", "assistant", "user", "assistant"]);
+  const user = blocks[2];
+  assert.ok(user.kind === "user");
+  assert.equal(user.text, "那先不要动数据库");
+  assert.equal(user.ts, "12:34:56", "按条目 ts 展示时间");
+});
+
+test("blockLines renders a user block as accent label + full-width userMessageBg body", () => {
+  const styled = {
+    ...plainStyles(),
+    accent: (text: string): string => `<a>${text}</a>`,
+    bubble: (text: string): string => `<bg>${text}</bg>`,
+  };
+  const lines = blockLines({ kind: "user", text: "把标题改短一点", ts: "12:34:56" }, 40, styled);
+  assert.deepEqual(lines, ["<a>▌用户 · 12:34:56</a>", `<bg>${padLine("把标题改短一点", 40)}</bg>`]);
+
+  // 多行正文：每行都补齐到整宽并包背景（亮块连续，不参差）。
+  const wrapped = blockLines({ kind: "user", text: "第一行\n第二行", ts: "" }, 12, styled);
+  assert.equal(wrapped[0], "<a>▌用户</a>", "ts 缺省时省略时间段");
+  assert.deepEqual(wrapped.slice(1), [`<bg>${padLine("第一行", 12)}</bg>`, `<bg>${padLine("第二行", 12)}</bg>`]);
+
+  // 无背景样式降级（themeStyles 取不到色名）时仍然可读。
+  const plain = blockLines({ kind: "user", text: "插话", ts: "12:34:56" }, 20, styles);
+  assert.equal(plain[0], "▌用户 · 12:34:56");
+  assert.equal(visibleWidth(plain[1] ?? ""), 20, "正文整行按右栏宽补齐");
+});
+
+test("formatTranscriptText：user 条目带 [user] 前缀（正文可复查）", () => {
+  const data = viewerData({
+    entries: new Map<string, TranscriptEntry[]>([
+      [
+        "_leader",
+        [entry("task", "修复登录 bug"), entry("user", "改成夜间模式", "2026-09-06T12:35:00.000Z"), entry("assistant", "好的")],
+      ],
+    ]),
+  });
+  const text = formatTranscriptText(data, "_leader", { styles });
+  assert.match(text, /\[user\] 12:35:00\n改成夜间模式/, "user 条目带 [user] 前缀 + 原文");
+  assert.match(text, /▸ assistant · 12:34:56/, "既有条目输出格式不变");
+});
+
 test("buildBlocks hides tool rows when toggled off and strips legacy icon prefixes", () => {
   const hidden = buildBlocks([entry("task", "t"), entry("tool", "▶ read x")], false);
   assert.deepEqual(hidden.map((b) => b.kind), ["task"]);

@@ -642,6 +642,16 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     // run 运行中且目标是 leader：RPC steer 定向插话（不打断任务）；失败或
     // 目标是成员时回退到队列/派单语义（chat.ts）。
     steerLeader: (runId, message) => state.coordinator.steerLeader(runId, message),
+    // 用户输入原文 + 排队条目的结局落 run 转录（#56）：viewer / team_transcript
+    // 都读同一批 JSONL，写完 750ms 内即可见；best-effort，写失败绝不影响会话。
+    appendEntry: (runId, actor, kind, text) => {
+      if (!runId) return;
+      try {
+        new FileTranscriptSink(transcriptRoot(), runId).append(actor, kind, text);
+      } catch {
+        /* transcript failures never break the session */
+      }
+    },
   });
 
   /**

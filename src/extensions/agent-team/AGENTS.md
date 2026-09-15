@@ -13,6 +13,7 @@
 | leader 提问（人工澄清） | leader 侧 `ask.ts` `askLeaderQuestion`（team_ask 工具）；cockpit 侧 `AskChannel` + `index.ts` `askPortFrom(ctx)` 宿主对话框；RPC 协议 = pi stdout `extension_ui_request` ↔ stdin `extension_ui_response` |
 | 续跑/换模型 | `resume.ts`（父 status/会话镜像/cwd/override 纯函数 + `restoreWorktree` 在 `worktree.ts`）+ `cockpit.ts` `start({resume})`（`--session <父文件>` 原地续写 + 父 worktree 恢复）+ `team_resume` 工具//`/team:resume`；leader 会话落盘 `<runsRoot>/<runId>/session/`（v1.21.0） |
 | 停止/终态 | `cockpit.ts` `TeamRunCoordinator.stop()`（同步 abort）/`stopAndSettle()`（有界等待落定返回终态记录）+ `team_stop` 工具（runId 可选三态：恰 1 活跃停它 / 0 活跃提示 / ≥2 活跃 `RUN_ID_REQUIRED`；aborted 记录补全 roster 成员） |
+| viewer 发消息 / 用户输入可见 | `chat.ts`（task 模板 + FIFO 队列 + 链式派出 + `appendEntry` 端口：提交时刻落 `user` 原文到目标 actor + leader、排队条目结局补 `system` 行）+ `index.ts` 接线（`FileTranscriptSink` best-effort）+ `transcript.ts` `TRANSCRIPT_ENTRY_KINDS`（含 `user`）+ `viewer.ts` `blockLines`（`▌用户 · <ts>` + `userMessageBg` 整行；`team_transcript` 转储带 `[user]`） |
 | 派发/并发上限 | `dispatch.ts`：每 dispatch ≤8 任务，8 并发成员 |
 | 子进程复用 | `runner.ts`（子 pi JSON 模式，`team-tmp://` 物化，SIGTERM→SIGKILL） |
 | 子进程 env / 工具面 | 成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`，exclude 优先于 `--tools`） |
@@ -45,7 +46,7 @@
 
 ## COMMANDS
 ```bash
-cd src/extensions/agent-team && npm install && npm test   # 564 测试（node --test test/*.test.ts）
+cd src/extensions/agent-team && npm install && npm test   # 643 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```
