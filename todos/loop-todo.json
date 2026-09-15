@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "title": "loop-todo TODO",
   "entries": [
     {
@@ -8,12 +8,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e：loop 的 1s 调度 ticker 改走 `aligned-ticker.ts`（对齐墙钟秒边界、自校正），widget 倒计时文本指纹未变时跳过 `setWidget`；契约 `docs/cross/status-bar.md`；loop 192 测试 + typecheck 绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -21,12 +23,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/loop-bg-model：语法 `/loop --bg --model <provider/id> <创建形态>`；`/loop list` 调度列以 `@provider/id` 标注；未知模型由子 pi 报错、任务标记 failed，loop 不做预检；13 个新测试，全量 182 绿 + typecheck 绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -34,10 +38,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
@@ -45,10 +51,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
@@ -56,12 +64,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ merge a03e525：子命令式为全仓统一基准，范围=全部命令面，直接替换不留别名。loop 已是子命令式，本插件代码不动仅文档口径同步；loop 182 测试回归绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 6,
@@ -69,12 +79,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：loop v1.6.0——裸 `/loop` 只管创建/用法（parseLoopCommand 收敛为 usage/create），五个管理命令独立静态注册、各自校验 id；旧管理词只提示改名；getArgumentCompletions 删除管理词。193 测试 + typecheck 绿；真实 pi loader 冒烟通过"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 7,
@@ -82,12 +94,14 @@
       "status": "processing",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ route A：材料已备，待提交上游"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 8,
@@ -95,10 +109,44 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 9,
+      "text": "loop 后台模式（mode=background / /loop --bg）允许同一任务重叠运行（用户 2026-09-15 提出）：现状为硬性跳过——startBgRun 用 bgEntries.has(t.id) 守卫，同一任务上一轮后台子进程未结束时本次触发只发一条 warning「上一轮后台仍在运行，本次触发跳过」（src/extensions/loop/index.ts:220；docs/extensions/loop.md:43 已把该跳过登记为不变量）。后果：单轮耗时 > 间隔时（如 15m/30m 巡检 + 单轮 40 分钟）实际执行轮次远少于触发轮次，用户只能从 warning 察觉被丢弃。要求：后台触发不再因上一轮在跑而丢弃，允许并发轮次；并发上限/开关形态待对齐（默认全放开 / 默认 1 轮且显式 opt-in / 带上限配置三选一）。重叠期的状态呈现必须区分多条并发运行：任务 lastRun 目 前是单对象（startedAt/finishedAt/status/sessionId/sessionPath/summary，tasks.ts 序列化）、widget 每任务一行、/loop:list 展示单一 lastRun，重叠后需明确显示口径（运行中计数 + 各自会话 id/状态，或最近一轮 + 运行记录列表）；stopSession 的 interrupted 收口、7 天过期清理、bgDoneMessage 通知文案都要在并发下给出确定语义（每轮一条通知 vs 聚合）。验收（待 align 细化）：同一任务两轮后台真实重叠运行、各自独立 session id 与完成通知；widget 与 /loop:list 能看出并发轮次；会话结束时在途各轮均被终止并标记 interrupted；方案有真实子进程边界测试（非纸面单测）+ 全量测试与 typecheck 绿。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-15T05:57:54.415Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 10,
+      "text": "后台单轮硬超时 30 分钟 → 3 小时（2026-09-15 真机证据：loop 的 BG_RUN_TIMEOUT_MS 从 spawn 起算，比 headless pi 在 agent_end 的 auto-drain 上限（同为 30 分钟，从回合结束起算）早 20~30 秒触发，于是派单类任务每轮都在子 agent 收尾前被杀——round 记 timeout、子 agent 半途夭折、stale-run 把 run 标 failed（#67 那轮工作已落地也被误标）。用户 2026-09-15 决策：单轮上限提到 3 小时，使其大于子任务自身的 drain/run 预算。范围：只改 runner.ts 常量 + 测试等值断言 + docs 卡 + 版本；不改 KILL_GRACE_MS/调度语义、不加 per-task 超时字段、不动 pi-subagents。",
+      "status": "done",
+      "branch": "feat/loop-bg-timeout-3h",
+      "tags": [
+        "timeout",
+        "bg"
+      ],
+      "dependsOn": [],
+      "notes": [
+        "对齐文档 todos/align/loop-todo#10.md 落盘（四小节齐全）；用户会话指令确认 3 小时",
+        "完成 2026-09-15 @ merge cc0e1e8（feat e59be87 / 版本 cdca9db loop 1.7.0 + 根 2.49.0 / docs 2cead7f 卡 last verified @ e59be87；loop 196 测试绿 + typecheck 零错误）。BG_RUN_TIMEOUT_MS 30 分钟 → 3 小时：必须大于 headless pi 在 agent_end 的 auto-drain 上限（pi-subagents DEFAULT_AUTO_DRAIN_TIMEOUT_MS = 30 分钟、从回合结束起算），loop 从 spawn 起算天然更早到点——取 30 分钟时派单类任务每轮都在子 agent 收尾前被杀（真机 run 0c56ca98 的 08:41/10:41 两轮：最后活动 09:10:56/11:11:07 vs 上限 09:11:08/11:11:08）。TDD 先红（expected 10800000 / actual 1800000）后绿；范围只动常量+测试+文档+版本（KILL_GRACE_MS、调度语义、per-task 超时字段均未动）。"
+      ],
+      "createdAt": "2026-09-15T05:58:17.897Z",
+      "claimedAt": "2026-09-15T05:58:33.232Z",
+      "completedAt": "2026-09-15T06:00:54.101Z",
+      "alignedAt": "2026-09-15T05:58:33.411Z"
     }
   ]
 }
