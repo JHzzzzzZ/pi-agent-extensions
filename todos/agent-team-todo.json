@@ -975,16 +975,17 @@
     {
       "id": 63,
       "text": "团队文件 description 含 ASCII「: 」时 frontmatter 解析失败被吞、团队静默从 /team:list 消失（v1.26.0 QA 真机发现）：要求解析失败可见（列表/doctor 显示「定义不可用 + 原因」）或容忍含冒号标量；补单测覆盖含「: 」/引号/多行块标量。",
-      "status": "aligned",
-      "branch": "feat/agent-team-frontmatter",
+      "status": "done",
+      "branch": "feat/team-frontmatter",
       "tags": [],
       "dependsOn": [],
       "notes": [
-        "5 问按建议走：容忍裸冒号 + 可操作报错 + run 路径可见"
+        "5 问按建议走：容忍裸冒号 + 可操作报错 + run 路径可见",
+        "完成 2026-09-15 @ merge 9f47626 / agent-team 1.29.0 / 根 2.45.0 / 654 测试（+11）。parseTeamFile 解析失败时只对 frontmatter 块内「值含 \": \" 的裸标量行」（团队级/成员级 description 等，含列表项）按写盘口径 yamlScalar 加引号重试一次（引号值/块标量/CRLF/值内引号走原路径；块标量内容行与 markdown 正文绝不重写，磁盘文件不改写），仍失败回落首次解析的原始错误 + 前置修法提示「第 N 行的值含 \": \"，请加引号（\"…\"）或改用 | 块标量」（N 按团队文件行号，首行 --- 计 1；无裸 \": \" 行不给提示，不猜）；findTeam 的 TEAM_NOT_FOUND 追加「另有 N 个定义不可用：<file>（<原因首行>）」——team_run 与 team_resume 两条入口同源可见，list/doctor 展示照旧。测试：新增 test/frontmatter-tolerance.test.ts（10 例）+ run-tool 两处（team_run / team_resume 的 TEAM_NOT_FOUND 带文件与原因）；TDD 先红后绿，块标量内容行守卫另有「去掉守卫即红」的变异验证。docs 卡 last verified @ ee160b7 + 插件 README/AGENTS + 根 README（表行 629→654 修正 #56 漏更、命令块 643→654）。遗留：failure-delivery「worktree 预检」用例本机照旧必红（临时目录落在用户 home——C:\\Users\\蒋晗 本身是 git 仓库，git rev-parse 命中），改动前后一致、环境既有（#56 note 已登记）；台账 branch 字段仍写作 feat/team-frontmatter（本次实际分支 feat/agent-team-frontmatter-parse）；docs 卡 107 行（改前 106，本就超 ≤100 指引）。"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-14T15:42:47.751Z",
-      "completedAt": null,
+      "completedAt": "2026-09-15T02:24:57.132Z",
       "alignedAt": "2026-09-14T16:01:43.410Z"
     },
     {
