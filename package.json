@@ -8,6 +8,7 @@
     "pi-package"
   ],
   "scripts": {
+    "test:all": "node tools/test-all.mjs",
     "test:contract": "node --test test/status-bar-contract.test.ts",
     "test:smoke": "node --test test/install-smoke.test.ts",
     "test:todo": "node --test \".agents/skills/todo-cli/todo-cli/test/*.test.ts\"",
