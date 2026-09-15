@@ -47,7 +47,7 @@ CLI 无法证明「是人敲的」，能证明的只有两件机器可验证的�
 
 - 新增 `.agents/skills/todo-cli/todo-cli/align.ts`（当时的 `todo-cli/align.ts`；纯函数、零 IO）：`alignDocPath` / `alignDocRelPath` / `ALIGN_SECTIONS` / `validateAlignDoc`。
 - schema 升 v2：条目新增 `alignedAt: string | null`；`ENTRY_STATUSES` 五态；`parseTodoJson` 接受 `version: 1 | 2` 并在内存归一成 v2（v1 的 `alignedAt` 视为 null），写出一律 v2（任一写操作重写整文件 ⇒ 该文件一次性升级；不做批量回填）。
-- 历史语义保留：现存 `open`/`processing`/`done` 原义不变；历史 `processing` 视为「已开工」，不要求补对齐文档、不回退状态。
+- 历史语义保留：现存 `open`/`processing`/`done` 原义不变；历史 `processing` 视为「已开工」，不要求补对齐文档。（「不回退状态」已被 ADR-0007 的 `reopen` 回退通道推翻，回退语义以该 ADR 为准。）
 - 展示/统计口径：list 行首标记 `[ ]` / `[?]`(aligning) / `[>]`(aligned) / `[~]`(processing) / `[x]`(done)；`summary` 五态 + total；`triage` 保留 `processing` 段语义不变并新增同构的 `aligning`/`aligned` 段；`lint` 不变。
 - `migrate`：`renderMarkdown`/`parseLegacyMarkdown`/`buildTodoData`/`countEntries` 覆盖五态，`from-md` 等价自检在新状态下仍成立。
 - 依赖门（#10 `dependsOn`）契约插在 `aligned → processing` 之前，本变更不实现。
