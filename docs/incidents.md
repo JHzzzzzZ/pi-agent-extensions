@@ -1,6 +1,6 @@
 # 事故与教训（纯增量，防重复踩坑）
 
-> last verified @ 775638d
+> last verified @ 841f5f4
 >
 > 记录格式：症状 → 根因 → 教训。新事故追加在表后；修完必须留档。
 
@@ -162,3 +162,10 @@
 - 根因：`try { ... return presentHostDialog(...) } finally { if (suspended) hooks.resumeViewer() }`——`return <promise>` 的 `finally` 在**返回语句求值时立即执行**（不等 promise 落定），于是 `resumeViewer()` 在用户还没作答时就重开了 viewer。原实现把 `await ctx.ui.input(...)` 写在 try 内，所以 finally 天然在作答后才跑。
 - 处置（v1.27.0）：所有「try/finally 内返回异步结果」的分支改 `return await …`（`presentHostDialog` 两个调用点 + 注释锁原因）；宿主级真实渲染测试（`test/viewer-ask-host.test.ts` 用例 1/2/3）在合入前就抓到了这次回归。
 - 教训：① `try/finally` 里的 `return promise` 与 `return await promise` 语义不同，凡是 finally 负责「恢复现场」（重开 overlay / 释放锁 / 还原状态）的代码一律 `return await`；② 这类缺陷只会在真实合成路径显形——纯逻辑 fake 看不到 overlay 与基础层的叠放顺序。
+
+## 回环地址被 httpProxy 劫持：QA 驱动 env 自带 NO_PROXY 掩盖缺口（agent-team v1.30.0，真机 run-1789134203331 后续，#67）
+
+- 症状：宿主设置 `httpProxy` 后，派给外部 claude 成员的派发**每次必失败**（405 CONNECT only），同 run 的 codex 成员与 pi 成员正常——用户的 claude 中继监听 `http://127.0.0.1:15721`，请求被强制送进代理桥。
+- 根因：宿主 `applyHttpProxySettings`（0.85.1 `dist/core/http-dispatcher.js:38`）只 `??=` 注入 `HTTP_PROXY`/`HTTPS_PROXY`，**从不注入 `NO_PROXY`**；v1.26.0 的 F1 只修好了「父进程 env 继承」——父进程里根本没这个变量，子进程继承到的仍是「只有代理、没有豁免」的事实。QA 验收时驱动 env 自带 `NO_PROXY=…,127.0.0.1`，F1 用例又只断言「有值就透传」，于是缺口被两端同时掩盖（本地默认环境与 QA 环境不等价）。
+- 处置（v1.30.0）：子进程 env 出口一律合成回环豁免（`dispatch.ts` `withLoopbackBypass`：`NO_PROXY`+`no_proxy` 双键、用户显式值只追加缺失项、去重、幂等），leader/pi 成员/外部 CLI 成员三条 spawn 路径一次覆盖；宿主侧不动（仓库边界），改为提上游 issue（草稿 `docs/pi-http-proxy-loopback-issue.md`）。
+- 教训：① **验收环境必须与被验收的用户环境同形**——驱动 env 里多出来的那个「方便设置」（这里是 `NO_PROXY`），往往正是用户环境缺失的东西；② **透传 ≠ 补齐**——「父进程有的能传下去」只证明链路通，不证明子进程拿到了它缺的变量，用例必须覆盖「缺失时应补齐什么」；③ 代理豁免是本地服务链路的隐性依赖，凡子进程会访问回环（本地中继/本地模型），出口就该显式放行，不能指望用户先配好。
