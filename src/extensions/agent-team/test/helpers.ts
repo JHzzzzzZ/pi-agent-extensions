@@ -36,7 +36,7 @@ export interface SpawnRecord {
 export class FakeChild implements PiChildProcess {
   private readonly stdoutCbs: Array<(chunk: unknown) => void> = [];
   private readonly stderrCbs: Array<(chunk: unknown) => void> = [];
-  private readonly closeCbs: Array<(code: number | null) => void> = [];
+  private readonly closeCbs: Array<(code: number | null, signal?: string | null) => void> = [];
   private readonly errorCbs: Array<(err: Error) => void> = [];
   readonly killed: string[] = [];
   /** Fake OS pid (assigned by the spawn factory when nextPid is set). */
@@ -68,7 +68,7 @@ export class FakeChild implements PiChildProcess {
   };
 
   on(event: "close" | "error", cb: (arg: never) => void): void {
-    if (event === "close") this.closeCbs.push(cb as (code: number | null) => void);
+    if (event === "close") this.closeCbs.push(cb as (code: number | null, signal?: string | null) => void);
     else if (event === "error") this.errorCbs.push(cb as (err: Error) => void);
   }
 
@@ -92,8 +92,9 @@ export class FakeChild implements PiChildProcess {
     for (const cb of this.stderrCbs) cb(Buffer.from(text, "utf8"));
   }
 
-  emitClose(code: number | null): void {
-    for (const cb of this.closeCbs) cb(code);
+  /** `signal` models an OS-level kill (node's close event second argument). */
+  emitClose(code: number | null, signal?: string | null): void {
+    for (const cb of this.closeCbs) cb(code, signal);
   }
 
   emitError(err: Error): void {

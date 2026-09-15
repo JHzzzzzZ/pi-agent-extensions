@@ -302,3 +302,133 @@ test("defaultSpawn opens a real stdin pipe when the caller asks for one (leader 
   assert.equal(code, 0);
   assert.match(out, /ping/);
 });
+
+// ---------------------------------------------------------------------------
+// ADR-0006 末轮作用域的 outcome 信号（早轮错误不粘、工具配对、终止信号）
+// ---------------------------------------------------------------------------
+
+test("runChildPi: 早轮 errorMessage 不粘在 outcome，进 priorErrors（前 3 条 + 计数）", async () => {
+  const spawn = makeFakeSpawn();
+  const promise = runChildPi({ command: "pi", args: [], spawn: spawn.spawn });
+  const child = await waitForChild(spawn);
+  for (let turn = 0; turn < 5; turn++) {
+    child.emitLine(
+      messageEndLine("assistant", {
+        content: [{ type: "text", text: `第 ${turn + 1} 轮` }],
+        usage: { input: 1, output: 1, cost: { total: 0 } },
+        stopReason: "error",
+        errorMessage: `boom-${turn + 1}`,
+      }),
+    );
+  }
+  // 末轮干净：前 5 轮的错误全部降级为诊断，errorMessage 必须清空
+  child.emitLine(
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "最终报告" }],
+      usage: { input: 1, output: 1, cost: { total: 0 } },
+      stopReason: "stop",
+    }),
+  );
+  child.emitClose(0);
+  const outcome = await promise;
+
+  assert.equal(outcome.errorMessage, undefined, "末轮说了算：errorMessage 不粘早轮");
+  assert.equal(outcome.stopReason, "stop");
+  assert.equal(outcome.finalText, "最终报告");
+  assert.deepEqual(outcome.priorErrors, ["boom-1", "boom-2", "boom-3"], "只留前 3 条");
+  assert.equal(outcome.priorErrorCount, 5, "计数不截断");
+});
+
+test("runChildPi: 末轮带 errorMessage ⇒ outcome.errorMessage 就是它", async () => {
+  const spawn = makeFakeSpawn();
+  const promise = runChildPi({ command: "pi", args: [], spawn: spawn.spawn });
+  const child = await waitForChild(spawn);
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "第一轮" }], stopReason: "stop" }));
+  child.emitLine(
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "炸了" }],
+      stopReason: "error",
+      errorMessage: "quota exhausted",
+    }),
+  );
+  child.emitClose(1);
+  const outcome = await promise;
+
+  assert.equal(outcome.errorMessage, "quota exhausted");
+  assert.equal(outcome.stopReason, "error");
+  assert.deepEqual(outcome.priorErrors, []);
+  assert.equal(outcome.priorErrorCount, 0);
+});
+
+test("runChildPi: 末轮不带 stopReason 时 outcome.stopReason 清空（末轮说了算）", async () => {
+  const spawn = makeFakeSpawn();
+  const promise = runChildPi({ command: "pi", args: [], spawn: spawn.spawn });
+  const child = await waitForChild(spawn);
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "第一轮" }], stopReason: "error" }));
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "恢复" }] }));
+  child.emitClose(0);
+  const outcome = await promise;
+  assert.equal(outcome.stopReason, undefined, "早轮 stopReason 不粘");
+});
+
+test("runChildPi: 未配对的 tool_execution_start 记成 toolInterrupted（按 id 配对，无 id 用计数兜底）", async () => {
+  const unpaired = makeFakeSpawn();
+  const unpairedRun = runChildPi({ command: "pi", args: [], spawn: unpaired.spawn });
+  const child = await waitForChild(unpaired);
+  child.emitLine(JSON.stringify({ type: "tool_execution_start", toolName: "bash", toolCallId: "call-1" }));
+  child.emitLine(JSON.stringify({ type: "tool_execution_start", toolName: "read" }));
+  child.emitLine(JSON.stringify({ type: "tool_execution_end", toolName: "read" }));
+  child.emitClose(0);
+  const outcome = await unpairedRun;
+  assert.equal(outcome.toolInterrupted, true, "call-1 没有 end");
+
+  const paired = makeFakeSpawn();
+  const pairedRun = runChildPi({ command: "pi", args: [], spawn: paired.spawn });
+  const child2 = await waitForChild(paired);
+  child2.emitLine(JSON.stringify({ type: "tool_execution_start", toolName: "bash", toolCallId: "call-1" }));
+  child2.emitLine(JSON.stringify({ type: "tool_execution_end", toolName: "bash", toolCallId: "call-1" }));
+  child2.emitLine(JSON.stringify({ type: "tool_execution_start", toolName: "read" }));
+  child2.emitLine(JSON.stringify({ type: "tool_execution_end", toolName: "read" }));
+  child2.emitClose(0);
+  const outcome2 = await pairedRun;
+  assert.equal(outcome2.toolInterrupted, false, "全部配对完成");
+});
+
+test("runChildPi: close 事件的信号进 outcome.signal（进程被信号杀的证据）", async () => {
+  const spawn = makeFakeSpawn();
+  const promise = runChildPi({ command: "pi", args: [], spawn: spawn.spawn });
+  const child = await waitForChild(spawn);
+  child.emitLine(messageEndLine("assistant", { content: [{ type: "text", text: "写了一半" }], stopReason: "stop" }));
+  child.emitClose(null, "SIGQUIT");
+  const outcome = await promise;
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(outcome.signal, "SIGQUIT");
+});
+
+test("真实子进程：JSON 事件流经真实管道（早轮 errorMessage + 末轮干净 stop）", async () => {
+  const stream = [
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "第一轮失败" }],
+      usage: { input: 1, output: 1, cost: { total: 0 } },
+      stopReason: "error",
+      errorMessage: "transient 502",
+    }),
+    messageEndLine("assistant", {
+      content: [{ type: "text", text: "重试后的最终报告" }],
+      usage: { input: 1, output: 1, cost: { total: 0 } },
+      stopReason: "stop",
+    }),
+  ];
+  const outcome = await runChildPi({
+    command: process.execPath,
+    args: ["-e", `process.stdout.write(${JSON.stringify(`${stream.join("\n")}\n`)});`],
+    spawn: defaultSpawn(),
+  });
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(outcome.signal, undefined);
+  assert.equal(outcome.finalText, "重试后的最终报告");
+  assert.equal(outcome.errorMessage, undefined, "早轮错误不粘");
+  assert.deepEqual(outcome.priorErrors, ["transient 502"]);
+  assert.equal(outcome.priorErrorCount, 1);
+  assert.equal(outcome.toolInterrupted, false);
+});

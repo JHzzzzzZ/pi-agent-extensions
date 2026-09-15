@@ -18,6 +18,7 @@ import {
   stripLeaderEnv,
 } from "../dispatch.ts";
 import { defaultSpawn, runChildPi } from "../runner.ts";
+import type { TranscriptEntryKind } from "../transcript.ts";
 import {
   DERIVED_AGENT_TOOL_DENYLIST,
   LEADER_ENV_FILE,
@@ -27,6 +28,7 @@ import {
   type DispatchOutcome,
   type ExternalBackend,
   type ExternalCliResolveResult,
+  type PiSpawn,
 } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
 import { makeFakeSpawn, messageEndLine, sleep, toolExecutionEndLine, toolExecutionStartLine, toolExecutionUpdateLine, waitForChild } from "./helpers.ts";
@@ -36,6 +38,16 @@ function assistantLine(text: string): string {
     content: [{ type: "text", text }],
     usage: { input: 100, output: 50, cost: { total: 0.01 }, totalTokens: 150, turns: 1 },
     stopReason: "stop",
+  });
+}
+
+/** 末轮收尾（stopReason/errorMessage 可注）。 */
+function turnErrorLine(text: string, errorMessage: string, stopReason: string): string {
+  return messageEndLine("assistant", {
+    content: [{ type: "text", text }],
+    usage: { input: 100, output: 50, cost: { total: 0.01 }, totalTokens: 150, turns: 1 },
+    stopReason,
+    errorMessage,
   });
 }
 
@@ -275,11 +287,15 @@ test("member child failure yields a failed member result, not a thrown error", a
   const executor = createDispatchExecutor(deps);
   const promise = executor({ tasks: [{ agent: "frontend", task: "x" }] }, undefined, undefined);
   const child = await waitForChild(spawn, 0);
-  child.autoRespond([assistantLine("boom")], 3, 5);
+  // 末轮以错误收尾（stopReason error + errorMessage）才是真失败；
+  // 末轮干净、仅退出码非 0 走「收尾异常」档（见下方 exit-code 用例）。
+  child.autoRespond([turnErrorLine("炸了", "model exploded", "error")], 1, 5);
   const outcome = await unwrap(promise);
   assert.equal(outcome.results[0].ok, false);
   assert.equal(outcome.results[0].status, "failed");
   assert.equal(outcome.results[0].error?.code, "CHILD_FAILED");
+  assert.match(outcome.results[0].error?.message ?? "", /model exploded/);
+  assert.match(outcome.results[0].error?.message ?? "", /exit 1/, "真 failed 的消息必带 exit code");
   assert.match(outcome.text, /failed（CHILD_FAILED）/);
 });
 
@@ -847,4 +863,168 @@ test("外部成员 env 透传：保留父进程 NO_PROXY，只剥 leader 三键"
   } finally {
     restoreEnv();
   }
+});
+
+// ---------------------------------------------------------------------------
+// ADR-0006 成员终态：末轮说了算（真机 run-1789104779153 的判定口径修复）
+// ---------------------------------------------------------------------------
+
+test("成员交付完成但早轮失败：末轮干净 + exit 0 ⇒ done（真机冤案最小复现）", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor(deps);
+  const promise = executor({ tasks: [{ agent: "frontend", task: "写报告" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  // 第 1 轮报错、第 2 轮重试成功并给出完整报告（宿主 auto-retry 的常见形态）
+  child.autoRespond(
+    [turnErrorLine("第一轮失败", "transient 502", "error"), assistantLine("完整报告与 commit 已完成")],
+    0,
+    5,
+  );
+  const outcome = await unwrap(promise);
+  const result = outcome.results[0];
+
+  assert.equal(result.status, "done", "早轮错误不得把已交付的成员判成 failed");
+  assert.equal(result.ok, true);
+  assert.equal(result.error, undefined);
+  assert.equal(result.warning, undefined, "收尾正常不给 warning");
+  assert.equal(result.result, "完整报告与 commit 已完成");
+  assert.deepEqual(result.diagnostics?.priorErrors, ["transient 502"], "早轮错误只留诊断");
+  assert.equal(result.diagnostics?.priorErrorCount, 1);
+  assert.equal(result.diagnostics?.exitCode, 0);
+  assert.equal(result.diagnostics?.lastStopReason, "stop");
+  assert.match(outcome.text, /## frontend — done/);
+  assert.doesNotMatch(outcome.text, /失败处理指令/);
+});
+
+test("末轮干净 + exitCode ≠ 0 ⇒ done + warning（收尾异常），产出与 leader 可见面都在", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor(deps);
+  const promise = executor({ tasks: [{ agent: "frontend", task: "写报告" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  child.autoRespond([assistantLine("报告正文")], 3, 5);
+  const outcome = await unwrap(promise);
+  const result = outcome.results[0];
+
+  assert.equal(result.status, "done", "末轮干净不因退出码非 0 被判失败");
+  assert.equal(result.ok, true);
+  assert.equal(result.warning, "收尾异常：exit 3");
+  assert.equal(result.error, undefined, "收尾异常不是 failed：不给 error");
+  assert.equal(result.result, "报告正文");
+  assert.equal(result.diagnostics?.exitCode, 3);
+  assert.match(outcome.text, /## frontend — done（收尾异常：exit 3/);
+  assert.doesNotMatch(outcome.text, /失败处理指令/, "收尾异常不进环境级失败指令");
+});
+
+test("轮中被打断（未配对工具 + 信号杀）⇒ failed，错误文本标注部分产出（可能可用）", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor(deps);
+  const promise = executor({ tasks: [{ agent: "frontend", task: "写报告" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  child.emitLine(assistantLine("写到一半的报告"));
+  child.emitLine(toolExecutionStartLine("bash", { command: "sleep 100" }));
+  child.emitClose(null, "SIGTERM");
+  const outcome = await unwrap(promise);
+  const result = outcome.results[0];
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, "CHILD_FAILED");
+  assert.match(result.error?.message ?? "", /轮中被打断，部分产出（可能可用）/);
+  assert.match(result.error?.message ?? "", /exit 0，信号 SIGTERM/);
+  assert.equal(result.diagnostics?.signal, "SIGTERM");
+  assert.equal(result.result, "写到一半的报告", "部分产出仍在结果里");
+  assert.match(outcome.text, /（已有完整产出 \d+ 字节，可直接取用）/, "leader 可见产出可直接取用");
+  assert.match(outcome.text, /失败处理指令/);
+});
+
+test("成员转录 system 行带诊断：exit/末轮 stopReason/前轮错误计数与条目", async () => {
+  const entries: Array<{ actor: string; kind: TranscriptEntryKind; text: string }> = [];
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    transcript: { append: (actor, kind, text) => entries.push({ actor, kind, text }) },
+  });
+  const promise = executor({ tasks: [{ agent: "frontend", task: "写报告" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  child.autoRespond([turnErrorLine("第一轮失败", "bad gateway", "error"), assistantLine("最终报告")], 2, 5);
+  await unwrap(promise);
+
+  const system = entries.filter((entry) => entry.actor === "frontend" && entry.kind === "system");
+  assert.equal(system.length, 1, "每个成员一条 system 收尾行");
+  assert.match(system[0].text, /^done（收尾异常：exit 2） · /);
+  assert.match(system[0].text, /exit 2 · 末轮 stop · 前轮错误 1 条：bad gateway/);
+});
+
+test("buildDispatchReport：失败成员的部分产出附字节数、「可直接取用」提示与正文", () => {
+  const base = {
+    name: "writer",
+    ok: false,
+    status: "failed" as const,
+    summary: "写到一半的报告",
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+    durationMs: 1000,
+    error: { code: "CHILD_FAILED" as const, message: "轮中被打断，部分产出（可能可用）：…（exit 1）" },
+  };
+  const withOutput = buildDispatchReport([{ ...base, result: "写到一半的报告" }]);
+  assert.match(withOutput, /## writer — failed（CHILD_FAILED）/);
+  assert.match(withOutput, /错误: 轮中被打断/);
+  assert.match(withOutput, /（已有完整产出 \d+ 字节，可直接取用）/);
+  assert.match(withOutput, /写到一半的报告/, "部分产出正文进 leader 可见面");
+
+  const empty = buildDispatchReport([{ ...base, result: "", summary: "" }]);
+  assert.doesNotMatch(empty, /可直接取用/, "无产出不给该提示");
+
+  // done 成员不受影响（正文照旧、无提示）
+  const doneReport = buildDispatchReport([
+    { ...base, ok: true, status: "done", result: "完整报告", error: undefined },
+  ]);
+  assert.match(doneReport, /## writer — done/);
+  assert.doesNotMatch(doneReport, /可直接取用/);
+});
+
+test("真实子进程：脚本化 --mode json 事件流（早轮 errorMessage + 末轮干净 stop）⇒ done 且 priorErrors 留痕", async () => {
+  const stream = [
+    turnErrorLine("第一轮失败", "transient 502", "error"),
+    assistantLine("重试后的最终报告"),
+  ];
+  const script = `process.stdout.write(${JSON.stringify(`${stream.join("\n")}\n`)});`;
+  const { deps } = baseDeps();
+  // 真实 OS 管道 + 真实退出码：只把 pi 的 argv 换成回放事件流的 node 子进程
+  // （cwd 取真实目录：非存在目录会让 spawn 同步 ENOENT，测试就测不到事件流）
+  const realSpawn: PiSpawn = (_command, _args, opts) => defaultSpawn()(process.execPath, ["-e", script], opts);
+  const executor = createDispatchExecutor({ ...deps, cwd: process.cwd(), spawn: realSpawn });
+  const outcome = await unwrap(executor({ tasks: [{ agent: "frontend", task: "写报告" }] }, undefined, undefined));
+  const result = outcome.results[0];
+
+  assert.equal(result.status, "done");
+  assert.equal(result.ok, true);
+  assert.equal(result.result, "重试后的最终报告");
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.diagnostics?.priorErrors, ["transient 502"]);
+  assert.equal(result.diagnostics?.priorErrorCount, 1);
+  assert.equal(result.diagnostics?.exitCode, 0);
+  assert.match(outcome.text, /## frontend — done/);
+});
+
+test("外部成员：末轮干净但 CLI 收尾非 0 ⇒ done + warning（与 pi 成员共用判定函数）", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CODEX_MEMBER }] }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+  });
+  const promise = executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+  // 事件流以成功收尾（末轮干净），但 CLI 进程退出码非 0：收尾异常而非失败
+  child.autoRespond(fixtureLines("external-codex-success.jsonl"), 1, 5);
+  const outcome = await unwrap(promise);
+  const result = outcome.results[0];
+
+  assert.equal(result.status, "done");
+  assert.equal(result.ok, true);
+  assert.equal(result.warning, "收尾异常：exit 1");
+  assert.equal(result.error, undefined);
+  assert.equal(result.diagnostics?.exitCode, 1);
+  assert.match(outcome.text, /## coder — done（收尾异常：exit 1/);
+  assert.doesNotMatch(outcome.text, /失败处理指令/);
 });

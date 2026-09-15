@@ -157,3 +157,29 @@ test("formatFailureNotice caps the whole notice (report truncated last)", () => 
   assert.match(notice, /^错误: model exploded$/m, "error survives truncation");
   assert.match(notice, /^  - backend: failed — 后端挂了$/m, "member rows survive truncation");
 });
+
+test("formatFailureNotice：成员行带收尾异常 warning 与 exit/信号诊断", () => {
+  const notice = formatFailureNotice(
+    failureRecord({
+      members: [
+        {
+          name: "writer",
+          status: "done",
+          warning: "收尾异常：exit 1",
+          diagnostics: { exitCode: 1, lastStopReason: "stop", priorErrors: [], priorErrorCount: 0 },
+          summary: "报告已交付",
+        },
+        {
+          name: "backend",
+          status: "failed",
+          diagnostics: { exitCode: 0, signal: "SIGTERM", lastStopReason: "stop", priorErrors: [], priorErrorCount: 0 },
+          summary: "写到一半",
+        },
+        { name: "clean", status: "done", diagnostics: { exitCode: 0, priorErrors: [], priorErrorCount: 0 } },
+      ],
+    }),
+  );
+  assert.match(notice, /^  - writer: done（收尾异常：exit 1） — 报告已交付$/m);
+  assert.match(notice, /^  - backend: failed（信号 SIGTERM） — 写到一半$/m);
+  assert.match(notice, /^  - clean: done$/m, "收尾正常且 exit 0 的成员行不添噪声");
+});

@@ -226,6 +226,44 @@ test("failure notice carries member results and the partial leader report", asyn
   }
 });
 
+test("failure notice: 成员交付完成但收尾异常的 warning/诊断随 record 到达通知", async () => {
+  const { pi, spawn, run, cleanup } = await setup();
+  try {
+    await run({ team: "proj-team", task: "修复登录 bug" });
+    const child = await waitForChild(spawn, 0);
+    child.autoRespond(
+      [
+        toolExecutionStartLine("team_dispatch", { tasks: [{ agent: "frontend", task: "a" }] }),
+        dispatchDetails([
+          {
+            name: "frontend",
+            ok: true,
+            status: "done",
+            summary: "报告与 commit 均已完成",
+            warning: "收尾异常：exit 1",
+            diagnostics: { exitCode: 1, lastStopReason: "stop", priorErrors: ["transient 502"], priorErrorCount: 1 },
+            usage: { input: 10, output: 5, cost: 0.01, turns: 2 },
+          },
+        ]),
+        messageEndLine("assistant", { content: [{ type: "text", text: "PARTIAL" }] }),
+      ],
+      1,
+      5,
+    );
+    await waitFor(() => pi.sentMessages.length > 0);
+
+    // 记录里的成员行保留 warning/诊断（不只活在 leader 的 tool result 里）
+    const record = runEntries(pi)[0];
+    assert.equal(record.members[0].status, "done");
+    assert.equal(record.members[0].warning, "收尾异常：exit 1");
+    assert.equal(record.members[0].diagnostics?.exitCode, 1);
+    const text = noticeText(pi);
+    assert.match(text, /^  - frontend: done（收尾异常：exit 1） — 报告与 commit 均已完成$/m);
+  } finally {
+    cleanup();
+  }
+});
+
 test("worktree pre-flight failure: minimal failed record + followUp, no leader spawned", async () => {
   const { pi, spawn, run, cleanup } = await setup({ worktree: true });
   try {

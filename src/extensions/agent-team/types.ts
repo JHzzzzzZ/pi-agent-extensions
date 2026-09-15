@@ -64,6 +64,12 @@ export const STOP_SETTLE_TIMEOUT_MS = KILL_GRACE_MS + 2000;
 /** Per-message text captured in run transcripts (bytes, UTF-8). */
 export const MAX_TRANSCRIPT_MESSAGE_BYTES = 4 * 1024;
 
+/**
+ * 前轮错误消息保留条数上限（ADR-0006）：终态只看末轮，早轮错误只留诊断——
+ * 保留前几条供排障，总数另记（`MemberDiagnostics.priorErrorCount`）。
+ */
+export const MAX_MEMBER_PRIOR_ERRORS = 3;
+
 /** Session entry type used to persist run records (metadata only). */
 export const RUN_ENTRY_TYPE = "agent-team-run-v1";
 
@@ -293,7 +299,10 @@ export interface ExternalResolveDeps {
 export interface ExternalParser {
   /** 喂入一行已 JSON.parse 的对象（runChildPi onWire 口径）；返回需上报的 ChildEvent。 */
   feed(message: Record<string, unknown>): ChildEvent[];
-  /** 进程退出后收口：失败判定与错误消息。 */
+  /**
+   * 进程退出后收口：失败判定与错误消息。语义与 pi 成员一致——只看**末轮**
+   * （codex turn.failed / claude is_error 是末轮失败信号，ADR-0006）。
+   */
   finalize(): { failed: boolean; errorMessage?: string };
   /** 累计 usage（turns = 完成回合数；codex cost 恒 0）。 */
   readonly usage: AgentUsage;
@@ -406,7 +415,7 @@ export interface PiChildProcess {
    * `prompt`/`steer` commands here). Absent on one-shot children.
    */
   stdin?: PiChildStdin;
-  on(event: "close", cb: (code: number | null) => void): void;
+  on(event: "close", cb: (code: number | null, signal?: string | null) => void): void;
   on(event: "error", cb: (err: Error) => void): void;
   kill(signal: string): boolean;
 }
@@ -460,14 +469,45 @@ export interface ChildOutcome {
   stderr: string;
   /** OS pid of the child when known (persisted for orphan diagnostics). */
   pid?: number;
+  /**
+   * 末轮（最后一次 assistant message_end）的错误消息；早轮错误不粘在这里
+   * （粘性赋值会把「前轮失败、后轮重试成功」永久记成失败，ADR-0006）。
+   */
   errorMessage?: string;
+  /** 末轮 stopReason（早轮不粘）。 */
   stopReason?: string;
+  /** Model id reported by the child (display caliber). */
   model?: string;
+  /** 前轮错误消息（最多 MAX_MEMBER_PRIOR_ERRORS 条，诊断用）。 */
+  priorErrors?: string[];
+  /** 前轮错误总数（可能大于 priorErrors.length）。 */
+  priorErrorCount?: number;
+  /** OS 上报的终止信号（node close 事件第二参，进程被杀的证据）。 */
+  signal?: string;
+  /** 结束时仍有未配对 tool_execution_start（工具执行中途被打断）。 */
+  toolInterrupted?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Member dispatch
 // ---------------------------------------------------------------------------
+
+/**
+ * 成员终态诊断（ADR-0006）：判定只看末轮，早轮错误只留诊断——exitCode/
+ * signal/末轮 stopReason + 前轮错误（前 `MAX_MEMBER_PRIOR_ERRORS` 条与总数）。
+ * 呈现面：成员转录 system 行、失败通知成员行；`warning` 另见 leader 结果分节。
+ */
+export interface MemberDiagnostics {
+  exitCode: number;
+  /** OS 上报的终止信号（如 SIGTERM），正常退出时缺省。 */
+  signal?: string;
+  /** 末轮 stopReason（pi 后端；外部 CLI 无该概念时缺省）。 */
+  lastStopReason?: string;
+  /** 前轮错误消息（最多 MAX_MEMBER_PRIOR_ERRORS 条）。 */
+  priorErrors: string[];
+  /** 前轮错误总数（可能大于 priorErrors.length）。 */
+  priorErrorCount: number;
+}
 
 export interface MemberRunResult {
   name: string;
@@ -479,6 +519,13 @@ export interface MemberRunResult {
   summary: string;
   usage: AgentUsage;
   durationMs: number;
+  /**
+   * done 但收尾异常（末轮干净而退出码非 0）时的一行说明（ADR-0006）：
+   * 三态不变，用 warning 承载「完成但有异常」，产出照常可用。
+   */
+  warning?: string;
+  /** 终态诊断（exitCode/信号/末轮 stopReason/前轮错误）。 */
+  diagnostics?: MemberDiagnostics;
   /** `switchedBackFrom` 仅分支自愈时出现（切回前成员自建分支名，见 docs/incidents.md）。 */
   worktree?: { path: string; branch: string; switchedBackFrom?: string };
   error?: { code: TeamErrorCode; message: string };
@@ -516,6 +563,10 @@ export interface TeamRunRecord {
     status: string;
     summary?: string;
     usage?: AgentUsage;
+    /** done 但收尾异常时的一行说明（成员结果原样透传，ADR-0006）。 */
+    warning?: string;
+    /** 成员终态诊断（失败通知回看用）。 */
+    diagnostics?: MemberDiagnostics;
     worktree?: { path: string; branch: string };
   }>;
   leaderUsage?: AgentUsage;

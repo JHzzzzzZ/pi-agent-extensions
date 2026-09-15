@@ -419,3 +419,14 @@ test("parser: claude result without a result string keeps the last assistant tex
   assert.equal(parser.finalText, "partial answer");
   assert.deepEqual(parser.usage, { input: 7, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.5, turns: 1 });
 });
+
+test("parser: codex 末轮说了算——turn.failed 之后的 turn.completed 清除失败态", () => {
+  const parser = createExternalParser("codex");
+  parser.feed({ type: "turn.failed", error: { message: "transient proxy 502" } });
+  const failed = parser.finalize();
+  assert.equal(failed.failed, true);
+  assert.match(failed.errorMessage ?? "", /transient proxy 502/);
+
+  parser.feed({ type: "turn.completed", usage: { input_tokens: 3, output_tokens: 1 } });
+  assert.deepEqual(parser.finalize(), { failed: false }, "早轮失败不得粘到末轮");
+});
