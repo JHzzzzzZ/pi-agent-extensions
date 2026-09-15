@@ -1,6 +1,6 @@
 # 事故与教训（纯增量，防重复踩坑）
 
-> last verified @ 841f5f4
+> last verified @ 441ac0a
 >
 > 记录格式：症状 → 根因 → 教训。新事故追加在表后；修完必须留档。
 
@@ -169,3 +169,10 @@
 - 根因：宿主 `applyHttpProxySettings`（0.85.1 `dist/core/http-dispatcher.js:38`）只 `??=` 注入 `HTTP_PROXY`/`HTTPS_PROXY`，**从不注入 `NO_PROXY`**；v1.26.0 的 F1 只修好了「父进程 env 继承」——父进程里根本没这个变量，子进程继承到的仍是「只有代理、没有豁免」的事实。QA 验收时驱动 env 自带 `NO_PROXY=…,127.0.0.1`，F1 用例又只断言「有值就透传」，于是缺口被两端同时掩盖（本地默认环境与 QA 环境不等价）。
 - 处置（v1.30.0）：子进程 env 出口一律合成回环豁免（`dispatch.ts` `withLoopbackBypass`：`NO_PROXY`+`no_proxy` 双键、用户显式值只追加缺失项、去重、幂等），leader/pi 成员/外部 CLI 成员三条 spawn 路径一次覆盖；宿主侧不动（仓库边界），改为提上游 issue（草稿 `docs/pi-http-proxy-loopback-issue.md`）。
 - 教训：① **验收环境必须与被验收的用户环境同形**——驱动 env 里多出来的那个「方便设置」（这里是 `NO_PROXY`），往往正是用户环境缺失的东西；② **透传 ≠ 补齐**——「父进程有的能传下去」只证明链路通，不证明子进程拿到了它缺的变量，用例必须覆盖「缺失时应补齐什么」；③ 代理豁免是本地服务链路的隐性依赖，凡子进程会访问回环（本地中继/本地模型），出口就该显式放行，不能指望用户先配好。
+
+## 成员交付完成后仍被判 CHILD_FAILED：早轮错误粘住终态（agent-team v1.31.0，#47，真机 run-1789104779153）
+
+- 症状：writer 与 checker 已经产出完整报告并提交 commit，run 记录里它们却是 `failed`（CHILD_FAILED）——leader 按「环境级失败不重试」的指令把已完成的工作丢掉或重派，比真失败更贵。
+- 根因：一次派发内多轮 assistant 消息被聚合成一个 outcome，`runner.ts` 对 `errorMessage` 是**粘性赋值**（`if (msg.errorMessage) outcome.errorMessage = msg.errorMessage`），`dispatch.ts` 的失败判定又把四个信号**或**起来（`aborted || exitCode !== 0 || stopReason === "error" || !!outcome.errorMessage`）——宿主自带 auto-retry（`auto_retry_start/end`，agent-team 不解析该事件）时，**前轮失败、后轮重试成功**的成员被永久记为失败。真机 run 记录当时已被 7 天 retention 清掉，无法回放「到底哪个信号触发」，所以修复必须让结果自证（诊断字段），不依赖复现。
+- 处置（v1.31.0，ADR-0006）：终态改「**末轮说了算**」——只看最后一次 assistant `message_end` 的 stopReason/errorMessage；三态不变，末轮干净而退出码非 0 判 `done` + warning「收尾异常：exit N」；`diagnostics`（exitCode/信号/末轮 stopReason/前轮错误前 3 条与计数）三处可见（成员转录 system 行、leader 报告分节、失败通知）；pi 成员与外部 CLI 成员共用 `outcome.ts` 判定函数（外部 CLI 的 `turn.failed`/`is_error` 折算成同一信号，后续成功轮清除早轮失败态）。
+- 教训：① 多轮聚合里的「只要出现过就记住」字段（错误/警告）会把重试成功反噬成失败——聚合字段必须显式定清**末次覆盖 vs 累计**的语义；② 把诊断信号（退出码、早轮错误）用「或」抬成终态真值，等于让噪声一票否决；终态需要单一真值来源，其余只作诊断与呈现；③ 判定错误的定价不对称：「成功当失败」会丢产出并引发重复派发，比漏报更贵——下结论前多问一句「产出是否已拿到」。
