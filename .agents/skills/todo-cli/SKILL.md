@@ -1,6 +1,6 @@
 ---
 name: todo-cli
-description: todos/*.json 台账的命令参考卡——add（登记）/ claim（两段式领取）/ align（对齐确认）/ dep（依赖增删）/ complete（完成）/ summary（盘点）/ list（组合查询）/ triage（worktree↔条目交接扫描）/ lint（注册扩展↔todo 文件一致性 + 依赖图扫描）/ migrate（旧 markdown 一次性迁移与逃生回滚），零依赖无构建。状态机五态 open→aligning→aligned→processing→done（含依赖门）与对齐文档契约见正文。当需要调用 todo CLI 的某个子命令、确认参数与退出码、或排查「找不到仓库根 / 锁超时 / JSON 损坏 / 匹配到多条 / 对齐文档缺失 / 依赖阻塞」时读它。
+description: todos/*.json 台账的命令参考卡——add（登记）/ claim（两段式领取）/ align（对齐确认）/ dep（依赖增删）/ complete（完成）/ reopen（在途条目退回未领取）/ summary（盘点）/ list（组合查询）/ triage（worktree↔条目交接扫描）/ lint（注册扩展↔todo 文件一致性 + 依赖图扫描）/ migrate（旧 markdown 一次性迁移与逃生回滚），零依赖无构建。状态机五态 open→aligning→aligned→processing→done（含依赖门，reopen 是唯一受支持的回退通道）与对齐文档契约见正文。当需要调用 todo CLI 的某个子命令、确认参数与退出码、或排查「找不到仓库根 / 锁超时 / JSON 损坏 / 匹配到多条 / 对齐文档缺失 / 依赖阻塞 / 撤销与归档」时读它。
 ---
 
 # todo-cli
@@ -40,6 +40,7 @@ todo.mjs claim --file <名> --match "子串" [--branch feat/x]    # 两段式领
 todo.mjs align --file <名> --match "子串" [--note "说明"]       # 对齐确认：校验对齐文档，aligning→aligned
 todo.mjs dep add|remove --file <名> --match "子串" --on 文件#id,...   # 增删直接依赖（add 写前校验悬空/自引用/环）
 todo.mjs complete --file <名> --match "子串" [--note "说明"]    # 完成：→ done，note 逐字进 notes
+todo.mjs reopen --file <名> --match "子串" [--note "原因"]      # 撤销：在途条目 → open（对齐文档归档；done 拒绝）
 todo.mjs lint                                                 # 单向：pi.extensions 扩展 ↔ todos/<名>-todo.json + 依赖图扫描
 todo.mjs triage [--json]                                      # 只读：worktree 事实 × 条目 branch 关联
 todo.mjs migrate from-md [--dry-run] [--force] | to-md        # md→JSON（带等价自检）/ JSON→md 逃生回滚
@@ -48,7 +49,11 @@ todo.mjs --help
 
 ### 对齐门（五态）
 
-`claim` 是两段式的：首次领取 `open → aligning`（此时**写对齐文档、不许写代码**），文档过 `align` 校验才 `aligning → aligned`，在 `aligned` 上再 `claim` 才进 `processing`（此后到 merge 无人值守）。
+`claim` 是两段式的：首次领取 `open → aligning`（此时**写对齐文档、不许写代码**），文档过 `align` 校验才 `aligning → aligned`，在 `aligned` 上再 `claim` 才进 `processing`（此后到 merge 无人值守）。五态只前向，唯一受支持的**回退通道**是 `reopen`（见下）。
+
+### 撤销（reopen）
+
+`reopen --file <名> --match "子串" [--note "原因"]` 把 `aligning` / `aligned` / `processing` 一律退回 `open`（清 `branch` / `claimedAt` / `alignedAt`，保留 `tags` / `dependsOn` / `createdAt` / 历史 notes），notes 追加一条 `撤销 <UTC 日期>：从 <源状态> 回到未领取`（带 `--note` 时以 `；` 接原因）。从 `aligning` / `aligned` 撤销**必须带 `--note`**（`NOTE_REQUIRED`，与 `complete` 对齐阶段收口同口径）；`done` 拒绝（`ALREADY_DONE`，撤销已完成条目另条登记）；已是 `open` 幂等（`状态未变`，不写盘）。存在对齐文档时**先归档**为 `todos/align/<名>#<id>.reopened-<UTC 紧凑>.md` 再写盘（归档失败整体中止：`ALIGN_ARCHIVE_FAILED`），因此重新 `claim` → `align` 必须重写新文档。不碰依赖语义与 git/worktree；无批量形态（无 `--all`）。决策见 ADR-0007。
 
 ### 依赖门
 
@@ -65,11 +70,11 @@ todo.mjs --help
 
 - 写操作 = 每文件 O_EXCL 锁（`todos/.todo-cli/locks/`）+ temp+rename 原子落盘；锁忙静默重试，stale（>60s 或 pid 已死）自动抢占，SIGKILL 残留无需人工清理。
 - `todos/*.json` 出现合并冲突标记或非法 JSON 时，**所有命令 fail-closed**；按条目 id 取并集手工解决后再跑。
-- `add` 只追加 open（查重命中要 `--force` 才写）；`claim` 在 `aligning`/`processing` 上幂等（不重复写）；`complete` 幂等（已 done 不重复写）。
+- `add` 只追加 open（查重命中要 `--force` 才写）；`claim` 在 `aligning`/`processing` 上幂等（不重复写）；`complete` 幂等（已 done 不重复写）；`reopen` 在已 `open` 上幂等（不重复写、文件字节不变）。
 - 条目 id 文件内 max+1 分配、永不复用；entries append-only。
 - `triage` 依赖 git（`worktree list` / `branch --merged`）；`--root` 指到非 git 目录时会静态报错而非抛栈。
-- 本工具不 commit、不碰 `todos/` 之外的文件（triage 只读）。
+- 本工具不 commit、不碰 `todos/` 之外的文件（triage 只读）。`reopen` 只归档 `todos/align/` 下的对齐文档（改名不删文件），且不碰 git / worktree / 分支。
 
 ## 设计权威
 
-命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）。
+命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）、`docs/adr/0007-todo-reopen.md`（回退与归档决策）。

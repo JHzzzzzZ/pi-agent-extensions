@@ -8,6 +8,9 @@
  * 机器可验证的结构约束，人工留痕靠 `## 人工确认` 小节 + 审批记录（见 ADR-0003）。
  *
  * 模板单源在 `docs/tools/todo-cli.md`；`claim` 只打印路径与小节名，不代建文件。
+ *
+ * `reopen`（todo-cli-todo:14，ADR-0007）把在途条目退回未领取时，用 `archiveStamp` +
+ * `reopenArchivePath` 把陈旧对齐文档改名归档——规范路径腾空，重新 claim 必须重写新文档。
  */
 
 import * as path from "node:path";
@@ -18,14 +21,37 @@ export const ALIGN_SECTIONS = ["意图", "范围", "验收标准", "人工确认
 const SECTION_HEADING_RE = /^##\s+(.+?)\s*$/;
 const ANY_HEADING_RE = /^#{1,6}\s/;
 
-/** 仓库相对路径（消息与测试的规范形态，如 `todos/align/todo-cli-todo#11.md`）。 */
+/** 对齐文档的仓库相对路径（消息与测试的规范形态，如 `todos/align/todo-cli-todo#11.md`）。 */
 export function alignDocRelPath(name: string, id: number): string {
   return `todos/align/${name}#${id}.md`;
 }
 
-/** 绝对路径（调用方拿它做存在性检查与读取）。 */
+/** 对齐文档的绝对路径（调用方拿它做存在性检查与读取）。 */
 export function alignDocPath(repoRoot: string, name: string, id: number): string {
   return path.join(repoRoot, "todos", "align", `${name}#${id}.md`);
+}
+
+/**
+ * reopen 归档时间戳：ISO 8601 → `YYYYMMDDTHHMMSSZ`（UTC 紧凑、无冒号——跨平台文件名安全）。
+ * 非 ISO 输入退化为去掉非数字字符（`now()` 的契约是 ISO，此处只为保持函数全定义）。
+ */
+export function archiveStamp(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(String(iso));
+  if (match === null) return String(iso).replace(/\D/g, "");
+  return `${match[1]}${match[2]}${match[3]}T${match[4]}${match[5]}${match[6]}Z`;
+}
+
+/**
+ * reopen 归档的仓库相对路径（todo-cli-todo:14）：规范路径腾空、旧留痕留同目录，
+ * 后缀仍为 `.md`（命中 `.gitattributes` 的 `todos/align/*.md` LF 锁，不新增 pattern）。
+ */
+export function reopenArchiveRelPath(name: string, id: number, stamp: string): string {
+  return `todos/align/${name}#${id}.reopened-${stamp}.md`;
+}
+
+/** 归档绝对路径（调用方做存在性检查与改名）。 */
+export function reopenArchivePath(repoRoot: string, name: string, id: number, stamp: string): string {
+  return path.join(repoRoot, "todos", "align", `${name}#${id}.reopened-${stamp}.md`);
 }
 
 function escapeRegExp(value: string): string {

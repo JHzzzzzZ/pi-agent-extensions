@@ -9,11 +9,13 @@
  *
  * 存储形态（方案 C，todos/todo-cli-todo.md:17）：`todos/<名>.json` 是唯一持久真相，
  * markdown 已退出（逃生回滚走 `migrate to-md`）。本模块负责：
- *   - 九个子命令：summary / list / add / claim / align / complete / dep / lint / triage；
+ *   - 十个子命令：summary / list / add / claim / align / complete / reopen / dep / lint / triage；
  *   - 状态机五态对齐门（todo-cli-todo:11，ADR-0003）：open → aligning → aligned →
  *     processing → done。首次 claim 进 aligning（必须先写对齐文档、经人工确认），
  *     `align` 结构校验文档后进 aligned，再次 claim 才进 processing；processing 起到
- *     收口无人值守。对齐文档契约（路径派生/必填小节）在 align.ts；模板在
+ *     收口无人值守。反向通道是 `reopen`（todo-cli-todo:14，ADR-0007）：aligning/aligned/
+ *     processing 一律退回 open，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`。
+ *     对齐文档契约（路径派生/必填小节）在 align.ts；模板在
  *     docs/tools/todo-cli.md。
  *   - 开工依赖门（todo-cli-todo:10，ADR-0005）：条目可声明 `dependsOn`（规范引用
  *     `文件基名#id`，`add --dep` 登记、`dep add/remove` 增删）。依赖未完成（status ≠ done）
@@ -34,6 +36,7 @@
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs align --file general --match "需求描述" [--note "说明"]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs reopen --file general --match "需求描述" [--note "撤销原因"]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file general --match "需求描述" --on 文件#id,...
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
@@ -50,7 +53,7 @@ import { execFileSync } from "node:child_process";
 
 import { emptyTodoData, nextId, normalizeText, normalizeTodoName, parseTodoJson, serializeTodo } from "./schema.ts";
 import type { EntryStatus, TodoEntry, TodoFileData } from "./schema.ts";
-import { ALIGN_SECTIONS, alignDocPath, alignDocRelPath, validateAlignDoc } from "./align.ts";
+import { ALIGN_SECTIONS, alignDocPath, alignDocRelPath, archiveStamp, reopenArchivePath, reopenArchiveRelPath, validateAlignDoc } from "./align.ts";
 import { blockedByMap, blockingDeps, checkDepWrite, DepProblemCodes, dependentsOf, findDepProblems, normalizeDepRef } from "./depends.ts";
 import type { DepEntry, DepProblem } from "./depends.ts";
 import { atomicWriteFile, installProcessHooks, tmpDirFor, withTodoLock } from "./lock.ts";
@@ -634,6 +637,84 @@ function runComplete(deps: WriteDeps): number {
 }
 
 /**
+ * 撤销：在途条目退回未领取（todo-cli-todo:14，ADR-0007）。五态是前向机，而台账会撞上
+ * 「零 claim / 零分支 / 零文档的虚空 processing」——`reopen` 是唯一受支持的回退通道。
+ * 来源 aligning/aligned/processing 一律 → open，清 branch/claimedAt/alignedAt，其余字段
+ * （id/text/createdAt/tags/dependsOn/历史 notes）原样；从对齐阶段撤销必须带 --note
+ * （与 complete 的对齐阶段收口同口径）；done 拒绝、已是 open 幂等。陈旧对齐文档先归档
+ * （`.reopened-<UTC 紧凑>.md`）再写 JSON：归档失败整体中止、不写盘。
+ * 不碰依赖语义（来源状态本来都不是 done）与 git/worktree。
+ */
+function runReopen(deps: WriteDeps): number {
+  const { repoRoot, opts, now, log } = deps;
+  const file = resolveTodoPath(String(opts.file), repoRoot) as string;
+  const name = path.basename(file, ".json");
+  const match = String(opts.match ?? "");
+  type ReopenOutcome =
+    | { ok: true; changed: boolean; archived: string | null }
+    | { ok: false; message: string };
+  const result = withTodoLock(repoRoot, name, (): ReopenOutcome => {
+    const all = readTodoDocs(repoRoot);
+    if (!all.ok) return { ok: false, message: all.message };
+    const doc = all.docs.find((item) => item.name === name);
+    if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
+    const located = locateEntry(doc.data, match);
+    if (!("entry" in located)) {
+      return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
+    }
+    const entry = located.entry;
+    if (entry.status === "open") return { ok: true, changed: false, archived: null };
+    if (entry.status === "done") return { ok: false, message: "ALREADY_DONE：条目已完成，撤销已完成条目请另条登记" };
+    const source = entry.status;
+    const note = opts.note;
+    const hasNote = typeof note === "string" && note !== "";
+    // 撤销对齐阶段的条目 = 推翻对齐结论，必须留原因（人工门的留痕）；
+    // processing 已开工，撤销原因由注记前缀承载，--note 可选。
+    if (!hasNote && (source === "aligning" || source === "aligned")) {
+      return { ok: false, message: "NOTE_REQUIRED：从对齐阶段撤销必须带 --note 说明原因" };
+    }
+
+    // 归档先于写盘：规范路径腾空后，重新 claim → align 必须重写新文档，
+    // 否则旧文档会零人工二次过门。文档不存在（虚空 processing 即是）跳过、正常通过。
+    const stamp = now();
+    let archived: string | null = null;
+    const docPath = alignDocPath(repoRoot, name, entry.id);
+    if (fs.existsSync(docPath)) {
+      const archive = archiveStamp(stamp);
+      const rel = reopenArchiveRelPath(name, entry.id, archive);
+      const target = reopenArchivePath(repoRoot, name, entry.id, archive);
+      if (fs.existsSync(target)) return { ok: false, message: `ALIGN_ARCHIVE_FAILED：归档目标已存在 ${rel}` };
+      try {
+        fs.renameSync(docPath, target);
+      } catch {
+        return { ok: false, message: `ALIGN_ARCHIVE_FAILED：归档失败 ${rel}` };
+      }
+      archived = rel;
+    }
+
+    entry.status = "open";
+    entry.branch = null;
+    entry.claimedAt = null;
+    entry.alignedAt = null;
+    entry.notes.push(`撤销 ${stamp.slice(0, 10)}：从 ${source} 回到未领取${hasNote ? `；${note}` : ""}`);
+    writeTodoData(repoRoot, file, doc.data);
+    return { ok: true, changed: true, archived };
+  });
+  if (!result.ok) {
+    log(result.message);
+    return 1;
+  }
+  if (!result.value.ok) {
+    log(result.value.message);
+    return 1;
+  }
+  const { changed, archived } = result.value;
+  log(`已撤销（${changed ? "已写入" : "状态未变"}）：${opts.file} · ${match}`);
+  if (archived !== null) log(`对齐文档已归档：${archived}`);
+  return 0;
+}
+
+/**
  * dep add / dep remove：增删直接依赖（todo-cli-todo:10）。与 add/claim 同一条锁 + 原子写；
  * add 去重保序追加且落盘前校验（悬空/自引用/环），remove 只删已声明的引用（否则 DEP_ABSENT）；
  * 两者都不动时间戳，变更后无变化则幂等返回「状态未变」。
@@ -850,6 +931,7 @@ const USAGE = `用法：
   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
   node .agents/skills/todo-cli/todo-cli/todo.mjs align --file <name> --match "子串" [--note "说明"]
   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file <name> --match "子串" [--note "说明"]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs reopen --file <name> --match "子串" [--note "原因"]
   node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file <name> --match "子串" --on 文件#id,...
   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]
@@ -859,7 +941,7 @@ const USAGE = `用法：
 仓库根默认由 git 自动发现（cwd 起）；也可在任意子命令前追加 --root <dir> 显式指定。`;
 
 /** 需要仓库根的子命令（help / 裸调用 / 未知命令都不要求 cwd 在 git 仓库内）。 */
-const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "align", "complete", "dep", "lint", "triage", "migrate"]);
+const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "align", "complete", "reopen", "dep", "lint", "triage", "migrate"]);
 
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
@@ -932,7 +1014,7 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     return 1;
   }
 
-  if (command === "add" || command === "claim" || command === "align" || command === "complete" || command === "dep") {
+  if (command === "add" || command === "claim" || command === "align" || command === "complete" || command === "reopen" || command === "dep") {
     if (!opts.file) {
       log("缺少 --file <name>");
       return 1;
@@ -950,6 +1032,7 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     if (command === "dep") return runDep({ repoRoot, opts, log });
     if (command === "claim") return runClaim({ repoRoot, opts, now, log });
     if (command === "align") return runAlign({ repoRoot, opts, now, log });
+    if (command === "reopen") return runReopen({ repoRoot, opts, now, log });
     return runComplete({ repoRoot, opts, now, log });
   }
 
