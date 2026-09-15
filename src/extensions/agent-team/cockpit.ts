@@ -1182,6 +1182,8 @@ export class TeamRunCoordinator {
           status: member.status,
           ...(member.summary !== undefined ? { summary: member.summary } : {}),
           ...(member.latest !== undefined ? { latest: member.latest } : {}),
+          ...(member.warning !== undefined ? { warning: member.warning } : {}),
+          ...(member.diagnostics !== undefined ? { diagnostics: member.diagnostics } : {}),
           ...(member.usage ? { usage: member.usage } : {}),
           ...(member.worktree ? { worktree: member.worktree } : {}),
         };

@@ -16,6 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   KILL_GRACE_MS,
+  MAX_MEMBER_PRIOR_ERRORS,
   MAX_TRANSCRIPT_MESSAGE_BYTES,
   emptyUsage,
   truncateUtf8,
@@ -87,7 +88,10 @@ export function defaultSpawn(): PiSpawn {
         },
       },
       on(event, cb) {
-        if (event === "close") child.on("close", (code) => (cb as (code: number | null) => void)(code));
+        if (event === "close")
+          child.on("close", (code, signal) =>
+            (cb as (code: number | null, signal?: string | null) => void)(code, signal),
+          );
         else if (event === "error") child.on("error", (err) => (cb as (err: Error) => void)(err));
       },
       kill(signal) {
@@ -158,6 +162,35 @@ interface JsonLineEvent {
   result?: { content?: Array<{ type?: string; text?: string }>; details?: unknown };
 }
 
+/**
+ * 末轮作用域的 outcome 信号（ADR-0006）：errorMessage/stopReason 一律「最后一次
+ * assistant message_end 说了算」，早轮错误只累计到 priorErrors（前
+ * MAX_MEMBER_PRIOR_ERRORS 条 + 总数）；未配对的 tool_execution_start 说明进程在
+ * 工具执行中途被打断。按 toolCallId 配对，缺 id 的行（老事件/fake 流）用计数兜底。
+ */
+interface TurnScope {
+  lastError: string | undefined;
+  stopReason: string | undefined;
+  priorErrors: string[];
+  priorErrorCount: number;
+  openToolIds: Set<string>;
+  openUnidentified: number;
+}
+
+/** 递增一轮：上一轮的错误降级为诊断，末轮信号取而代之（末轮说了算）。 */
+function beginTurn(scope: TurnScope, message: StreamedMessage | undefined): void {
+  if (scope.lastError !== undefined) {
+    scope.priorErrorCount++;
+    if (scope.priorErrors.length < MAX_MEMBER_PRIOR_ERRORS) scope.priorErrors.push(scope.lastError);
+  }
+  scope.lastError = message?.errorMessage;
+  scope.stopReason = message?.stopReason;
+}
+
+function openTools(scope: TurnScope): boolean {
+  return scope.openToolIds.size > 0 || scope.openUnidentified > 0;
+}
+
 function toNumber(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
@@ -223,6 +256,16 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
     }
   };
 
+  // 末轮作用域信号（ADR-0006）：早轮错误不粘、工具配对、末轮 stopReason。
+  const scope: TurnScope = {
+    lastError: undefined,
+    stopReason: undefined,
+    priorErrors: [],
+    priorErrorCount: 0,
+    openToolIds: new Set<string>(),
+    openUnidentified: 0,
+  };
+
   // Materialize `team-tmp://<text>` system prompts into private temp files.
   const tmpFiles: string[] = [];
   const tmpDirs: string[] = [];
@@ -281,14 +324,13 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
         const role = msg.role ?? "unknown";
         if (role === "assistant") {
           outcome.usage.turns++;
+          beginTurn(scope, msg);
           applyUsage(outcome.usage, msg.usage);
           if (msg.model) {
             outcome.model = msg.model;
             outcome.usage.model = msg.model;
           }
           if (msg.providerThinkingLevel) outcome.usage.thinkingLevel = msg.providerThinkingLevel;
-          if (msg.stopReason) outcome.stopReason = msg.stopReason;
-          if (msg.errorMessage) outcome.errorMessage = msg.errorMessage;
         }
         const text = contentText(msg.content);
         if (role === "assistant" && text) outcome.finalText = text;
@@ -305,6 +347,8 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
         return;
       }
       if (event.type === "tool_execution_start") {
+        if (event.toolCallId) scope.openToolIds.add(event.toolCallId);
+        else scope.openUnidentified++;
         emit({ type: "tool_execution_start", toolName: event.toolName ?? "?", args: event.args });
         return;
       }
@@ -318,6 +362,8 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
         return;
       }
       if (event.type === "tool_execution_end") {
+        if (event.toolCallId) scope.openToolIds.delete(event.toolCallId);
+        else if (scope.openUnidentified > 0) scope.openUnidentified--;
         emit({
           type: "tool_execution_end",
           toolName: event.toolName ?? "?",
@@ -340,10 +386,13 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
       outcome.stderr += String(chunk);
     });
 
-    const exit = new Promise<number>((resolve) => {
-      spawned.on("close", (code) => {
+    const exit = new Promise<{ code: number; signal?: string }>((resolve) => {
+      spawned.on("close", (code, signal) => {
         if (buffer.trim()) processLine(buffer);
-        resolve(code ?? 0);
+        resolve({
+          code: code ?? 0,
+          ...(typeof signal === "string" && signal.length > 0 ? { signal } : {}),
+        });
       });
     });
 
@@ -368,10 +417,10 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
       else signal.addEventListener("abort", killProc, { once: true });
     }
 
-    const exitCode = await exit;
+    const exited = await exit;
     clearAbort?.();
 
-    emit({ type: "exit", exitCode });
+    emit({ type: "exit", exitCode: exited.code });
     if (spawnErrorMessage) {
       emit({ type: "error", code: "CHILD_SPAWN_FAILED", message: spawnErrorMessage });
     }
@@ -379,7 +428,14 @@ export async function runChildPi(options: RunChildOptions): Promise<ChildOutcome
       emit({ type: "error", code: "AGENT_ABORTED", message: "child process killed by abort" });
     }
 
-    outcome.exitCode = exitCode;
+    // 末轮说了算：errorMessage/stopReason 取最后一次 assistant 轮，早轮只留诊断。
+    outcome.exitCode = exited.code;
+    if (exited.signal !== undefined) outcome.signal = exited.signal;
+    outcome.errorMessage = scope.lastError;
+    outcome.stopReason = scope.stopReason;
+    outcome.priorErrors = scope.priorErrors;
+    outcome.priorErrorCount = scope.priorErrorCount;
+    outcome.toolInterrupted = openTools(scope);
     return outcome;
   } finally {
     clearAbort?.();

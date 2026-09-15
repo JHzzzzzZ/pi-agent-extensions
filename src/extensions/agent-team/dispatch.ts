@@ -14,6 +14,12 @@
 
 import * as path from "node:path";
 import { buildExternalArgs, createExternalParser, resolveExternalCli } from "./external.ts";
+import {
+  decideMemberTerminal,
+  formatMemberDiagnostics,
+  memberFailureMessage,
+  type MemberTerminalSignals,
+} from "./outcome.ts";
 import { defaultSpawn, getPiInvocation, runChildPi } from "./runner.ts";
 import { type TranscriptEntryKind, type TranscriptSink } from "./transcript.ts";
 import { createWorktree, defaultGitRunner, memberWorktreeBranch, type GitRunner } from "./worktree.ts";
@@ -33,9 +39,11 @@ import {
   truncateUtf8,
   type AgentUsage,
   type ChildEvent,
+  type ChildOutcome,
   type DispatchOutcome,
   type ExternalBackend,
   type ExternalCliResolveResult,
+  type MemberDiagnostics,
   type MemberPhase,
   type MemberProgress,
   type MemberProgressStatus,
@@ -127,6 +135,10 @@ export interface DispatchMemberDetail {
   latest?: string;
   /** Short progress note (turn count / worktree setup / failure code). */
   note?: string;
+  /** done 但收尾异常（exitCode ≠ 0）时的一行说明（ADR-0006）。 */
+  warning?: string;
+  /** 终态诊断（转录/失败通知回看用）。 */
+  diagnostics?: MemberDiagnostics;
   /** Live activity phase reported by the member's child events. */
   phase?: MemberPhase;
   /** Tool name while `phase === "tool"`. */
@@ -236,10 +248,17 @@ function rosterText(team: TeamConfig): string {
   return team.members.map((m) => `- ${m.name}${m.model ? ` (${m.model})` : ""}`).join("\n");
 }
 
+/**
+ * 成员分节标题：三态不变；`done` 且收尾异常时把 warning 前置到括号里
+ * （`— done（收尾异常：exit 1，2.3s）`）——leader 一眼看到「完成但有异常」。
+ */
 function statusLine(result: MemberRunResult): string {
   const secs = Math.round(result.durationMs / 100) / 10;
   const cost = result.usage.cost > 0 ? `，$${result.usage.cost.toFixed(4)}` : "";
-  if (result.status === "done") return `## ${result.name} — done（${secs}s${cost}）`;
+  if (result.status === "done") {
+    const warning = result.warning ? `${result.warning}，` : "";
+    return `## ${result.name} — done（${warning}${secs}s${cost}）`;
+  }
   if (result.status === "aborted") return `## ${result.name} — aborted`;
   return `## ${result.name} — failed（${result.error?.code ?? "CHILD_FAILED"}）`;
 }
@@ -260,13 +279,6 @@ function shortMessage(text: string, max = 80): string {
 }
 
 /** Member result codes that are environmental — retrying cannot help. */
-const ENVIRONMENT_FAILURE_CODES = new Set<string>([
-  "WORKTREE_UNAVAILABLE",
-  "MEMBER_NOT_FOUND",
-  "CHILD_FAILED",
-  "CLI_NOT_FOUND",
-]);
-
 const FAILURE_GUIDANCE =
   [
     "⚠ 失败处理指令：",
@@ -274,11 +286,37 @@ const FAILURE_GUIDANCE =
     "- 调整方案（换成员、改任务、放弃该子任务）或直接输出最终报告，并在报告中如实说明失败原因。",
   ].join("\n");
 
+/**
+ * 成员转录收尾行（system）：状态 + warning + 耗时/费用/轮数 + 一行诊断。
+ * 转录是排障面，判定只看末轮——早轮错误只在这里的「前轮错误」里可见。
+ */
+function memberSystemLine(result: MemberRunResult, secs: number, cost: number, turns: number): string {
+  const status = result.warning ? `${result.status}（${result.warning}）` : result.status;
+  const parts = [`${status} · ${secs}s · $${cost.toFixed(4)} · ${turns} turns`];
+  if (result.diagnostics) parts.push(formatMemberDiagnostics(result.diagnostics));
+  return parts.join(" · ");
+}
+
+/**
+ * 失败成员的部分产出提示（ADR-0006）：真 failed 不代表产出无用——
+ * 轮中被打断时子进程可能已完成大部分工作，leader 可直接取用而不是重派。
+ */
+function partialOutputNote(result: MemberRunResult): string {
+  if (result.status !== "failed") return "";
+  const bytes = Buffer.byteLength(result.result, "utf8");
+  if (bytes === 0 || result.result === "(no output)") return "";
+  return `（已有完整产出 ${bytes} 字节，可直接取用）`;
+}
+
 /** Builds the combined markdown report returned to the leader. */
 export function buildDispatchReport(results: MemberRunResult[]): string {
   const sections = results.map((result) => {
     const header = statusLine(result);
-    const body = result.ok ? result.result : `错误: ${result.error?.message ?? result.result}`;
+    // 失败时错误消息 + 部分产出正文一并可见（产出已拿到就不该白重派）
+    const note = partialOutputNote(result);
+    const body = result.ok
+      ? result.result
+      : [`错误: ${result.error?.message ?? result.result}`, ...(note ? ["", note, result.result] : [])].join("\n");
     return [header, "", body, ...worktreeLines(result)].join("\n");
   });
   const anyFailure = results.some((r) => !r.ok);
@@ -325,6 +363,75 @@ async function mapWithConcurrency<T, R>(
 
 function truncateMessage(text: string, max = 2000): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * 成员终态落地：共享判定函数（outcome.ts）+ 错误消息/诊断组装。两条后端
+ * （pi / 外部 CLI）各传自己的信号，判定表与呈现面只此一处。
+ */
+function finalizeMember(input: {
+  name: string;
+  aborted: boolean;
+  outcome: ChildOutcome;
+  /** 末轮错误消息（外部 CLI 来自解析器，pi 来自 outcome；空则回退到 fallback）。 */
+  errorMessage?: string;
+  /** 末轮以错误收尾的显式信号（外部 CLI：turn.failed / is_error）。 */
+  finalTurnError?: boolean;
+  /** 是否观察到任何一轮输出。 */
+  hasFinalTurn: boolean;
+  rawText: string;
+  usage: AgentUsage;
+  durationMs: number;
+  /** 无错误消息时的兜底描述。 */
+  fallbackMessage: string;
+}): MemberRunResult {
+  const signals: MemberTerminalSignals = {
+    aborted: input.aborted,
+    exitCode: input.outcome.exitCode,
+    signal: input.outcome.signal,
+    hasFinalTurn: input.hasFinalTurn,
+    toolInterrupted: input.outcome.toolInterrupted === true,
+    ...(input.finalTurnError !== undefined ? { finalTurnError: input.finalTurnError } : {}),
+    ...(input.outcome.stopReason !== undefined ? { lastStopReason: input.outcome.stopReason } : {}),
+    ...(input.errorMessage !== undefined ? { lastErrorMessage: input.errorMessage } : {}),
+  };
+  const decision = decideMemberTerminal(signals);
+  const diagnostics: MemberDiagnostics = {
+    exitCode: input.outcome.exitCode,
+    ...(input.outcome.signal !== undefined ? { signal: input.outcome.signal } : {}),
+    ...(input.outcome.stopReason !== undefined ? { lastStopReason: input.outcome.stopReason } : {}),
+    priorErrors: [...(input.outcome.priorErrors ?? [])],
+    priorErrorCount: input.outcome.priorErrorCount ?? 0,
+  };
+  const result: MemberRunResult = {
+    name: input.name,
+    ok: decision.status === "done",
+    status: decision.status,
+    result: truncateUtf8(input.rawText, MAX_RESULT_BYTES),
+    summary: truncateUtf8(input.rawText, MAX_SUMMARY_BYTES),
+    usage: input.usage,
+    durationMs: input.durationMs,
+    diagnostics,
+  };
+  if (decision.warning !== undefined) result.warning = decision.warning;
+  if (decision.status !== "done") {
+    result.error = {
+      code: decision.status === "aborted" ? "AGENT_ABORTED" : "CHILD_FAILED",
+      message:
+        decision.status === "aborted"
+          ? truncateMessage(input.errorMessage || "run 已中止，成员子进程被终止")
+          : truncateMessage(
+              memberFailureMessage({
+                interrupted: decision.failure === "interrupted",
+                message: input.errorMessage,
+                fallback: input.fallbackMessage,
+                exitCode: input.outcome.exitCode,
+                ...(input.outcome.signal !== undefined ? { signal: input.outcome.signal } : {}),
+              }),
+            ),
+    };
+  }
+  return result;
 }
 
 /**
@@ -564,26 +671,21 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           const durationMs = Date.now() - startMs;
           const aborted = signal?.aborted === true;
           const finalized = parser.finalize();
-          const failed = aborted || finalized.failed || outcome.exitCode !== 0;
           const rawText = parser.finalText || outcome.stderr || "(no output)";
-          const result: MemberRunResult = {
+          const errorMessage = finalized.errorMessage ?? (outcome.stderr.trim().length > 0 ? outcome.stderr : undefined);
+          const result = finalizeMember({
             name,
-            ok: !failed,
-            status: aborted ? "aborted" : failed ? "failed" : "done",
-            result: truncateUtf8(rawText, MAX_RESULT_BYTES),
-            summary: truncateUtf8(rawText, MAX_SUMMARY_BYTES),
+            aborted,
+            outcome,
+            ...(errorMessage !== undefined ? { errorMessage } : {}),
+            finalTurnError: finalized.failed,
+            hasFinalTurn: parser.finalText.length > 0 || parser.usage.turns > 0 || finalized.failed,
+            rawText,
             usage: parser.usage,
             durationMs,
-          };
+            fallbackMessage: `${backend} CLI 未报告错误消息`,
+          });
           if (plan.worktree) result.worktree = plan.worktree;
-          if (failed) {
-            result.error = {
-              code: aborted ? "AGENT_ABORTED" : "CHILD_FAILED",
-              message: truncateMessage(
-                finalized.errorMessage || outcome.stderr || `${backend} exited with code ${outcome.exitCode}`,
-              ),
-            };
-          }
           setProgress(
             name,
             result.status,
@@ -591,7 +693,11 @@ export function createDispatchExecutor(deps: DispatchDeps) {
             result.ok ? shortMessage(rawText) : undefined,
           );
           const secs = Math.round(durationMs / 100) / 10;
-          record(name, "system", `${result.status} · ${secs}s · $${parser.usage.cost.toFixed(4)} · ${parser.usage.turns} turns`);
+          record(
+            name,
+            "system",
+            memberSystemLine(result, secs, parser.usage.cost, parser.usage.turns),
+          );
           if (result.error) record(name, "error", `${result.error.code}: ${result.error.message}`);
           return result;
         } catch (e) {
@@ -642,25 +748,21 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           onEvent: (event) => handleChildEvent(name, event),
         });
         const durationMs = Date.now() - startMs;
-        const aborted = signal?.aborted === true || outcome.stopReason === "aborted";
-        const failed = aborted || outcome.exitCode !== 0 || outcome.stopReason === "error" || !!outcome.errorMessage;
+        const aborted = signal?.aborted === true;
         const rawText = outcome.finalText || outcome.stderr || "(no output)";
-        const result: MemberRunResult = {
+        const errorMessage = outcome.errorMessage ?? (outcome.stderr.trim().length > 0 ? outcome.stderr : undefined);
+        const result = finalizeMember({
           name,
-          ok: !failed,
-          status: aborted ? "aborted" : failed ? "failed" : "done",
-          result: truncateUtf8(rawText, MAX_RESULT_BYTES),
-          summary: truncateUtf8(rawText, MAX_SUMMARY_BYTES),
+          aborted,
+          outcome,
+          ...(errorMessage !== undefined ? { errorMessage } : {}),
+          hasFinalTurn: outcome.usage.turns > 0,
+          rawText,
           usage: outcome.usage,
           durationMs,
-        };
+          fallbackMessage: "pi 子进程未报告错误消息",
+        });
         if (plan.worktree) result.worktree = plan.worktree;
-        if (failed) {
-          result.error = {
-            code: aborted ? "AGENT_ABORTED" : "CHILD_FAILED",
-            message: truncateMessage(outcome.errorMessage || outcome.stderr || `pi exited with code ${outcome.exitCode}`),
-          };
-        }
         setProgress(
           name,
           result.status,
@@ -668,7 +770,7 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           result.ok ? shortMessage(rawText) : undefined,
         );
         const secs = Math.round(durationMs / 100) / 10;
-        record(name, "system", `${result.status} · ${secs}s · $${outcome.usage.cost.toFixed(4)} · ${outcome.usage.turns} turns`);
+        record(name, "system", memberSystemLine(result, secs, outcome.usage.cost, outcome.usage.turns));
         if (result.error) record(name, "error", `${result.error.code}: ${result.error.message}`);
         return result;
       } catch (e) {
@@ -738,6 +840,10 @@ export function parseDispatchMemberResults(details: unknown): DispatchMemberDeta
       ...(typeof raw.summary === "string" ? { summary: raw.summary } : {}),
       ...(typeof raw.latest === "string" ? { latest: raw.latest } : {}),
       ...(typeof raw.note === "string" ? { note: raw.note } : {}),
+      ...(typeof raw.warning === "string" ? { warning: raw.warning } : {}),
+      ...(raw.diagnostics !== null && typeof raw.diagnostics === "object"
+        ? { diagnostics: raw.diagnostics as MemberDiagnostics }
+        : {}),
       ...(raw.phase === "tool" || raw.phase === "waiting" ? { phase: raw.phase } : {}),
       ...(typeof raw.toolName === "string" ? { toolName: raw.toolName } : {}),
       ...(typeof raw.lastActivityAtMs === "number" && Number.isFinite(raw.lastActivityAtMs)

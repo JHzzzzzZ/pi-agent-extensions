@@ -244,6 +244,9 @@ export function createExternalParser(backend: ExternalBackend): ExternalParser {
         // codex usage 无 cost 字段（P6）：费用恒 0，token 照折。
       }
       usage.turns += 1;
+      // 末轮说了算（ADR-0006）：完成的轮次清除早轮失败态，与 pi 成员同一判定口径。
+      failed = false;
+      errorMessage = undefined;
       return [];
     }
     if (type === "turn.failed") {

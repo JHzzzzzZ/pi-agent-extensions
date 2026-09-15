@@ -78,6 +78,22 @@ export function runDetailText(record: TeamRunRecord): string {
 }
 
 /**
+ * 失败通知的成员行证据：warning（完成但收尾异常）优先，否则失败诊断
+ * （exitCode / 终止信号）——成员产出是否真的可用，通知里要看得出来（ADR-0006）。
+ */
+function memberRowEvidence(member: TeamRunRecord["members"][number]): string {
+  if (member.warning !== undefined && member.warning.length > 0) {
+    return `（${flattenText(member.warning)}）`;
+  }
+  const diagnostics = member.diagnostics;
+  if (!diagnostics) return "";
+  const parts: string[] = [];
+  if (diagnostics.exitCode !== 0) parts.push(`exit ${diagnostics.exitCode}`);
+  if (diagnostics.signal !== undefined && diagnostics.signal.length > 0) parts.push(`信号 ${diagnostics.signal}`);
+  return parts.length > 0 ? `（${parts.join("，")}）` : "";
+}
+
+/**
  * Failure summary delivered to the main session as a followUp message when
  * a background run lands `failed` (leader non-zero exit / error stopReason /
  * promptError) or fails at launch (no record path builds one via
@@ -102,7 +118,7 @@ export function formatFailureNotice(record: TeamRunRecord): string {
     for (const member of record.members) {
       const summary = member.summary !== undefined ? flattenText(member.summary) : "";
       const tail = summary.length === 0 ? "" : ` — ${summary.length > 160 ? `${summary.slice(0, 160)}…` : summary}`;
-      lines.push(`  - ${member.name}: ${member.status}${tail}`);
+      lines.push(`  - ${member.name}: ${member.status}${memberRowEvidence(member)}${tail}`);
     }
   }
   if (record.report) lines.push("部分报告:", record.report);

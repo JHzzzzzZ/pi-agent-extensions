@@ -19,6 +19,7 @@
 | 子进程 env / 工具面 | 成员 env 经 `dispatch.ts` `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`；leader（`stripRunScopedEnv()`）与成员（含外部 CLI 成员）统一经 `withLoopbackBypass()` 补回环代理豁免（`NO_PROXY` + `no_proxy` 双键，用户显式值只追加缺失项，v1.30.0）；leader 与成员 args 统一 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`，exclude 优先于 `--tools`） |
 | 隔离分支 | `worktree.ts`（每次 run 独立分支；同 run 重派复用已注册 worktree / 空闲同名分支，不碰当前目录） |
 | 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界，契约 `<仓库根>/docs/cross/status-bar.md`）；数据驱动挂载：controller 每会话挂一次，运行中有帧、落定 `setWidget(undefined)` 自动卸载；未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`，选中态 = `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（末行恒为成员行；v1.13.0，任务摘要 v1.13.1 并入）；连接符 `├─ `/`╰─ `（末项圆角，v1.15.4），每行带背景（普通行 `rowBg`、选中行 `rowSelectedBg`，按宿主内容宽补齐，v1.15.4） |
+| 成员终态判定 | `outcome.ts` `decideMemberTerminal`（**末轮说了算**，v1.31.0，#47，ADR-0006）：只看最后一次 assistant `message_end` 的 stopReason/errorMessage；pi 成员（`dispatch.ts`）与外部 CLI 成员（`external.ts` `finalize`）共用；`diagnostics`（exitCode/signal/末轮/前轮错误）三处呈现（转录 system 行 / leader 报告分节 / 失败通知） |
 | 错误码 | `types.ts` `TeamErrorCodes` |
 
 ## CONVENTIONS
@@ -35,6 +36,7 @@
 - 亮块行文本不允许含换行：任务/尾注先 `\s+` 压平再截断（任务 44 + `…`、成员尾注 ≤30）—— 残余换行由宿主渲染成额外行（截图回归）；折叠单行只报团队名，状态/耗时/并行数只在展开树。
 - 亮块挂载由数据决定（v1.13.0）：`buildWidgetView` 仅在 `running && progress` 时产出视图，否则返回空——`RunWidgetController.refresh()` 空视图即卸载（setWidget undefined + 复位选择态）；刷新由 coordinator `onProgress` 事件即时驱动 + 1s tick 兜底，`/team:clear` 不碰 widget（只清排队对话）。
 - 按键 reducer（widget `handleWidgetKey` / viewer `handleViewerKey`）顶部必须 `isKeyRelease` 短路（fleet-status.ts:699）：Kitty 键盘协议 flag 2 下 release 事件（`:3` 编码）同样能被 `matchesKey` 命中，漏过滤 = 一次按键生效两次（激活+移动/跳两行/开关两回）；repeat（`:2`）故意保留（长按连移）。
+- 成员终态只看**末轮**（v1.31.0，#47）：早轮 `errorMessage`/`stopReason` 绝不粘进判定（宿主 auto-retry 后「前轮失败、后轮交付完成」曾被判 CHILD_FAILED，leader 按「环境级失败不重试」白丢产出）；末轮干净而退出码非 0 = `done` + `warning`（三态不扩），新后端（外部 leader 等）复用 `outcome.ts` 判定函数而不是另写四信号表达式。
 - leader 提问必须 fail-closed：任何等待都有界（工具侧超时 30s~30min，默认 10 分钟；cockpit 侧 backstop = 超时 + 5s），超时/取消/主会话无 UI/run abort 一律回 `extension_ui_response {cancelled}`，leader 按工具结果自行决策 —— 无界等待会把 run 挂死（对齐 v1.15.0 教训）。
 - RPC dialog 不能从 `session_start` 触发：pi 在 session-start 处理器 pending 期间不消费 RPC stdin，请求永远收不到 response（真机 E2E 实证，fixture 改用 `/ask-e2e` 命令触发）。
 - 真机 E2E 起 pi 子进程用包的真实 bin 入口 `dist/bundle/cli.js`（unbundled `dist/cli.js` 在本工作区不启动），并以 `PI_CODING_AGENT_DIR` 隔离用户全局扩展/配置。
@@ -47,7 +49,7 @@
 
 ## COMMANDS
 ```bash
-cd src/extensions/agent-team && npm install && npm test   # 664 测试（node --test test/*.test.ts）
+cd src/extensions/agent-team && npm install && npm test   # 688 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```

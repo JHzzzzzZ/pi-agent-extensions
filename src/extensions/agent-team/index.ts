@@ -461,6 +461,8 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string, opts: AgentTeamE
             ok: result.ok,
             status: result.status,
             ...(result.summary ? { summary: result.summary } : {}),
+            ...(result.warning ? { warning: result.warning } : {}),
+            ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
             ...(result.result && result.ok ? { latest: singleLineTail(result.result) } : {}),
             usage: result.usage,
             ...(result.worktree ? { worktree: result.worktree } : {}),

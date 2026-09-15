@@ -238,6 +238,7 @@ members:
 
 - 每个成员的失败会显示**具体原因**（不只错误码），Widget、进度流和派发报告中都可见。
 - **失败终态必达主 agent（v1.18.0）**：后台 run 落 `failed` 时，除用户端 `ui.notify` 外，主会话还会收到一条失败摘要 followUp（`agent-team-result`，与完成报告同通道）——头行含状态/runId/耗时/费用，随后是错误、任务、各成员结果行（`done/failed/aborted` + 摘要）与部分报告（leader 失败前已产出的内容）；总量 8KB 上限，超长先截报告。启动级失败（worktree 预检、创建 worktree 失败、leader 进程拉起异常）同样送达，并补落一条最小 failed 记录（`members: []`），`/team:status` 与查看器可回看。**中止（stop/D）不送达**——那是用户主动叫停，`team_stop` 返回 aborted 终态记录；model 预检 / `RUN_IN_PROGRESS` 等同步拒绝也不补送达（`team_run` 已内联报错）。
+- **成员终态判定「末轮说了算」（v1.31.0，#47）**：成员是否算「交付完成」只看**最后一轮** assistant 消息的结束状态——早轮失败（宿主 auto-retry、模型限流重试）不再把已交付完整报告与 commit 的成员永久判成 `failed`（真机 run-1789104779153：writer 与 checker 双双交付完成后仍被判 CHILD_FAILED，leader 按「环境级失败不重试」丢弃已完成的工作）。三态不变：末轮干净而进程退出码非 0 判 `done` + 「收尾异常：exit N」（产出照常可用，但绝不静默——leader 报告分节标题、成员转录收尾行、失败通知三处都看得见）；末轮报错/被信号杀/工具执行中途被打断才是真 `failed`，错误消息必带 exit code 或信号，被打断的成员另标注「部分产出（可能可用）」；失败成员已产出的正文连同「（已有完整产出 N 字节，可直接取用）」一并进 leader 报告，leader 可直接取用而不是白重派。诊断字段 `diagnostics = { exitCode, signal, lastStopReason, priorErrors[≤3], priorErrorCount }` 随成员结果进转录（`exit N · 末轮 <stop> · 前轮错误 K 条：…`）与失败通知；pi 成员与外部 CLI 成员（codex `turn.failed` / claude `is_error`）共用同一判定。
 - 派发报告对环境级失败（worktree/git 不可用、成员/模型不存在）附带指令：重试无效，不要再次派发同一成员。
 - **派发预算**：单次 run 最多 12 次 dispatch 调用 / 40 次成员运行（可用团队文件 `budget:` 块调整）；超限后 team_dispatch 返回错误并强制 leader 立即输出最终报告，杜绝无限重试循环。
 - **费用/token 硬上限**（可选）：`budget.maxCostUsd` / `budget.maxTotalTokens` 超限时整个 run 自动中止（`BUDGET_EXCEEDED`），累计值 = leader 轮次 + 全部成员 usage，`/team:status` 运行态显示预算行（如 `预算: $0.42/$5.00 · 2/12 派发 · 5/40 成员`），亮块展开头行在设了费用上限时显示余额提示（折叠行不含）。
@@ -259,7 +260,7 @@ members:
 ```bash
 cd src/extensions/agent-team
 npm install
-npm test          # node --test test/*.test.ts（664 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
+npm test          # node --test test/*.test.ts（688 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```
