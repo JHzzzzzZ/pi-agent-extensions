@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "title": "goal-todo TODO",
   "entries": [
     {
@@ -8,10 +8,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -19,10 +21,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -30,12 +34,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e，goal 60 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
@@ -43,12 +49,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge e68095d，goal v1.3.0 + footer 瘦身：状态行改 `│ ◎ <目标≤20 显示列> · N轮 · 时长>`（暂停 `⏸ … 已暂停`，目标按显示列截断、CJK 双宽），`updateStatus` 唯一写入边界拼 `STATUS_SEPARATOR`（前缀计入指纹）；62 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
@@ -56,25 +64,30 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：goal v1.3.0——`parseGoalArgs` 收敛为 status/set（`/goal status` 仍是目标文本），`/goal:status` 副本 + `/goal:clear|:stop|:off|:reset|:none|:cancel`（共享 handler）+ `/goal:resume` 共 8 条冒号命令；旧管理词经裸入口只提示改名、绝不设置目标。61 测试绿；真实 pi loader 冒烟通过"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 6,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件主要写 footer（按 key 排序，不受插入序影响），同属宿主根修受益面。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "processing",
+      "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
-        "2026-09-10 @ route A：材料已备，待提交上游"
+        "2026-09-10 @ route A：材料已备，待提交上游",
+        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 7,
@@ -82,12 +95,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 9db7983：footer 首段定格——goal v1.3.0 段前缀改由本地 `status-band.ts`（`Symbol.for(\"pi.status-bar.bands.v1\")` 进程登记表）统一决定：最前段无前缀（行首定格）、非最前段 `│ `，低带出现/消失立即重渲染；`updateStatus` 不再自己拼前缀（前缀计入指纹），idle/shutdown 经 `writeBand(…, undefined, …)` 清登记；63 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

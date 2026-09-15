@@ -204,6 +204,24 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 14,
+      "text": "reopen 子命令：把在途条目退回未领取（用户 2026-09-15）。背景：五态是前向机（open→aligning→aligned→processing→done），claim 在 processing 上幂等 no-op，docs/tools/todo-cli.md 明写「历史 processing 不回退状态」——实际撞上：9 条虚空 processing（8 条 route A 上游根修跨插件登记 + agent-team#66）零 claim / 零分支 / 零对齐文档，却没有任何受支持手段退回 open；唯一替代 migrate to-md → from-md --force 会重建全台账并丢 createdAt 18 / claimedAt 18 / completedAt 20 / alignedAt 8 / tags 8。要求：新增第 10 个子命令 reopen --file <名> --match \"子串\" [--note \"原因\"]——来源 aligning / aligned / processing 一律 → open，清空 branch / claimedAt / alignedAt，notes 追加「撤销 <日期>：回到未领取」（--note 并入）；done 拒绝（撤销已完成另条登记）；已是 open 幂等 changed:false；沿用既有锁 / 原子写 / 匹配口径（0 条或多条匹配 fail-closed 报错）。契约变更同步：USAGE + SKILL.md + docs/tools/todo-cli.md + todo-cli 卡（五态图与子命令面）；TDD 先红后绿（三来源各一例 + 幂等 + done 拒绝 + 多匹配 fail-closed）。验收：npm run test:todo 全绿 + 用它把本次 9 条虚空 processing 撤销为 open（未领取）。",
+      "status": "done",
+      "branch": "feat/todo-cli-reopen",
+      "tags": [
+        "cli",
+        "state-machine"
+      ],
+      "dependsOn": [],
+      "notes": [
+        "merge b97e548（feat 287554d / chore(pi) 0673258 根 2.51.0 / docs ca97533）；92 测试全绿 + lint exit 0；真机闭环：9 条虚空 processing（8 条 route A + agent-team#66）已用 reopen 退回 open 池，注记「从未开工：零 claim / 零分支 / 零对齐文档」。实现期偏差：根版本 2.50.0 已被 loop #9 占用，本次实际 bump 到 2.51.0。"
+      ],
+      "createdAt": "2026-09-15T14:17:33.475Z",
+      "claimedAt": "2026-09-15T14:23:44.017Z",
+      "completedAt": "2026-09-15T15:59:49.687Z",
+      "alignedAt": "2026-09-15T14:58:31.629Z"
     }
   ]
 }

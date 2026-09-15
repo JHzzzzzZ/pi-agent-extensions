@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "title": "provider-quota-todo TODO",
   "entries": [
     {
@@ -8,10 +8,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -19,10 +21,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -30,12 +34,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e，provider-quota 25 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
@@ -43,25 +49,30 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge e68095d：状态文本去 provider 前缀——OR→`$12.50 (used $3.25)`、DS→`10.00 CNY`、CA→`60.00`、GLM→`tokX% mcpY%(HH:mm)`、GO→`X%/Y%/Z%(HH:mm)`（跨日 `(MM-dd HH:mm)`；倒计时已删，后缀只保留绝对时间）；`doRefresh` 的 `write` 是唯一前缀拼接点（错误态同样带 `│ `）；26 测试绿（新增临时 HOME + 动态 import 的写入边界前缀测试）"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件主要写 footer（按 key 排序，不受插入序影响），同属宿主根修受益面。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "processing",
+      "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
-        "2026-09-10 @ route A：材料已备，待提交上游"
+        "2026-09-10 @ route A：材料已备，待提交上游",
+        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 6,
@@ -69,12 +80,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 9db7983：段前缀改由本地 `status-band.ts` 统一决定——最前段无前缀、非最前段 `│ `，低带出现/消失重渲染；`doRefresh` 的 `write` 是唯一入口（错误态同样处理、session 中止只清登记），session_shutdown 同时清 UI + 登记；26 测试绿（写入边界测试覆盖最前/非最前/重渲染）"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

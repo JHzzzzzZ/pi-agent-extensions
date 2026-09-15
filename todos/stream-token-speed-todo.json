@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "title": "stream-token-speed-todo TODO",
   "entries": [
     {
@@ -8,10 +8,12 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -19,12 +21,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e，stream-token-speed 43 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -32,25 +36,30 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge e68095d：去 `生成中` 前缀与 `｜` 分隔——等待 `TTFT —`、热身 `TTFT 412ms · —`、流式 `TTFT 412ms · 86.4 tok/s`、汇总 `TTFT 412ms · ~78.6 tok/s`（`~` 标注平均，不再输出最后瞬时值）；无流式数据清除状态（删 `NO_DATA_STATUS`）；`status-port.setStatus` 统一拼 `│ `；45 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件主要写 footer（按 key 排序，不受插入序影响），同属宿主根修受益面。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "processing",
+      "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
-        "2026-09-10 @ route A：材料已备，待提交上游"
+        "2026-09-10 @ route A：材料已备，待提交上游",
+        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
@@ -58,12 +67,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 9db7983：段前缀改由本地 `status-band.ts` 统一决定（最前段无前缀、其余段 `│ `，低带出现/消失重渲染，前缀决策在样式之前）；新增 `session_shutdown` 清上一轮汇总与登记；45 测试绿（新增最前/非最前/重渲染用例）"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

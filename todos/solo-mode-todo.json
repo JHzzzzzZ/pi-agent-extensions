@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "title": "solo-mode-todo",
   "entries": [
     {
@@ -8,6 +8,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ 9e2c15d / feat-solo-mode-approval-gate",
         "交付：新增 `solo-mode/` 扩展（11 测试）+ pwr 410 / opencode-bridge 113 / deep-init 37 全绿 + 三处 typecheck 零错误；文档同步（`docs/extensions/solo-mode.md`、`docs/cross/solo-approval-gate.md`、docs/INDEX、三张扩展卡 last verified）与版本 bump（根 2.16.0 / pwr 2.5.0 / bridge 1.5.0 / deep-init 1.2.0）。",
@@ -21,7 +22,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
@@ -29,12 +31,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e，solo-mode 12 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
@@ -42,12 +46,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge e68095d：段文本不变，仅内部 `setStatus` 助手在定义值时拼 `│ `（`│ ⚡ solo`）；14 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
@@ -55,6 +61,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ 20dbb78，根 v2.24.9",
         "需求：启动时带 `--solo` 即自动激活免审批模式，免去进 TUI 后再敲 `/solo`；同时解决无头场景（`-p` / `--mode json` 无 UI，当前 `/solo on` 因拿不到确认框而拒绝激活）用不了 solo 的问题。",
@@ -66,7 +73,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 5,
@@ -74,25 +82,30 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：solo-mode v1.2.0——裸 `/solo` 空参仍是一键切换（与习惯一致），`on`/`off`/`status` 改为独立冒号命令，旧空格词只提示改名、绝不执行（避免 `/solo on` 被误当反向切换）；`parseSoloCommand` 收敛为 toggle/usage。14 测试绿；真实 pi loader 冒烟通过"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 6,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件主要写 footer（按 key 排序，不受插入序影响），同属宿主根修受益面。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "processing",
+      "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
-        "2026-09-10 @ route A：材料已备，待提交上游"
+        "2026-09-10 @ route A：材料已备，待提交上游",
+        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 7,
@@ -100,12 +113,14 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 9db7983：`setStatus` 助手改走本地 `status-band.ts`——最前段 `⚡ solo` 无前缀、非最前段 `│ ⚡ solo`，低带出现/消失重渲染；15 测试绿"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
