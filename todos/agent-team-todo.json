@@ -44,15 +44,15 @@
     {
       "id": 4,
       "text": "支持与各个 agent 进行动态对话。（验证中：count-duet 团队 1-10 轮流计数已跑通，5 次串行派单；1-1000 逐个派单超预算待分批方案确认）",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:27:32.860Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T14:41:13.402Z"
     },
     {
       "id": 5,
@@ -452,7 +452,7 @@
     {
       "id": 28,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件下方亮块（belowEditor 独立栈）与 cockpit 进度 ticker 直接受影响。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
@@ -461,9 +461,9 @@
         "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
       ],
       "createdAt": null,
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:27:41.569Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T14:41:13.194Z"
     },
     {
       "id": 29,
@@ -951,15 +951,15 @@
     {
       "id": 61,
       "text": "多 run 并发下 /team:stop 省略 runId 的队列语义不一致：命令路径清全队列、工具路径只清该 run 队列（reviewer LOW①，run-1789133982726 交付）：统一契约 + 测试 + 文档（用户 2026-09-12）",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:27:33.376Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T14:41:13.933Z"
     },
     {
       "id": 62,
@@ -1019,7 +1019,7 @@
     {
       "id": 66,
       "text": "外部 CLI 成员 thinking/reasoning 级别映射（v1.26.0 缺口，用户 2026-09-12 追问）：外部成员 model 原串直传 CLI，写 :level 后缀会被当成模型名报错（当前无任何级别参数注入，见 external.ts buildExternalArgs）——实际级别只能跟随各 CLI 全局配置（codex ~/.codex/config.toml 的 model_reasoning_effort；claude --effort 默认）。要求：按成员指定级别——codex 注入 -c model_reasoning_effort=<level>、claude 注入 --effort <level>；设计待定：per-member 字段（如 thinking:）还是解析 model 的 :level 后缀映射（pi 的 off/minimal/low/medium/high/xhigh/max → 各 CLI 支持集，claude 仅 low/medium/high/xhigh/max）；预检对非法级别 fail-closed；README §7 + docs 卡同步。",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
@@ -1027,9 +1027,9 @@
         "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
       ],
       "createdAt": null,
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:27:33.209Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T14:41:13.753Z"
     },
     {
       "id": 67,
@@ -1063,15 +1063,15 @@
     {
       "id": 69,
       "text": "failure-delivery.test.ts 第 3 例（worktree pre-flight failure）在本机必失败：setup 用 os.tmpdir() 建项目目录，而本机 HOME（C:\\Users\\蒋晗）自带 .git（dotfiles 仓库）→ 临时目录落在 git 仓库内，createWorktree 成功、leader 照常 spawn（断言 'no leader spawned' 挂）。要求：用例不再依赖「tmpdir 不在任何 git 仓库里」这一环境假设——显式构造非仓库 cwd（如自建目录 + 断掉 git 发现）或注入失败路径，保持真实 git 语义；验收：基线（dev-laptop 无本次改动）跑该文件也全绿。来源：#58 收尾时实测（基线同样失败，非本次改动引入）。",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T15:45:54.909Z",
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:27:33.033Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T14:41:13.580Z"
     },
     {
       "id": 70,
