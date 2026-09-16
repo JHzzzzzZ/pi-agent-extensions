@@ -4,13 +4,13 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 439 个（node:test） |
-| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 688 个 |
+| [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 443 个（node:test） |
+| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 711 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
 | [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
-| [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令） | 205 个（node:test） |
+| [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令） | 213 个（node:test） |
 | [`src/extensions/goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 63 个 |
 | [`src/extensions/deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
 | [`src/extensions/opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
@@ -263,7 +263,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ```bash
 cd src/extensions/pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 439 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 443 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflow UI（无宿主）
 ```
@@ -322,7 +322,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd src/extensions/agent-team
-npm install && npm test        # 688 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
+npm install && npm test        # 711 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
@@ -435,7 +435,7 @@ daily/window 调度与固定间隔共用同一套语义：错过的时间点不�
 ```bash
 cd src/extensions/loop
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
-npm test           # 205 个测试（node:test）
+npm test           # 213 个测试（node:test）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 

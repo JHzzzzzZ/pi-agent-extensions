@@ -125,7 +125,7 @@ src/extensions/pwr/
 ```powershell
 cd src/extensions/pwr
 npm install        # 仅开发依赖（typescript、@types/node、typebox、pi 宿主类型）
-npm test           # 439 个单测（test/ 105 + tests/ 233 + runtime/test/ 56 + runner/test/ 45）
+npm test           # 443 个单测（test/ 105 + tests/ 237 + runtime/test/ 56 + runner/test/ 45）
 npm run typecheck  # tsc --noEmit（strict）
 ```
 

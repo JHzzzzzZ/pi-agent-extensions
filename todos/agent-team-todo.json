@@ -44,14 +44,16 @@
     {
       "id": 4,
       "text": "支持与各个 agent 进行动态对话。（验证中：count-duet 团队 1-10 轮流计数已跑通，5 次串行派单；1-1000 逐个派单超预算待分批方案确认）",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/agent-team-member-dialogue",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "2026-09-16 交付：对话线（同一团队 + actor 的多轮追问）——每轮注入最近 3 轮前文 + 摘要头（单轮答复 ≤800 字节，只取该轮最后一条 assistant，避免递归卷入 task 行）；成员保持一次性子进程、leader 唯一中枢；轮用量计各轮 run 既有预算（不新增预算类型）；新增 test/dialogue.test.ts（8）+ viewer-chat-host 3 轮往返宿主级用例；README/docs 卡/AGENTS 同步。全量 711/711 + typecheck 0。merge 4fc9bd2 / agent-team 1.32.0"
+      ],
       "createdAt": null,
       "claimedAt": "2026-09-16T14:27:32.860Z",
-      "completedAt": null,
+      "completedAt": "2026-09-16T15:19:12.180Z",
       "alignedAt": "2026-09-16T14:41:13.402Z"
     },
     {
@@ -452,17 +454,18 @@
     {
       "id": 28,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件下方亮块（belowEditor 独立栈）与 cockpit 进度 ticker 直接受影响。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/status-bar-widget-band",
       "tags": [],
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ route A：材料已备，待提交上游",
-        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
+        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档",
+        "2026-09-16 交付：仓库内 widget 排序带（三插件各一份 widget-band.ts，Symbol.for 登记表 + band key 最小者当单写者，三段合并为单键 widget-band 并保序；不纳入 belowEditor）；契约重锁 docs/cross/status-bar.md + test/status-bar-contract.test.ts；上游 issue 稿补成可直接粘贴（提交由人工）。pwr 443 / loop 213 / run-timer 59 / contract 4 / smoke 21 全绿 + 三个 typecheck 0。merge a81ba32 / pwr 2.10.0 / loop 1.9.0 / 根 2.52.0；同族 7 条 route A 条目已归并到本条"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-16T14:27:41.569Z",
-      "completedAt": null,
+      "completedAt": "2026-09-16T15:19:11.956Z",
       "alignedAt": "2026-09-16T14:41:13.194Z"
     },
     {
@@ -951,14 +954,16 @@
     {
       "id": 61,
       "text": "多 run 并发下 /team:stop 省略 runId 的队列语义不一致：命令路径清全队列、工具路径只清该 run 队列（reviewer LOW①，run-1789133982726 交付）：统一契约 + 测试 + 文档（用户 2026-09-12）",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/agent-team-stop-queue-scope",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "2026-09-16 交付：命令路径 /team:stop 统一到 chat.clearRun(runId)（与 team_stop 同语义），被停 run 的排队条目转录记 QUEUE_DROPPED_BY_STOP，notice 标明 run 与条数；新增 test/stop-queue-scope.test.ts（命令侧 + 工具侧同断言集）；README + docs 卡 + 插件 README/AGENTS 同步。全量 711/711 + typecheck 0。merge 3e0e99b / agent-team 1.32.0"
+      ],
       "createdAt": null,
       "claimedAt": "2026-09-16T14:27:33.376Z",
-      "completedAt": null,
+      "completedAt": "2026-09-16T15:19:05.808Z",
       "alignedAt": "2026-09-16T14:41:13.933Z"
     },
     {
@@ -1019,16 +1024,17 @@
     {
       "id": 66,
       "text": "外部 CLI 成员 thinking/reasoning 级别映射（v1.26.0 缺口，用户 2026-09-12 追问）：外部成员 model 原串直传 CLI，写 :level 后缀会被当成模型名报错（当前无任何级别参数注入，见 external.ts buildExternalArgs）——实际级别只能跟随各 CLI 全局配置（codex ~/.codex/config.toml 的 model_reasoning_effort；claude --effort 默认）。要求：按成员指定级别——codex 注入 -c model_reasoning_effort=<level>、claude 注入 --effort <level>；设计待定：per-member 字段（如 thinking:）还是解析 model 的 :level 后缀映射（pi 的 off/minimal/low/medium/high/xhigh/max → 各 CLI 支持集，claude 仅 low/medium/high/xhigh/max）；预检对非法级别 fail-closed；README §7 + docs 卡同步。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/agent-team-external-thinking",
       "tags": [],
       "dependsOn": [],
       "notes": [
-        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
+        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档",
+        "2026-09-16 交付：外部成员复用 model 的 :level 后缀（splitModelThinking），codex 注入 -c model_reasoning_effort、claude 注入 --effort；不支持档位预检 fail-closed（EXTERNAL_THINKING_UNSUPPORTED，静态消息）；顺带修「预检剥后缀、启动不剥」的不一致；README §7 落映射表。全量 711/711 + typecheck 0。merge d131003 / agent-team 1.32.0"
       ],
       "createdAt": null,
       "claimedAt": "2026-09-16T14:27:33.209Z",
-      "completedAt": null,
+      "completedAt": "2026-09-16T15:19:05.976Z",
       "alignedAt": "2026-09-16T14:41:13.753Z"
     },
     {
@@ -1063,14 +1069,16 @@
     {
       "id": 69,
       "text": "failure-delivery.test.ts 第 3 例（worktree pre-flight failure）在本机必失败：setup 用 os.tmpdir() 建项目目录，而本机 HOME（C:\\Users\\蒋晗）自带 .git（dotfiles 仓库）→ 临时目录落在 git 仓库内，createWorktree 成功、leader 照常 spawn（断言 'no leader spawned' 挂）。要求：用例不再依赖「tmpdir 不在任何 git 仓库里」这一环境假设——显式构造非仓库 cwd（如自建目录 + 断掉 git 发现）或注入失败路径，保持真实 git 语义；验收：基线（dev-laptop 无本次改动）跑该文件也全绿。来源：#58 收尾时实测（基线同样失败，非本次改动引入）。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/agent-team-faildeliver-nonrepo",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "2026-09-16 交付：failure-delivery 第 3 例改用 GIT_CEILING_DIRECTORIES 斩断上层仓库发现（case 标题与三条断言逐字不变，diff 仅目录构造 + 文件头注释）；本机全量 711/711 绿 + typecheck 0。同族排查：todo-cli#13（并发计时抖动）、agent-manager#3（墙钟性能预算）均与本条不同族（该结论暂无命令可写回未领取条目，见交付报告）。merge f29902b / 根 2.52.0"
+      ],
       "createdAt": "2026-09-14T15:45:54.909Z",
       "claimedAt": "2026-09-16T14:27:33.033Z",
-      "completedAt": null,
+      "completedAt": "2026-09-16T15:19:05.639Z",
       "alignedAt": "2026-09-16T14:41:13.580Z"
     },
     {

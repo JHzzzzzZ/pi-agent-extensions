@@ -278,7 +278,7 @@ members:
 ```bash
 cd src/extensions/agent-team
 npm install
-npm test          # node --test test/*.test.ts（688 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
+npm test          # node --test test/*.test.ts（711 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```

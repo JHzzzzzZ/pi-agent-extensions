@@ -50,7 +50,7 @@
 
 ## COMMANDS
 ```bash
-cd src/extensions/agent-team && npm install && npm test   # 688 测试（node --test test/*.test.ts）
+cd src/extensions/agent-team && npm install && npm test   # 711 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```

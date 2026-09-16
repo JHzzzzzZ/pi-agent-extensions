@@ -170,17 +170,18 @@
     {
       "id": 12,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件 `pwr-runs` widget 位于上方栈；footer 段顺序另受 key 排序带约束（见 `docs/cross/status-bar.md`）。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "open",
+      "status": "done",
       "branch": null,
       "tags": [],
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ route A：材料已备，待提交上游",
-        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档"
+        "撤销 2026-09-15：从 processing 回到未领取；从未开工：零 claim / 零分支 / 零对齐文档",
+        "归并到 agent-team-todo#28（同族跨插件条目）：#28 已交付仓库内 widget 排序带（根 2.52.0 / pwr 2.10.0 / loop 1.9.0），刷新期不保序已自愈；上游 issue 稿见 docs/pi-widget-order-issue.md（提交由人工）"
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null,
+      "completedAt": "2026-09-16T15:19:12.867Z",
       "alignedAt": null
     },
     {
