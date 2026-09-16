@@ -20,6 +20,7 @@
 | 隔离分支 | `worktree.ts`（每次 run 独立分支；同 run 重派复用已注册 worktree / 空闲同名分支，不碰当前目录） |
 | 亮块/进度节拍 | `widget.ts` + `cockpit.ts` 走 `aligned-ticker.ts`（对齐墙钟秒边界，契约 `<仓库根>/docs/cross/status-bar.md`）；数据驱动挂载：controller 每会话挂一次，运行中有帧、落定 `setWidget(undefined)` 自动卸载；未选中态 = 折叠单行 `agent-team <团队> · ↓/← 查看详情`，选中态 = `main → leader（含任务摘要）→ 成员…` 树 + 底部提示行（末行恒为成员行；v1.13.0，任务摘要 v1.13.1 并入）；连接符 `├─ `/`╰─ `（末项圆角，v1.15.4），每行带背景（普通行 `rowBg`、选中行 `rowSelectedBg`，按宿主内容宽补齐，v1.15.4） |
 | 成员终态判定 | `outcome.ts` `decideMemberTerminal`（**末轮说了算**，v1.31.0，#47，ADR-0006）：只看最后一次 assistant `message_end` 的 stopReason/errorMessage；pi 成员（`dispatch.ts`）与外部 CLI 成员（`external.ts` `finalize`）共用；`diagnostics`（exitCode/signal/末轮/前轮错误）三处呈现（转录 system 行 / leader 报告分节 / 失败通知） |
+| 外部成员思考档位 | `model: <id>:<level>` 的 `:level`（`config.ts` `splitModelThinking`，宿主级别集）由 `external.ts` `externalThinkingArgs` 按 `EXTERNAL_THINKING_LEVELS` 映射（codex `-c model_reasoning_effort=` / claude `--effort`）；预检（`preflight.ts`）与启动（`buildExternalArgs` 返回 `Result`）**共用同一函数**，不支持档位两端同码 fail-closed（`EXTERNAL_THINKING_UNSUPPORTED`，静态消息不插值档位）——改映射必改两处共同的支持集与 README §7 的表 |
 | 错误码 | `types.ts` `TeamErrorCodes` |
 
 ## CONVENTIONS

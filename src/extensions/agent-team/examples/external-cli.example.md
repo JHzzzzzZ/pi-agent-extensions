@@ -15,8 +15,9 @@ leader:
 
     v1 外部成员限制（务必遵守）：
     - backend: codex / backend: claude 的成员由对应 CLI 的非交互模式执行，不走 pi 子进程。
-    - 其 model: 原样传给 CLI（codex 用原生 id，如 gpt-5.1-codex；claude 用别名或全名），
-      不要写 provider/id 形态，也不要写 :level 思考后缀（对外部 CLI 不适用）。
+    - 其 model: 基础 id 传给 CLI（codex 用原生 id，如 gpt-5.1-codex；claude 用别名或全名），
+      不要写 provider/id 形态；可选 :level 思考后缀（如 gpt-5.1-codex:high），按该 CLI 实际
+      支持集注入（codex -c model_reasoning_effort / claude --effort），不支持的档位预检拒绝。
     - tools: 对外部成员被忽略（外部 CLI 没有 pi 工具面）。
     - leader 不能声明 backend（run 预检以 EXTERNAL_LEADER_UNSUPPORTED 拒绝）。
 members:
@@ -47,6 +48,10 @@ members:
 - 成员声明 `backend: codex` 或 `backend: claude` 后，任务经对应 CLI 的非交互模式执行，
   结果与 usage 折回既有 run 记录 / viewer / status / 报告 followUp 链路；未声明 backend 的成员
   行为与旧版完全一致（仍为 pi 子进程）。
+- 成员的 `model:` 可选 `:level` 思考后缀（如 `gpt-5.1-codex:high` / `sonnet:max`）：
+  按该 CLI 实际支持集注入参数（codex `-c model_reasoning_effort=<level>`、claude `--effort <level>`），
+  后缀不再作为模型名直传；两端不支持的档位（如 claude 的 `:off`）run 预检 fail-closed
+  （`EXTERNAL_THINKING_UNSUPPORTED`，不 spawn）。映射表见 `README.md` §7。
 - CLI 未安装时 run 预检 fail-closed（CLI_NOT_FOUND）：先确认 `codex` / `claude` 在 PATH，
   或用 `PI_AGENT_TEAM_CODEX_BIN` / `PI_AGENT_TEAM_CLAUDE_BIN` 指定可执行文件绝对路径。
 - 未登录不做预检，运行时失败按成员 CHILD_FAILED 呈现：codex 先 `codex login`，
