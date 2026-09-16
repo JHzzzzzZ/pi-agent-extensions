@@ -9,6 +9,11 @@
  *
  * Host wiring level: real entry + fake ExtensionAPI + scripted leader
  * child (fake spawn), same harness as run-tool.test.ts.
+ *
+ * Environment assumption: the temp project dir is NOT inside a git repo. On a
+ * machine whose HOME is itself a repo (dotfiles), os.tmpdir() lives inside one,
+ * so setup() pins GIT_CEILING_DIRECTORIES to make the assumption deterministic
+ * (same trick as worktree.test.ts; see docs/tools/todo-cli.md「非 git 目录很稀缺」).
  */
 
 import * as assert from "node:assert/strict";
@@ -99,6 +104,13 @@ async function setup(teamOverrides: Partial<TeamConfig> = {}): Promise<{
   isolateRunsDir();
   resetDoubleLoadGuardForTests();
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-faildeliver-"));
+  // 本机 HOME 自带 .git（dotfiles 仓库）时，tmpdir 会落在某个 git 仓库里，
+  // 「不是 git 仓库」这一前提就不成立（worktree 预检成功 → leader 照常 spawn）。
+  // 用 git 官方的向上发现上限把临时目录与宿主仓库隔开：上限必须命名**父目录**，
+  // git 不会穿过它继续向上找。
+  const ceiling = path.dirname(projectDir);
+  const previousCeiling = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = previousCeiling ? `${ceiling}${path.delimiter}${previousCeiling}` : ceiling;
   fs.mkdirSync(path.join(projectDir, ".pi", "teams"), { recursive: true });
   const team = fixtureTeam({ name: "proj-team", description: "项目团队", filePath: "", notes: undefined, ...teamOverrides });
   fs.writeFileSync(path.join(projectDir, ".pi", "teams", "proj-team.md"), serializeTeam(team));
@@ -117,7 +129,11 @@ async function setup(teamOverrides: Partial<TeamConfig> = {}): Promise<{
     run: (params) => tool("team_run").execute("call-run", params, undefined, undefined, ctx),
     stop: (params) => tool("team_stop").execute("call-stop", params, undefined, undefined, ctx),
     notifications,
-    cleanup: () => fs.rmSync(projectDir, { recursive: true, force: true }),
+    cleanup: () => {
+      if (previousCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+      else process.env.GIT_CEILING_DIRECTORIES = previousCeiling;
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    },
   };
 }
 
