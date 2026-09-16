@@ -12,7 +12,8 @@
  * 本模块是纯逻辑层：task 模板、上文尾部截断、FIFO 队列与链式门控全部依赖
  * 注入（resolveTeam/startRun/contextTail/notify），不触进程与文件系统。
  * 宿主接线在 index.ts（viewer onMessage → submit；runPromise 收尾 →
- * onRunFinalized；显式停止路径 → clear）。
+ * onRunFinalized；显式停止路径 → clearRun(runId)（/team:stop、team_stop、
+ * viewer D 同一丢弃范围）；/team:clear → clear() 清全队列）。
  */
 
 import { LEADER_ACTOR, sanitizeActorName, type TranscriptEntry } from "./transcript.ts";

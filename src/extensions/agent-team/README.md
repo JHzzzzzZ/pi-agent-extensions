@@ -94,7 +94,7 @@ members:
 
 **主 agent 忙碌时的按键语义**（宿主行为，派长任务前值得知道）：`enter`=排队（steering，当前轮次边界处理）、`alt+enter`（Windows `ctrl+q`）=followUp、`esc`=**中断当前 run 并把排队消息退回编辑器**（慎用）。因此派单请优先走后台：`/team:run`，或 team_run 工具默认（主 agent 轮次立即结束，报告完成后作为新轮次自动送回，等待期间正常对话）。查进度：`team_status` 工具、`/team:status`，或下方亮块 `alt+↓ → enter` 直达查看器。
 
-其它命令（冒号命令面，v1.12.0）：`/team`（无参列团队；带参显示用法）与 `/team:list`；`/team:status [runId]` 查看指定 run / 全部活跃 run / 最近一次 run 的详细快照（省略且多个 run 并行时逐 run 分节 `── run <runId> · team …`，无活跃 run 且 records > 1 条时附「近期 run」尾注；带 runId 命中活跃/终态则输出单 run 块，未命中提示「没有找到 runId …（活跃/最近 5 条终态之外）」；含 runId，每个成员在做什么、模型、轮次、费用、worktree、预算消耗；续跑 run 的 runId 行标注 `（续跑自 <parentRunId>）`，failed/aborted 且有会话镜像时附 `可用 team_resume <runId> 续跑（可换模型）`；任务行先压平换行（连续空白 → 单空格）再按显示宽度截断到 60 列（CJK 双宽，超宽补 `…`，整行 ≤66 列），`team_status` 工具共用同一口径）；`/team:stop [runId]` 中止指定 run（SIGTERM → SIGKILL 逐级终止 leader 与成员；省略时恰 1 活跃则停它、0 活跃提示、**≥2 活跃 warning 列出 runId 要求显式指定**）；`/team:resume <runId> [补充指示]` 后台续跑 failed/aborted 的 run（换模型走 `team_resume` 工具）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏，见 §4）；`/team:doctor` **自检报告**（运行模式/团队发现/逐团队模型预检/运行目录残留/逐团队预算/worktree 可用性）。旧空格写法（`/team run` 等）只提示改名、不再执行。
+其它命令（冒号命令面，v1.12.0）：`/team`（无参列团队；带参显示用法）与 `/team:list`；`/team:status [runId]` 查看指定 run / 全部活跃 run / 最近一次 run 的详细快照（省略且多个 run 并行时逐 run 分节 `── run <runId> · team …`，无活跃 run 且 records > 1 条时附「近期 run」尾注；带 runId 命中活跃/终态则输出单 run 块，未命中提示「没有找到 runId …（活跃/最近 5 条终态之外）」；含 runId，每个成员在做什么、模型、轮次、费用、worktree、预算消耗；续跑 run 的 runId 行标注 `（续跑自 <parentRunId>）`，failed/aborted 且有会话镜像时附 `可用 team_resume <runId> 续跑（可换模型）`；任务行先压平换行（连续空白 → 单空格）再按显示宽度截断到 60 列（CJK 双宽，超宽补 `…`，整行 ≤66 列），`team_status` 工具共用同一口径）；`/team:stop [runId]` 中止指定 run（SIGTERM → SIGKILL 逐级终止 leader 与成员；同时只丢弃该 run 排队的 viewer 对话消息，其他并行 run 的排队保留、转录结局记「未派出（run 已停止）」，丢弃 notice 标明 run 与条数；省略时恰 1 活跃则停它、0 活跃提示、**≥2 活跃 warning 列出 runId 要求显式指定**）；`/team:resume <runId> [补充指示]` 后台续跑 failed/aborted 的 run（换模型走 `team_resume` 工具）；`/team:view` **全屏会话记录查看器**（见下节）；`/team:clear` 丢弃排队的 viewer 对话消息（亮块随 run 结束自动隐藏，见 §4）；`/team:doctor` **自检报告**（运行模式/团队发现/逐团队模型预检/运行目录残留/逐团队预算/worktree 可用性）。旧空格写法（`/team run` 等）只提示改名、不再执行。
 
 ### 4. 进度亮块（输入栏下方，可键盘选中）
 
@@ -146,7 +146,7 @@ leader nightly-audit · 巡检依赖漏洞 ▶ running · 0m41s · 1/1 并行
 agent-team count-duet · ↓/← 查看详情
 ```
 
-结束不需要手动清理：**run 落定（completed/failed/aborted）即自动卸载亮块**；`/team:status`、`/team:view`、runstore 记录不受影响。`/team:clear` 保留为清排队对话的入口：run 进行中拒绝（先 `/team:stop` 或等结束），否则丢弃排队中的 viewer 对话消息并提示（无排队时提示「亮块随 run 结束自动隐藏，没有可清除的内容」）。
+结束不需要手动清理：**run 落定（completed/failed/aborted）即自动卸载亮块**；`/team:status`、`/team:view`、runstore 记录不受影响。`/team:clear` 保留为清排队对话的入口：run 进行中拒绝（先 `/team:stop` 或等结束），否则丢弃排队中的**全部** viewer 对话消息并提示（无排队时提示「亮块随 run 结束自动隐藏，没有可清除的内容」）——停止路径（`/team:stop`、`team_stop`、viewer `D`）与之相反，只丢被停 run 的排队消息（#61）。
 
 裸 `↑`/`↓` 平时归编辑器（光标移动/历史记录/发送消息），因此选中是**模态**的。对齐 pi-subagents fleet-status（v0.66.0）：**焦点在主编辑器且编辑器为空时** `↓`/`←` 才可进入选中；`alt+↓`/`alt+↑` 是不受门控的第二通道（编辑器有文本也能进）。**焦点不在编辑器时 widget 完全不介入**（对齐 fleet `editorHasFocus`，v1.9.1）：`/login`、`/model`、`/settings` 等选择器或 `ctx.ui.select`/overlay 对话框打开期间，方向键原样让给选择器（含 alt 通道），已进入的选中态自动退出。选中态导航补 `j`/`k`（对齐 fleet roster）：
 
