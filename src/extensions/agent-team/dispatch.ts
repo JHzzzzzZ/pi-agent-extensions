@@ -645,11 +645,29 @@ export function createDispatchExecutor(deps: DispatchDeps) {
           if (plan.worktree) result.worktree = plan.worktree;
           return result;
         }
-        const args = buildExternalArgs(
+        const built = buildExternalArgs(
           backend,
           { ...(plan.member.model ? { model: plan.member.model } : {}), prompt: plan.member.prompt },
           plan.task,
         );
+        if (!built.ok) {
+          // 预检之外的第二道闸：不支持档位即使漏过预检也不发参数、不起进程。
+          record(name, "error", `${built.code}: ${built.message}`);
+          setProgress(name, "failed", shortMessage(`${built.code}: ${built.message}`));
+          const result: MemberRunResult = {
+            name,
+            ok: false,
+            status: "failed",
+            result: "",
+            summary: "",
+            usage: emptyUsage(),
+            durationMs: 0,
+            error: { code: built.code, message: built.message },
+          };
+          if (plan.worktree) result.worktree = plan.worktree;
+          return result;
+        }
+        const args = built.value;
         const parser = createExternalParser(backend);
 
         record(name, "task", plan.task);

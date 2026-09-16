@@ -73,7 +73,7 @@ members:
 - **leader 默认拥有全部内置工具**（读写文件、bash 等）。若要限制 leader 亲自动手（例如只让它拆解派发），在团队文件里设置 `leader.tools`（如 `tools: [read, grep, find, ls]`）。实测中 leader 可能会用编辑工具自行"降级代写"或修订团队配置——不希望如此就收紧它的工具。
 - **worktree 三种模式**：都不配 = 在当前目录工作；团队根级 `worktree: true` = 整个 run 在共享 worktree `~/.pi/agent/teams/worktrees/<runId>/team`（分支 `team-run-<runId>`，连字符形式——避免与成员分支 `team/<runId>/<member>` 构成 git ref 文件/目录冲突）；成员级 `worktree: true` = 该成员独立 worktree（分支 `team/<runId>/<member>`，优先于团队配置）。改动都留在分支上**不自动合并**，结果中附路径与分支名。同一 run 对同一 worktree 成员再次派发时**复用**已注册的工作树/分支（分支存在但空闲则 attach 复用；成员自建分支且工作树干净、期望分支存在且空闲时自动 `git switch` 切回，报告中标注「已从 <旧> 切回」；其余不匹配报 `WORKTREE_UNAVAILABLE` 并附非破坏可操作提示 `git -C … switch …`，不再建议 `remove --force`；路径被非 worktree 占用等才报错）；git 失败文案穿透进度行取真 fatal 行（不再被 `Preparing worktree …` 顶掉）。启动前有预检：需要 worktree 而当前目录不是 git 仓库时直接报错，不会启动 leader。
 - **模型预检**：派单前会先对 leader + 全体成员的 `provider/id` 做一次注册表预检——引用不存在的模型直接报 `MODEL_NOT_FOUND`（不启动任何子进程，提示先调 `team_models`）；存在但未配置鉴权的模型放行并警告。成员不配 model 则用 pi 默认模型（无从预检）。
-- **外部 CLI 后端成员（v1.26.0）**：成员可声明 `backend: codex|claude` 改用对应 CLI 非交互执行（语法/口径/限制见 §7）；leader 不可声明 backend（run 预检 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed）。
+- **外部 CLI 后端成员（v1.26.0）**：成员可声明 `backend: codex|claude` 改用对应 CLI 非交互执行（语法/口径/限制见 §7）；成员的 `model:` 可带 `:level` 思考后缀（pi 级别 → CLI 参数映射表见 §7，#66）；leader 不可声明 backend（run 预检 `EXTERNAL_LEADER_UNSUPPORTED` fail-closed）。
 - **裸 `": "` 值容忍（v1.29.0，#63）**：frontmatter 里值含 `": "` 的裸标量（如 `description: 全栈开发: 小队`，YAML 判定非法）不再让整份团队文件加载失败——解析只对这类行（团队级/成员级 `description`、`prompt` 等）按写盘口径加引号**重试一次**（不是通用宽松解析：引号值、`|`/`>` 块标量、CRLF、值内引号照旧；块标量内容行与正文一个都不动，也**不写回磁盘**）。重试仍失败时错误信息前置修法提示（`第 N 行的值含 ": "，请加引号（"…"）或改用 | 块标量`，行号按团队文件），原始 YAML 错误作为细节保留；`/team:list`、`team_list`、`/team:doctor` 照旧列出不可用文件与原因，`team_run`/`team_resume` 的 `TEAM_NOT_FOUND` 文案追加 `另有 N 个定义不可用：<file>（<原因首行>）`——坏团队文件在派单与续跑两个入口都看得见。
 - 文件是唯一事实来源：手改后下一次派单即生效（leader 运行中使用启动时的花名册快照，运行中改文件不影响当次 run）；删除文件即删除团队（下次派单/列表即生效，无注册缓存）。
 
@@ -210,20 +210,34 @@ leader 遇到需求歧义、需要拍板、或影响结果的假设无法自行�
 ```markdown
 members:
   - name: coder
-    backend: codex          # 仅成员可声明；缺省 = pi 子进程契约
-    model: gpt-5.1-codex    # codex：CLI 原生裸 id（provider/id 形态不被识别）
+    backend: codex                  # 仅成员可声明；缺省 = pi 子进程契约
+    model: gpt-5.1-codex:high       # codex：CLI 原生裸 id（provider/id 形态不被识别）；:level → -c model_reasoning_effort=high
     prompt: |
       你是资深工程师……
   - name: reviewer
     backend: claude
-    model: sonnet           # claude：别名（haiku/sonnet/opus）或全名（如 claude-haiku-4-5）
+    model: sonnet:max               # claude：别名（haiku/sonnet/opus）或全名；:level → --effort max
     prompt: |
       你是严格的代码评审员……
 ```
 
+**pi 级别 → 各 CLI 参数映射表（#66，2026-09-16 本机实测）：**
+
+| pi 级别（`model: <id>:<level>`） | codex（`-c model_reasoning_effort=<level>`） | claude（`--effort <level>`） |
+| --- | --- | --- |
+| `off` | — 预检 fail-closed | — 预检 fail-closed |
+| `minimal` | `minimal` | — 预检 fail-closed |
+| `low` / `medium` / `high` | 同名注入 | 同名注入 |
+| `xhigh` | `xhigh` | `xhigh` |
+| `max` | — 预检 fail-closed | `max` |
+
+- 两端支持集来源（实测）：claude `--help`（Claude Code 2.1.220）列出 `--effort <level>` 取值为 low/medium/high/xhigh/max，非法值只打警告后忽略（所以预检必须自己 fail-closed）；codex 官方配置参考 `model_reasoning_effort`（minimal | low | medium | high | xhigh，developers.openai.com/codex/config-reference）经 `-c/--config <key=value>` 覆盖（codex-cli 0.154.0 本机 `--help` 实测该 flag 存在；该值本地不校验，同靠预检拦）。
+- 不支持的档位在 **run 预检期 fail-closed**（稳定错误码 `EXTERNAL_THINKING_UNSUPPORTED` + 静态消息）：不生成任何 CLI 参数、不 spawn、不静默降级为 CLI 默认；预检（`preflight.ts`）与启动（`external.ts` `buildExternalArgs`）过同一解析函数，`team_resume` 的 `memberModels` 覆盖同样受校验（生效团队为准）。
+- 后缀只认宿主有效级别（off/minimal/low/medium/high/xhigh/max，`config.ts` `splitModelThinking`）；尾段不是这七个之一时原样当模型名（如 `o3:beta`），不注入级别参数。
+
 **口径与限制：**
 
-- **模型**：`model:` 原样传给 CLI 的 `--model`（不填则用 CLI 默认模型）。codex 走 ChatGPT 账户模型域——只认 CLI 原生 id（如 `gpt-5.1-codex`），不认 `provider/id` 形态；claude 支持别名或全名。**`:level` 思考后缀对外部 CLI 不适用，勿写**（v1 不做映射）。
+- **模型与思考档位**：`model:` 的基础 id 原样传给 CLI 的 `--model`（不填则用 CLI 默认模型）。codex 走 ChatGPT 账户模型域——只认 CLI 原生 id（如 `gpt-5.1-codex`），不认 `provider/id` 形态；claude 支持别名或全名。`:level` 后缀（与 pi 成员同写法 `model: <id>:<level>`）按上方映射表注入对应 CLI 参数，**不再作为模型名直传**（v1.26.0–v1.31.0 的行为已修，正好修掉「预检剥后缀、启动不剥」的不一致）。
 - **`tools:` 白名单对外部成员忽略**（pi 工具名 ≠ CLI 工具名，v1 不造翻译层）：默认权限面为 codex `-s workspace-write`、claude `--permission-mode acceptEdits`；claude 更宽权限请在用户侧 `~/.claude/settings.json` 的 permissions 里配置（团队级权限配置留待后续 todo）。
 - **费用口径**：codex 事件流无 cost 字段 → 费用恒 0、**不计入** `budget.maxCostUsd`（token 照常折算，`maxTotalTokens` 有效）；claude 的 `total_cost_usd` 正常计入。
 - **codex 的 `prompt` 并入任务文本开头**（CLI 无公开 system-prompt flag）；prompt + 任务文本都走 argv，Windows argv 上限约 32K——任务过长会 spawn 失败（按成员 `CHILD_FAILED` 呈现），请写精简些。成员级 `worktree: true` 对外部成员同样生效（外部进程在该 worktree 路径下执行）。
@@ -285,4 +299,4 @@ npm run typecheck # tsc -p tsconfig.json --noEmit
 - 成员子进程与 pwr 的 `PiAgentRunner`、官方 subagent 扩展同模式：`--mode json -p --no-session`、行 JSON 事件流解析（usage/stopReason/finalText）、`team-tmp://` prompt 物化为 0600 临时文件、SIGTERM→SIGKILL 中止。本扩展自包含，不 import pwr。
 - 子进程环境与工具面显式声明（v1.17.1，leader env 语义 v1.21.1）：leader env 继承父进程环境、先剥全部 run 级键（`dispatch.ts` `stripRunScopedEnv()`：`PI_AGENT_TEAM_FILE/NAME/RUN_ID` + resume 谱系键 `PI_AGENT_TEAM_WORKTREE_RUN_ID`/`PI_AGENT_TEAM_MEMBER_MODELS`），再叠加本次 run 三键——派生新 run 不继承父进程 run 绑定，也不再丢 PATH/provider key；成员 env 经 `stripLeaderEnv()` 剥离 `PI_AGENT_TEAM_FILE/NAME/RUN_ID`（其余变量原样保留）——成员不会误进 leader 模式；leader 与成员子进程 args 统一带 `--exclude-tools subagent,team_run`（`types.ts` `DERIVED_AGENT_TOOL_DENYLIST`），嵌套派生（嵌套 subagent / 嵌套团队）被宿主排除（exclude 优先于 `--tools` 白名单）。
 - 结果截断：单成员结果 50KB、摘要 8KB；错误按成员隔离（单个成员失败不拖垮整次 dispatch）。
-- 已知限制（v1）：任务为纯文本（GitHub issue 输入）；worktree 不自动合并；无超时（手动 `/team:stop`）；外部 CLI 后端（v1.26.0，codex/claude）仅成员可用（leader 声明 backend 由 run 预检 fail-closed），`:level` 思考后缀不映射。
+- 已知限制（v1）：任务为纯文本（GitHub issue 输入）；worktree 不自动合并；无超时（手动 `/team:stop`）；外部 CLI 后端（v1.26.0，codex/claude）仅成员可用（leader 声明 backend 由 run 预检 fail-closed）；外部成员的 `:level` 思考后缀按 §7 映射表注入 CLI 参数，不支持的档位预检 fail-closed。

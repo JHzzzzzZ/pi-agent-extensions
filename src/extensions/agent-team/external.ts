@@ -6,8 +6,14 @@
  * 包装器——Windows 的 SIGTERM 是 TerminateProcess，只杀直子进程，孙进程
  * codex.exe 会孤儿化继续烧 API）；② 非交互参数构建 buildExternalArgs；
  * ③ stdout JSONL 事件解析 createExternalParser。进程骨架沿用 runner.ts 的
- * runChildPi（spawn/SIGTERM→SIGKILL/stderr/pid），本模块不 import 其他运行时
- * 模块，保持纯函数可测。
+ * runChildPi（spawn/SIGTERM→SIGKILL/stderr/pid），本模块不 import runner /
+ * cockpit 等进程模块（只借 config.ts 的 `splitModelThinking` 纯函数，保持可测）。
+ *
+ * 成员级别（agent-team-todo #66）：`model: <id>:<level>` 的后缀由
+ * `splitModelThinking` 剥离，再按 EXTERNAL_THINKING_LEVELS 逐 CLI 映射成命令行
+ * 参数（codex `-c model_reasoning_effort=` / claude `--effort`）——预检
+ * （preflight.ts 调 externalThinkingArgs）与启动（buildExternalArgs）过同一函数，
+ * 不支持档位两端同码 fail-closed（EXTERNAL_THINKING_UNSUPPORTED），永不静默降级。
  *
  * 三禁（违反即安全/进程事故）：
  * ① 禁 shell:true —— 只 shell:false 直接 spawn 解析出的原生可执行文件；
@@ -36,7 +42,9 @@ import {
   type ExternalCliResolveResult,
   type ExternalParser,
   type ExternalResolveDeps,
+  type Result,
 } from "./types.ts";
+import { splitModelThinking } from "./config.ts";
 
 export { EXTERNAL_BACKENDS, EXTERNAL_BIN_ENV };
 export type { ExternalParser, ExternalResolveDeps };
@@ -143,20 +151,60 @@ export function resolveExternalCli(
 }
 
 /**
+ * 各外部 CLI 实际支持的思考档位（与 pi 宿主档位 off/minimal/low/medium/high/xhigh/max
+ * 不同名同集）：
+ * - claude：`claude --help` 的 `--effort <level>`（low, medium, high, xhigh, max；
+ *   Claude Code 2.1.220 实测），非法值 CLI 自身只警告并忽略（→ 预检期必须 fail-closed）；
+ * - codex：官方配置参考 `model_reasoning_effort`（minimal | low | medium | high | xhigh；
+ *   developers.openai.com/codex/config-reference），经 `-c` 覆盖；本机 codex-cli 0.154.0
+ *   `debug models -c model_reasoning_effort=<值>` 不在本地校验（实测），同样靠预检拦截。
+ * 来源与实测记录见 `README.md` §7 映射表。
+ */
+const EXTERNAL_THINKING_LEVELS: Record<ExternalBackend, readonly string[]> = {
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+  claude: ["low", "medium", "high", "xhigh", "max"],
+};
+
+/** 静态模板：只拼后端名（类型限定枚举）与静态支持集，绝不插值被拒档位/模型串。 */
+function thinkingUnsupportedMessage(backend: ExternalBackend): string {
+  return `外部 CLI 不支持该思考档位：${backend} 仅支持 ${EXTERNAL_THINKING_LEVELS[backend].join("/")}。请把成员 model 的 :level 后缀改为受支持档位，或去掉后缀使用 CLI 默认。`;
+}
+
+/**
+ * `:level` 后缀 → 该 CLI 的思考级别参数；不支持档位 fail-closed
+ * （EXTERNAL_THINKING_UNSUPPORTED，零参数产出）。预检与启动共用本函数。
+ */
+export function externalThinkingArgs(backend: ExternalBackend, level: string): Result<string[]> {
+  if (!EXTERNAL_THINKING_LEVELS[backend].some((supported) => supported === level)) {
+    return err(TeamErrorCodes.EXTERNAL_THINKING_UNSUPPORTED, thinkingUnsupportedMessage(backend));
+  }
+  // codex 的 `-c` 值先按 TOML 解析、解析失败当字面量字符串——级别名不是合法 TOML，
+  // 因此 `model_reasoning_effort=high` 就是字符串 "high"（无需引号）。
+  return ok(backend === "codex" ? ["-c", `model_reasoning_effort=${level}`] : ["--effort", level]);
+}
+
+/**
  * 非交互参数构建（纯函数）。任务文本只出现在末位位置参数。
  * codex 无公开 system-prompt flag：member.prompt 并入任务文本开头；
  * claude 的 `--verbose` 是 `-p + --output-format stream-json` 的硬要求，缺失即 exit=1（P8）。
+ * `model` 可带宿主思考级别后缀（`:level`）；后缀一律剥离后只进级别参数（见下），
+ * 不支持的档位返回 EXTERNAL_THINKING_UNSUPPORTED（零参数产出，绝不静默降级）。
  */
 export function buildExternalArgs(
   backend: ExternalBackend,
   member: { model?: string; prompt: string },
   task: string,
-): string[] {
+): Result<string[]> {
+  const declared = splitModelThinking(member.model);
+  const thinking = declared.thinkingLevel ? externalThinkingArgs(backend, declared.thinkingLevel) : ok<string[]>([]);
+  if (!thinking.ok) return thinking;
+
   if (backend === "codex") {
     const args = ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "-s", "workspace-write"];
-    if (member.model) args.push("--model", member.model);
+    if (declared.model) args.push("--model", declared.model);
+    args.push(...thinking.value);
     args.push(`${member.prompt}\n\n---\n\nTask: ${task}`);
-    return args;
+    return ok(args);
   }
   const args = [
     "-p",
@@ -168,9 +216,10 @@ export function buildExternalArgs(
     "acceptEdits",
   ];
   if (member.prompt.length > 0) args.push("--append-system-prompt", member.prompt);
-  if (member.model) args.push("--model", member.model);
+  if (declared.model) args.push("--model", declared.model);
+  args.push(...thinking.value);
   args.push(`Task: ${task}`);
-  return args;
+  return ok(args);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

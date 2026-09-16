@@ -24,6 +24,7 @@ import {
   type TeamErrorCode,
 } from "./types.ts";
 import { splitModelThinking } from "./config.ts";
+import { externalThinkingArgs } from "./external.ts";
 
 /** Structural surface of the host model registry used here (kept testable). */
 export interface ModelLookup {
@@ -104,6 +105,9 @@ export type PreflightResult =
  * leader backend fails EXTERNAL_LEADER_UNSUPPORTED before any probe; member
  * `model` values are CLI-native ids, so the registry is skipped and, when
  * `external` is wired, the CLI must resolve (CLI_NOT_FOUND otherwise).
+ * 成员 model 的 `:level` 后缀按该 CLI 的实际支持集校验
+ * （externalThinkingArgs，EXTERNAL_THINKING_UNSUPPORTED 硬失败——与启动路径
+ * 同一函数，两边对同一字符串的解析结果一致）。
  */
 export function preflightTeamModels(
   team: TeamConfig,
@@ -125,7 +129,16 @@ export function preflightTeamModels(
   if (team.leader.model) checkModelRef({ owner: "leader", model: team.leader.model }, lookup, missing, warnings);
   for (const member of team.members) {
     if (member.backend) {
-      // 外部成员的 model 是 CLI 原生 id（非 provider/id 引用），跳过注册表查询；
+      // 外部成员的 model 是 CLI 原生 id（非 provider/id 引用），跳过注册表查询。
+      // `:level` 后缀先过与启动共用的 externalThinkingArgs：不支持档位是配置错
+      // （与 CLI 是否安装无关）→ 先于 CLI 探测 fail-closed，fail-closed 优先于环境探测。
+      const declared = splitModelThinking(member.model);
+      if (declared.thinkingLevel) {
+        const thinking = externalThinkingArgs(member.backend, declared.thinkingLevel);
+        if (!thinking.ok) {
+          return { ok: false, code: thinking.code, message: `外部成员 ${member.name}：${thinking.message}` };
+        }
+      }
       // 注入 resolver 时先确认 CLI 可解析（未注入 = 不探测，向后兼容）。
       if (external) {
         const resolved = external.resolveCli(member.backend);
