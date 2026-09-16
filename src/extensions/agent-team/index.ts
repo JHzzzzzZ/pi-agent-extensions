@@ -30,7 +30,7 @@ import { fallbackAskTitle, presentAskOverlay, shouldRenderAskOverlay } from "./a
 import { discoverTeams, findTeam, parseTeamFile, splitModelThinking } from "./config.ts";
 import { createDispatchExecutor, parseDispatchRequest } from "./dispatch.ts";
 import { resolveExternalCli } from "./external.ts";
-import { ChatCoordinator, chatSubmitNotice, transcriptContextTail } from "./chat.ts";
+import { ChatCoordinator, chatSubmitNotice, dialogueAnswerExcerpt, transcriptContextTail } from "./chat.ts";
 import { buildDoctorReport } from "./doctor.ts";
 import { registerManageTools, teamSummaryLines } from "./manage.ts";
 import { resolveModelCaliber } from "./model-caliber.ts";
@@ -549,6 +549,20 @@ interface ViewerRunEntry {
  */
 type ViewerDataWithRuns = ViewerData & { runs: ViewerRunEntry[] };
 
+/**
+ * 一轮 run 的用量（对话线累计展示用）：记录口径 = leader 累计 + 成员派发
+ * 用量（与 cockpit 预算折叠同源字段）；预算 enforcement 仍在各轮 run 内。
+ */
+function roundUsageOf(record: TeamRunRecord): { cost: number; tokens: number } {
+  let cost = record.totalCost;
+  let tokens = record.totalTokens;
+  for (const member of record.members) {
+    cost += member.usage?.cost ?? 0;
+    tokens += (member.usage?.input ?? 0) + (member.usage?.output ?? 0);
+  }
+  return { cost: Math.round(cost * 1e6) / 1e6, tokens };
+}
+
 /** Active runs first (oldest→newest), then recent terminal records (newest→oldest). */
 function viewerRunList(snapshot: RunStatusSnapshot): ViewerRunEntry[] {
   const runs: ViewerRunEntry[] = [];
@@ -640,6 +654,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     contextTail: (runId, actor) => {
       if (!runId) return "";
       return transcriptContextTail(readTranscript(transcriptRoot(), runId, actor));
+    },
+    // 对话线（#4）：该轮成员答复的注入摘录按该轮 run 现读（最后一条 assistant）；
+    // 只取 assistant，避免把上一轮注入的前文（在 task 行里）递归卷进下一轮。
+    roundAnswer: (runId, actor) => {
+      if (!runId) return "";
+      return dialogueAnswerExcerpt(readTranscript(transcriptRoot(), runId, actor));
     },
     // run 运行中且目标是 leader：RPC steer 定向插话（不打断任务）；失败或
     // 目标是成员时回退到队列/派单语义（chat.ts）。
@@ -1152,7 +1172,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
           return;
         }
         finalizeRun(result.value, ui, "followUp");
-        chat.onRunFinalized(runId, result.value.status);
+        chat.onRunFinalized(runId, result.value.status, roundUsageOf(result.value));
         refreshWidget();
       })
       .catch((e: unknown) => {

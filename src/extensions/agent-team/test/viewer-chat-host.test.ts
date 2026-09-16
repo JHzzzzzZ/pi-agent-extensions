@@ -16,9 +16,9 @@ import * as path from "node:path";
 import { test } from "node:test";
 import agentTeamExtension, { resetDoubleLoadGuardForTests } from "../index.ts";
 import { serializeTeam } from "../config.ts";
-import { LEADER_ACTOR, readTranscript } from "../transcript.ts";
+import { FileTranscriptSink, LEADER_ACTOR, readTranscript } from "../transcript.ts";
 import { fixtureTeam } from "./fixtures.ts";
-import { isolateRunsDir, makeFakeSpawn, sleep, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
+import { isolateRunsDir, makeFakeSpawn, messageEndLine, sleep, waitForChild, type FakeSpawnHandle } from "./helpers.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -328,6 +328,118 @@ test("团队定义消失：已结束 run 上提交 → 发送失败 notice，无
     assert.match(frame, /发送失败/, "resolveTeam 失败 → error notice");
     await sleep(150);
     assert.equal(host.spawn.records.length, 1, "失败路径不派新 run");
+    viewer.dispose();
+  } finally {
+    await host.cleanup();
+  }
+});
+
+/** viewer 输入框提交一条消息（进入输入模式 → 逐键敲入 → 回车）。 */
+function sendMessage(viewer: ViewerComponentLike, text: string): void {
+  viewer.handleInput("m");
+  for (const ch of text) viewer.handleInput(ch);
+  viewer.handleInput("\r");
+}
+
+/** 该 run 的 system 转录行（默认 leader 文件）。 */
+function systemLines(host: HostFixture, runId: string, actor: string = LEADER_ACTOR): string[] {
+  return readTranscript(host.runsDir, runId, actor)
+    .filter((e) => e.kind === "system")
+    .map((e) => e.text);
+}
+
+/** 一条带用量（成本 $0.02 / 70 tokens）的 assistant 事件行。 */
+function usageLine(text: string): string {
+  return messageEndLine("assistant", {
+    content: [{ type: "text", text }],
+    usage: { input: 50, output: 20, cost: { total: 0.02 }, totalTokens: 70 },
+  });
+}
+
+function promptOf(child: { writes: string[] }): string {
+  return String(JSON.parse(child.writes[0] ?? "{}").message ?? "");
+}
+
+/** 该 leader 子进程的 runId（宿主用 env 传给子进程）。 */
+function runIdOf(host: HostFixture, index: number): string {
+  return host.spawn.records[index]?.env?.PI_AGENT_TEAM_RUN_ID ?? "";
+}
+
+/**
+ * 对话线宿主接线（agent-team-todo #4）：同一成员 3 轮追问。真实 cockpit +
+ * 真实转录读写（成员答复由测试直接写 JSONL 落在该轮 run 的成员文件里——真实
+ * 链路里那是 leader 进程里的派发执行器写的），只 fake leader 子进程。锁定：
+ * ① 每轮是新 run，任务里带前文注入；第 3 轮注入仍含第 1 轮的提问与答复；
+ * ② 每轮用量落该轮 run 转录，并在注入头累计（既有 run 预算口径，不新增）。
+ */
+test("对话线：同一成员 3 轮追问 —— 第 3 轮注入含第 1 轮内容与各轮用量", async () => {
+  const host = await setupHost();
+  try {
+    await startBackgroundRun(host);
+    const baseRun = runIdOf(host, 0);
+    assert.ok(baseRun, "首 run 有 runId");
+    // 首 run 之前成员的既有产出（viewer 成员页签与第 1 轮的对话线尾部都读它）。
+    new FileTranscriptSink(host.runsDir, baseRun).append("frontend", "assistant", "第 1 轮之前：已改过 App.tsx。");
+    const first = host.spawn.children[0];
+    assert.ok(first);
+    first.emitClose(0);
+    await sleep(120); // 首 run 落定（completed）
+
+    const viewer = await openViewer(host);
+    // 成员名单按 actor 排序：leader 在前，其后是 frontend（backend 无产出）。
+    viewer.handleInput("j");
+
+    // ---- 第 1 轮 ----
+    sendMessage(viewer, "第 3 个文件为什么这么改？");
+    await waitFor(() => host.spawn.records.length >= 2, "第 1 轮 run");
+    const round1Run = runIdOf(host, 1);
+    assert.ok(round1Run && round1Run !== baseRun, "第 1 轮是新 run");
+    const round1 = host.spawn.children[1];
+    assert.ok(round1);
+    const task1 = promptOf(round1);
+    assert.match(task1, /【用户消息·请转派】/);
+    assert.match(task1, /第 3 个文件为什么这么改？/);
+    assert.match(task1, /frontend/);
+    // 成员答复 + 本轮用量（真实链路：leader 派生的成员子进程写转录）。
+    new FileTranscriptSink(host.runsDir, round1Run).append("frontend", "assistant", "因为要保持与旧接口兼容。");
+    round1.emitLine(usageLine("第一轮答复"));
+    round1.emitClose(0);
+    await waitFor(
+      () => systemLines(host, round1Run).includes("第 1 轮完成 · $0.0200 · 70 tokens"),
+      "第 1 轮用量落转录",
+    );
+
+    // ---- 第 2 轮：注入第 1 轮前文 + 累计用量 ----
+    sendMessage(viewer, "那就改成新接口。");
+    await waitFor(() => host.spawn.records.length >= 3, "第 2 轮 run");
+    const round2Run = runIdOf(host, 2);
+    const round2 = host.spawn.children[2];
+    assert.ok(round2);
+    const task2 = promptOf(round2);
+    assert.match(task2, /【对话线前文·第 2 轮】/);
+    assert.match(task2, /已完成 1 轮，本块注入最近 1 轮/);
+    assert.match(task2, /第 3 个文件为什么这么改？/);
+    assert.match(task2, /因为要保持与旧接口兼容。/, "第 1 轮成员答复被注入第 2 轮");
+    assert.match(task2, /累计用量：\$0\.0200 · 70 tokens/);
+    new FileTranscriptSink(host.runsDir, round2Run).append("frontend", "assistant", "已按新接口改好。");
+    round2.emitLine(usageLine("第二轮答复"));
+    round2.emitClose(0);
+    await waitFor(
+      () => systemLines(host, round2Run).includes("第 2 轮完成 · $0.0200 · 70 tokens"),
+      "第 2 轮用量落转录",
+    );
+
+    // ---- 第 3 轮：仍能读到第 1 轮内容（验收口径）----
+    sendMessage(viewer, "再解释一遍第 3 个文件。");
+    await waitFor(() => host.spawn.records.length >= 4, "第 3 轮 run");
+    const round3 = host.spawn.children[3];
+    assert.ok(round3);
+    const task3 = promptOf(round3);
+    assert.match(task3, /【对话线前文·第 3 轮】/);
+    assert.match(task3, /第 3 个文件为什么这么改？/, "第 3 轮注入仍含第 1 轮提问");
+    assert.match(task3, /因为要保持与旧接口兼容。/, "第 3 轮注入仍含第 1 轮答复");
+    assert.match(task3, /已按新接口改好。/);
+    assert.match(task3, /累计用量：\$0\.0400 · 140 tokens/);
     viewer.dispose();
   } finally {
     await host.cleanup();
