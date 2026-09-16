@@ -117,3 +117,13 @@ _Avoid_: 导出、md 视图
 **stale 抢占**:
 锁残留（pid 已死 / 内容损坏 / 超 60s）被下一个写者就地接管并重试的机制；SIGKILL 中断释放的唯一路径。
 _Avoid_: 锁清理、强制解锁
+
+### 状态条与 widget 契约（跨插件）
+
+**widget 排序带（widget band）**:
+把多个扩展写在编辑器上方的 widget 文本合并到**单一宿主 widget key**、由登记表里 band key 最小的写入者当唯一写者一次写入的协调机制；顺序由契约（band key 升序）保证，不依赖宿主刷新 widget 时的 Map 插入序。与 footer 的 `status-band.ts` 同源（`globalThis` + `Symbol.for` 登记表，每插件一份拷贝），契约见 `docs/cross/status-bar.md`。
+_Avoid_: widget 合并、排序补丁、宿主补丁（那是改宿主安装目录，红线 8 禁止）
+
+**变卦语义**:
+用户在 run 在途时改变主意：停止该 run，并**只**丢弃属于它的排队对话消息（其他并行 run 的排队消息保留）。`/team:stop` 命令与 `team_stop` 工具共用这一语义。
+_Avoid_: 取消、清队列（`/team:clear` 是显式清全部，另一回事）
