@@ -33,6 +33,7 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { startAlignedTicker } from "./aligned-ticker.ts";
+import { writeWidgetBand } from "./widget-band.ts";
 import { LOOP_SUBCOMMANDS, parseLoopCommand, RETIRED_LOOP_SUBCOMMANDS, type CreateSpec } from "./parse.ts";
 import { runBgAgent, type BgRunOutcome } from "./runner.ts";
 import { registerLoopTools } from "./tools.ts";
@@ -57,7 +58,8 @@ import {
   type LoopTask,
 } from "./tasks.ts";
 
-const WIDGET_ID = "loop";
+/** widget 排序带键（内部排序键，用户不可见；顺序契约见 docs/cross/status-bar.md）。 */
+const BAND_KEY = "30:loop";
 const TICK_MS = 1000;
 const LOOP_TASKS_ENTRY = "loop-tasks-v1";
 const LOOP_RUN_ENTRY = "loop-run-v1";
@@ -155,7 +157,8 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
       if (tasks.length === 0) {
         if (lastWidgetLine === null) return; // 已无 widget，重复清除无需再写
         lastWidgetLine = null;
-        savedCtx.ui.setWidget(WIDGET_ID, undefined);
+        // widget 走排序带：不写本插件的宿主键（多键各自刷新会被宿主 delete+set 逐秒换位）。
+        writeWidgetBand(BAND_KEY, undefined, savedCtx.ui);
         return;
       }
       const active = tasks.filter((t) => !t.paused);
@@ -173,7 +176,7 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
       }
       if (line === lastWidgetLine) return; // 跨秒倒计时文本未变则跳过重绘
       lastWidgetLine = line;
-      savedCtx.ui.setWidget(WIDGET_ID, [line]);
+      writeWidgetBand(BAND_KEY, [line], savedCtx.ui);
     } catch {
       // widget 失败不影响调度
     }
@@ -223,7 +226,7 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
     }
     if (savedCtx?.hasUI) {
       try {
-        savedCtx.ui.setWidget(WIDGET_ID, undefined);
+        writeWidgetBand(BAND_KEY, undefined, savedCtx.ui);
       } catch {
       }
     }

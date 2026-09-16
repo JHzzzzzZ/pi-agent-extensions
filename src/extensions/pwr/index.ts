@@ -381,7 +381,8 @@ export default function pwrExtension(pi: ExtensionAPI): void {
 	// 会话关闭（/new、/resume、/fork、/clone、exit 都触发，且先于新会话的
 	// session_start）：中止在途控制器、非终态 run 标记 cancelled。runtime
 	// 不可用（AGENT_RUNNER_UNAVAILABLE 降级面）时无操作，绝不阻塞关会话。
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (_event, ctx) => {
+		if (ctx.hasUI) ui.clear(ctx);
 		deps.runtime?.shutdown?.();
 	});
 

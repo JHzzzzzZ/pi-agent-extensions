@@ -5,6 +5,8 @@ import type { BgRunOutcome } from "../runner.ts";
 import { formatRoundLabel } from "../tasks.ts";
 import type { BgRunEntry, LoopTask, PersistedTask } from "../tasks.ts";
 
+/** 宿主 widget 键：loop 不再独占自己的键，改由 widget 排序带合并（docs/cross/status-bar.md）。 */
+const WIDGET_KEY = "widget-band";
 const LOOP_TASKS_ENTRY = "loop-tasks-v1";
 const LOOP_DUE_CUSTOM_TYPE = "loop-task-due";
 const LOOP_RUN_ENTRY = "loop-run-v1";
@@ -644,7 +646,7 @@ describe("widget", () => {
     seedSnapshot(fake, [rawTask({ id: "widget01", nextDueAt: BASE + 65_000 })]);
     loopFactory(fake as never);
     await fake.fire("session_start");
-    const w = fake._widgets.get("loop");
+    const w = fake._widgets.get(WIDGET_KEY);
     assert.ok(w, "widget exists");
     assert.match(w!.content![0]!, /⏰ loop 1 个任务/);
     assert.match(w!.content![0]!, /下次 1m/);
@@ -655,9 +657,9 @@ describe("widget", () => {
     loopFactory(fake as never);
     await fake.fire("session_start");
     await fake.runCommand("5m 临时任务");
-    assert.ok(fake._widgets.has("loop"));
+    assert.ok(fake._widgets.has(WIDGET_KEY));
     await fake.runNamed("loop:clear", "");
-    assert.ok(!fake._widgets.has("loop"), "widget removed after clear");
+    assert.ok(!fake._widgets.has(WIDGET_KEY), "widget removed after clear");
   });
 
   it("倒计时粗粒度（>1h）时 tick 不重复写 widget（指纹跳过）", async () => {
@@ -697,7 +699,7 @@ describe("生命周期", () => {
     loopFactory(fake as never);
     await fake.fire("session_start");
     assert.equal(timerCount(), 1);
-    assert.ok(fake._widgets.has("loop") === false || true); // 无任务时 widget 可不存在
+    assert.ok(fake._widgets.has(WIDGET_KEY) === false || true); // 无任务时 widget 可不存在
     await fake.fire("session_shutdown");
     assert.equal(timerCount(), 0);
   });
@@ -769,7 +771,7 @@ describe("loop_create 工具", () => {
     assert.equal(fake._persisted.length, 1);
     const data = fake._persisted[0]!.data as { tasks: LoopTask[] };
     assert.equal(data.tasks[0]!.nextDueAt, BASE + 300_000);
-    assert.ok(fake._widgets.has("loop"));
+    assert.ok(fake._widgets.has(WIDGET_KEY));
   });
 
   it("创建一次性任务：in 30m 与 at 15:00", async () => {
@@ -979,7 +981,7 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     assert.match(note.message, /后台完成/);
     assert.match(note.message, /pi --session sess-42/);
     assert.match(note.message, /检查全部通过/);
-    assert.ok(!fake._widgets.has("loop"), "任务自删后 widget 移除");
+    assert.ok(!fake._widgets.has(WIDGET_KEY), "任务自删后 widget 移除");
   });
 
   it("循环后台任务完成：轮次进 loop-run-v1 条目，快照只留任务骨架", async () => {
@@ -992,7 +994,7 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     fakeNow = BASE + 61_000;
     fireTick();
     assert.equal(bg.calls.length, 1);
-    assert.match(fake._widgets.get("loop")!.content![0]!, /后台运行 1 轮（1 个任务）/);
+    assert.match(fake._widgets.get(WIDGET_KEY)!.content![0]!, /后台运行 1 轮（1 个任务）/);
 
     bg.resolveNext({ status: "done", exitCode: 0, sessionId: "sess-9abc", summary: "OK", stderr: "" });
     await flush();
@@ -1050,7 +1052,7 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     fireTick();
     assert.equal(bg.calls.length, 2, "在途不再拦截：第二轮照常拉起");
     assert.equal(fake._notifications.length, base + 1, "重叠轮不重复发启动通知");
-    assert.match(fake._widgets.get("loop")!.content![0]!, /后台运行 2 轮（1 个任务）/);
+    assert.match(fake._widgets.get(WIDGET_KEY)!.content![0]!, /后台运行 2 轮（1 个任务）/);
 
     // 运行中的两轮各自捕获会话 id 并落盘
     bg.calls[0]!.onSessionId?.({ sessionId: "sess-a" });
@@ -1070,7 +1072,7 @@ describe("后台模式（v1.3）— 触发与完成", () => {
     await flush();
     assert.match(fake.lastNotification()!.message, /sess-b/);
     assert.deepEqual(runEntries(fake).map((e) => [e.sessionId, e.status]), [["sess-a", "done"], ["sess-b", "done"]]);
-    assert.doesNotMatch(fake._widgets.get("loop")!.content![0]!, /后台运行/);
+    assert.doesNotMatch(fake._widgets.get(WIDGET_KEY)!.content![0]!, /后台运行/);
   });
 
   it("并发提示：同任务第 3 轮在跑时提示一次，回落再穿越仍提示", async () => {

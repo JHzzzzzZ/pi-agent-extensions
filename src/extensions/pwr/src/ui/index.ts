@@ -24,7 +24,7 @@ import {
 import { WORKFLOW_SUBCOMMANDS } from "../intent.ts";
 import { runSaveFlow, type SaveFlowActions } from "./save-flow.ts";
 import { MemoryRunStore } from "./run-store.ts";
-import { createRunEntryRenderer, refreshUiStatus, runCardSummaryLine } from "./renderer.ts";
+import { createRunEntryRenderer, clearUiStatus, refreshUiStatus, runCardSummaryLine } from "./renderer.ts";
 import type { RunEntryData, UiRuntimeAdapter } from "./types.ts";
 import { formatRunDetail, formatRunList, formatSavedWorkflows, formatStatus } from "./views.ts";
 import { describeSavedWorkflows } from "../save.ts";
@@ -43,6 +43,8 @@ export interface WorkflowsUi {
 	bindRuntime(runtime: UiRuntimeAdapter | null | undefined): void;
 	/** Refresh widget + footer status from the store (fire-and-forget). */
 	refresh(ctx: ExtensionContext): void;
+	/** 会话关停：清 widget 排序带登记（owner 位交还，见 docs/cross/status-bar.md）。 */
+	clear(ctx: ExtensionContext): void;
 }
 
 export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: () => UiRuntimeAdapter | null): WorkflowsUi {
@@ -53,6 +55,12 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 	const refresh = (ctx: ExtensionContext): void => {
 		lastUi = ctx.ui;
 		refreshUiStatus(ctx.ui, store);
+	};
+
+	// 关停后清登记并摘掉 lastUi：否则会话已关闭、运行时仍在推的 store 事件会把 widget 写回去。
+	const clear = (ctx: ExtensionContext): void => {
+		lastUi = undefined;
+		clearUiStatus(ctx.ui);
 	};
 
 	const notify = (ctx: ExtensionCommandContext, text: string, type: "info" | "warning" | "error" = "info"): void => {
@@ -433,5 +441,6 @@ export function createWorkflowsUi(pi: ExtensionAPI, deps: ToolDeps, getRuntime: 
 			runtime.onEvent?.((ev) => store.feedEvent(ev));
 		},
 		refresh,
+		clear,
 	};
 }

@@ -9,6 +9,7 @@ import { MemoryRunStore } from "../src/ui/run-store.ts";
 import { RunRegistry } from "../src/flow.ts";
 import { refreshUiStatus, runCardSummaryLine, runStatusText, runWidgetLines } from "../src/ui/renderer.ts";
 import { writeBand } from "../src/ui/status-band.ts";
+import { writeWidgetBand } from "../src/ui/widget-band.ts";
 
 function makeRun(registry: RunRegistry, source: string, name: string, createdAt: string, agentCalls = 3): string {
 	const plan = {
@@ -60,13 +61,13 @@ test("runWidgetLines empty store", () => {
 	assert.ok(lines.some((l) => l.includes("no runs")));
 });
 
-test("refreshUiStatus 写 footer 排序带键 30:pwr；最前段无前缀、有更低排序带时带 `│ `（docs/cross/status-bar.md）", () => {
+test("refreshUiStatus 写 footer 排序带键 30:pwr；widget 走 widget 排序带单键（docs/cross/status-bar.md）", () => {
 	const store = storeWith([{ name: "a", at: "2026-08-05T12:00:00Z", status: "running" }]);
 	const statusCalls: Array<{ key: string; text: string | undefined }> = [];
-	const widgetCalls: Array<{ key: string; lines: string[] }> = [];
+	const widgetCalls: Array<{ key: string; lines: string[] | undefined }> = [];
 	const ui = {
 		setStatus: (key: string, text: string | undefined) => statusCalls.push({ key, text }),
-		setWidget: (key: string, lines: string[]) => widgetCalls.push({ key, lines }),
+		setWidget: (key: string, lines: string[] | undefined) => widgetCalls.push({ key, lines }),
 	} as never;
 	const anchorWrites: Array<string | undefined> = [];
 	const anchorWriter = (t: string | undefined): void => {
@@ -77,7 +78,9 @@ test("refreshUiStatus 写 footer 排序带键 30:pwr；最前段无前缀、有�
 		const footer = statusCalls.find((c) => c.key === "30:pwr");
 		assert.ok(footer, "footer 状态键带排序前缀");
 		assert.equal(footer!.text, "pwr 1▶", "唯一段 = 最前，无前导分隔符");
-		assert.ok(widgetCalls.some((c) => c.key === "pwr-runs"), "widget 键不变");
+		assert.equal(widgetCalls.length, 1, "widget 一次刷新只写宿主一个键");
+		assert.equal(widgetCalls[0]!.key, "widget-band", "不再写自己的 pwr-runs 宿主键（宿主 delete+set 会逐秒换位）");
+		assert.deepEqual(widgetCalls[0]!.lines, runWidgetLines(store), "合并结果 = pwr 段的原行");
 
 		// 更低排序带出现 -> 重渲染带前缀；低带消失 -> 恢复无前缀
 		writeBand("05:test-anchor", "锚点", anchorWriter);
@@ -87,6 +90,8 @@ test("refreshUiStatus 写 footer 排序带键 30:pwr；最前段无前缀、有�
 		assert.equal(statusCalls.at(-1)!.text, "pwr 1▶", "低带消失后重渲染为最前");
 	} finally {
 		writeBand("05:test-anchor", undefined, anchorWriter);
+		// pwr 的 widget 常驻（无活跃 run 也显示标题行）：用例收尾清登记，避免影响同进程其它用例
+		writeWidgetBand("10:pwr-runs", undefined, ui);
 	}
 });
 
