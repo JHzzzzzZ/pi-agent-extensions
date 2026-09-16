@@ -1,6 +1,6 @@
 # run-timer — 会话/任务/回合计时 widget
 
-> last verified @ 775638d
+> last verified @ a81ba32
 
 ## 职责与边界
 
@@ -9,8 +9,9 @@
 ## 文件地图
 
 - `index.ts` — 全部生产代码（约 200 行）：上半是纯函数（formatDuration / isCJK / visualLen / truncateVisual / buildDisplayLine），下半是工厂（事件注册 + 节拍器 + 状态机）。改计时语义只动这半。
+- `widget-band.ts` — widget 排序带（每插件一份，跨插件契约见 `docs/cross/status-bar.md`）：本插件只登记 band key `20:run-timer` 的逻辑行，由 band key 最小的可见段当 owner 一次写宿主单键 `widget-band`（宿主每次 setWidget 都 delete+set，各写各键会逐秒换位）。**改 widget 写入只能走 `writeWidgetBand`，不可直接 `ui.setWidget`。**
 - `aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，不跨插件共享；只依赖全局 `setTimeout` 与可注入 `now`）。
-- `run-timer.test.ts` — 50 个 it：前段纯函数表格测试，后段真实工厂 + 假 pi 事件接线测试（含节拍驱动与指纹跳过）。**timer 单例与计账幂等契约都写在这**。
+- `run-timer.test.ts` — 50 个 it：前段纯函数表格测试，中段真实工厂 + 假 pi 事件接线测试（含节拍驱动与指纹跳过），末段 widget 写入断言（按宿主键 `widget-band` 观察，不再有 `run-timer` 自己的键）。**timer 单例与计账幂等契约都写在这**。
 - `aligned-ticker.test.ts` — 9 个 it：首跳对齐、跨跳自校正、stop 幂等、回调抛错后继续排跳。
 - 无 package.json / 无 tsconfig —— 刻意的：纯目录复制即可被 pi 自动发现（`extensions/*/index.ts`）。
 
@@ -19,21 +20,21 @@
 1. `session_start` → 重置全部状态 + 记 savedCtx + hasUI 时起对齐秒节拍（`startAlignedTicker`，默认 1s）。
 2. `agent_start` → 无进行中任务才开新任务（randomUUID + performance.now 起点）；`turn_start/turn_end` 只管本轮段。
 3. `agent_settled` → settleTask：任务耗时入账 `sessionTotalMs`、记 `lastTask`、id 进 `accountedTaskIds`。
-4. 每次事件都立即 flushWidget 一次；节拍只是事件间隙的连续刷新。flushWidget 先比对纯文本指纹，与上一帧相同则跳过 `setWidget`（静态内容不再每秒踢宿主重绘）。窄终端时先保「本会话」段，再截断前缀。
+4. 每次事件都立即 flushWidget 一次；节拍只是事件间隙的连续刷新。flushWidget 先比对纯文本指纹，与上一帧相同则跳过写 widget（静态内容不再每秒踢宿主重绘），写入走 `writeWidgetBand(20:run-timer, …)`（宿主键 `widget-band`）；`stopWidget`（含 session_shutdown 与模块级 dispose）清本段登记，owner 自动移交。窄终端时先保「本会话」段，再截断前缀。
 
 ## 不变量
 
 - **恰好一个节拍器**：双 session_start、UI→无 UI 重启、双工厂调用、A/B/A 交错关停，任何时序下 timer 数收敛到 1（`index.ts` stopWidget + 模块级 dispose 单例）。
 - **计账幂等**：同一任务 id 只入账一次，settle 后再 shutdown 不得双计（`index.ts` 的 accountedTaskIds Set；测试 dedup accounting）。
 - **本会话段永不丢**：宽度截断时保底显示会话总时长，超窄终端只显示它（`index.ts` buildDisplayLine 收尾分支）。
-- **hasUI 门控**：无 UI 不建 widget 不建 timer；每处 `setWidget` 均 try/catch 异常隔离，渲染抛错则整个 widget 自拆（`index.ts` flushWidget/stopWidget）。
+- **hasUI 门控**：无 UI 不建 widget 不建 timer；widget 写入经 `writeWidgetBand`（内部已异常隔离），渲染抛错则整个 widget 自拆（`index.ts` flushWidget/stopWidget）。
 - 时钟统一 `performance.now()`，负时长钳到 00:00（formatDuration 首行）。
 
 ## 已知坑
 
 - 入口文件名必须是 `index.ts`（commit a33ebde 从旧名统一改名换 auto-discovery），复制目录时改名即失效。
 - 测试时钟是特例：文件级 before/after 全局替换 `setTimeout`/`clearTimeout`，`fireTick()` 手动触发（节拍器 `now` 可注入，跨跳自校正在 `aligned-ticker.test.ts` 单测）。新增测试勿给它立 deps 口，按 docs/cross/deps-ports.md 的特例约定直接 mock timer。
-- `index.ts` 的 widget 传 `theme.fg("dim", …)` 样式字符串——与 loop 的纯字符串约定不同源（那是 `ExtensionUIContext` 的限制），照抄 loop 模式会丢样式。
+- `index.ts` 的 widget 行传 `theme.fg("dim", …)` 样式字符串（排序带原样拼接，样式由本插件给）——与 loop 的纯字符串约定不同源（那是 `ExtensionUIContext` 的限制），照抄 loop 模式会丢样式。
 - 模块级 dispose 是进程级单例：同进程第二个会话工厂会抢走清理权（测试 A/B/old A shutdown/C 用例），多实例场景改这里必须重跑 timer lifecycle 组。
 
 ## 改动清单

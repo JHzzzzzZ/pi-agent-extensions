@@ -1,7 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { startAlignedTicker } from "./aligned-ticker.ts";
+import { writeWidgetBand } from "./widget-band.ts";
 
-const WIDGET_ID = "run-timer";
+/** widget 排序带键（内部排序键，用户不可见；顺序契约见 docs/cross/status-bar.md）。 */
+const BAND_KEY = "20:run-timer";
 const TICK_MS = 1000;
 
 export interface TimerState {
@@ -125,7 +127,8 @@ export default function (pi: ExtensionAPI) {
       const line = buildDisplayLine(state, now(), maxWidth);
       if (line === lastLine) return;
       lastLine = line;
-      savedCtx.ui.setWidget(WIDGET_ID, [savedCtx.ui.theme.fg("dim", line)]);
+      // widget 走排序带：不写本插件的宿主键（多键各自刷新会被宿主 delete+set 逐秒换位）。
+      writeWidgetBand(BAND_KEY, [savedCtx.ui.theme.fg("dim", line)], savedCtx.ui);
     } catch {
       stopWidget();
     }
@@ -139,7 +142,7 @@ export default function (pi: ExtensionAPI) {
     lastLine = null;
     if (savedCtx?.hasUI) {
       try {
-        savedCtx.ui.setWidget(WIDGET_ID);
+        writeWidgetBand(BAND_KEY, undefined, savedCtx.ui);
       } catch {
       }
     }

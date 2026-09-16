@@ -216,6 +216,9 @@ interface FakeWidget {
   content?: string[];
 }
 
+/** 宿主 widget 键：run-timer 不再独占自己的键，改由 widget 排序带合并（docs/cross/status-bar.md）。 */
+const WIDGET_KEY = "widget-band";
+
 function createFakeAPI() {
   const widgets = new Map<string, FakeWidget>();
   const handlers = new Map<string, (e: any, ctx: any) => void | Promise<void>>();
@@ -280,7 +283,7 @@ describe("real factory — widget lifecycle", () => {
     const fake = createFakeAPI();
     runTimer(fake as any);
     await fake.fire("session_start");
-    const w = fake._widgets.get("run-timer");
+    const w = fake._widgets.get(WIDGET_KEY);
     assert.ok(w, "widget should exist");
     assert.ok(Array.isArray(w!.content), "widget content should be an array");
   });
@@ -297,18 +300,18 @@ describe("real factory — widget lifecycle", () => {
     const fake = createFakeAPI();
     runTimer(fake as any);
     await fake.fire("session_start");
-    assert.ok(fake._widgets.has("run-timer"));
+    assert.ok(fake._widgets.has(WIDGET_KEY));
     await fake.fire("session_shutdown");
-    assert.ok(!fake._widgets.has("run-timer"));
+    assert.ok(!fake._widgets.has(WIDGET_KEY));
   });
 
   it("agent_start triggers immediate widget update", async () => {
     const fake = createFakeAPI();
     runTimer(fake as any);
     await fake.fire("session_start");
-    fake._widgets.delete("run-timer");
+    fake._widgets.delete(WIDGET_KEY);
     await fake.fire("agent_start");
-    const w = fake._widgets.get("run-timer");
+    const w = fake._widgets.get(WIDGET_KEY);
     assert.ok(w, "widget should update immediately after agent_start");
   });
 
@@ -324,9 +327,9 @@ describe("real factory — widget lifecycle", () => {
       await fake.fire("agent_start");
       await fake.fire("turn_start");
       fakePerf += 5000;
-      fake._widgets.delete("run-timer");
+      fake._widgets.delete(WIDGET_KEY);
       await fake.fire("turn_end");
-      const w = fake._widgets.get("run-timer");
+      const w = fake._widgets.get(WIDGET_KEY);
       assert.ok(w, "widget should update immediately after turn_end");
     } finally {
       performance.now = originalPerfNow;
@@ -343,9 +346,9 @@ describe("real factory — widget lifecycle", () => {
       await fake.fire("session_start");
       await fake.fire("agent_start");
       fakePerf += 5000; // 结束后行文切换为“上次任务 …（已结束）”
-      fake._widgets.delete("run-timer");
+      fake._widgets.delete(WIDGET_KEY);
       await fake.fire("agent_settled");
-      const w = fake._widgets.get("run-timer");
+      const w = fake._widgets.get(WIDGET_KEY);
       assert.ok(w, "widget should update immediately after agent_settled");
     } finally {
       performance.now = originalPerfNow;
@@ -360,7 +363,7 @@ describe("real factory — display content", () => {
     await fake.fire("session_start");
     await fake.fire("agent_start");
     await fake.fire("turn_start");
-    const w = fake._widgets.get("run-timer");
+    const w = fake._widgets.get(WIDGET_KEY);
     assert.ok(w, "widget exists");
     const text = w!.content?.[0] || "";
     assert.match(text, /任务/);
@@ -375,7 +378,7 @@ describe("real factory — display content", () => {
     await fake.fire("agent_start");
     await fake.fire("turn_start");
     await fake.fire("turn_end");
-    const w = fake._widgets.get("run-timer");
+    const w = fake._widgets.get(WIDGET_KEY);
     const text = w!.content?.[0] || "";
     assert.match(text, /本轮 00:00/);
   });
@@ -386,7 +389,7 @@ describe("real factory — display content", () => {
     await fake.fire("session_start");
     await fake.fire("agent_start");
     await fake.fire("agent_settled");
-    const w = fake._widgets.get("run-timer");
+    const w = fake._widgets.get(WIDGET_KEY);
     const text = w!.content?.[0] || "";
     assert.match(text, /（已结束）/);
   });
@@ -431,12 +434,12 @@ describe("real factory — timer lifecycle", () => {
     runTimer(fake as any);
     await fake.fire("session_start");
     assert.equal(timerCount(), 1, "timer created for first session");
-    assert.ok(fake._widgets.has("run-timer"), "widget created");
+    assert.ok(fake._widgets.has(WIDGET_KEY), "widget created");
 
     fake.hasUI = false;
     await fake.fire("session_start");
     assert.equal(timerCount(), 0, "old timer cleared when new session has no UI");
-    assert.ok(!fake._widgets.has("run-timer"), "old widget removed");
+    assert.ok(!fake._widgets.has(WIDGET_KEY), "old widget removed");
   });
 
   it("double session_start with UI keeps exactly one timer", async () => {
@@ -518,13 +521,13 @@ describe("real factory — dedup accounting", () => {
     await fake.fire("agent_start");
     await fake.fire("agent_settled");
 
-    const w1 = fake._widgets.get("run-timer")!;
+    const w1 = fake._widgets.get(WIDGET_KEY)!;
     const text1 = w1.content?.[0] || "";
     const match1 = text1.match(/本会话 (\d+:\d+)/);
     assert.ok(match1, "session total in widget");
 
     await fake.fire("session_shutdown");
-    const w2 = fake._widgets.get("run-timer");
+    const w2 = fake._widgets.get(WIDGET_KEY);
     assert.ok(!w2, "widget removed on shutdown");
   });
 });
@@ -579,7 +582,7 @@ describe("real factory — widgetLines array contract", () => {
     runTimer(fake as any);
     await fake.fire("session_start");
     await fake.fire("agent_start");
-    const w = fake._widgets.get("run-timer");
+    const w = fake._widgets.get(WIDGET_KEY);
     assert.ok(w, "widget exists");
     assert.ok(Array.isArray(w!.content), "content is array");
     assert.equal(w!.content!.length, 1, "single line");

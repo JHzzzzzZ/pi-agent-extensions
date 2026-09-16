@@ -14,10 +14,14 @@ import type { EntryRenderer, ExtensionUIContext } from "@earendil-works/pi-codin
 import { writeBand } from "./status-band.ts";
 import type { RunEntryData, RunStore } from "./types.ts";
 import { formatCount, formatDuration, formatStatus, runCardLines } from "./views.ts";
+import { writeWidgetBand } from "./widget-band.ts";
 
 export { STATUS_SEPARATOR } from "./status-band.ts";
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "paused", "awaiting_approval"]);
+
+/** widget 排序带键（内部排序键，用户不可见；顺序契约见 docs/cross/status-bar.md）。 */
+const PWR_WIDGET_BAND = "10:pwr-runs";
 
 /** Collapsed one-line summary for the entry card. */
 export function runCardSummaryLine(store: RunStore, runId: string): string {
@@ -104,8 +108,15 @@ export function runStatusText(store: RunStore): string | undefined {
  * Non-blocking push of status + widget from the store.
  * footer 键带 `30:` 排序前缀（宿主按 key localeCompare 拼接，见 docs/cross/status-bar.md）；
  * 段前缀由 `status-band` 统一决定（最前段不加 `│ `）。
+ * widget 走 `widget-band`：本插件不写自己的宿主键（宿主每次 setWidget 都 delete+set，
+ * 多键各自刷新会逐秒换位），只登记逻辑行，由 owner 合并成宿主单键。
  */
 export function refreshUiStatus(ui: ExtensionUIContext, store: RunStore): void {
 	writeBand("30:pwr", runStatusText(store), (text) => ui.setStatus("30:pwr", text));
-	ui.setWidget("pwr-runs", runWidgetLines(store));
+	writeWidgetBand(PWR_WIDGET_BAND, runWidgetLines(store), ui);
+}
+
+/** 会话关停：清本段登记（widget 排序带生命周期纪律，同 footer 排序带）。 */
+export function clearUiStatus(ui: ExtensionUIContext): void {
+	writeWidgetBand(PWR_WIDGET_BAND, undefined, ui);
 }

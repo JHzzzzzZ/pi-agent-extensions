@@ -55,8 +55,12 @@ export const REPO_ROOT = path.resolve(HERE, "..");
 
 /**
  * 每个扩展的最小期望面。命令名锁定已发布的命令契约（重命名/删除会响亮
- * 失败，新增命令不需改这里）；uiKeys 是扩展在 session_start 期间写入宿主
- * 的 widget/status 键，用于证明"无命令扩展"也真的加载并跑起来了。
+ * 失败，新增命令不需改这里）；uiKeys 是扩展在会话生命期内写入宿主的
+ * widget/status 键，用于证明"无命令扩展"也真的加载并跑起来了。
+ *
+ * widget 键：编辑器上方三段（pwr / run-timer / loop）走仓库内「widget 排序带」
+ * 合并后只写宿主单键 `widget-band`（契约 docs/cross/status-bar.md），故不再
+ * 各自出现 pwr-runs / run-timer；loop 无任务时不挂 widget（启动期无写入）。
  */
 export const EXTENSION_EXPECTATIONS = {
   pwr: {
@@ -78,7 +82,7 @@ export const EXTENSION_EXPECTATIONS = {
       "workflow:stop",
       "workflow:view",
     ],
-    uiKeys: ["30:pwr", "pwr-runs"],
+    uiKeys: ["30:pwr", "widget-band"],
   },
   "agent-team": {
     commands: ["team", "team:clear", "team:doctor", "team:list", "team:resume", "team:run", "team:status", "team:stop", "team:view"],
@@ -86,7 +90,7 @@ export const EXTENSION_EXPECTATIONS = {
   },
   loop: {
     commands: ["loop", "loop:clear", "loop:delete", "loop:list", "loop:pause", "loop:resume"],
-    uiKeys: ["loop"],
+    uiKeys: [],
   },
   goal: {
     commands: [
@@ -110,7 +114,7 @@ export const EXTENSION_EXPECTATIONS = {
   "provider-quota": { commands: ["quota"], uiKeys: ["20:provider-quota"] },
   "solo-mode": { commands: ["solo", "solo:off", "solo:on", "solo:status"], uiKeys: ["40:solo-mode"] },
   // 无命令扩展：只能以启动期 TUI 写入或"加载不抛错"证明。
-  "run-timer": { commands: [], uiKeys: ["run-timer"] },
+  "run-timer": { commands: [], uiKeys: ["widget-band"] },
   "stream-token-speed": { commands: [], uiKeys: ["50:stream-token-speed"] },
   "human-notify": { commands: [], uiKeys: [] },
   "chatanywhere-provider": { commands: [], uiKeys: [] },

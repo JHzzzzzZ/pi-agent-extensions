@@ -21,7 +21,7 @@
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |
 | solo 免审批模式的跨扩展契约（状态文件 / 采纳方 / fail-closed） | `cross/solo-approval-gate.md` |
-| 状态条刷新节拍 / footer 排序带 / 段分隔与首段定格 / widget 栈顺序契约 | `cross/status-bar.md` |
+| 状态条刷新节拍 / footer 排序带 / 段分隔与首段定格 / widget 排序带契约 | `cross/status-bar.md` |
 | widget 刷新重排问题与上游 issue 稿（本地不打补丁） | `pi-widget-order-issue.md` |
 | 宿主 httpProxy 不注入 `NO_PROXY` → 本地回环被代理劫持（405）的问题与上游 issue 稿（本地不打补丁） | `pi-http-proxy-loopback-issue.md` |
 | 历史事故与教训（渲染堆叠、误杀进程、编码坑） | `incidents.md` |
