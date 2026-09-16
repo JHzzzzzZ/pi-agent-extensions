@@ -1520,7 +1520,7 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
         refreshWidget();
         // 只丢弃该 run 的排队对话（其他并行 run 的排队消息保留）。
         const dropped = chat.clearRun(runId);
-        const droppedNote = dropped > 0 ? `已丢弃排队的 ${dropped} 条 viewer 对话消息。` : "";
+        const droppedNote = dropped > 0 ? `已丢弃 run ${runId} 排队的 ${dropped} 条 viewer 对话消息。` : "";
         if (outcome.settled) {
           const record = outcome.record;
           const secs = record?.durationMs !== undefined ? `（${Math.round(record.durationMs / 100) / 10}s）` : "";
@@ -1785,10 +1785,12 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
       return;
     }
     refreshWidget();
-    const dropped = chat.clear();
+    // 变卦语义只针对被停的 run：其他并行 run 的排队消息保留（与 team_stop
+    // 工具、viewer D 同一条丢弃范围；/team:clear 才清全队列）。
+    const dropped = chat.clearRun(runId);
     ui.notify(
       dropped > 0
-        ? `已发送中止信号（SIGTERM → SIGKILL）：run ${runId}；已丢弃排队的 ${dropped} 条 viewer 对话消息`
+        ? `已发送中止信号（SIGTERM → SIGKILL）：run ${runId}；已丢弃 run ${runId} 排队的 ${dropped} 条 viewer 对话消息`
         : `已发送中止信号（SIGTERM → SIGKILL）：run ${runId}`,
       "warning",
     );
