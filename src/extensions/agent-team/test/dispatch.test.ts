@@ -781,6 +781,43 @@ test("外部成员派发：resolver 命令/args 形状、stdin ignore、leader �
   }
 });
 
+test("外部成员 model 带 :level：spawn 参数注入级别、--model 不带后缀（#66）", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CODEX_MEMBER, model: "gpt-5.1-codex:high" }] }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CODEX_BIN),
+  });
+  const promise = executor({ tasks: [{ agent: "coder", task: "写脚本" }] }, undefined, undefined);
+  const child = await waitForChild(spawn, 0);
+
+  const record = spawn.records[0];
+  assert.equal(record.args[record.args.indexOf("--model") + 1], "gpt-5.1-codex", "--model 不带 :level 后缀");
+  assert.ok(record.args.includes("model_reasoning_effort=high"), "级别经 -c model_reasoning_effort 注入");
+  assert.equal(record.args[record.args.length - 1], "你是外部码农。\n\n---\n\nTask: 写脚本");
+
+  child.autoRespond(fixtureLines("external-codex-success.jsonl"), 0, 5);
+  const outcome = await unwrap(promise);
+  assert.equal(outcome.results[0].status, "done");
+});
+
+test("外部成员 model 带不支持档位：零 spawn、failed EXTERNAL_THINKING_UNSUPPORTED（预检之外的第二道闸）", async () => {
+  const { deps, spawn } = baseDeps();
+  const executor = createDispatchExecutor({
+    ...deps,
+    team: fixtureTeam({ members: [{ ...CLAUDE_MEMBER, model: "claude-haiku-4-5:off" }] }),
+    resolveExternalCli: fixedResolver(EXTERNAL_CLAUDE_BIN),
+  });
+  const outcome = await Promise.race([
+    executor({ tasks: [{ agent: "coder", task: "读文件" }] }, undefined, undefined).then((r) => (r.ok ? r.value : undefined)),
+    sleep(200).then(() => undefined),
+  ]);
+  assert.ok(outcome, "不支持的档位必须不 spawn 直接落定");
+  assert.equal(spawn.records.length, 0, "no child spawns for an unsupported thinking level");
+  assert.equal(outcome.results[0].status, "failed");
+  assert.equal(outcome.results[0].error?.code, "EXTERNAL_THINKING_UNSUPPORTED");
+});
+
 test("codex 外部成员回放成功 fixture：done + usage 折回 + progress latest", async () => {
   const { deps, spawn } = baseDeps();
   const executor = createDispatchExecutor({

@@ -8,6 +8,8 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { preflightTeamModels, type ExternalPreflightDeps, type ModelLookup } from "../preflight.ts";
+import { buildExternalArgs } from "../external.ts";
+import { resolveEffectiveTeam } from "../resume.ts";
 import { TeamErrorCodes } from "../types.ts";
 import { fixtureTeam } from "./fixtures.ts";
 
@@ -253,4 +255,131 @@ test("CLI 解析成功时外部成员照常放行，pi 成员的鉴权警告不�
   assert.ok(result.ok);
   assert.equal(result.warnings.length, 1);
   assert.match(result.warnings[0], /frontend/);
+});
+
+// ---------------------------------------------------------------------------
+// 外部成员思考档位（agent-team-todo #66）
+// ---------------------------------------------------------------------------
+
+/** 本机实测支持集（claude `--help` / codex 官方 config 参考，见 README §7）。 */
+const SUPPORTED_LEVELS = {
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+  claude: ["low", "medium", "high", "xhigh", "max"],
+} as const;
+
+function externalTeam(backend: "codex" | "claude", model: string) {
+  return fixtureTeam({
+    leader: { prompt: "p" },
+    members: [{ name: "coder", backend, model, prompt: "p" }],
+  });
+}
+
+test("外部成员带受支持档位：预检放行（含基础 id 剥后缀后仍不查注册表）", () => {
+  let lookupCalls = 0;
+  for (const [backend, level] of [
+    ["codex", "minimal"],
+    ["codex", "xhigh"],
+    ["claude", "low"],
+    ["claude", "max"],
+  ] as const) {
+    const result = preflightTeamModels(
+      externalTeam(backend, `m:${level}`),
+      {
+        find: () => {
+          lookupCalls++;
+          return undefined;
+        },
+        hasConfiguredAuth: () => true,
+      },
+      externalDeps(() => ({ ok: true, value: { command: "/x/cli" } })),
+    );
+    assert.ok(result.ok, `${backend}:${level} → ${result.ok ? "" : result.message}`);
+    assert.deepEqual(result.warnings, [], `${backend}:${level}`);
+  }
+  assert.equal(lookupCalls, 0);
+});
+
+test("外部成员带不支持档位：预检 fail-closed（EXTERNAL_THINKING_UNSUPPORTED + 静态消息，零 CLI 探测）", () => {
+  const cases = [
+    ["claude", "off"],
+    ["claude", "minimal"],
+    ["codex", "off"],
+    ["codex", "max"],
+  ] as const;
+  for (const [backend, level] of cases) {
+    let resolveCalls = 0;
+    const result = preflightTeamModels(
+      externalTeam(backend, `m:${level}`),
+      lookup([]),
+      externalDeps(() => {
+        resolveCalls++;
+        return { ok: true, value: { command: "/x/cli" } };
+      }),
+    );
+    assert.ok(!result.ok, `${backend}:${level} 必须 fail-closed`);
+    assert.equal(result.code, TeamErrorCodes.EXTERNAL_THINKING_UNSUPPORTED, `${backend}:${level}`);
+    // 静态模板：成员名前缀 + 后端名 + 静态支持集列表；被拒档位与模型串（用户输入）不进消息。
+    const supported = SUPPORTED_LEVELS[backend].join("/");
+    assert.equal(
+      result.message,
+      `外部成员 coder：外部 CLI 不支持该思考档位：${backend} 仅支持 ${supported}。请把成员 model 的 :level 后缀改为受支持档位，或去掉后缀使用 CLI 默认。`,
+      `${backend}:${level}`,
+    );
+    assert.equal(resolveCalls, 0, `${backend}:${level} 不进入 CLI 探测`);
+  }
+});
+
+test("外部成员不带后缀：预检不因档位检查改变既有行为", () => {
+  const result = preflightTeamModels(
+    externalTeam("claude", "claude-haiku-4-5"),
+    lookup([]),
+    externalDeps(() => ({ ok: true, value: { command: "/x/cli" } })),
+  );
+  assert.ok(result.ok, result.ok ? "" : result.message);
+});
+
+test("对照组：预检与启动对同一 model 字符串的判定/解析完全一致（pi 全档位 × 两 CLI）", () => {
+  const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  for (const backend of ["codex", "claude"] as const) {
+    for (const level of levels) {
+      const model = `gpt-5.1-codex:${level}`;
+      const pre = preflightTeamModels(
+        externalTeam(backend, model),
+        lookup([]),
+        externalDeps(() => ({ ok: true, value: { command: "/x/cli" } })),
+      );
+      const spawned = buildExternalArgs(backend, { model, prompt: "p" }, "t");
+      assert.equal(pre.ok, spawned.ok, `${backend}:${level} 预检与启动判定必须一致`);
+      if (!pre.ok && !spawned.ok) assert.equal(pre.code, spawned.code, `${backend}:${level} 错误码一致`);
+      if (spawned.ok) {
+        const flag = backend === "codex" ? `model_reasoning_effort=${level}` : level;
+        assert.ok(spawned.value.includes(flag), `${backend}:${level} spawn 参数含级别`);
+        assert.equal(spawned.value[spawned.value.indexOf("--model") + 1], "gpt-5.1-codex");
+      }
+    }
+  }
+});
+
+test("team_resume 的 memberModels 覆盖走同一解析路径（生效团队为准）", () => {
+  const team = externalTeam("codex", "gpt-5.1-codex");
+  const overridden = resolveEffectiveTeam(team, { memberModels: { coder: "gpt-5.1-codex:max" } }).team;
+  const rejected = preflightTeamModels(
+    overridden,
+    lookup([]),
+    externalDeps(() => ({ ok: true, value: { command: "/x/cli" } })),
+  );
+  assert.ok(!rejected.ok, "覆盖为不支持档位必须在预检期拦下");
+  assert.equal(rejected.code, TeamErrorCodes.EXTERNAL_THINKING_UNSUPPORTED);
+
+  const ok = resolveEffectiveTeam(team, { memberModels: { coder: "gpt-5.1-codex:xhigh" } }).team;
+  const passed = preflightTeamModels(
+    ok,
+    lookup([]),
+    externalDeps(() => ({ ok: true, value: { command: "/x/cli" } })),
+  );
+  assert.ok(passed.ok, passed.ok ? "" : passed.message);
+  const built = buildExternalArgs("codex", { model: ok.members[0].model, prompt: "p" }, "t");
+  assert.ok(built.ok);
+  assert.ok(built.value.includes("model_reasoning_effort=xhigh"));
+  assert.equal(built.value[built.value.indexOf("--model") + 1], "gpt-5.1-codex");
 });

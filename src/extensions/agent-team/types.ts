@@ -242,6 +242,8 @@ export const TeamErrorCodes = {
   EXTERNAL_LEADER_UNSUPPORTED: "EXTERNAL_LEADER_UNSUPPORTED",
   /** Declared external CLI could not be resolved to a spawnable executable. */
   CLI_NOT_FOUND: "CLI_NOT_FOUND",
+  /** 外部成员的 `model: <id>:<level>` 档位不被该 CLI 支持（预检期 fail-closed，不静默降级）。 */
+  EXTERNAL_THINKING_UNSUPPORTED: "EXTERNAL_THINKING_UNSUPPORTED",
 } as const;
 
 export type TeamErrorCode = (typeof TeamErrorCodes)[keyof typeof TeamErrorCodes];

@@ -18,7 +18,13 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildExternalArgs, createExternalParser, resolveExternalCli } from "../external.ts";
-import type { ChildEvent } from "../types.ts";
+import { TeamErrorCodes, type ChildEvent, type ExternalBackend } from "../types.ts";
+
+/** 本机实测的支持集（claude `--help` / codex 官方 config 参考，见 README §7 映射表）。 */
+const SUPPORTED_LEVELS: Record<ExternalBackend, readonly string[]> = {
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+  claude: ["low", "medium", "high", "xhigh", "max"],
+};
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "fixtures");
@@ -241,8 +247,9 @@ test("resolveExternalCli: all misses report CLI_NOT_FOUND with searched location
 // ---------------------------------------------------------------------------
 
 test("buildExternalArgs: codex exact shape, model optional, prompt merged into the task text", () => {
-  const args = buildExternalArgs("codex", { model: "gpt-5.1-codex", prompt: "你是评审员。" }, "检查登录流程");
-  assert.deepEqual(args, [
+  const built = buildExternalArgs("codex", { model: "gpt-5.1-codex", prompt: "你是评审员。" }, "检查登录流程");
+  assert.ok(built.ok);
+  assert.deepEqual(built.value, [
     "exec",
     "--json",
     "--skip-git-repo-check",
@@ -254,13 +261,15 @@ test("buildExternalArgs: codex exact shape, model optional, prompt merged into t
     "你是评审员。\n\n---\n\nTask: 检查登录流程",
   ]);
   const noModel = buildExternalArgs("codex", { prompt: "p" }, "t");
-  assert.ok(!noModel.includes("--model"));
-  assert.equal(noModel[noModel.length - 1], "p\n\n---\n\nTask: t");
+  assert.ok(noModel.ok);
+  assert.ok(!noModel.value.includes("--model"));
+  assert.equal(noModel.value[noModel.value.length - 1], "p\n\n---\n\nTask: t");
 });
 
 test("buildExternalArgs: claude exact shape includes --verbose (missing it fails exit=1)", () => {
-  const args = buildExternalArgs("claude", { model: "haiku", prompt: "你是评审员。" }, "检查登录流程");
-  assert.deepEqual(args, [
+  const built = buildExternalArgs("claude", { model: "haiku", prompt: "你是评审员。" }, "检查登录流程");
+  assert.ok(built.ok);
+  assert.deepEqual(built.value, [
     "-p",
     "--output-format",
     "stream-json",
@@ -275,18 +284,110 @@ test("buildExternalArgs: claude exact shape includes --verbose (missing it fails
     "Task: 检查登录流程",
   ]);
   const noModel = buildExternalArgs("claude", { prompt: "p" }, "t");
-  assert.ok(!noModel.includes("--model"));
-  assert.equal(noModel[noModel.length - 1], "Task: t");
+  assert.ok(noModel.ok);
+  assert.ok(!noModel.value.includes("--model"));
+  assert.equal(noModel.value[noModel.value.length - 1], "Task: t");
 });
 
 test("buildExternalArgs: task text only ever lands in the final positional argument", () => {
   const task = "UNIQUE_TASK_SENTINEL_12345";
   for (const backend of ["codex", "claude"] as const) {
-    const args = buildExternalArgs(backend, { model: "m", prompt: "PROMPT_SENTINEL" }, task);
+    const built = buildExternalArgs(backend, { model: "m", prompt: "PROMPT_SENTINEL" }, task);
+    assert.ok(built.ok, backend);
+    const args = built.value;
     const hits = args.filter((arg) => arg.includes(task));
     assert.equal(hits.length, 1, `${backend}: task must appear exactly once`);
     assert.equal(args[args.length - 1], hits[0]);
     assert.ok(!hits[0].startsWith("--"), `${backend}: task must not be read as a flag`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// model :level（agent-team-todo #66）——统一解析 + 各 CLI 参数映射 + fail-closed
+// ---------------------------------------------------------------------------
+
+test("buildExternalArgs: codex 成员 model 的 :level 映射为 -c model_reasoning_effort，--model 不带后缀", () => {
+  const built = buildExternalArgs("codex", { model: "gpt-5.1-codex:high", prompt: "你是评审员。" }, "检查登录流程");
+  assert.ok(built.ok);
+  assert.deepEqual(built.value, [
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "--ephemeral",
+    "-s",
+    "workspace-write",
+    "--model",
+    "gpt-5.1-codex",
+    "-c",
+    "model_reasoning_effort=high",
+    "你是评审员。\n\n---\n\nTask: 检查登录流程",
+  ]);
+});
+
+test("buildExternalArgs: claude 成员 model 的 :level 映射为 --effort，--model 不带后缀", () => {
+  const built = buildExternalArgs("claude", { model: "claude-haiku-4-5:xhigh", prompt: "你是评审员。" }, "检查登录流程");
+  assert.ok(built.ok);
+  assert.deepEqual(built.value, [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+    "--permission-mode",
+    "acceptEdits",
+    "--append-system-prompt",
+    "你是评审员。",
+    "--model",
+    "claude-haiku-4-5",
+    "--effort",
+    "xhigh",
+    "Task: 检查登录流程",
+  ]);
+});
+
+test("buildExternalArgs: 支持集内每个档位都注入对应参数（--model 值恒为基础 id）", () => {
+  for (const backend of ["codex", "claude"] as const) {
+    for (const level of SUPPORTED_LEVELS[backend]) {
+      const built = buildExternalArgs(backend, { model: `m:${level}`, prompt: "p" }, "t");
+      assert.ok(built.ok, `${backend}:${level} 应受支持`);
+      const args = built.value;
+      assert.equal(args[args.indexOf("--model") + 1], "m", `${backend}:${level} --model 不带后缀`);
+      const flag = backend === "codex" ? ["-c", `model_reasoning_effort=${level}`] : ["--effort", level];
+      for (const expected of flag) assert.ok(args.includes(expected), `${backend}:${level} 缺 ${expected}`);
+    }
+  }
+});
+
+test("buildExternalArgs: 不支持的档位 fail-closed（EXTERNAL_THINKING_UNSUPPORTED + 静态消息，零参数产出）", () => {
+  const cases: Array<[ExternalBackend, string]> = [
+    ["claude", "off"],
+    ["claude", "minimal"],
+    ["codex", "off"],
+    ["codex", "max"],
+  ];
+  for (const [backend, level] of cases) {
+    const built = buildExternalArgs(backend, { model: `m:${level}`, prompt: "p" }, "t");
+    assert.ok(!built.ok, `${backend}:${level} 必须 fail-closed`);
+    assert.equal(built.code, TeamErrorCodes.EXTERNAL_THINKING_UNSUPPORTED, `${backend}:${level}`);
+    const supported = SUPPORTED_LEVELS[backend].join("/");
+    assert.equal(
+      built.message,
+      `外部 CLI 不支持该思考档位：${backend} 仅支持 ${supported}。请把成员 model 的 :level 后缀改为受支持档位，或去掉后缀使用 CLI 默认。`,
+    );
+    // 静态模板：被拒档位与模型串（用户输入）不得出现在消息里。
+    assert.ok(!built.message.includes(level));
+    assert.ok(!built.message.includes("m:"));
+  }
+});
+
+test("buildExternalArgs: 冒号尾段不是宿主思考级别时不剥离（照旧是模型名的一部分）", () => {
+  for (const backend of ["codex", "claude"] as const) {
+    const built = buildExternalArgs(backend, { model: "m:beta", prompt: "p" }, "t");
+    assert.ok(built.ok, backend);
+    const args = built.value;
+    assert.equal(args[args.indexOf("--model") + 1], "m:beta", backend);
+    assert.ok(!args.includes("--effort"), backend);
+    assert.ok(!args.includes("model_reasoning_effort=beta"), backend);
   }
 });
 
