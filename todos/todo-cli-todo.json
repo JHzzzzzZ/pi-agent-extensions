@@ -192,7 +192,7 @@
     {
       "id": 13,
       "text": "test:todo 偶发失败（2026-09-14 实测）：并发负载下（同仓另有会话在跑 todo CLI 写操作）首跑 42/44、fail 2（疑为 concurrency.test.ts 真子进程用例），独立复跑两次均 44/44 全绿。要求：捕获失败时的用例名与 stderr 后再判定是锁等待/超时预算问题还是测试自身竞态；若确认负载敏感则放宽等待预算或标注串行，保持真子进程语义不退化。",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [
         "tests",
@@ -201,9 +201,9 @@
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T14:31:09.083Z",
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:51:29.732Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T15:03:24.309Z"
     },
     {
       "id": 14,
@@ -226,15 +226,28 @@
     {
       "id": 15,
       "text": "todo 条目优先级（用户 2026-09-15 提出，未领取）：台账支持 1-10 数字优先级，默认 5，agent 登记时可自行判断取值。要求：① 存储层 entries[] 增加 priority 字段，旧条目缺失视作 5（读时兜底，不强制重写既有文件）；② 命令面 add --priority <1-10>，非整数/越界 fail-closed（新错误码，沿用 result union 口径）；③ 查询面 list 展示并按优先级排序（数字大者为高优先、同值内保持 id 稳定次序；是否设为默认排序在对齐时定）、summary 与 list --json 输出该字段；④ 优先级只影响展示/排序/人工排期，不改变五态状态机与依赖门语义（claim/align 不按优先级拦截）；⑤ 文档同步：SKILL.md 命令面、docs/tools/todo-cli.md 卡片、align 模板若要带上字段一并更新。验收：单测覆盖默认值、边界 1 与 10、越界与非法输入拒绝、旧数据（无字段）兼容、排序稳定性、--json 输出；npm run test:todo 全绿；todo lint 不受影响。",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-16T14:27:04.829Z",
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:51:29.549Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T15:03:13.159Z"
+    },
+    {
+      "id": 16,
+      "text": "todo 统一全局 id（用户 2026-09-15 提出，repo-dev 首单候选）：当前条目 id 是文件内 max+1、跨文件会重号（todo-cli#15 与 general#15 是两个不同条目却都叫 15），查重/引用/对齐文档命名/依赖引用全以「文件#id」为准，人机都容易混。要求：所有 todos/*.json 的条目支持统一唯一 id（类似数据库主键，全台账从不重复、永不复用）。待定口径（对齐时定）：① id 形态（全局自增整数+跨文件计数器文件 vs 时间戳型 ULID）；② 引用与展示格式（文件#id 双轨保留 or 全局 id 单轨；dependsOn 规范引用、align 文档命名 todos/align/<名>#<id>.md、--match 口径是否跟随）；③ 存量条目分配方式（一次性迁移全量写盘 vs 惰性分配——注意 #14 教训：批量重写须逐字段保全时间戳/notes）；④ 跨文件计数器的锁与并发语义（沿用每文件锁不够，需全局唯一性保证）；⑤ 与已领取的 #15（优先级）的先后关系（统一 id 改 list 展示，宜先行）。验收：新登记/领取/引用/查重按全局 id 全链路跑通；存量条目 id 无一丢失或改义；test:todo 全绿；SKILL.md + docs/tools/todo-cli.md 卡片同步。",
+      "status": "aligned",
+      "branch": null,
+      "tags": [],
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-16T14:58:14.486Z",
+      "claimedAt": "2026-09-16T15:00:22.460Z",
+      "completedAt": null,
+      "alignedAt": "2026-09-16T15:03:12.979Z"
     }
   ]
 }

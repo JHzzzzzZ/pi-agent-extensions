@@ -44,8 +44,8 @@
     {
       "id": 4,
       "text": "支持与各个 agent 进行动态对话。（验证中：count-duet 团队 1-10 轮流计数已跑通，5 次串行派单；1-1000 逐个派单超预算待分批方案确认）",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/agent-team-member-dialogue",
       "tags": [],
       "dependsOn": [],
       "notes": [],
@@ -452,8 +452,8 @@
     {
       "id": 28,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件下方亮块（belowEditor 独立栈）与 cockpit 进度 ticker 直接受影响。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/status-bar-widget-band",
       "tags": [],
       "dependsOn": [],
       "notes": [
@@ -951,8 +951,8 @@
     {
       "id": 61,
       "text": "多 run 并发下 /team:stop 省略 runId 的队列语义不一致：命令路径清全队列、工具路径只清该 run 队列（reviewer LOW①，run-1789133982726 交付）：统一契约 + 测试 + 文档（用户 2026-09-12）",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/agent-team-stop-queue-scope",
       "tags": [],
       "dependsOn": [],
       "notes": [],
@@ -1019,8 +1019,8 @@
     {
       "id": 66,
       "text": "外部 CLI 成员 thinking/reasoning 级别映射（v1.26.0 缺口，用户 2026-09-12 追问）：外部成员 model 原串直传 CLI，写 :level 后缀会被当成模型名报错（当前无任何级别参数注入，见 external.ts buildExternalArgs）——实际级别只能跟随各 CLI 全局配置（codex ~/.codex/config.toml 的 model_reasoning_effort；claude --effort 默认）。要求：按成员指定级别——codex 注入 -c model_reasoning_effort=<level>、claude 注入 --effort <level>；设计待定：per-member 字段（如 thinking:）还是解析 model 的 :level 后缀映射（pi 的 off/minimal/low/medium/high/xhigh/max → 各 CLI 支持集，claude 仅 low/medium/high/xhigh/max）；预检对非法级别 fail-closed；README §7 + docs 卡同步。",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/agent-team-external-thinking",
       "tags": [],
       "dependsOn": [],
       "notes": [
@@ -1063,8 +1063,8 @@
     {
       "id": 69,
       "text": "failure-delivery.test.ts 第 3 例（worktree pre-flight failure）在本机必失败：setup 用 os.tmpdir() 建项目目录，而本机 HOME（C:\\Users\\蒋晗）自带 .git（dotfiles 仓库）→ 临时目录落在 git 仓库内，createWorktree 成功、leader 照常 spawn（断言 'no leader spawned' 挂）。要求：用例不再依赖「tmpdir 不在任何 git 仓库里」这一环境假设——显式构造非仓库 cwd（如自建目录 + 断掉 git 发现）或注入失败路径，保持真实 git 语义；验收：基线（dev-laptop 无本次改动）跑该文件也全绿。来源：#58 收尾时实测（基线同样失败，非本次改动引入）。",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/agent-team-faildeliver-nonrepo",
       "tags": [],
       "dependsOn": [],
       "notes": [],
@@ -1076,15 +1076,15 @@
     {
       "id": 70,
       "text": "长提问视图的真机观感走查（#58 收尾时 leader 报告点出，无自动化证据项）：自绘 overlay 在极窄终端（<60 列，VIEWER_OVERLAY_OPTIONS minWidth=60）的截断/重影、以及长选项列表键盘导航选中态在真实终端下的观感，只有宿主级 headless 渲染测试（test/viewer-ask-host.test.ts 用例 7）+ 一次真机长提问跑通链路（用户选到第 6 项）作证据，缺人工逐场景走查。要求：在真实终端（含 80/60/40 列三种宽度、Windows Terminal）跑一次长提问：题面折行与段落空行、PgDn 到底部、选项窗口跟随、Enter/Esc 后屏面清理无残行；发现问题按 docs/incidents.md 记事故并修。验收：三种宽度下无残行/无重影、题面尾部可达，结论写入 docs/extensions/agent-team.md 或 incidents。",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T15:58:25.896Z",
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:51:29.912Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T15:03:24.474Z"
     }
   ]
 }

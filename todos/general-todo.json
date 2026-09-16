@@ -102,15 +102,15 @@
     {
       "id": 8,
       "text": "团队运行工作空间约定（repo-dev）：新增 `history/team-runs/<runId>/` 目录约定——00-task / 10-design / 20-writer-N / 30-integration / 40-review / 50-acceptance / 90-run-report 七份文档（单作者、头部元数据、定稿后只追加不改写），并在 AGENTS.md 关键目录与根 README 各补一行说明。验收：约定文档化；repo-dev 首单 run 走通 SE→Writer×N→Reviewer→QA 全流程并留档。",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
-      "claimedAt": null,
+      "claimedAt": "2026-09-16T14:51:30.087Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-09-16T15:03:24.648Z"
     },
     {
       "id": 9,
