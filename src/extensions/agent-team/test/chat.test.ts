@@ -2,9 +2,11 @@
  * agent-team — viewer 直接对话：派单语义纯函数与队列
  *
  * chat.ts 是纯逻辑层：buildChatTask（消息 → 新 run 的 task 模板）、
- * transcriptContextTail（上文尾部截断）、ChatCoordinator（FIFO 队列 +
- * 链式派出门控）。全部依赖注入（resolveTeam/startRun/contextTail/notify），
- * 不触进程与文件系统——宿主接线由 viewer-chat-host.test.ts 覆盖。
+ * transcriptContextTail（上文尾部截断）、buildDialogueBlock / dialogueAnswerExcerpt
+ * （对话线前文注入与答复摘录）、ChatCoordinator（FIFO 队列 + 链式派出门控 +
+ * 对话线状态）。全部依赖注入（resolveTeam/startRun/contextTail/roundAnswer/
+ * notify），不触进程与文件系统——宿主接线由 viewer-chat-host.test.ts 覆盖，
+ * 对话线前文与用量口径由 dialogue.test.ts 覆盖。
  */
 
 import * as assert from "node:assert/strict";
@@ -30,7 +32,7 @@ test("buildChatTask：目标 leader — 用户消息 + leader 上文尾部", () 
   const task = buildChatTask(
     { actor: LEADER_ACTOR, label: "leader", isLeader: true, runId: "run-1" },
     "把 backend 的任务停一下",
-    "[assistant] 收到，正在派发",
+    { tail: "[assistant] 收到，正在派发" },
   );
   assert.match(task, /【用户消息】/);
   assert.match(task, /把 backend 的任务停一下/);
@@ -39,7 +41,7 @@ test("buildChatTask：目标 leader — 用户消息 + leader 上文尾部", () 
 });
 
 test("buildChatTask：目标 leader — 无上文尾部时不出现尾部段", () => {
-  const task = buildChatTask({ actor: LEADER_ACTOR, label: "leader", isLeader: true, runId: "run-1" }, "你好", "");
+  const task = buildChatTask({ actor: LEADER_ACTOR, label: "leader", isLeader: true, runId: "run-1" }, "你好", {});
   assert.doesNotMatch(task, /最近会话尾部/);
   assert.match(task, /你好/);
 });
@@ -48,7 +50,7 @@ test("buildChatTask：目标成员 — 指示 leader 转派并点名成员", () 
   const task = buildChatTask(
     { actor: "frontend", label: "frontend", isLeader: false, runId: "run-1" },
     "你写的组件用一下 TypeScript",
-    "[tool] edit src/App.tsx",
+    { tail: "[tool] edit src/App.tsx" },
   );
   assert.match(task, /请转派/);
   assert.match(task, /frontend/);
