@@ -4,8 +4,10 @@
 > 与宿主 **pi-tui 0.85.1 + pi-coding-agent 0.85.1** 扩展 UI 原语**代码级对照**的唯一事实来源。
 > 对齐≠依赖：`@earendil-works/pi-tui` 仍只是 devDependencies（宿主运行时解析），
 > 测试保持结构 fake（`as never`），不实例化真实 pi-tui 组件；
-> 唯一例外是 `pwr/tests/ui-viewer-host.test.ts`（真实 `TuiMainScreen` + 假终端 headless，
-> 专测 overlay 合成/diff 路径——堆叠类 bug 只在真实路径存在，fake 断言不到）。
+> 例外是 `pwr/tests/ui-viewer-host.test.ts`（真实 `TuiMainScreen` + 假终端 headless，
+> 专测 overlay 合成/diff 路径——堆叠类 bug 只在真实路径存在，fake 断言不到）
+> 与 `pwr/tests/ui-widget-band-host.test.ts`（真实 pi-tui `Container` + 真实宿主
+> `InteractiveMode.setExtensionWidget`/`renderWidgetContainer`，专测宿主 widget 栈保序）。
 > 惯例：宿主每升版一次，复核本矩阵一次并在头部登记新版本（同 agent-team/docs/tui-sync.md §5）。
 
 **基线版本：pi-tui 0.85.1 / pi-coding-agent 0.85.1**（`pwr/package.json` devDependencies `^0.85.1`，与本机安装一致；核查日 2026-09-11 @ 31446bc）。
@@ -14,7 +16,8 @@
 
 | pwr 侧 | 宿主侧原语 | 关系 |
 |---|---|---|
-| `src/ui/renderer.ts` — entry 渲染器（`Box(1,1,theme.bg("customMessageBg"))` + `Text`）、widget 字符串行、`setStatus` 状态行 | `pi.registerEntryRenderer`（`EntryRenderer(entry, options, theme)` 契约）、`ui.setWidget(key, string[], options?)`、`ui.setStatus(key, text)` | 已对齐（宿主原语直用） |
+| `src/ui/renderer.ts` — entry 渲染器（`Box(1,1,theme.bg("customMessageBg"))` + `Text`）、widget 字符串行、`setStatus` 状态行 | `pi.registerEntryRenderer`（`EntryRenderer(entry, options, theme)` 契约）、`ui.setWidget(key, string[], options?)`、`ui.setStatus(key, text)` | 已对齐（宿主原语直用）；widget 实际写入点在 `src/ui/widget-band.ts`（合并成宿主单键 `widget-band`，`{ placement: "aboveEditor" }`） |
+| `src/ui/widget-band.ts` — widget 排序带（band key `10:pwr-runs`，与 run-timer/loop 合并后写宿主单键） | `ui.setWidget("widget-band", string[], { placement: "aboveEditor" })`（宿主对每次 setWidget 都 delete+set 沉底） | 已对齐（仓库内自愈，不打宿主补丁）：真机路径由 `tests/ui-widget-band-host.test.ts` 接真实 `InteractiveMode` 原型方法锁定 |
 | `src/ui/viewer.ts` — `RunViewer implements Component`（经 `ctx.ui.custom` 打开的 fleet 式分栏 overlay：roster + detail） | `ui.custom<T>(factory(tui, theme, keybindings, done), { overlay, overlayOptions })` + pi-tui `Component`（`render/dispose`）；宿主 `truncateToWidth`/`wrapTextWithAnsi`/`visibleWidth` 文本工具 | 已对齐（分栏几何/overlay 选项/键位/刷新全部按 fleet，见 §2；host 测试 `tests/ui-viewer-host.test.ts` 锁定真实合成/diff 路径） |
 | `src/ui/keybindings.ts` — 快捷键注册表（`ctrl+alt+z/x/r`，命令孪生） | `pi.registerShortcut(KeyId, { description, handler })` | 已对齐（注册契约一致）；自建注册表是特性：单点改键 + 测试锁定 + 帮助文本同源 |
 | `src/tools.ts` / `src/ui/index.ts` — 审批卡与动作选择 | `ctx.ui.select(title, options)` 宿主原语 | 已对齐（不用自绘选择列表） |
@@ -31,8 +34,8 @@
 | 刷新节流 | fleet/agent-team viewer `REFRESH_MS = 750` | `VIEWER_TICK_MS = 750`（`src/ui/types.ts`）+ `unref`；指纹门控（忽略 elapsed 纯时钟变化）+ 帧高消抖 | 已对齐（A3 完成 @ 31446bc） |
 | 富文本渲染 | pi-tui `Markdown` 组件（agent-team viewer 的回复气泡在用） | viewer 全纯文本行（含结果页） | A5 低优先级评估（缓办）：结果页换 Markdown；当前纯文本与"entry 只持久化元数据"的保守取向一致，无正确性问题 |
 | widget 形态 | `setWidget` 支持 string[] 与组件工厂两种 | 仅 string[] 形式（`refreshUiStatus`） | **保持 string[]，明确不换**：agent-team 已验证宿主包装的 string 渲染是跨构建最稳路径，组件工厂逐帧重绘在某 bundle 宿主上产生残影（incidents 教训） |
-| widget placement | `placement?: "aboveEditor" \| "belowEditor"`（缺省 aboveEditor） | 缺省 aboveEditor（`setWidget("pwr-runs", …)` 无 options） | 保留：运行进度属会话级信息，agent-team 亮块的 belowEditor 是其可选中交互的设计需要，两者语义不同 |
-| 状态键约定 | `setStatus(key, text)` | 单键 `"pwr"` + widget 键 `"pwr-runs"` | 已对齐（每扩展一个状态键约定） |
+| widget placement | `placement?: "aboveEditor" \| "belowEditor"`（缺省 aboveEditor） | 显式 `{ placement: "aboveEditor" }`（在 `src/ui/widget-band.ts` 的 owner 写入处统一给，各插件不再自己 setWidget） | 保留：运行进度属会话级信息，agent-team 亮块的 belowEditor 是其可选中交互的设计需要，两者语义不同 |
+| 状态键约定 | `setStatus(key, text)` | footer 单键 `"30:pwr"`（前缀由 status-band 决定）+ widget 走排序带单键 `"widget-band"`（band key `10:pwr-runs` 只是登记表内部排序键） | 已对齐（每扩展一个状态键约定；widget 三段合并成单键是仓库内自愈方案，见 docs/cross/status-bar.md） |
 | 主题取色 | `Theme.fg/bg(color, text)` | `theme.bg("customMessageBg")`（entry 卡）+ `themeStyles(theme)` 包 `theme.fg("dim"/"border"/"accent"/"success"/…)` 且 try/catch 兜底 | 已对齐（异常隔离符合仓库惯例） |
 | 生命周期 | `Component` 可选 `dispose()`；宿主 teardown 时调用 | `RunViewer.dispose()` 清 `setInterval`；`invalidate()` 空实现（无状态缓存） | 已对齐 |
 | 快捷键冲突 | pi 保留"最后注册者赢"，内建键只用 `ctrl+alt+]` | `pause` 曾用 `ctrl+alt+p` 与 plan-mode 扩展冲突后改 `ctrl+alt+z`（keybindings.ts 头注释） | 已对齐且有先例记录；新快捷键仍需查 `TUI_KEYBINDINGS` 避让 |

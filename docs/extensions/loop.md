@@ -1,6 +1,6 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ 689354a
+> last verified @ a81ba32
 
 ## 职责与边界
 
@@ -14,11 +14,12 @@
 - `tools.ts` — 三个 agent 工具，经 `LoopToolDeps` 操作 index.ts 注入的任务状态（persist / refreshWidget 回调）。
 - `index.ts` — 对齐秒节拍刷新（`aligned-ticker.ts`）、followUp 送达、widget 渲染、生命周期（session_start / shutdown / 模块级 dispose）。
 - `aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，跨插件契约见 `docs/cross/status-bar.md`）。
+- `widget-band.ts` — widget 排序带（每插件一份，跨插件契约同上卡）：只登记 band key `30:loop` 的逻辑行，由 band key 最小的可见段当 owner 一次写宿主单键 `widget-band`（宿主每次 setWidget 都 delete+set，各写各键会逐秒换位）。`test/widget-band.test.ts` 锁本拷贝的语义（合并顺序 / owner 移交 / 卸载 / 文本指纹 / 异常隔离）。
 
 ## 核心数据流
 
 1. `/loop …` 或 `loop_create` → 解析为 CreateSpec → `createTask` 校验上限 → 全量快照写 `loop-tasks-v1` 自定义条目（不进 LLM 上下文）。
-2. index.ts 按对齐秒节拍扫到期任务 → 到期推进 `nextDueAt`（错过的时间点不补跑，只触发一次）。widget 倒计时文本指纹未变时跳过 `setWidget`（>1h 时 formatCountdown 只到分钟，每秒若无变化就不重绘）。
+2. index.ts 按对齐秒节拍扫到期任务 → 到期推进 `nextDueAt`（错过的时间点不补跑，只触发一次）。widget 倒计时文本指纹未变时跳过写 widget（>1h 时 formatCountdown 只到分钟，每秒若无变化就不重绘），写入走 `writeWidgetBand(30:loop, …)`（宿主键 `widget-band`；无任务时清本段登记 → 全空时宿主键卸载）。
 3. 前台：任务文本以 `loop-task-due` 自定义类型经 `pi.sendMessage(deliverAs: "followUp")` 送达——空闲开新 turn，agent 正在响应则排队到当前 turn 结束。
 4. 后台：`runner.ts` 拉起 `pi --mode json -p --name loop-<id>-<HHMM>`（**不带 --no-session**；任务带 model 时附 `--model <provider/id>`）；JSON stdout 首行 session 头捕获会话 id（运行中即回调写进轮次记录，`/loop:list` 的运行中行可直接 resume），最后一条 assistant 文本截断为摘要。
 5. 轮次记录（v1.8）：任务内存态 `runs` 装本会话全部轮次；**快照只持久化 `status==="running"` 的轮次**（`activeRuns`），已结束轮次逐条写 append-only 会话条目 `loop-run-v1`。`session_start` 回放条目重建历史，并把快照里恢复出的轮次（旧 `lastRun` / 宿主中途退出留下的在途轮次）补写为条目——不补写则重启即丢。
@@ -37,7 +38,7 @@
 - 任务 model 必须从任务一路透传到 spawn：`startBgRun` → `runBg` → runner 的 `--model`（index.ts）。v1.4.0 曾只接通解析 / 任务存储 / 列表展示三段，调度调用漏传 `t.model`——`--bg --model` 静默失效、子 pi 落回默认模型（2026-09-11 真机定时任务 13 轮实测，v1.6.1 修复）。改 `startBgRun` 时这是回归红线。
 - 自包含：只依赖 pi SDK，不引其它扩展目录；快照格式对旧快照向后兼容（schedule 字段缺省即固定间隔模式，tasks.ts）。
 - 命令面为冒号式（v1.6.0）：裸 `/loop` 只管创建与用法（无子命令）；管理走独立静态命令 `/loop:list|:pause|:resume|:delete|:clear`，旧空格管理词只提示改名（parse.ts 只解析 create/usage，看不得命令词）。2026-09 曾以「空格子命令式为全仓基准」同步过文档口径，v1.12.0 全仓改回冒号后本条恢复本插件自身的冒号面。
-- 调度不依赖 UI：session_start 无论 `hasUI` 都启动计时器；widget 走 `hasUI` 守卫且传纯无样式字符串（`ExtensionUIContext` 无 theme 字段）。
+- 调度不依赖 UI：session_start 无论 `hasUI` 都启动计时器；widget 走 `hasUI` 守卫且传纯无样式字符串（`ExtensionUIContext` 无 theme 字段），写入经 `widget-band.ts`（本插件不写自己的宿主键）。
 - 时钟一律注入 `nowMs`，代码里禁止直接 `Date.now()`（仓库时钟约定，见 docs/cross/deps-ports.md）。
 
 ## 已知坑
@@ -51,8 +52,8 @@
 
 ## 改动清单
 
-- 必跑：`cd src/extensions/loop && npm install && npm test`（205 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.7.0 → 根 2.49.0 模式）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
+- 必跑：`cd src/extensions/loop && npm install && npm test`（213 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.7.0 → 根 2.49.0 模式）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
 - opt-in 真机冒烟（需鉴权 + 网络，不进 npm test）：`node src/extensions/loop/test/bg-overlap-smoke.mjs`——真实 pi 子进程两轮并发，校对各自 session id/会话文件与并发峰值。
-- 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台并发重叠/阈值提示/interrupted）、test/tasks.test.ts（调度推进、7 天过期边界与轮次快照/回放）、test/runner.test.ts（子进程契约 + label/onSessionId/piEntry）、test/parse.test.ts（语法与闭区间窗口）。
+- 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台并发重叠/阈值提示/interrupted；widget 断言按宿主键 `widget-band`）、test/widget-band.test.ts（排序带语义）、test/tasks.test.ts（调度推进、7 天过期边界与轮次快照/回放）、test/runner.test.ts（子进程契约 + label/onSessionId/piEntry）、test/parse.test.ts（语法与闭区间窗口）。
 - fake 模式：进程边界手写 fake child + fake spawn（runner.test.ts，参照 deps-ports.md fake 选型规则 1）；时钟经 nowMs 注入手动推进，不引 mock 库。
 - 改调度语义：parse.ts 与 tasks.ts 的推进逻辑两端同看，并补 parse.test.ts 边界用例（午夜 / 窗口端点 / 已过时刻排明天）。

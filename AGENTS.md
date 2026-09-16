@@ -100,7 +100,7 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **安全不变量**（PWR）：无 `vm`/`eval`；执行前白名单校验；fail-closed 默认（缺 engine/runner ⇒ 类型化错误，无隐式回退）；脚本源码/args 永不持久化；`pwr-tmp://` 仅进程内；不存 API key；错误信息为静态模板。
 - **Typebox** 用于工具参数 schema（`src/tools.ts` 的 `registerPwrTools`、`agent-team` 的 `manage.ts`/`index.ts`）。
 - **TUI 约定（其余扩展）：** 写入前用 `ctx.hasUI` 守卫，样式经 `theme.fg("dim", …)`，每个 `setStatus`/`setWidget` 调用均异常隔离，每扩展一个状态键。`loop/` 传纯（无样式）字符串给 `setWidget`——`ExtensionUIContext` 无 `theme` 字段，对 `ctx.ui.theme` 的类型化访问无法编译。
-- **状态条契约（跨插件）：** 唯一权威在 `docs/cross/status-bar.md`——秒对齐 `aligned-ticker.ts`、写入前文本指纹、footer 排序前缀、段分隔与首段定格、widget 栈顺序（宿主行为，本仓库不打补丁，走上游 issue）。改任何状态条/widget 行为前先读该卡。
+- **状态条契约（跨插件）：** 唯一权威在 `docs/cross/status-bar.md`——秒对齐 `aligned-ticker.ts`、写入前文本指纹、footer 排序前缀、段分隔与首段定格、widget 排序带（编辑器上方三段合并成宿主单键 `widget-band`，顺序由 band key 保证；宿主每次 setWidget 都 delete+set 的沉底行为本仓库不打补丁，走上游 issue）。改任何状态条/widget 行为前先读该卡。
 - 缩进：`src/extensions/pwr/` 用 tab，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`deep-init/`、`human-notify/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格。
 
 

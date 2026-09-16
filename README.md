@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十一个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔（契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十一个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |

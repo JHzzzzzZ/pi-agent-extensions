@@ -1,12 +1,12 @@
 # 跨扩展横切契约：状态条刷新节拍与排序（footer + 编辑器上下 widget）
 
-> last verified @ 9db7983
+> last verified @ a81ba32
 >
 > 适用范围：所有往 footer（`ctx.ui.setStatus`）或输入栏上下 widget（`ctx.ui.setWidget`）写「随时间变化」内容的扩展。目标：同一屏多个状态源**同一帧一起刷新**、相对顺序**契约化**，不再靠各自的 `setInterval` 相位碰运气。
 
 ## 节拍：对齐同一墙钟秒边界
 
-每个时间类状态源各跑各的定时器时相位互不相关，同一秒内多个段分先后重绘；宿主 widget 保序 bug 下看起来就是「每秒换位 / 互相挤占」。契约：
+每个时间类状态源各跑各的定时器时相位互不相关，同一秒内多个段分先后重绘；footer 是一行拼接，先后重绘只影响单帧字面，而 widget 侧曾因宿主保序 bug 表现为「每秒换位 / 互相挤占」（现已由 widget 排序带合并成宿主单键，见下节）。契约：
 
 - 时间类刷新一律用**插件目录内自带的** `aligned-ticker.ts`（`startAlignedTicker(fn, { intervalMs = 1000 })`）驱动；
 - 首跳延迟 `intervalMs - (now() % intervalMs)`，此后每次回调按实际时钟重算（自校正、不累积漂移）；`stop()` 幂等；回调异常吞掉并继续排跳；内部 `unref()`，不阻止宿主退出；
@@ -55,12 +55,30 @@ provider-quota 各 adapter 文本（前缀由 `status-band` 统一加）：OpenR
 - 生命周期：各写入者 `session_shutdown` 必须经 `writeBand(key, undefined, …)` 清登记（避免 `/reload` / 会话切换后残留文本影响首段判定）；stream-token-speed 自 v 2.x 起在 shutdown 清上一轮汇总。
 - 非目标：不做字段轮播、不做跨插件聚合、不改宿主排序/截断行为。
 
-## widget 栈顺序
+## widget 排序带（编辑器上方，宿主键 `widget-band`）
 
-- **编辑器上方**（`setWidget(key, lines)` 无 placement）顺序（**首次挂载**）= 扩展注册顺序 = 根 `package.json` `pi.extensions` 数组顺序：宿主 `session_start` 按注册顺序逐个 `await` 派发，首个 `setWidget` 决定 widget Map 插入序。当前契约：`pwr-runs → run-timer → loop`（loop 无任务时懒挂载，首次出现位于当时栈底）。
-- **编辑器下方**（`placement: "belowEditor"`）只有 agent-team，无冲突。
-- 刷新阶段**不保序**：宿主 `setExtensionWidget` 每次 `setWidget` 都 delete+set，会把该 key 移到栈底（周期性刷新 widget 因此逐秒换位）。这是宿主行为，本仓库不打宿主补丁（`AGENTS.md` 规则红线·仓库边界）；问题走上游，见 `docs/pi-widget-order-issue.md`（issue 草稿）与各插件的 route A 待办。
-- 接入步骤（新增上方 widget）：把扩展注册进根 `package.json` `pi.extensions` 的正确位置，并在 `test/status-bar-contract.test.ts` 锁定相对顺序。
+宿主 `InteractiveMode.setExtensionWidget` 每次 `setWidget` 都先对**两个** widget Map `Map.delete(key)` 再 `Map.set(key, component)`；JS Map 按插入序迭代 ⇒ **被刷新的 widget 沉到所在栈底部**。编辑器上方的三段周期性刷新 widget（`pwr-runs` / `run-timer` / `loop`）因此曾逐秒换位（可见症状：输入栏上方灰色区域「抽搐」，纯观感、无数据风险）。这是宿主行为，本仓库不打宿主补丁（`AGENTS.md` 规则红线·仓库边界），上游 issue 稿见 `docs/pi-widget-order-issue.md`；插件侧的自愈办法就是本节契约。
+
+协调机制：每插件目录一份 `widget-band.ts`（同 `status-band.ts` 模式，`globalThis` + `Symbol.for("pi.widget-band.v1")` 共享登记表，不跨插件 import，单目录仍可复制安装）。band key = 两位数字带 + `:`：
+
+| 带 | 扩展 | band key |
+| --- | --- | --- |
+| 10 | pwr | `10:pwr-runs` |
+| 20 | run-timer | `20:run-timer` |
+| 30 | loop | `30:loop` |
+
+规则：
+
+- 写入者**不写自己的宿主键**，只把「本段逻辑行 + 本插件 ui 上下文」交给 `writeWidgetBand(bandKey, lines, ui)`；`lines` 为空（`undefined` / 空数组）表示本段不显示。
+- **单一写者**：登记表中 band key 最小的**可见**段当 owner，由它一次写宿主键 `widget-band`（`{ placement: "aboveEditor" }`）；顺序 = band key 升序（`localeCompare`，与宿主 footer 判定同源），**段间不加分隔符**（widget 是多行块，不是 footer 那种一行拼接）。
+- owner 段清空（本段不显示 / 会话关停清登记）即自动移交给下一个可见段；全段不显示 → 写 `setWidget("widget-band", undefined)` 卸载（不留残行）。
+- 写宿主前有指纹比对（owner + 行内容 + **ui 身份**）：相同内容不踢重绘；ui 身份计入指纹是为了让会话重绑 / `/reload`（宿主清 widget 并换新 ui 上下文）后必然重写一次。
+- 生命周期：各写入者 `session_shutdown`（或「已无任务」态）必须清登记（`writeWidgetBand(bandKey, undefined, ui)`），否则 owner 位会留在登记表里——与 footer 排序带的清登记纪律相同。
+- **旧契约作废**：「首次挂载顺序 = 扩展注册顺序 = 根 `package.json` `pi.extensions` 顺序」不再成立，也不再需要——宿主只有一个合并键可挪，段间顺序由登记表保证。
+- **编辑器下方**（`placement: "belowEditor"`）只有 agent-team 亮块，单占无冲突，**不纳入**排序带（登记表预留 placement 维度供日后扩展，本轮 YAGNI 不做）。
+- 接入步骤（新增上方 widget）：复制任一 `widget-band.ts` 到插件目录 → 取一个空出的两位数字带 → 写入改走 `writeWidgetBand` → `session_shutdown` 清登记 → 同步 `test/status-bar-contract.test.ts` 的 bands 表与 `tools/install-smoke.mjs` 的启动期 TUI 键（`widget-band`）。
+- 局限：只认识同样使用本模块的写入者；宿主若在其它时机清 widget 而内容未变，指纹会跳过重写（与各写入者自有的文本指纹同源的局限）。
+- 验证：`test/status-bar-contract.test.ts` 锁三份拷贝同源 + band key 顺序 + 不绕过排序带；`pwr/tests/ui-widget-band-host.test.ts` 接真实 `InteractiveMode.setExtensionWidget` + 真实 pi-tui 容器，复现旧的三键换位并验证单键 N 帧保序；`tools/install-smoke.mjs` 在真 pi 进程里核验启动期只写 `widget-band`。
 
 ## 非目标
 
