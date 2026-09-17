@@ -242,6 +242,20 @@
       "claimedAt": "2026-09-14T14:29:39.798Z",
       "completedAt": "2026-09-14T14:31:08.964Z",
       "alignedAt": null
+    },
+    {
+      "id": 16,
+      "globalId": 312,
+      "text": "多会话并行在主仓库根缺串行化协议（2026-09-16 实测事故，来自 todo-cli#16 交付巡检）：repo-dev 巡检会话在「解冲突 → 合并 → 存量迁移」期间，另一会话同时把 feat/todo-cli-priority 合进主仓库根，导致 ① package.json 处于 UU 冲突态（Node 报 ERR_INVALID_PACKAGE_CONFIG，仓库内所有 .ts/.mjs 一度无法启动）；② 迁移被打断在半态且计数器 EPERM（号 75..120 烧掉，允许但不可解释）；③ todos/ 曾处 v3/v4 混布，写门禁把其它会话的写操作全部挡下。要求：给出多会话并行最低协议（候选：主仓库根同一时刻只允许单一「合并者」；合并/迁移前检查 UU 与 MERGE_HEAD；merge+迁移原子化到同一会话；或引入仓库级合并锁/「谁在合并」标记）；验收：两会话并发跑完整「解冲突+合并+迁移+收口」时，双方都得到确定性结果或明确拒绝，不产生半态明文冲突文件；并用测试或脚本锁定检查点。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-17T01:17:39.896Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
