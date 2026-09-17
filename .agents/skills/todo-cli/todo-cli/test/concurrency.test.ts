@@ -11,6 +11,7 @@
  */
 
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -20,6 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import { emptyTodoData, parseTodoJson, serializeTodo } from "../schema.ts";
 import type { TodoEntry } from "../schema.ts";
+import { activeSceneSink, withFailureScene } from "./failure-scene.ts";
 
 /** 工具目录（入口 + 实现同居）：测试文件的上一级。 */
 const TOOL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -88,11 +90,13 @@ function removeFixture(root: string): void {
 
 function runCli(root: string, args: string[], timeoutMs = 60_000): Promise<CliResult> {
   return new Promise((resolve) => {
+    const sink = activeSceneSink();
     const child = spawn(process.execPath, [cliPath(root), "--root", root, ...args], {
       cwd: root,
       env: cleanEnv(),
       timeout: timeoutMs,
     });
+    const childId = sink?.spawn("todo-cli", { pid: child.pid, args });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => {
@@ -101,8 +105,17 @@ function runCli(root: string, args: string[], timeoutMs = 60_000): Promise<CliRe
     child.stderr?.on("data", (chunk) => {
       stderr += String(chunk);
     });
-    child.on("error", () => resolve({ code: -1, signal: null, stdout, stderr }));
-    child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+    child.on("error", (err) => {
+      if (sink !== null && childId !== undefined) sink.fail(childId, String(err));
+      resolve({ code: -1, signal: null, stdout, stderr });
+    });
+    child.on("close", (code, signal) => {
+      if (sink !== null && childId !== undefined) {
+        sink.close(childId, { code, signal, stdout, stderr });
+        sink.note("剩余锁", JSON.stringify(leftoverLocks(root)));
+      }
+      resolve({ code, signal, stdout, stderr });
+    });
   });
 }
 
@@ -117,8 +130,14 @@ function leftoverLocks(root: string): string[] {
   return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
 }
 
-test("并发写：6 个真实子进程同时 add --file general，6 条全落、id 与 globalId 均唯一、无锁残留", { timeout: 180_000 }, async (t) => {
+/** 用例包装：失败时写现场；通过路径零写盘零输出（activeSceneSink 为 null 时全短路）。 */
+function sceneTest(name: string, options: { timeout: number }, body: (t: TestContext) => Promise<void>): void {
+  test(name, options, async (t) => withFailureScene(name, () => body(t)));
+}
+
+sceneTest("并发写：6 个真实子进程同时 add --file general，6 条全落、id 与 globalId 均唯一、无锁残留", { timeout: 180_000 }, async (t) => {
   const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
 
   const texts = Array.from({ length: 6 }, (_, i) => `并发新增条目 编号${i} 须完整落盘`);
@@ -147,8 +166,9 @@ test("并发写：6 个真实子进程同时 add --file general，6 条全落、
   assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件（含 id.lock）");
 });
 
-test("并发跨文件 add：3+3 真实子进程同时打两个文件，globalId 全台账唯一只靠 id.lock + 无锁残留", { timeout: 180_000 }, async (t) => {
+sceneTest("并发跨文件 add：3+3 真实子进程同时打两个文件，globalId 全台账唯一只靠 id.lock + 无锁残留", { timeout: 180_000 }, async (t) => {
   const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
   // 第二个台账文件（globalId 与 general 种子错开、无重号）：文件锁互不相关，唯一性只得笃 id.lock。
   fs.writeFileSync(
@@ -192,8 +212,9 @@ test("并发跨文件 add：3+3 真实子进程同时打两个文件，globalId 
   assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件（含 id.lock）");
 });
 
-test("并发 dep add：2 个真实子进程同时给不同条目加依赖，两条都在（无丢更新）+ 无锁残留", { timeout: 120_000 }, async (t) => {
+sceneTest("并发 dep add：2 个真实子进程同时给不同条目加依赖，两条都在（无丢更新）+ 无锁残留", { timeout: 120_000 }, async (t) => {
   const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
 
   const first = "种子条目 0001 供并发测试使用";
@@ -215,8 +236,9 @@ test("并发 dep add：2 个真实子进程同时给不同条目加依赖，两�
   assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件");
 });
 
-test("并发 claim：2 个真实子进程同时领取不同条目，两个分支引用都在（open → aligning）", { timeout: 120_000 }, async (t) => {
+sceneTest("并发 claim：2 个真实子进程同时领取不同条目，两个分支引用都在（open → aligning）", { timeout: 120_000 }, async (t) => {
   const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
 
   const first = "种子条目 0001 供并发测试使用";
@@ -242,8 +264,9 @@ test("并发 claim：2 个真实子进程同时领取不同条目，两个分支
   assert.deepEqual(leftoverLocks(root), []);
 });
 
-test("并发 align：2 个真实子进程同时确认同一条目——幂等、无丢更新、收尾可再领取进 processing", { timeout: 120_000 }, async (t) => {
+sceneTest("并发 align：2 个真实子进程同时确认同一条目——幂等、无丢更新、收尾可再领取进 processing", { timeout: 120_000 }, async (t) => {
   const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
 
   const text = "种子条目 0003 供并发测试使用";

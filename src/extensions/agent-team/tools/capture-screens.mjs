@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 
 import { TuiMainScreen, Container, Editor, Spacer, Text } from "@earendil-works/pi-tui";
 import { VIEWER_OVERLAY_OPTIONS, TranscriptViewer } from "../viewer.ts";
+import { AskView } from "../askview.ts";
 import { buildWidgetView, renderWidgetView } from "../widget.ts";
 import {
   VIEWER_OVERLAY_OPTIONS as PWR_VIEWER_OVERLAY_OPTIONS,
@@ -513,6 +514,194 @@ export function assertWidgetFrame(lines, { multiRun = false } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Scene: long ask overlay (team_ask long question walkthrough, #70) over the
+// real host stack — 三档宽度（80/60/40 列）走查证据管线
+// ---------------------------------------------------------------------------
+
+/**
+ * 长提问场景数据：形态复刻 test/viewer-ask-host.test.ts 用例 7（30 段、每段
+ * “细节”×20、头部后一个空行、8 选项）。复制而非 import——工具不依赖测试文件
+ * （vt-screen.mjs 头注既有边界）。`timeoutMs` 省略 ⇒ 帧尾静态文案恒为
+ * `超时：10 分钟后自动取消`（确定性锚点）。
+ */
+const ASK_WALKTHROUGH_REQUEST = {
+  id: "walkthrough-1",
+  method: "select",
+  title: ["[dev-team] 部署方案二选一：", "", ...Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 段：${"细节".repeat(20)}`)].join("\n"),
+  options: Array.from({ length: 8 }, (_, index) => `方案 ${index + 1}`),
+};
+
+/** PgDn 到底自适应驱动的安全上限（宽度无关；40 列 maxScroll=85、每步 7 行时实测 13 步到底 + 2 帧稳定确认）。 */
+const ASK_PGDN_MAX_STEPS = 30;
+
+/** 主屏背景示意文本（帧顶行 = 屏面第 3 行，前两行在帧上方仍可见，便于观察清理残留）。 */
+const ASK_BASE_LINES = [
+  `${BASE_PAD}${fgStyle(DARK.accent)("⏺")} leader 正在等待人工回答…`,
+  "",
+  `${BASE_PAD}${fgStyle(DARK.dim)("leader turn 8 · team_ask 等待中")}`,
+];
+
+/**
+ * 带输入路由的 headless 终端：方法集逐字对照 test/viewer-ask-host.test.ts 的
+ * mountAskHost term（不发明新形状），`kittyProtocolActive: false` ⇒ 用普通序列
+ * 驱动（PgDn `\x1b[6~` / ↓ `\x1b[B` / Enter `\r` / Esc `\x1b`），无 release 事件干扰。
+ */
+function makeInputTerm(cols, rows, screen) {
+  let onInput;
+  const term = {
+    columns: cols,
+    rows,
+    start(cb) {
+      onInput = cb;
+    },
+    stop() {},
+    drainInput() {
+      return Promise.resolve();
+    },
+    write(data) {
+      screen.feed(data);
+    },
+    get kittyProtocolActive() {
+      return false;
+    },
+    moveBy() {},
+    hideCursor() {},
+    showCursor() {},
+    clearLine() {},
+    clearFromCursor() {},
+    clearScreen() {},
+    setTitle() {},
+    setProgress() {},
+  };
+  return {
+    term,
+    dispatch(data) {
+      if (!onInput) throw new Error("tui.start 后应捕获到真实输入回调");
+      onInput(data);
+    },
+  };
+}
+
+/** 帧签名（视口网格逐格字符）——PgDn 自适应驱动判定“连续两帧一致”用。 */
+function askViewportKey(screen) {
+  return screen.grid()
+    .map((row) => row.map((cell) => cell?.ch ?? " ").join(""))
+    .join("\n");
+}
+
+/** 当前屏面文本（丢弃尾部空行：清理帧回基线后尾部整片空白，物理等价）。 */
+function screenLines(screen) {
+  const lines = screen.text();
+  while (lines.length > 0 && (lines.at(-1) ?? "").trimEnd() === "") lines.pop();
+  return lines;
+}
+
+/**
+ * 跑一个长提问场景：真实 TuiMainScreen + 真实 AskView（VIEWER_OVERLAY_OPTIONS
+ * 挂载，与 presentAskOverlay 的 factory 接线同构：ansiStyles / rows /
+ * requestRender / done→handle.hide()）。
+ * 时序全部同步、确定性（无定时器参与）：baseline 在挂载前截（清理帧对照）；
+ * initial 在挂载后、任何按键前截；steps 逐项先驱动（label "bottom" 走自适应
+ * PgDn 到底：逐次 PgDn + renderNow，连续两帧一致即停，上限 ASK_PGDN_MAX_STEPS），
+ * 再 renderNow、截一帧。
+ */
+export function captureAskScene({ cols = 80, rows = 24, steps = [] } = {}) {
+  const screen = new VtScreen(cols, rows);
+  const { term, dispatch } = makeInputTerm(cols, rows, screen);
+  const tui = new TuiMainScreen(term);
+  try {
+    const base = { render: () => [...ASK_BASE_LINES], handleInput: () => {}, invalidate: () => {} };
+    tui.addChild(base);
+    tui.start();
+    tui.renderNow();
+    const baseline = screenLines(screen);
+
+    let settled;
+    const view = new AskView(ASK_WALKTHROUGH_REQUEST, {
+      styles: ansiStyles(),
+      rows: () => term.rows,
+      requestRender: () => tui.requestRender(),
+      done: (value) => {
+        settled = value;
+        handle.hide();
+      },
+    });
+    const handle = tui.showOverlay(view, VIEWER_OVERLAY_OPTIONS);
+    tui.renderNow();
+    const frames = [{ label: "initial", lines: screenLines(screen), grid: screen.grid() }];
+
+    for (const step of steps) {
+      if (step.label === "bottom") {
+        let previous;
+        let stable = 0;
+        let attempts = 0;
+        while (attempts < ASK_PGDN_MAX_STEPS && stable < 2) {
+          dispatch("\x1b[6~");
+          tui.renderNow();
+          const current = askViewportKey(screen);
+          stable = current === previous ? stable + 1 : 0;
+          previous = current;
+          attempts += 1;
+        }
+      } else {
+        for (const key of step.keys ?? []) dispatch(key);
+      }
+      tui.renderNow();
+      frames.push({ label: step.label, lines: screenLines(screen), grid: screen.grid() });
+    }
+    return { cols, rows, baseline, frames, settled };
+  } finally {
+    tui.stop();
+    tui.dispose?.();
+  }
+}
+
+/**
+ * 三次独立场景运行组合出每档宽度的 5 个 canonical 帧（Enter/Esc 各需一次干净
+ * 挂载）：运行 A = bottom + follow；运行 B = ↓×6 前置后 Enter；运行 C = Esc。
+ * `settledEnter` = 提交答案（预期“方案 7”），`settledEsc` = 取消（恒 undefined）。
+ */
+export function captureAskWalkthrough({ cols = 80, rows = 24 } = {}) {
+  const downKeys = Array.from({ length: 6 }, () => "\x1b[B");
+  const runA = captureAskScene({ cols, rows, steps: [{ label: "bottom" }, { label: "follow", keys: downKeys }] });
+  const runB = captureAskScene({
+    cols,
+    rows,
+    steps: [{ label: "follow-again", keys: downKeys }, { label: "enter-clean", keys: ["\r"] }],
+  });
+  const runC = captureAskScene({ cols, rows, steps: [{ label: "esc-clean", keys: ["\x1b"] }] });
+  const take = (run, label) => {
+    const frame = run.frames.find((candidate) => candidate.label === label);
+    if (!frame) throw new Error(`ask walkthrough 缺少 ${label} 帧`);
+    return frame;
+  };
+  return {
+    cols,
+    rows,
+    frames: [
+      take(runA, "initial"),
+      take(runA, "bottom"),
+      take(runA, "follow"),
+      take(runB, "enter-clean"),
+      take(runC, "esc-clean"),
+    ],
+    settledEnter: runB.settled,
+    settledEsc: runC.settled,
+  };
+}
+
+/** ask 帧自检：标题/题面头/选项表头/静态超时文案锚点缺一即失败；标题行恰 1 行。 */
+export function assertAskFrame(lines) {
+  const text = lines.join("\n");
+  const anchors = ["agent-team 提问", "部署方案二选一", "可选（共 8 项", "超时：10 分钟后自动取消"];
+  const missing = anchors.filter((anchor) => !text.includes(anchor));
+  if (missing.length > 0) throw new Error(`截图自检失败，缺少锚点: ${missing.join(", ")}`);
+  const titles = lines.filter((line) => line.includes("agent-team 提问")).length;
+  if (titles !== 1) throw new Error(`ask 帧标题应恰好 1 行，实得 ${titles}`);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -544,11 +733,45 @@ export function captureAll() {
   return [capture(), capturePwr(), captureWidget()];
 }
 
+/** ask 走查资产落盘：三档宽度 × 5 帧 SVG + 每档 5 帧文本（帧分隔头）；不进 captureAll()。 */
+function writeAskAssets(outputDir) {
+  const dir = path.resolve(outputDir);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const cols of [80, 60, 40]) {
+    const walkthrough = captureAskWalkthrough({ cols });
+    // 仅初始帧做锚点自检：bottom 已滚动到题面尾部（题面头不可见）、clean 帧已收屏。
+    assertAskFrame(walkthrough.frames[0].lines);
+    for (const frame of walkthrough.frames) {
+      const name = `ask-${cols}col-${frame.label}.svg`;
+      fs.writeFileSync(path.join(dir, name), svgFromGrid(frame.grid), "utf8");
+      console.log(`✓ ${name}`);
+    }
+    const textName = `ask-${cols}col-frames.txt`;
+    fs.writeFileSync(
+      path.join(dir, textName),
+      walkthrough.frames.map((frame) => [`=== ${frame.label} ===`, ...frame.lines].join("\n")).join("\n\n"),
+      "utf8",
+    );
+    console.log(`✓ ${textName}（Enter → ${walkthrough.settledEnter ?? "（无）"}，Esc → 取消）`);
+  }
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const outDir = path.resolve(process.argv[2] ?? path.join(ROOT, "docs", "assets"));
-  fs.mkdirSync(outDir, { recursive: true });
-  for (const { name, svg } of captureAll()) {
-    fs.writeFileSync(path.join(outDir, name), svg, "utf8");
-    console.log(`✓ docs/assets/${name}（${svg.split("\n").length} 行 SVG）`);
+  const command = process.argv[2];
+  if (command === "ask") {
+    const outputDir = process.argv[3];
+    if (!outputDir) {
+      console.error("用法: node tools/capture-screens.mjs ask <outDir>");
+      process.exitCode = 2;
+    } else {
+      writeAskAssets(outputDir);
+    }
+  } else {
+    const outDir = path.resolve(command ?? path.join(ROOT, "docs", "assets"));
+    fs.mkdirSync(outDir, { recursive: true });
+    for (const { name, svg } of captureAll()) {
+      fs.writeFileSync(path.join(outDir, name), svg, "utf8");
+      console.log(`✓ docs/assets/${name}（${svg.split("\n").length} 行 SVG）`);
+    }
   }
 }

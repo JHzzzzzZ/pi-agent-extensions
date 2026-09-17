@@ -46,5 +46,27 @@ export declare function captureWidgetScene(opts?: { cols?: number; rows?: number
 };
 /** widget 帧自检（main/leader/成员树 + 提示行锚点）。 */
 export declare function assertWidgetFrame(lines: string[]): true;
+/** 长提问（team_ask）走查场景：真实 `AskView` overlay + 真实 `TuiMainScreen` 合成路径。 */
+export declare function captureAskScene(opts?: {
+  cols?: number;
+  rows?: number;
+  steps?: { label: string; keys?: string[] }[];
+}): {
+  cols: number;
+  rows: number;
+  baseline: string[];
+  frames: { label: string; lines: string[]; grid: (VtCell | null)[][] }[];
+  settled: string | undefined;
+};
+/** 三档宽度 canonical 帧组合：运行 A（bottom+follow）/ B（↓×6 后 Enter）/ C（Esc）。 */
+export declare function captureAskWalkthrough(opts?: { cols?: number; rows?: number }): {
+  cols: number;
+  rows: number;
+  frames: { label: string; lines: string[]; grid: (VtCell | null)[][] }[];
+  settledEnter: string | undefined;
+  settledEsc: string | undefined;
+};
+/** ask 帧自检（标题/题面头/选项表头/静态超时文案锚点）。 */
+export declare function assertAskFrame(lines: string[]): true;
 /** 全部文档截图（agent-team 查看器 + pwr 查看器 + agent-team 亮块，同一 VT/SVG 管线）。 */
 export declare function captureAll(): { name: string; svg: string }[];

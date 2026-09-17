@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 443 个（node:test） |
-| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 711 个 |
+| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 719 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -322,7 +322,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd src/extensions/agent-team
-npm install && npm test        # 711 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
+npm install && npm test        # 719 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
@@ -560,7 +560,7 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs --help                           
 ```
 
 - **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / dep 增删 / complete 收口）；依赖是一维直接约束（只报直接依赖，done 即解锁，不展开下游）；CLI 只保证迁移顺序、对齐文档结构与依赖图可判定，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp、锁与全局 id 计数器在 gitignore 的 `todos/.todo-cli/`）
-- **测试** — 仓库根 `npm run test:todo`（107 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / 全局 id 计数器 / reopen 回退与归档 / 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **测试** — 仓库根 `npm run test:todo`（116 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / 全局 id 计数器 / reopen 回退与归档 / 并发/中断真子进程（失败现场接线）+ 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
@@ -591,7 +591,7 @@ npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 /
 node tools/test-all.mjs --install # 新 worktree：先并行 npm install（--prefer-offline）再跑
 npm run test:contract             # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke                # 安装冒烟工具纯逻辑
-npm run test:todo                 # todo CLI（107 个）
+npm run test:todo                 # todo CLI（116 个）
 node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi）
 ```
 
@@ -599,3 +599,4 @@ node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi�
 - **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`src/extensions/pwr/vendor/acorn.mjs` 为生成文件，勿修改
+- **团队 run 留档**：repo-dev 团队每 run 在 `history/team-runs/<runId>/` 留固定七份文档 `00-task` / `10-design` / `20-writer-N` / `30-integration` / `40-review` / `50-acceptance` / `90-run-report`（头部元数据 runId / 日期 / 参与成员；单作者执笔、定稿后只追加不改写；`history/` 已 gitignore 不入库）
