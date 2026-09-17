@@ -3,7 +3,10 @@
  *
  * 覆盖：旧 md 解析（标注剥出/缩进子行归并/嵌套括号/CRLF）、规范渲染 roundtrip 恒等、
  * from-md 编排（落盘/删 md/清遗留索引/dry-run/拒绝覆盖/等价自检失败中止/时间戳回填）、
- * to-md 编排（还原 md、保留 JSON）。全部在 mkdtemp 临时仓库上执行，不碰真实 todos/。
+ * 覆盖：旧 md 解析（标注剥出/缩进子行归并/嵌套括号/CRLF）、规范渲染 roundtrip 恒等、
+ * from-md 编排（落盘/删 md/清遗留索引/dry-run/拒绝覆盖/等价自检失败中止/时间戳回填）、
+ * to-md 编排（还原 md、保留 JSON）、migrate global-id 编排（dry-run/稳定顺序取号/
+ * 逐字段保全/幂等/重复号预检中止）。全部在 mkdtemp 临时仓库上执行，不碰真实 todos/。
  * priority（todo-cli-todo:15）：md 无优先级语法 ⇒ 迁移条目一律 5，to-md 不渲染该字段。
  */
 
@@ -16,6 +19,7 @@ import { createRequire } from "node:module";
 
 import { buildTodoData, migrateFromMd, migrateToMd, parseLegacyMarkdown, renderMarkdown } from "../migrate.ts";
 import { parseTodoJson } from "../schema.ts";
+import { main } from "../todo.mjs";
 
 const NOW = () => "2026-09-12T00:00:00.000Z";
 
@@ -140,7 +144,7 @@ test("renderMarkdown → parseLegacyMarkdown → buildTodoData：五态 roundtri
     "  - feat/x：做完",
   ].join("\n");
   const first = buildTodoData("general-todo", parseLegacyMarkdown(md));
-  assert.equal(first.version, 3, "buildTodoData 产出 v3");
+  assert.equal(first.version, 4, "buildTodoData 产出 v4（globalId 为 null，由 from-md 编排取号）");
   assert.deepEqual(first.entries.map((e) => e.alignedAt), [null, null, null, null, null]);
   assert.deepEqual(
     first.entries.map((e) => e.dependsOn),
@@ -264,7 +268,7 @@ test("migrateToMd：JSON → 规范 md（processing 标记还原、notes 作缩�
   assert.ok(fs.existsSync(path.join(root, "todos", "general-todo.json")), "to-md 不删 JSON");
   // 还原的 md 再迁移回去必须语义恒等（roundtrip 稳定）
   const round = buildTodoData("general-todo", parseLegacyMarkdown(md));
-  assert.equal(round.version, 3);
+  assert.equal(round.version, 4);
   assert.deepEqual(round.entries.map((e) => e.alignedAt), [null, null, null, null, null]);
   const original = parseTodoJson(fs.readFileSync(path.join(root, "todos", "general-todo.json"), "utf8"), "t");
   assert.equal(original.ok, true);
@@ -341,4 +345,138 @@ test("migrateToMd：带 priority（含非 5）照常渲染；md 无优先级语�
   assert.doesNotMatch(md, /\[p\d+\]/);
   const round = buildTodoData("general-todo", parseLegacyMarkdown(md));
   assert.deepEqual(round.entries.map((entry) => entry.priority), [5, 5], "to-md → from-md 往返抹平非 5（记入卡片已知坑）");
+});
+
+// ---------------------------------------------------------------------------
+// migrate global-id（todo-cli-todo:16）：存量一次性取号
+// ---------------------------------------------------------------------------
+
+/** v3 条目（未迁移形态：没有 globalId 字段；显式带号时写 globalId）。 */
+function legacy(id: number, text: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    text,
+    status: "open",
+    branch: null,
+    tags: [],
+    dependsOn: [],
+    notes: [],
+    createdAt: null,
+    claimedAt: null,
+    completedAt: null,
+    alignedAt: null,
+    ...extra,
+  };
+}
+
+function writeLegacyJson(root: string, name: string, entries: Array<Record<string, unknown>>): void {
+  fs.writeFileSync(path.join(root, "todos", `${name}.json`), `${JSON.stringify({ version: 3, title: `${name} TODO`, entries }, null, 2)}\n`);
+}
+
+function counterPath(root: string): string {
+  return path.join(root, "todos", ".todo-cli", "next-id");
+}
+
+/** 除 globalId 外的逐字段快照（迁移等价比较用）。 */
+function stripGlobalId(data: { version: number; title: string; entries: Array<Record<string, unknown>> }): string {
+  return JSON.stringify({ ...data, entries: data.entries.map(({ globalId, ...rest }) => rest) });
+}
+
+test("migrate global-id：dry-run 零写盘零取号；稳定顺序取号 71..74 + 逐字段保全 + 计数器就位", (t) => {
+  const root = makeRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
+  writeLegacyJson(root, "a-todo", [
+    legacy(1, "甲", {
+      tags: ["cli", "性能"],
+      dependsOn: ["b-todo#70"],
+      notes: ["注记一", "注记二"],
+      createdAt: "2026-08-01T00:00:00.000Z",
+    }),
+    legacy(2, "乙", { status: "aligned", branch: "feat/a", alignedAt: "2026-09-01T00:00:00.000Z", dependsOn: ["a-todo#1"] }),
+    legacy(3, "丙", { status: "done", dependsOn: ["a-todo#2"], completedAt: "2026-09-02T00:00:00.000Z", notes: ["feat/a：做完"] }),
+  ]);
+  writeLegacyJson(root, "b-todo", [legacy(70, "丁", { dependsOn: ["a-todo#1"] })]);
+
+  const bytes = () => ["a-todo", "b-todo"].map((name) => fs.readFileSync(path.join(root, "todos", `${name}.json`), "utf8"));
+  const before = bytes();
+
+  const dry: string[] = [];
+  assert.equal(main(["migrate", "global-id", "--dry-run"], { repoRoot: root, log: (l) => dry.push(l) }), 0);
+  assert.match(dry.join("\n"), /演练：将迁移 2 个文件 · 4 条条目（起始号 71）/);
+  assert.deepEqual(bytes(), before, "dry-run 零写盘");
+  assert.equal(fs.existsSync(counterPath(root)), false, "dry-run 零取号");
+
+  const out: string[] = [];
+  assert.equal(main(["migrate", "global-id"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.match(out.join("\n"), /已迁移全局 id：2 个文件 · 4 条条目取号 71\.\.74（等价自检通过）/);
+
+  const aBefore = parseTodoJson(before[0], "a");
+  const bBefore = parseTodoJson(before[1], "b");
+  assert.equal(aBefore.ok, true);
+  assert.equal(bBefore.ok, true);
+  const afterA = readJson(root, "a-todo");
+  const afterB = readJson(root, "b-todo");
+  if (aBefore.ok) assert.equal(stripGlobalId(afterA), stripGlobalId(aBefore.data), "a-todo 除 globalId 外逐字段零漂移");
+  if (bBefore.ok) assert.equal(stripGlobalId(afterB), stripGlobalId(bBefore.data), "b-todo 除 globalId 外逐字段零漂移");
+  assert.equal(afterA.version, 4, "迁移后写出一律 v4");
+  assert.deepEqual(afterA.entries.map((e) => e.globalId), [71, 72, 73], "文件名 sort + 数组序稳定取号");
+  assert.deepEqual(afterB.entries.map((e) => e.globalId), [74]);
+  assert.equal(fs.readFileSync(counterPath(root), "utf8"), "75\n", "计数器就位到 max+1");
+});
+
+test("migrate global-id：幂等（重跑零动作零写盘、计数器不动）+ 重复号预检中止零写盘", (t) => {
+  const root = makeRepo();
+  const dupRoot = makeRepo();
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    fs.rmSync(dupRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  });
+  writeLegacyJson(root, "a-todo", [legacy(1, "甲")]);
+  writeLegacyJson(root, "b-todo", [legacy(2, "乙", { globalId: 40 })]);
+
+  const out: string[] = [];
+  assert.equal(main(["migrate", "global-id"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.match(out.join("\n"), /已迁移全局 id：1 个文件 · 1 条条目取号 41\.\.41/);
+  const bytes = () => ["a-todo", "b-todo"].map((name) => fs.readFileSync(path.join(root, "todos", `${name}.json`), "utf8"));
+  const migrated = bytes();
+  const counter = fs.readFileSync(counterPath(root), "utf8");
+
+  out.length = 0;
+  assert.equal(main(["migrate", "global-id"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.match(out.join("\n"), /没有需要迁移的条目/);
+  assert.deepEqual(bytes(), migrated, "幂等：零写盘");
+  assert.equal(fs.readFileSync(counterPath(root), "utf8"), counter, "幂等：计数器不动");
+
+  // 合并产物重号：预检中止，一个字节都不写、不动计数器（先手工仲裁）
+  writeLegacyJson(dupRoot, "a-todo", [legacy(1, "甲", { globalId: 7 })]);
+  writeLegacyJson(dupRoot, "b-todo", [legacy(1, "乙", { globalId: 7 })]);
+  const dupBytes = ["a-todo", "b-todo"].map((name) => fs.readFileSync(path.join(dupRoot, "todos", `${name}.json`), "utf8"));
+  const dupOut: string[] = [];
+  assert.equal(main(["migrate", "global-id"], { repoRoot: dupRoot, log: (l) => dupOut.push(l) }), 1);
+  assert.match(dupOut.join("\n"), /globalId 重复：7（a-todo#1 与 b-todo#1）/);
+  assert.deepEqual(
+    ["a-todo", "b-todo"].map((name) => fs.readFileSync(path.join(dupRoot, "todos", `${name}.json`), "utf8")),
+    dupBytes,
+    "重复号预检中止：零写盘",
+  );
+  assert.equal(fs.existsSync(counterPath(dupRoot)), false, "重复号预检中止：零取号");
+});
+
+test("migrateFromMd 产 v4 完备（逐条 globalId + 计数器就位）；to-md 对 v4 照常工作（globalId 不进 md）", (t) => {
+  const root = makeRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
+  writeMd(root, "general-todo", "# 通用 TODO\n\n- [ ] 甲\n- [x] 乙（完成 收尾）\n");
+
+  const out: string[] = [];
+  assert.equal(migrateFromMd(root, { now: NOW, log: (l) => out.push(l), dryRun: false, force: false }), 0);
+  const data = readJson(root, "general-todo");
+  assert.equal(data.version, 4, "from-md 一步到位 v4，不产生 v3 中间态");
+  assert.deepEqual(data.entries.map((e) => e.globalId), [1, 2], "每文件锁内逐条取号");
+  assert.equal(fs.readFileSync(counterPath(root), "utf8"), "3\n", "计数器就位（下一个待发号）");
+
+  const mdOut: string[] = [];
+  assert.equal(migrateToMd(root, { now: NOW, log: (l) => mdOut.push(l) }), 0);
+  const md = fs.readFileSync(path.join(root, "todos", "general-todo.md"), "utf8");
+  assert.equal(md, ["# 通用 TODO", "", "- [ ] 甲", "- [x] 乙", "  - 收尾", ""].join("\n"), "globalId 不进 md（逃生舱只装人类契约）");
+
 });

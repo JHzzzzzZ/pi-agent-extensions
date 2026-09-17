@@ -42,7 +42,7 @@
 - `migrate.ts`：`buildTodoData` 字面量加 `priority: 5`（md 无优先级语法，与 tags / dependsOn 同型默认值）；`renderMarkdown` 不渲染（to-md 是逃生降级，丢 priority 可接受）。migrate 子命令面 / 等价自检结构零变化。
 - `lock.ts` / `depends.ts` / `align.ts` / `todo.mjs` 零改动：priority 是纯数据字段，写入落在既有文件锁临界区内，无新并发面。
 - 新错误码：`BAD_PRIORITY`（core 层，随 `parsePriorityOption` 的 result union 走——todo-cli 无 errors.ts 惯例，与 `BAD_JSON` / `BAD_SCHEMA` / `BAD_FILTER` 同构）；复用 `BAD_SCHEMA`（新 reason 模板「条目 priority 必须是 1-10 的整数」）与 `BAD_FILTER`（新消息「--sort 只支持 priority」）。
-- 文档：SKILL.md / `docs/tools/todo-cli.md` / 根 README / CONTEXT.md「条目（Entry）」词条 / ADR-0008；根版本 2.53.0。
+- 文档：SKILL.md / `docs/tools/todo-cli.md` / 根 README / CONTEXT.md「条目（Entry）」词条 / ADR-0009（原拟 0008，#16 先合并占号后顺延）；根版本 2.55.0（集成时点 minor）。
 
 ## 测试决策
 
@@ -51,7 +51,7 @@
 - `test/todo-cli.test.ts`（+7）：T1 add 缺省 / 边界 / 前导零 / 日志不回显；T2 非法值 exit 1 + 文件字节不变 + 目标文件不创建；T3 旧数据读兜底 `[p5]` + 零写盘 + 写路径顺带补 5 且 version 不变；T4 `--sort priority` 端到端与默认序对照 + `BAD_FILTER`；T5 默认 list「现版格式 + `[pN]`」逐字节对照；T6 `--json` 带字段 + summary 不变（人读与 `--json`）；T7 真子进程 E2E（`--help` 含新 flag；拷工具进临时仓库跑 add/list）。
 - `test/migrate.test.ts`（+2）：M1 from-md 条目一律 5；M2 to-md 带 priority（含非 5）照常渲染、md 无语法、往返抹平为 5（已知坑回归锁）。
 - 存量断言适配（只加标记/字段，不改序不改措辞）：`query.test.ts` / `todo-cli.test.ts` / `interrupt.test.ts` 的人读行 deepEqual 补 ` [p5]`；`schema` / `concurrency` / `interrupt` 的 TodoEntry fixture 补 `priority: 5`。
-- 门：`npm run test:todo` 110/110 + `lint` exit 0。
+- 门：`npm run test:todo` 134/134（集成 #16 后实测）+ `lint` exit 0。
 
 ## 范围外
 

@@ -7,7 +7,7 @@ Pi 编码助手的扩展工作区：12 个零构建 TypeScript ESM 插件（pwr 
 ### todos 工作流（todo-cli 域）
 
 **条目（Entry）**:
-`todos/<名>.json` 里的一条待办，schema v3 原生字段 = id / text / status / branch / tags / dependsOn / notes / createdAt / claimedAt / completedAt / alignedAt + 可选 priority（1-10，10 最高，缺省 5；全版本可选软字段，见 ADR-0008）（读兼容 v1/v2，写出一律 v3）。
+`todos/<名>.json` 里的一条待办，schema v4 原生字段 = id / globalId / text / status / branch / tags / priority / dependsOn / notes / createdAt / claimedAt / completedAt / alignedAt（`priority` 为全版本可选软字段：1-10，10 最高，缺省 5，见 ADR-0009；读兼容 v1/v2/v3，写出一律 v4）。
 _Avoid_: todo 行、任务、item
 
 **顶层条目**:
@@ -63,8 +63,12 @@ _Avoid_: `@ 引用`、processing 标注
 _Avoid_: 备注、comment
 
 **id**:
-条目在文件内的稳定编号，max+1 分配、永不复用/重排；跨分支合并冲突按 id 取并集手工解决。
+条目在文件内的稳定编号，max+1 分配、永不复用/重排；跨分支合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）。
 _Avoid_: 行号、序号
+
+**全局 id（globalId）**:
+schema v4 条目字段：**全台账唯一、永不回收**的统一主键，由 `todos/.todo-cli/next-id` 计数器在 `locks/id.lock` 内发号（计数器不入库、缺失时自愈为 `max(全台账条目 id, globalId) + 1`）。与文件内 `id` 正交双轨：`文件#id` 继续承担展示 / `dependsOn` 引用 / 对齐文档命名（人类契约不变），`globalId` 只进 `list --json` 与机器判定——`lint` 查重、跨分支合并冲突按其判同条目取并集；存量旧台账需 `migrate global-id` 一次性迁移（迁移前 v1-v3 读入归一 null，六个写命令被 `GLOBAL_ID_PENDING` 挡下）。决策见 ADR-0008。
+_Avoid_: 全局序号、统一编号（口语可，文档统一用 globalId）
 
 **依赖（dependsOn）**:
 条目对另一条目的开工前提声明，存储形态为规范引用 `文件基名#id`（可跨文件）；被引用条目未 done 时引用方不得开工。

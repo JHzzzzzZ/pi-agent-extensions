@@ -5,7 +5,7 @@
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
 | [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 443 个（node:test） |
-| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 711 个 |
+| [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 719 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
@@ -322,7 +322,7 @@ leader dev-team · 重构登录模块并补齐单测 ▶ running · 3m12s · 2/3
 
 ```bash
 cd src/extensions/agent-team
-npm install && npm test        # 711 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
+npm install && npm test        # 719 个测试（含真实 git worktree 与真实 pi 子进程 E2E）
 node test/resume-host-smoke.mjs # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 node tools/capture-screens.mjs # 重新生成 docs/assets/{agent-team-viewer,pwr-viewer,agent-team-widget}.svg（无头真实渲染）
 npm run typecheck
@@ -539,7 +539,7 @@ node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts   
 
 ## todo-cli
 
-`todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 撤销 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/优先级/依赖/时间戳都是原生字段；schema v3）。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。**回退通道 `reopen`**（见 [`docs/adr/0007-todo-reopen.md`](docs/adr/0007-todo-reopen.md)）：在途条目（aligning/aligned/processing）退回 `open` 池（清 branch/claimedAt/alignedAt，注记留痕，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`），从对齐阶段撤销必带 `--note`、done 拒绝、已是 open 幂等——修的是「状态说在途、事实从未开工」的虚空 processing。**依赖门**（`dependsOn` 规范引用 `文件#id`，见 [`docs/adr/0005-todo-depends-on.md`](docs/adr/0005-todo-depends-on.md)）：依赖未 done（含悬空）时第二次 `claim` fail-closed（`DEP_BLOCKED`），`list` 行尾标阻塞、`triage` 列明细；写路径拒绝悬空/自引用/环，`lint` 另做全量图扫描兑合并产物。**优先级 `priority`**（1-10，10 最高，见 [`docs/adr/0008-todo-priority-soft-field.md`](docs/adr/0008-todo-priority-soft-field.md)）：`add --priority` 写入（缺省 5、非法 fail-closed），`list` 行内 `[pN]` 标记、`--sort priority` 降序排、`--json` 带字段；全版本可选软字段、不占版本位（v3→v4 归 globalId 姊妹单）、不进状态机/依赖门。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|depends|lock|query|migrate|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
+`todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 撤销 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/优先级/依赖/时间戳都是原生字段；schema v4）。**统一全局 id**（`globalId` 全台账唯一、永不回收的机器主键，计数器 `todos/.todo-cli/next-id` 在 `locks/id.lock` 内发号；`文件#id` 展示/引用/对齐文档命名双轨不变；存量旧台账先 `migrate global-id`，迁移前六个写命令报 `GLOBAL_ID_PENDING`；见 [`docs/adr/0008-todo-global-id.md`](docs/adr/0008-todo-global-id.md)）——让跨文件重号与合并仲裁有唯一机器身份。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。**回退通道 `reopen`**（见 [`docs/adr/0007-todo-reopen.md`](docs/adr/0007-todo-reopen.md)）：在途条目（aligning/aligned/processing）退回 `open` 池（清 branch/claimedAt/alignedAt，注记留痕，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`），从对齐阶段撤销必带 `--note`、done 拒绝、已是 open 幂等——修的是「状态说在途、事实从未开工」的虚空 processing。**依赖门**（`dependsOn` 规范引用 `文件#id`，见 [`docs/adr/0005-todo-depends-on.md`](docs/adr/0005-todo-depends-on.md)）：依赖未 done（含悬空）时第二次 `claim` fail-closed（`DEP_BLOCKED`），`list` 行尾标阻塞、`triage` 列明细；写路径拒绝悬空/自引用/环，`lint` 另做全量图扫描兑合并产物。**优先级 `priority`**（1-10，10 最高，见 [`docs/adr/0009-todo-priority-soft-field.md`](docs/adr/0009-todo-priority-soft-field.md)）：`add --priority` 写入（缺省 5、非法 fail-closed），`list` 行内 `[pN]` 标记、`--sort priority` 降序排、`--json` 带字段；全版本可选软字段、不占版本位（版本位 v3→v4 归 globalId 姊妹单）、不进状态机/依赖门。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|depends|lock|query|migrate|globalid|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
 
 ```bash
 node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]                    # 全量盘点（open / aligning / aligned / processing / done）
@@ -552,15 +552,15 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs reopen --file <name> --match "子
 node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file <name> --match "子串" --on 文件#id,...   # 增删直接依赖（add 落盘前校验悬空/自引用/环；remove 只删已声明的）
 node .agents/skills/todo-cli/todo-cli/todo.mjs lint                                # 单向核对 pi.extensions 扩展 ↔ todo 文件 + 依赖图全量扫描（悬空/自引用/环）
 node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]                     # 只读扫描 worktree↔条目关联与遗留（条目 branch 字段 ↔ worktree 分支精确相等；aligning/aligned/processing 三段同构）
-node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md   # md→JSON 一次性迁移（带逐文件等价自检）/ JSON→md 逃生回滚
+node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]   # md→JSON 一次性迁移（带逐文件等价自检）/ JSON→md 逃生回滚 / 存量一次性取全局 id
 node .agents/skills/todo-cli/todo-cli/todo.mjs --help                              # 打印用法
 
 # 任意子命令可前置 --root <dir> 显式指定仓库根（跳过 git 发现，对非 git 目录也适用）
 # 或走包装器：sh .agents/skills/todo-cli/scripts/todo.sh <子命令> [参数]
 ```
 
-- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / dep 增删 / complete 收口）；依赖是一维直接约束（只报直接依赖，done 即解锁，不展开下游）；CLI 只保证迁移顺序、对齐文档结构与依赖图可判定，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 id 取并集手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp 与锁在 gitignore 的 `todos/.todo-cli/`）
-- **测试** — 仓库根 `npm run test:todo`（110 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / reopen 回退与归档 / priority（add/标记/排序/JSON/迁移）/ 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / dep 增删 / complete 收口）；依赖是一维直接约束（只报直接依赖，done 即解锁，不展开下游）；CLI 只保证迁移顺序、对齐文档结构与依赖图可判定，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp、锁与全局 id 计数器在 gitignore 的 `todos/.todo-cli/`）
+- **测试** — 仓库根 `npm run test:todo`（134 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / 全局 id 计数器 / priority（schema/query/命令闭环/migrate）/ reopen 回退与归档 / 并发/中断真子进程（失败现场接线）+ 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
@@ -591,7 +591,7 @@ npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 /
 node tools/test-all.mjs --install # 新 worktree：先并行 npm install（--prefer-offline）再跑
 npm run test:contract             # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke                # 安装冒烟工具纯逻辑
-npm run test:todo                 # todo CLI（110 个）
+npm run test:todo                 # todo CLI（134 个）
 node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi）
 ```
 
@@ -599,3 +599,4 @@ node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi�
 - **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`src/extensions/pwr/vendor/acorn.mjs` 为生成文件，勿修改
+- **团队 run 留档**：repo-dev 团队每 run 在 `history/team-runs/<runId>/` 留固定七份文档 `00-task` / `10-design` / `20-writer-N` / `30-integration` / `40-review` / `50-acceptance` / `90-run-report`（头部元数据 runId / 日期 / 参与成员；单作者执笔、定稿后只追加不改写；`history/` 已 gitignore 不入库）

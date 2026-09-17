@@ -14,7 +14,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 
 ### 需求生命周期（按序执行）
 
-1. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建同名文件；通用/跨插件需求 → `todos/general-todo.json`；仓库级工具 → 该工具专门文件（现 `todo-cli-todo.json`、`agent-manager-todo.json`）。`todos/` 唯一读写入口是 todo CLI（`node .agents/skills/todo-cli/todo-cli/todo.mjs`，手工编辑 JSON 视为破坏存储；命令面/锁/查重口径见 `docs/tools/todo-cli.md`）：已有条目 `claim` 领取（`--branch` 写入分支引用；两段式——首次领取进 `aligning`，对齐确认后再次 `claim` 才进 `processing`），没有则 `add` 追加；取消/搁置用 `complete --note "<原因>"` 收口（从 `aligning`/`aligned` 收口必带 `--note`）；误标为在途或推翻对齐结论用 `reopen --note "<原因>"` 退回未领取（从 `aligning`/`aligned` 撤销必带 `--note`，`done` 拒绝，陈旧对齐文档自动归档为 `.reopened-<UTC 紧凑>.md`）——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 id 取并集手工解决。
+1. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建同名文件；通用/跨插件需求 → `todos/general-todo.json`；仓库级工具 → 该工具专门文件（现 `todo-cli-todo.json`、`agent-manager-todo.json`）。`todos/` 唯一读写入口是 todo CLI（`node .agents/skills/todo-cli/todo-cli/todo.mjs`，手工编辑 JSON 视为破坏存储；命令面/锁/查重口径见 `docs/tools/todo-cli.md`）：已有条目 `claim` 领取（`--branch` 写入分支引用；两段式——首次领取进 `aligning`，对齐确认后再次 `claim` 才进 `processing`），没有则 `add` 追加；取消/搁置用 `complete --note "<原因>"` 收口（从 `aligning`/`aligned` 收口必带 `--note`）；误标为在途或推翻对齐结论用 `reopen --note "<原因>"` 退回未领取（从 `aligning`/`aligned` 撤销必带 `--note`，`done` 拒绝，陈旧对齐文档自动归档为 `.reopened-<UTC 紧凑>.md`）——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）手工解决。
 2. **先对齐意图（grill-with-docs）**——登记后、动手前，先跑 `/skill:grill-with-docs`（mattpocock/skills 库：内部为 grilling 访谈 + domain-modeling 建模）与人类把意图、边界、术语问清，**对齐产物必须落盘**：逐条对齐文档落 `todos/align/<名>#<id>.md`（四小节 `意图/范围/验收标准/人工确认`，由 `align` 做结构校验；门形态见 `docs/adr/0003-todo-align-gate.md`）、术语与领域词汇进 `CONTEXT.md`、决策进 `docs/adr/`；只留在会话里的对齐视为没对齐。
 3. **规格落盘（to-spec）**——对齐后用 `/skill:to-spec` 把结论综合成规格文档（问题陈述/方案/用户故事/实现决策/测试决策/范围外）落盘到 `docs/specs/`；规格与实现同变更同步，不许只活在会话或工单里。需求跟踪始终以 `todos/` 为准（第 1 步），不引入外部 issue tracker。
 4. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记（自测、合并与清理在第 7 步）。
@@ -36,6 +36,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 - `.agents/skills/todo-cli/` — 仓库内项目级 skill：`SKILL.md`（命令参考卡）+ `scripts/todo.sh` 包装器 + `todo-cli/`（todo CLI 入口与实现同居，任意 git 仓库任意 cwd 可用；仓库根解析 = `--root` > `git rev-parse --show-toplevel`，见 `docs/tools/todo-cli.md`）。
 - `src/extensions/<插件名>/` — 12 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
 - `agent-manager/` — 独立 Node 工具，**非扩展**：不 import 宿主 SDK、不注册 pi 扩展点、已从根 `pi.extensions` 注销，仅 listen `127.0.0.1`；边界与数据流见 `docs/tools/agent-manager.md`。
+- `history/team-runs/<runId>/` — repo-dev 团队 run 的本地留档目录（`history/` 已 gitignore，不入库）：每 run 固定七份文档 `00-task` / `10-design` / `20-writer-N` / `30-integration` / `40-review` / `50-acceptance` / `90-run-report`，头部带元数据（runId / 日期 / 参与成员），单作者执笔、定稿后只追加不改写。
 
 ## 开发命令
 

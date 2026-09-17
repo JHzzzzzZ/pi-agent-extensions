@@ -13,6 +13,7 @@
  */
 
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -22,6 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import { emptyTodoData, parseTodoJson, serializeTodo } from "../schema.ts";
 import type { TodoEntry, TodoFileData } from "../schema.ts";
+import { activeSceneSink, withFailureScene } from "./failure-scene.ts";
 
 /** 工具目录（入口 + 实现同居）：测试文件的上一级。 */
 const TOOL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -52,6 +54,7 @@ function seedEntries(): TodoEntry[] {
   for (let i = 0; i < SEED_ENTRIES; i += 1) {
     entries.push({
       id: i + 1,
+      globalId: i + 1,
       text: `种子条目 ${String(i).padStart(3, "0")} 供中断测试使用`,
       status: "open",
       branch: null,
@@ -116,14 +119,24 @@ function collect(child: import("node:child_process").ChildProcess): { stdout: st
 
 function runCli(root: string, args: string[], timeoutMs = 60_000): Promise<CliResult> {
   return new Promise((resolve) => {
+    const sink = activeSceneSink();
     const child = spawn(process.execPath, [cliPath(root), "--root", root, ...args], {
       cwd: root,
       env: cleanEnv(),
       timeout: timeoutMs,
     });
+    const childId = sink?.spawn("todo-cli", { pid: child.pid, args });
     const captured = collect(child);
-    child.on("error", () => resolve({ code: -1, signal: null, ...captured }));
-    child.on("close", (code, signal) => resolve({ code, signal, ...captured }));
+    child.on("error", (err) => {
+      if (sink !== null && childId !== undefined) sink.fail(childId, String(err));
+      resolve({ code: -1, signal: null, ...captured });
+    });
+    child.on("close", (code, signal) => {
+      if (sink !== null && childId !== undefined) {
+        sink.close(childId, { code, signal, stdout: captured.stdout, stderr: captured.stderr });
+      }
+      resolve({ code, signal, ...captured });
+    });
   });
 }
 
@@ -154,6 +167,7 @@ function withEntry(data: TodoFileData, text: string): TodoFileData {
       ...data.entries,
       {
         id: data.entries.length + 1,
+        globalId: null,
         text,
         status: "open",
         branch: null,
@@ -169,8 +183,14 @@ function withEntry(data: TodoFileData, text: string): TodoFileData {
   };
 }
 
-test("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁由 stale 抢占自愈；过期 tmp 被清理；末次 add 与 list 一致", { timeout: 180_000 }, async (t) => {
+/** 用例包装：失败时写现场；通过路径零写盘零输出（activeSceneSink 为 null 时全短路）。 */
+function sceneTest(name: string, options: { timeout: number }, body: (t: TestContext) => Promise<void>): void {
+  test(name, options, async (t) => withFailureScene(name, () => body(t)));
+}
+
+sceneTest("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁由 stale 抢占自愈；过期 tmp 被清理；末次 add 与 list 一致", { timeout: 180_000 }, async (t) => {
   const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
 
   for (let round = 0; round < 5; round += 1) {
@@ -193,6 +213,13 @@ test("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁
       isOld || isNew,
       `第 ${round} 轮（SIGKILL ${delay}ms，killed=${killed}，exit=${result.code}/${result.signal}）后 JSON 必须是旧版或完整新版：旧 ${before.length} 字节 / 实际 ${after.length} 字节`,
     );
+    if (isNew) {
+      const appended = afterData.entries[afterData.entries.length - 1];
+      assert.ok(
+        typeof appended.globalId === "number" && Number.isInteger(appended.globalId) && appended.globalId >= 1,
+        `第 ${round} 轮成功落盘的新条目必须带正整数 globalId（实际 ${appended.globalId}）`,
+      );
+    }
     assert.doesNotThrow(() => parseTodoJson(after, "roundtrip"), `第 ${round} 轮后 JSON 必须仍可解析`);
   }
 
@@ -212,6 +239,21 @@ test("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁
     "收尾条目必须完整落盘",
   );
   assert.deepEqual(leftoverTmps(root), [], "成功写入后不得留下任何（含过期）tmp 残留");
+
+  // 风暴后全台账不变量：globalId 两两互异、全为正整数；计数器 ≥ max(globalId)+1
+  //（被杀进程烧号/留缺口允许，重号与倒退不允许）。
+  const finalEntries = readData(root).entries;
+  const finalGlobalIds = finalEntries.map((entry) => entry.globalId);
+  assert.equal(new Set(finalGlobalIds).size, finalGlobalIds.length, "风暴后全台账 globalId 互异");
+  assert.ok(
+    finalGlobalIds.every((g) => typeof g === "number" && Number.isInteger(g) && g >= 1),
+    "风暴后每条条目都是正整数 globalId",
+  );
+  const counterPath = path.join(root, "todos", ".todo-cli", "next-id");
+  assert.equal(fs.existsSync(counterPath), true, "成功 add 后计数器必须存在");
+  const counter = Number(fs.readFileSync(counterPath, "utf8").trim());
+  assert.ok(Number.isSafeInteger(counter), "计数器必须是纯数字");
+  assert.ok(counter >= Math.max(...finalGlobalIds) + 1, `计数器 ${counter} 不得小于 max(globalId)+1`);
 
   const listRes = await runCli(root, ["list"]);
   assert.equal(listRes.code, 0, `list 应 exit 0（stderr=${listRes.stderr.slice(0, 200)}）`);
