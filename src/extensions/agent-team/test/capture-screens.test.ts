@@ -15,10 +15,14 @@ import {
   captureViewerScene,
   capturePwrViewerScene,
   captureWidgetScene,
+  captureAskScene,
+  captureAskWalkthrough,
   svgFromGrid,
   assertFrame,
   assertPwrFrame,
   assertWidgetFrame,
+  assertAskFrame,
+  DARK,
 } from "../tools/capture-screens.mjs";
 import { VtScreen, ansi256, DEFAULT_BG } from "../tools/vt-screen.mjs";
 
@@ -202,4 +206,206 @@ test("widget 产物：确定性 + 进 captureAll", () => {
   const shot = captureAll().find((s) => s.name === "agent-team-widget.svg");
   assert.ok(shot, "captureAll 必须含 widget 截图");
   assert.ok(shot.svg.includes("▸ leader count-duet"), "SVG 含展开态 leader 行");
+});
+
+// ---------------------------------------------------------------------------
+// ask 场景（#70 长提问三档宽度走查）：真实 AskView overlay + 真实 TuiMainScreen
+// 合成路径，产出 initial/bottom/follow/enter-clean/esc-clean 五帧。与
+// viewer-ask-host.test.ts 用例 7 同链路（真实输入路由），此处只锁"走查证据能否
+// 可信产出"（几何/锚点/确定性/清理），不重复交互正确性。
+// ---------------------------------------------------------------------------
+
+const ASK_WIDTHS = [80, 60, 40] as const;
+
+/** 帧宽期望：宿主 resolveOverlayLayout（pi-tui dist/tui.js）= clamp(max(95%×cols, minWidth 60), cols−2)。 */
+const ASK_FRAME_WIDTHS: Record<(typeof ASK_WIDTHS)[number], number> = { 80: 76, 60: 58, 40: 38 };
+
+/** ↓ 六次：选中第 7 项（rows=24 时选项窗口高 6，触发窗口跟随）。 */
+const ASK_DOWN_KEYS = Array.from({ length: 6 }, () => "\x1b[B");
+
+const ASK_FRAME_CHARS = new Set(["╭", "╮", "╰", "╯", "─", "│", "├", "┤"]);
+
+type AskScene = ReturnType<typeof captureAskScene>;
+type AskFrame = AskScene["frames"][number];
+
+function askFrameOf(scene: AskScene, label: string): AskFrame {
+  const frame = scene.frames.find((candidate) => candidate.label === label);
+  assert.ok(frame, `缺少 ${label} 帧`);
+  return frame;
+}
+
+/** 边框之间的内容（帧行带左右宿主 margin 缩进）。 */
+function innerBetweenBorders(line: string): string {
+  return line.slice(line.indexOf("│") + 1, line.lastIndexOf("│"));
+}
+
+test("ask 场景：三档宽度（80/60/40）初始帧产出且含题面/选项窗口/静态超时锚点", () => {
+  for (const cols of ASK_WIDTHS) {
+    const scene = captureAskScene({ cols });
+    const initial = askFrameOf(scene, "initial");
+    assert.equal(initial.label, "initial");
+    assert.equal(assertAskFrame(initial.lines), true, `${cols} 列：帧自检应通过`);
+    const text = initial.lines.join("\n");
+    assert.ok(text.includes("部署方案二选一"), `${cols} 列：题面开头可见`);
+    assert.ok(text.includes("可选（共 8 项，显示 1-6"), `${cols} 列：选项窗口表头可见`);
+    assert.ok(text.includes("› 方案 1"), `${cols} 列：选中标记在首项`);
+    assert.ok(text.includes("超时：10 分钟后自动取消"), `${cols} 列：静态超时文案可见`);
+    assert.ok(!text.includes("第 30 段"), `${cols} 列：前置——题面尾部不在首屏`);
+  }
+  assert.throws(() => assertAskFrame(["nothing here"]), /缺少锚点/);
+});
+
+test("ask 场景帧几何：宿主钳位宽度 76/58/38、边框连续、不越终端右缘", () => {
+  for (const cols of ASK_WIDTHS) {
+    const scene = captureAskScene({ cols });
+    const grid = askFrameOf(scene, "initial").grid;
+    const topRow = grid.find((row) => row.some((cell) => cell?.ch === "╭"));
+    assert.ok(topRow, `${cols} 列：应有顶边框行`);
+    const left = topRow.findIndex((cell) => cell?.ch === "╭");
+    const right = topRow.findIndex((cell) => cell?.ch === "╮");
+    // 宿主 resolveOverlayLayout 公式锁定：帧宽 = clamp(max(95%×cols, minWidth 60), cols−2)——宿主漂移即红。
+    assert.equal(right - left + 1, ASK_FRAME_WIDTHS[cols], `${cols} 列：帧宽应为钳位结果 ${ASK_FRAME_WIDTHS[cols]}`);
+    for (let col = left + 1; col < right; col++) {
+      assert.equal(topRow[col]?.ch, "─", `${cols} 列：顶边框列 ${col} 断裂`);
+    }
+    // 判定标准 2：帧单元格不得越出帧左右缘（col 0 / 右缘以外是主屏背景）。
+    for (const row of grid) {
+      for (let col = 0; col < cols; col++) {
+        if (col >= left && col <= right) continue;
+        const ch = row[col]?.ch ?? "";
+        assert.ok(!ASK_FRAME_CHARS.has(ch), `${cols} 列：帧字符「${ch}」越出帧缘（col ${col}）`);
+      }
+    }
+  }
+});
+
+test("ask 场景 40 列：完整帧渲染（非 ASK_MIN_WIDTH 单行提示）+ 题面折行 + 尾行可读", () => {
+  const scene = captureAskScene({ cols: 40 });
+  const initial = askFrameOf(scene, "initial");
+  const text = initial.lines.join("\n");
+  assert.ok(!text.includes("至少需要 36 列"), "40 列不得落到 ASK_MIN_WIDTH 单行提示分支（宿主钳位到 38）");
+
+  const bottomRow = initial.grid.find((row) => row.some((cell) => cell?.ch === "╰"));
+  assert.ok(bottomRow, "应有底边框行");
+  const left = bottomRow.findIndex((cell) => cell?.ch === "╰");
+  const right = bottomRow.findIndex((cell) => cell?.ch === "╯");
+  assert.ok(left >= 0 && right > left, "底边框 ╰…╯ 应完整");
+  for (let col = left + 1; col < right; col++) {
+    assert.equal(bottomRow[col]?.ch, "─", `40 列：底边框列 ${col} 断裂`);
+  }
+
+  const timeoutLine = initial.lines.find((line) => line.includes("超时：10 分钟后自动取消"));
+  assert.ok(timeoutLine, "尾行应有静态超时文案");
+  assert.ok(timeoutLine.includes("超时：10 分钟后自动取消│"), "40 列下超时文案右端紧贴右边框（可读）");
+
+  const firstParagraph = initial.lines.findIndex((line) => line.includes("第 1 段："));
+  assert.ok(firstParagraph >= 0, "首屏应可见第 1 段开头");
+  assert.ok(initial.lines[firstParagraph + 1]?.includes("细节"), "折行续行以「细节」开头（按显示宽度折行而非截断）");
+
+  const title = initial.lines.findIndex((line) => line.includes("部署方案二选一"));
+  assert.ok(title >= 0, "首屏应可见题面标题行");
+  assert.equal(innerBetweenBorders(initial.lines[title + 1] ?? "").trim(), "", "题面首行后段落空行保留");
+});
+
+test("ask 场景：PgDn 到底第 30 段可见且钳位（再翻帧不变）", () => {
+  for (const cols of ASK_WIDTHS) {
+    const scene = captureAskScene({ cols, steps: [{ label: "bottom" }, { label: "bottom-clamped", keys: ["\x1b[6~"] }] });
+    const bottom = askFrameOf(scene, "bottom");
+    const text = bottom.lines.join("\n");
+    assert.ok(text.includes("第 30 段"), `${cols} 列：自适应 PgDn 应到底（第 30 段可见）`);
+    assert.ok(!text.includes("第 1 段"), `${cols} 列：到底后题面头部应滚出窗口`);
+    assert.equal(askFrameOf(scene, "bottom-clamped").lines.join("\n"), text, `${cols} 列：到底后再翻页帧不变（maxScroll 钳位）`);
+  }
+});
+
+test("ask 场景：选项窗口跟随——↓×6 后显示 2-7、选中标记在方案 7、方案 1 滚出", () => {
+  for (const cols of ASK_WIDTHS) {
+    const scene = captureAskScene({ cols, steps: [{ label: "follow", keys: ASK_DOWN_KEYS }] });
+    const follow = askFrameOf(scene, "follow");
+    const text = follow.lines.join("\n");
+    assert.ok(text.includes("显示 2-7"), `${cols} 列：选项表头应显示 2-7`);
+    assert.ok(text.includes("› 方案 7"), `${cols} 列：选中标记应在方案 7`);
+    assert.ok(!text.includes("方案 1"), `${cols} 列：方案 1 应滚出窗口`);
+
+    // 选中态：› 与标签同为 accent（模板中 marker 与标签之间一格分隔空格不着色，不参与连续断言）。
+    const selected = follow.grid.find((row) => row.some((cell) => cell?.ch === "›"));
+    assert.ok(selected, `${cols} 列：应有选中行`);
+    const marker = selected.findIndex((cell) => cell?.ch === "›");
+    assert.equal(selected[marker]?.fg, DARK.accent, `${cols} 列：选中标记应为 accent 色`);
+    const rightBorder = selected.findIndex((cell, col) => col > marker && cell?.ch === "│");
+    assert.ok(rightBorder > marker, `${cols} 列：选中行应有右边框`);
+    const labelCells = selected.slice(marker + 1, rightBorder).filter((cell) => (cell?.ch ?? "").trim() !== "");
+    assert.ok(labelCells.length > 0, `${cols} 列：选中项标签应有可见字符`);
+    for (const cell of labelCells) assert.equal(cell?.fg, DARK.accent, `${cols} 列：选中项标签应为 accent 色`);
+
+    const joined = follow.grid.map((row) => row.map((cell) => cell?.ch ?? "").join(""));
+    const selectedIndex = joined.findIndex((line) => line.includes("›"));
+    const plainIndex = joined.findIndex((line, index) => index !== selectedIndex && line.includes("方案 2"));
+    assert.ok(plainIndex >= 0, `${cols} 列：应有非选中项在窗口内`);
+    assert.ok(!follow.grid[plainIndex]?.some((cell) => cell?.fg === DARK.accent), `${cols} 列：非选中项不得染 accent`);
+  }
+});
+
+test("ask 场景：Enter 提交后 settled=方案 7、屏面回基线无残行", () => {
+  for (const cols of ASK_WIDTHS) {
+    const scene = captureAskScene({
+      cols,
+      steps: [{ label: "follow-again", keys: ASK_DOWN_KEYS }, { label: "enter-clean", keys: ["\r"] }],
+    });
+    assert.equal(scene.settled, "方案 7", `${cols} 列：Enter 应提交选中项`);
+    const clean = askFrameOf(scene, "enter-clean");
+    assert.deepEqual(
+      clean.lines.map((line) => line.trimEnd()),
+      scene.baseline.map((line) => line.trimEnd()),
+      `${cols} 列：提交后屏面应回基线（无残行）`,
+    );
+    const text = clean.lines.join("\n");
+    for (const residue of ["╭", "╰", "agent-team 提问", "方案 "]) {
+      assert.ok(!text.includes(residue), `${cols} 列：清理帧不得残留「${residue}」`);
+    }
+  }
+});
+
+test("ask 场景：Esc 取消后 settled=undefined、屏面回基线无残行", () => {
+  for (const cols of ASK_WIDTHS) {
+    const scene = captureAskScene({ cols, steps: [{ label: "esc-clean", keys: ["\x1b"] }] });
+    assert.equal(scene.settled, undefined, `${cols} 列：Esc 不应产生答案`);
+    const clean = askFrameOf(scene, "esc-clean");
+    assert.deepEqual(
+      clean.lines.map((line) => line.trimEnd()),
+      scene.baseline.map((line) => line.trimEnd()),
+      `${cols} 列：取消后屏面应回基线（无残行）`,
+    );
+    const text = clean.lines.join("\n");
+    for (const residue of ["╭", "╰", "agent-team 提问", "方案 "]) {
+      assert.ok(!text.includes(residue), `${cols} 列：清理帧不得残留「${residue}」`);
+    }
+  }
+});
+
+test("ask 产物：三档 walkthrough 各 5 帧且确定性（两次捕获逐字节一致）+ captureAll 不受影响", () => {
+  for (const cols of ASK_WIDTHS) {
+    const first = captureAskWalkthrough({ cols });
+    const second = captureAskWalkthrough({ cols });
+    assert.deepEqual(
+      first.frames.map((frame) => frame.label),
+      ["initial", "bottom", "follow", "enter-clean", "esc-clean"],
+      `${cols} 列：canonical 帧清单`,
+    );
+    assert.equal(first.settledEnter, "方案 7", `${cols} 列：walkthrough 的 Enter 答案`);
+    assert.equal(first.settledEsc, undefined, `${cols} 列：walkthrough 的 Esc 无答案`);
+    assert.equal(second.frames.length, first.frames.length);
+    first.frames.forEach((frame, index) => {
+      assert.equal(
+        frame.lines.join("\n"),
+        second.frames[index]?.lines.join("\n"),
+        `${cols} 列 ${frame.label} 帧：两次捕获应逐字节一致`,
+      );
+    });
+  }
+  assert.deepEqual(
+    captureAll().map((shot) => shot.name),
+    ["agent-team-viewer.svg", "pwr-viewer.svg", "agent-team-widget.svg"],
+    "captureAll 名单不变（ask 帧不进 docs/assets）",
+  );
 });
