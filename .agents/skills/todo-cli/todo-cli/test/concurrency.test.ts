@@ -52,6 +52,7 @@ function seedEntries(): TodoEntry[] {
   for (let i = 0; i < SEED_ENTRIES; i += 1) {
     entries.push({
       id: i + 1,
+      globalId: i + 1,
       text: `种子条目 ${String(i).padStart(4, "0")} 供并发测试使用`,
       status: "open",
       branch: null,
@@ -134,7 +135,7 @@ function sceneTest(name: string, options: { timeout: number }, body: (t: TestCon
   test(name, options, async (t) => withFailureScene(name, () => body(t)));
 }
 
-sceneTest("并发写：6 个真实子进程同时 add --file general，6 条全落、id 唯一、无锁残留", { timeout: 180_000 }, async (t) => {
+sceneTest("并发写：6 个真实子进程同时 add --file general，6 条全落、id 与 globalId 均唯一、无锁残留", { timeout: 180_000 }, async (t) => {
   const root = makeFixture();
   activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
@@ -155,8 +156,60 @@ sceneTest("并发写：6 个真实子进程同时 add --file general，6 条全�
   }
   const ids = new Set(data.entries.map((entry) => entry.id));
   assert.equal(ids.size, data.entries.length, "并发分配的 id 不得重复");
+  const globalIds = data.entries.map((entry) => entry.globalId);
+  assert.equal(new Set(globalIds).size, data.entries.length, "并发分配的 globalId 不得重复（同文件并发也必须不重号）");
+  assert.ok(
+    globalIds.every((g) => typeof g === "number" && Number.isInteger(g) && g >= 1),
+    "落盘条目恒有正整数 globalId",
+  );
   assert.equal(data.entries.length, SEED_ENTRIES + 6, "6 条全部落盘（丢更新即失败）");
-  assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件");
+  assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件（含 id.lock）");
+});
+
+sceneTest("并发跨文件 add：3+3 真实子进程同时打两个文件，globalId 全台账唯一只靠 id.lock + 无锁残留", { timeout: 180_000 }, async (t) => {
+  const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
+  t.after(() => removeFixture(root));
+  // 第二个台账文件（globalId 与 general 种子错开、无重号）：文件锁互不相关，唯一性只得笃 id.lock。
+  fs.writeFileSync(
+    path.join(root, "todos", "other-todo.json"),
+    serializeTodo({
+      ...emptyTodoData("other-todo"),
+      entries: [
+        { ...seedEntries()[0], id: 1, globalId: 2001, text: "乙文件种子 1" },
+        { ...seedEntries()[0], id: 2, globalId: 2002, text: "乙文件种子 2" },
+        { ...seedEntries()[0], id: 3, globalId: 2003, text: "乙文件种子 3" },
+      ],
+    }),
+  );
+
+  const texts = [
+    ...Array.from({ length: 3 }, (_, i) => [`general`, `甲文件并发条目 编号${i}`]),
+    ...Array.from({ length: 3 }, (_, i) => [`other`, `乙文件并发条目 编号${i}`]),
+  ];
+  const results = await Promise.all(texts.map(([file, text]) => runCli(root, ["add", "--file", file, text])));
+
+  for (const [i, res] of results.entries()) {
+    assert.equal(res.code, 0, `第 ${i} 个子进程 add 应 exit 0（stderr=${res.stderr.slice(0, 200)}）`);
+    assert.equal(res.stderr, "", `第 ${i} 个子进程 stderr 应恒空`);
+  }
+
+  const readAll = () =>
+    ["general-todo", "other-todo"].flatMap((name) => {
+      const parsed = parseTodoJson(fs.readFileSync(path.join(root, "todos", `${name}.json`), "utf8"), "test");
+      assert.equal(parsed.ok, true, `${name}.json 必须可解析`);
+      return parsed.ok ? parsed.data.entries.map((entry) => [name, entry]) : [];
+    });
+  const all = readAll();
+  for (const [file, text] of texts) {
+    const match = all.filter(([name, entry]) => name === `${file}-todo` && entry.text === text);
+    assert.equal(match.length, 1, `条目必须且只出现一次：${text}（实际 ${match.length}）`);
+  }
+  const globalIds = all.map(([, entry]) => entry.globalId);
+  assert.equal(new Set(globalIds).size, globalIds.length, "跨文件并发下 globalId 必须两两互异（文件锁不互斥，只靠 id.lock）");
+  const counter = Number(fs.readFileSync(path.join(root, "todos", ".todo-cli", "next-id"), "utf8").trim());
+  assert.equal(counter, Math.max(...globalIds) + 1, "计数器 = 全台账 max(globalId)+1（烧号即断）");
+  assert.deepEqual(leftoverLocks(root), [], "收尾不得残留锁文件（含 id.lock）");
 });
 
 sceneTest("并发 dep add：2 个真实子进程同时给不同条目加依赖，两条都在（无丢更新）+ 无锁残留", { timeout: 120_000 }, async (t) => {

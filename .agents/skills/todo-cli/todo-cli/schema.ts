@@ -13,26 +13,34 @@
  *   - 时间戳（含 v2 的 alignedAt）ISO 字符串或 null（迁移的历史条目为 null，不回填假数据）。
  *
  * schema v2（todo-cli-todo:11 对齐门）：状态五态 open/aligning/aligned/processing/done，
- * 条目新增 alignedAt。**读 v1 兼容、写出一律 v2**：parseTodoJson 接受 version 1 或 2 并在
- * 内存里归一成 v2（v1 的 alignedAt 视为 null）；任一写操作重写整文件 => 该文件一次性升级，
- * 不做批量回填。旧版 CLI 读 v2 文件会明确报错（回滚路径见 ADR-0003）。
+ * 条目新增 alignedAt。历史兼容口径（当时读 v1 写 v2，现由 v4 段落统一接管）：parseTodoJson
+ * 读入时在内存里归一成当前版本（v1 的 alignedAt 视为 null）；任一写操作重写整文件 =>
+ * 该文件一次性升级，不做批量回填。旧版 CLI 读新版文件会明确报错（回滚路径见 ADR-0003）。
  *
  * schema v3（todo-cli-todo:10 依赖门）：条目新增 dependsOn（规范引用 `文件基名#id`，可跨文件，
- * 保序去重由写入方保证）。同一套兼容口径：读 1|2|3 归一成 3（旧版缺 dependsOn 视为 []），
- * 写出一律 3；v1/v2 文件被写一次即整体升版。schema 层不校验引用存在性/环——那是
- * depends.ts 的职责（这里只管字段形态）。
+ * 保序去重由写入方保证）。兼容口径（现由 v4 段落统一接管）：读 1|2|3 归一成当前版本
+ * （旧版缺 dependsOn 视为 []）；v1/v2 文件被写一次即整体升版。schema 层不校验引用存在性/环——
+ * 那是 depends.ts 的职责（这里只管字段形态）。
+ *
+ * schema v4（todo-cli-todo:16 统一全局 id）：条目新增 globalId（全台账唯一、永不回收的统一主键，
+ * 计数器与写门禁在 globalid.ts/core.ts）。兼容口径：读 1|2|3|4 都归一成 4，写出一律 4；
+ * v4 条目的 globalId 是必填正整数（缺失/非正整数即结构损坏，fail-closed）；v1-v3 缺字段归一为
+ * null（未迁移的瞬态形态），出现则须为正整数（合并产物/手写混入也保全）。null 只在「读旧版文件」
+ * 路径产生，落盘路径受 core 的 GLOBAL_ID_PENDING 门禁保护，永远写不出 v4+null。
  */
 
 export const ENTRY_STATUSES = ["open", "aligning", "aligned", "processing", "done"] as const;
 export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 
-/** 持久 schema 当前版本：写出一律此版本；读兼容 1 / 2。 */
-export type TodoFileVersion = 1 | 2 | 3;
+/** 持久 schema 当前版本：写出一律此版本；读兼容 1 / 2 / 3。 */
+export type TodoFileVersion = 1 | 2 | 3 | 4;
 
-/** 单条待办：schema v3 的完整字段集（原生字段，无 rawText）。 */
+/** 单条待办：schema v4 的完整字段集（原生字段，无 rawText）。 */
 export interface TodoEntry {
   /** 文件内稳定 id（max+1 分配，永不复用/重排）。 */
   id: number;
+  /** 全台账唯一、永不回收的全局主键（v4 必填正整数；读 v1-v3 未迁移条目为 null）。 */
+  globalId: number | null;
   /** 纯需求描述，不含标注括号内容。 */
   text: string;
   status: EntryStatus;
@@ -53,7 +61,7 @@ export interface TodoEntry {
 
 /** 单个 todo 文件的持久形态（`todos/<名>.json` 的 JSON 根对象）。 */
 export interface TodoFileData {
-  version: 3;
+  version: 4;
   /** md 时代文件头标题（迁移保真；新建文件 = `<名> TODO`）。 */
   title: string;
   entries: TodoEntry[];
@@ -102,9 +110,16 @@ function validateEntry(value: unknown, label: string, version: TodoFileVersion):
     if (stringOrNull(value[field]) === undefined) return `条目 ${field} 必须是字符串或 null`;
   }
   // v3 的 dependsOn 是必填原生字段；v1/v2 无此字段（读入时归一为 []）。
-  if (version === 3 && stringArray(value.dependsOn) === undefined) return "条目 dependsOn 必须是字符串数组";
+  if (version >= 3 && stringArray(value.dependsOn) === undefined) return "条目 dependsOn 必须是字符串数组";
   // v2 的 alignedAt 是必填原生字段；v1 无此字段（读入时归一为 null）。
   if (version >= 2 && stringOrNull(value.alignedAt) === undefined) return "条目 alignedAt 必须是字符串或 null";
+  // v4 的 globalId 是必填正整数（结构损坏先例：v3 缺 dependsOn 即拒绝）；
+  // v1-v3 可选，但出现就须为正整数（保合并产物/手写混入）。
+  if (value.globalId === undefined) {
+    if (version >= 4) return "条目 globalId 必须是正整数";
+  } else if (typeof value.globalId !== "number" || !Number.isInteger(value.globalId) || value.globalId < 1) {
+    return "条目 globalId 必须是正整数";
+  }
   if (label === "") return "缺少文件标签";
   return null;
 }
@@ -123,7 +138,7 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
     return badJson(label, conflict);
   }
   if (!isRecord(parsed)) return badJson(label, false);
-  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) return badSchema(label, "version 必须是 1、2 或 3");
+  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) return badSchema(label, "version 必须是 1、2、3 或 4");
   if (typeof parsed.title !== "string") return badSchema(label, "title 必须是字符串");
   if (!Array.isArray(parsed.entries)) return badSchema(label, "entries 必须是数组");
   const version: TodoFileVersion = parsed.version;
@@ -134,11 +149,13 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
     const record = raw as Record<string, unknown>;
     entries.push({
       id: record.id as number,
+      // v4 保证是正整数；v1-v3 出现即正整数，缺失归一 null（未迁移的瞬态）。
+      globalId: typeof record.globalId === "number" ? record.globalId : null,
       text: record.text as string,
       status: record.status as EntryStatus,
       branch: stringOrNull(record.branch) ?? null,
       tags: stringArray(record.tags) ?? [],
-      dependsOn: version === 3 ? (stringArray(record.dependsOn) ?? []) : [],
+      dependsOn: version >= 3 ? (stringArray(record.dependsOn) ?? []) : [],
       notes: stringArray(record.notes) ?? [],
       createdAt: stringOrNull(record.createdAt) ?? null,
       claimedAt: stringOrNull(record.claimedAt) ?? null,
@@ -146,7 +163,7 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
       alignedAt: version >= 2 ? (stringOrNull(record.alignedAt) ?? null) : null,
     });
   }
-  return { ok: true, data: { version: 3, title: parsed.title, entries } };
+  return { ok: true, data: { version: 4, title: parsed.title, entries } };
 }
 
 /** 序列化：两空格缩进 + LF + 尾换行（git 可 diff 的规范形态）。 */
@@ -163,9 +180,9 @@ export function nextId(entries: TodoEntry[]): number {
   return max + 1;
 }
 
-/** 新建 todo 文件的空数据（title 沿旧 add 的 `# <名> TODO` 约定；v3 写下）。 */
+/** 新建 todo 文件的空数据（title 沿旧 add 的 `# <名> TODO` 约定；v4 写下）。 */
 export function emptyTodoData(name: string): TodoFileData {
-  return { version: 3, title: `${name} TODO`, entries: [] };
+  return { version: 4, title: `${name} TODO`, entries: [] };
 }
 
 /**

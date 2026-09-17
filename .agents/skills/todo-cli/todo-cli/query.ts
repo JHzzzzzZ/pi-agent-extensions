@@ -8,7 +8,8 @@
  * 人读行格式：`${statusMark} ${file}#${id}  ${text}`（file 为去 `.json` 的归属名，
  * id 为文件内稳定编号，id 与文本间两空格）；标记五态见 STATUS_MARKS；阻塞条目行尾追加
  * `（阻塞：等待 <引用清单>）`（todo-cli-todo:10）——阻塞与否由 core 算好（blockedBy 非空），
- * query 层不查台账、不解析依赖图。
+ * query 层不查台账、不解析依赖图。globalId（todo-cli-todo:16）只进 `--json` 输出形状，
+ * 不进人读行（双轨：`文件#id` 是人类契约、globalId 是机器判定身份）。
  */
 
 import type { EntryStatus } from "./schema.ts";
@@ -19,6 +20,8 @@ export interface QueryEntry {
   file: string;
   /** 文件内稳定 id。 */
   id: number;
+  /** 全台账唯一主键（v4 落盘恒为正整数；读 v1-v3 未迁移条目为 null）。 */
+  globalId: number | null;
   status: EntryStatus;
   /** 纯需求描述（不含标注；标注在 notes，不参与 --text/--match 匹配）。 */
   text: string;
