@@ -13,6 +13,7 @@
  */
 
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -22,6 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import { emptyTodoData, parseTodoJson, serializeTodo } from "../schema.ts";
 import type { TodoEntry, TodoFileData } from "../schema.ts";
+import { activeSceneSink, withFailureScene } from "./failure-scene.ts";
 
 /** 工具目录（入口 + 实现同居）：测试文件的上一级。 */
 const TOOL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -115,14 +117,24 @@ function collect(child: import("node:child_process").ChildProcess): { stdout: st
 
 function runCli(root: string, args: string[], timeoutMs = 60_000): Promise<CliResult> {
   return new Promise((resolve) => {
+    const sink = activeSceneSink();
     const child = spawn(process.execPath, [cliPath(root), "--root", root, ...args], {
       cwd: root,
       env: cleanEnv(),
       timeout: timeoutMs,
     });
+    const childId = sink?.spawn("todo-cli", { pid: child.pid, args });
     const captured = collect(child);
-    child.on("error", () => resolve({ code: -1, signal: null, ...captured }));
-    child.on("close", (code, signal) => resolve({ code, signal, ...captured }));
+    child.on("error", (err) => {
+      if (sink !== null && childId !== undefined) sink.fail(childId, String(err));
+      resolve({ code: -1, signal: null, ...captured });
+    });
+    child.on("close", (code, signal) => {
+      if (sink !== null && childId !== undefined) {
+        sink.close(childId, { code, signal, stdout: captured.stdout, stderr: captured.stderr });
+      }
+      resolve({ code, signal, ...captured });
+    });
   });
 }
 
@@ -167,8 +179,14 @@ function withEntry(data: TodoFileData, text: string): TodoFileData {
   };
 }
 
-test("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁由 stale 抢占自愈；过期 tmp 被清理；末次 add 与 list 一致", { timeout: 180_000 }, async (t) => {
+/** 用例包装：失败时写现场；通过路径零写盘零输出（activeSceneSink 为 null 时全短路）。 */
+function sceneTest(name: string, options: { timeout: number }, body: (t: TestContext) => Promise<void>): void {
+  test(name, options, async (t) => withFailureScene(name, () => body(t)));
+}
+
+sceneTest("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁由 stale 抢占自愈；过期 tmp 被清理；末次 add 与 list 一致", { timeout: 180_000 }, async (t) => {
   const root = makeFixture();
+  activeSceneSink()?.note("fixture root", root);
   t.after(() => removeFixture(root));
 
   for (let round = 0; round < 5; round += 1) {
