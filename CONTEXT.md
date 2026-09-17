@@ -7,7 +7,7 @@ Pi 编码助手的扩展工作区：12 个零构建 TypeScript ESM 插件（pwr 
 ### todos 工作流（todo-cli 域）
 
 **条目（Entry）**:
-`todos/<名>.json` 里的一条待办，schema v3 原生字段 = id / text / status / branch / tags / dependsOn / notes / createdAt / claimedAt / completedAt / alignedAt（读兼容 v1/v2，写出一律 v3）。
+`todos/<名>.json` 里的一条待办，schema v3 原生字段 = id / text / status / branch / tags / dependsOn / notes / createdAt / claimedAt / completedAt / alignedAt + 可选 priority（1-10，10 最高，缺省 5；全版本可选软字段，见 ADR-0008）（读兼容 v1/v2，写出一律 v3）。
 _Avoid_: todo 行、任务、item
 
 **顶层条目**:

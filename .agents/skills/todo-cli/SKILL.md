@@ -34,8 +34,8 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs <子命令> [参数]
 ```bash
 todo.mjs summary [--json]                                     # 按文件汇总 open/aligning/aligned/processing/done
 todo.mjs list [--status open|aligning|aligned|processing|done] [--file <名>]   # 状态/文件过滤
-todo.mjs list [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
-todo.mjs add --file <名> "需求描述" [--tag 词1,词2] [--dep 文件#id,...] [--force]   # 追加 open 条目（跨文件查重；--dep 登记即声明依赖）
+todo.mjs list [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--sort priority] [--json]
+todo.mjs add --file <名> "需求描述" [--tag 词1,词2] [--dep 文件#id,...] [--priority 1-10] [--force]   # 追加 open 条目（跨文件查重；--dep 登记即声明依赖；--priority 缺省 5）
 todo.mjs claim --file <名> --match "子串" [--branch feat/x]    # 两段式领取：open→aligning / aligned→processing
 todo.mjs align --file <名> --match "子串" [--note "说明"]       # 对齐确认：校验对齐文档，aligning→aligned
 todo.mjs dep add|remove --file <名> --match "子串" --on 文件#id,...   # 增删直接依赖（add 写前校验悬空/自引用/环）
@@ -59,6 +59,15 @@ todo.mjs --help
 
 条目可声明 `dependsOn`（规范引用 `文件基名#id`，可跨文件；输入接受 `general#11` / `general-todo#11` 等同 `--file` 口径的写法，存储统一归一）。依赖未 `done`（含指向不存在条目的悬空引用）时，第二次 `claim`（`aligned → processing`）报 `DEP_BLOCKED` 并逐条列出等待对象与状态，条目留在 `aligned`；首次 `claim` 与 `align` 不受此门约束。`add --dep` / `dep add` 在写入前拒绝悬空目标、自引用与成环（`lint` 另做全量图扫描兑合并产物）；`list` 对阻塞条目行尾追加 `（阻塞：等待 a#1, b#2）`，`list --json` 带 `dependsOn` 与 `blockedBy`（非空即阻塞），`triage` 在 aligned 段列明细，`complete` 输出直接依赖者提示。决策见 ADR-0005。
 
+### 优先级（priority）
+
+条目可选软字段 `priority`（整数 1-10，**10 最高**，缺省 5），只影响展示/排序/人工排期：
+
+- `add --priority 1-10` 写入（缺省 5；非整数/越界/裸 `--priority` 报 `BAD_PRIORITY` + exit 1 **不写盘**；前导零 `05` 按数值 5 接受）；成功日志不回显优先级。
+- `list` 人读行在 `文件#id` 两空格后显示 `[pN]`（不零填充，如 `[p7]` / `[p10]`）；`list --sort priority` 按 `priority 降序 → file 升序 → id 升序` 排（同值桶保持默认序）；`--sort` 只支持 `priority`，其它值/空串报 `BAD_FILTER`；`list --json` 带 `priority`。
+- **全版本可选软字段**：旧文件缺字段读时兜底 5、读命令不写盘；任一写操作重写文件时顺带补 5（不 bump 版本位，v3→v4 归 globalId 姊妹单）。字段出现但非法（`"高"`/`3.5`/`0`/`11`/`null`）报 `BAD_SCHEMA`（fail-closed，不静默兜底）。
+- **不进**状态机、依赖门、查重与 `summary`/`triage` 输出；无 `priority set`（改值走 `reopen` → 重登记）。决策见 ADR-0008。
+
 对齐文档固定派生 `todos/align/<文件基名>#<id>.md`（无自由路径参数），需四小节 `## 意图` / `## 范围` / `## 验收标准` / `## 人工确认` 各带非空正文，且正文出现 `<名>#<id>` 标记；`claim` 只打印路径与必填小节，**不代建文件**。缺失报 `ALIGN_DOC_MISSING`，结构不全报 `ALIGN_DOC_INCOMPLETE`。从 `aligning`/`aligned` 用 `complete` 收口**必须带 `--note`**（取消/搁置留原因）。模板单源在 `docs/tools/todo-cli.md`。
 
 - `--file` 四种写法等价：`general` / `general-todo` / `general-todo.json` / `general-todo.md`；只允许 `todos/` 下一层文件名（穿越直接拒绝）。
@@ -77,4 +86,4 @@ todo.mjs --help
 
 ## 设计权威
 
-命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）、`docs/adr/0007-todo-reopen.md`（回退与归档决策）。
+命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）、`docs/adr/0007-todo-reopen.md`（回退与归档决策）、`docs/adr/0008-todo-priority-soft-field.md`（优先级软字段决策）。
