@@ -119,6 +119,7 @@ argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repo
   - **负载实验结论**：8 写者真实子进程持续 add(+list)（临时仓 `--root`，绝不指向主仓 `todos/`）+ 10 轮 `npm run test:todo` → 10×101 全绿、零现场文件（test:todo 的短促并发形状未复现）；但同负载写者侧复现 EPERM：约 2–3 千条台账 8 写者并发写失败率 2%–23%（持续写压 + 大台账），纯写负载（无并发读）亦复现，≤800 条台账 60s/787 写零失败。判读要点：现场「子进程输出」节的 `errno -4048 / syscall rename / 目标路径` = rename 争用而非锁失效（「备注」节剩余锁快照显示锁被正常持有/等待）；失败 fail-closed（原子写不留半态、条目未落盘、复跑即可），与数据正确性无关。维持观察：test:todo 再遇并发失败先读失败消息尾行的现场路径。
 - **`--match` 是子串不是全文**：多条包含该子串报歧义；改写条目文本后旧 match 失效；notes 内容匹配不到（设计如此，防误伤）。
 - **对齐文档只校验结构**：小节标题 + 任意非空正文即通过（模板里的提示行也算正文）；`claim` 不代建文件，未写文档就跑 `align` 必报 `ALIGN_DOC_MISSING`。
+- **worktree 里 `lint` 会假失败**：台账（`todos/*.json`）只住在主仓库根，worktree 里那份是检出副本——#16 落地后未迁移的副本会让 `todo.mjs lint` 报满屏「globalId 缺失（未迁移）」并 exit 1，这不是代码问题。lint 门在台账所在地（主仓库根）跑；worktree 内的门用 `npm run test:todo`（+ 根 `test:contract`/`test:smoke`）。
 - **v4 升版一次性生效**：迁移后任一写操作重写整文件 ⇒ 该文件整体变 v4（`version: 4` + 每条 `globalId` 正整数，diff 一次性）；未迁移的 v1-v3 文件（`globalId: null`）仍可读、写被 `GLOBAL_ID_PENDING` 挡下；旧版 CLI 读到 v4 直接报错，回滚走 git 历史。
 - **锁残留与 stale 抢占**：进程挂起超 60s 后其锁可被抢占（恢复后写失败，重跑即可）；Windows SIGKILL 不跑 exit 钩子、锁文件残留，pid 已死即被下一次写抢占，无需人工清理。
 - **时间戳 null 的含义**：迁移前历史条目三时间戳为 null（`--claimed-since` 对 null 不命中）；历史 `processing` 视为「已开工」，不要求补对齐文档。误标为在途或推翻对齐结论时用 `reopen` 退回 open（ADR-0007）——不要手工编辑 JSON，也不要用 migrate 重建台账（会重排 id）。
