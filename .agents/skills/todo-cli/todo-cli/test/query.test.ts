@@ -4,12 +4,13 @@
  *
  * 边界：零 IO 纯函数；QueryEntry 由测试内联构造（字段口径见 schema.ts）；
  * 阻塞是 core 算好的派生字段（query 不查台账、不解析依赖图）。
+ * priority（todo-cli-todo:15）是人读行标记与 `--sort priority` 的排序键。
  */
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyEntryFilter, parseFilterOptions, serializeEntries, sortQueryEntries, statusMark } from "../query.ts";
+import { applyEntryFilter, parseFilterOptions, serializeEntries, sortByPriority, sortQueryEntries, statusMark } from "../query.ts";
 import type { QueryEntry } from "../query.ts";
 
 function entry(overrides: Partial<QueryEntry>): QueryEntry {
@@ -20,6 +21,7 @@ function entry(overrides: Partial<QueryEntry>): QueryEntry {
     text: "一条需求",
     branch: null,
     tags: [],
+    priority: 5,
     dependsOn: [],
     blockedBy: [],
     createdAt: null,
@@ -77,12 +79,12 @@ test("sortQueryEntries：file 升序 → id 升序，返回新数组", () => {
 test("serializeEntries：人读行 `${mark} ${file}#${id}  ${text}`；--json 带 alignedAt 单行整体输出", () => {
   const lines = serializeEntries(FIXTURE, { json: false });
   assert.deepEqual(lines, [
-    "[ ] general-todo#1  未领取条目",
-    "[?] general-todo#2  对齐中条目",
-    "[>] general-todo#3  已对齐条目",
-    "[~] general-todo#4  进行中条目",
-    "[x] general-todo#5  完成条目",
-    "[ ] zzz-todo#6  另一文件条目",
+    "[ ] general-todo#1  [p5] 未领取条目",
+    "[?] general-todo#2  [p5] 对齐中条目",
+    "[>] general-todo#3  [p5] 已对齐条目",
+    "[~] general-todo#4  [p5] 进行中条目",
+    "[x] general-todo#5  [p5] 完成条目",
+    "[ ] zzz-todo#6  [p5] 另一文件条目",
   ]);
   const json = serializeEntries(FIXTURE.slice(2, 3), { json: true });
   assert.equal(json.length, 1);
@@ -107,9 +109,9 @@ test("blocked 条目：人读行尾追加阻塞标记，非阻塞行字节不变
     entry({ id: 3, status: "open", text: "无依赖" }),
   ];
   assert.deepEqual(serializeEntries(fixture, { json: false }), [
-    "[~] general-todo#1  前提",
-    "[>] general-todo#2  被阻塞条目 （阻塞：等待 general-todo#1, zzz-todo#9）",
-    "[ ] general-todo#3  无依赖",
+    "[~] general-todo#1  [p5] 前提",
+    "[>] general-todo#2  [p5] 被阻塞条目 （阻塞：等待 general-todo#1, zzz-todo#9）",
+    "[ ] general-todo#3  [p5] 无依赖",
   ]);
 
   const rows = JSON.parse(serializeEntries(fixture, { json: true })[0]);
@@ -135,4 +137,70 @@ test("parseFilterOptions：--claimed-since 校验格式与真实日期；其余 
   }
   assert.deepEqual(parseFilterOptions({}).filter, {});
   assert.deepEqual(parseFilterOptions({ tag: "" }).filter, {}, "空串 flag 视作未提供");
+});
+
+test("sortByPriority：priority 降序 → file 升序 → 文件内 id 升序；乱序输入同结果、返回新数组", () => {
+  const fixture: QueryEntry[] = [
+    entry({ file: "b-todo", id: 1, priority: 9 }),
+    entry({ file: "a-todo", id: 2, priority: 9 }),
+    entry({ file: "a-todo", id: 1, priority: 5 }),
+    entry({ file: "a-todo", id: 3, priority: 9 }),
+    entry({ file: "b-todo", id: 2, priority: 10 }),
+    entry({ file: "b-todo", id: 3, priority: 1 }),
+  ];
+  const refs = (rows: QueryEntry[]) => rows.map((row) => `${row.file}#${row.id}`);
+  const expected = ["b-todo#2", "a-todo#2", "a-todo#3", "b-todo#1", "a-todo#1", "b-todo#3"];
+  assert.deepEqual(refs(sortByPriority(fixture)), expected);
+  assert.deepEqual(refs(sortByPriority([...fixture].reverse())), expected, "与输入序无关");
+  assert.notEqual(sortByPriority(fixture), fixture, "返回新数组");
+});
+
+test("serializeEntries：sort: \"priority\" 时行序 = (priority desc, file asc, id asc)；不传 sort 保持默认序", () => {
+  const fixture: QueryEntry[] = [
+    entry({ file: "b-todo", id: 1, priority: 9 }),
+    entry({ file: "a-todo", id: 2, priority: 9 }),
+    entry({ file: "a-todo", id: 1, priority: 5 }),
+    entry({ file: "b-todo", id: 2, priority: 10 }),
+  ];
+  const refOf = (line: string) => /(\S+#\d+)/.exec(line)?.[1];
+  assert.deepEqual(serializeEntries(fixture, { json: false, sort: "priority" }).map(refOf), [
+    "b-todo#2",
+    "a-todo#2",
+    "b-todo#1",
+    "a-todo#1",
+  ]);
+  assert.deepEqual(serializeEntries(fixture, { json: false }).map(refOf), [
+    "a-todo#1",
+    "a-todo#2",
+    "b-todo#1",
+    "b-todo#2",
+  ], "不传 sort 时默认序（file → id）不变");
+});
+
+test("serializeEntries：人读行在 file#id 后插 [pN]（不零填充），阻塞后缀原样", () => {
+  const fixture: QueryEntry[] = [
+    entry({ id: 1, status: "done", text: "完成一条", priority: 10, completedAt: "2026-09-11T00:00:00.000Z" }),
+    entry({ id: 2, status: "aligned", text: "被阻塞条目", priority: 7, dependsOn: ["general-todo#1"], blockedBy: ["general-todo#1"] }),
+  ];
+  assert.deepEqual(serializeEntries(fixture, { json: false }), [
+    "[x] general-todo#1  [p10] 完成一条",
+    "[>] general-todo#2  [p7] 被阻塞条目 （阻塞：等待 general-todo#1）",
+  ]);
+});
+
+test("serializeEntries：--json 行对象带 priority（取值断言，不锁 key 序）", () => {
+  const rows = JSON.parse(serializeEntries([entry({ id: 3, priority: 8 })], { json: true })[0]);
+  assert.equal(rows[0].priority, 8);
+});
+
+test("parseFilterOptions：--sort 只接受 priority；其它值与空串 → BAD_FILTER 静态消息", () => {
+  const ok = parseFilterOptions({ sort: "priority" });
+  assert.equal(ok.ok, true);
+  if (ok.ok) assert.equal(ok.sort, "priority");
+  const bad = { ok: false, code: "BAD_FILTER", message: "--sort 只支持 priority" };
+  assert.deepEqual(parseFilterOptions({ sort: "foo" }), bad);
+  assert.deepEqual(parseFilterOptions({ sort: "" }), bad, "空串 flag 不静默默认");
+  const none = parseFilterOptions({});
+  assert.equal(none.ok, true);
+  if (none.ok) assert.equal(none.sort, undefined);
 });

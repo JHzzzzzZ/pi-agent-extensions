@@ -5,7 +5,8 @@
  * 边界：schema 是零 IO 的纯函数层（解析/校验/序列化/nextId），本文件不碰文件系统；
  * 落盘与锁的边界行为在 lock.test.ts / 根 test/todo-cli.test.ts 覆盖。
  * 本文件锁定的核心兼容契约：读 v1/v2/v3 都归一成 v3，写出一律 v3；
- * dependsOn 自 v3 起是必填原生字段，v1/v2 缺字段视作空数组。
+ * dependsOn 自 v3 起是必填原生字段，v1/v2 缺字段视作空数组；
+ * priority 是全版本可选软字段（todo-cli-todo:15）：缺失读时兜底 5，出现但非法 fail-closed。
  */
 
 import test from "node:test";
@@ -24,6 +25,7 @@ const LATEST = {
       status: "open",
       branch: null,
       tags: [],
+      priority: 5,
       dependsOn: [],
       notes: [],
       createdAt: "2026-09-12T00:00:00.000Z",
@@ -37,6 +39,7 @@ const LATEST = {
       status: "aligning",
       branch: "feat/x",
       tags: ["性能"],
+      priority: 5,
       dependsOn: ["zzz-todo#1"],
       notes: ["2026-09-11 备注一", "备注二"],
       createdAt: null,
@@ -50,6 +53,7 @@ const LATEST = {
       status: "aligned",
       branch: "feat/x",
       tags: [],
+      priority: 5,
       dependsOn: [],
       notes: [],
       createdAt: null,
@@ -63,6 +67,7 @@ const LATEST = {
       status: "processing",
       branch: "feat/x",
       tags: [],
+      priority: 5,
       dependsOn: [],
       notes: [],
       createdAt: null,
@@ -76,6 +81,7 @@ const LATEST = {
       status: "done",
       branch: "feat/x",
       tags: [],
+      priority: 5,
       dependsOn: ["general-todo#1", "zzz-todo#4"],
       notes: ["feat/x：做完"],
       createdAt: null,
@@ -174,6 +180,80 @@ test("parseTodoJson：v3 文件原样通过（五态 + alignedAt + dependsOn 保
   assert.equal(parsed.data.entries[0].alignedAt, null);
   assert.deepEqual(parsed.data.entries[1].dependsOn, ["zzz-todo#1"], "依赖引用原样保留（schema 层不校验存在性）");
   assert.deepEqual(parsed.data.entries[4].dependsOn, ["general-todo#1", "zzz-todo#4"], "引用顺序保序");
+});
+
+/** 无 priority 字段的 v3 条目（模拟 #15 之前的存量文件形态，供兜底/往返用例）。 */
+function noPriorityEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    text: "存量条目",
+    status: "open",
+    branch: null,
+    tags: [],
+    dependsOn: [],
+    notes: [],
+    createdAt: null,
+    claimedAt: null,
+    completedAt: null,
+    alignedAt: null,
+    ...overrides,
+  };
+}
+
+test("parseTodoJson：priority 缺失（v1/v2/v3）读出兜底 5，version 归一 3 不变；v1 带合法 priority 也保留", () => {
+  const v2 = { version: 2, title: "t", entries: [noPriorityEntry({ alignedAt: null })] };
+  const v3 = { version: 3, title: "t", entries: [noPriorityEntry()] };
+  const cases = [V1, v2, v3];
+  for (const input of cases) {
+    const parsed = parseTodoJson(JSON.stringify(input), "todos/general-todo.json");
+    assert.equal(parsed.ok, true, `v${input.version} 应可读`);
+    if (!parsed.ok) continue;
+    assert.equal(parsed.data.version, 3, `v${input.version} 读入即归一为 v3`);
+    assert.ok(parsed.data.entries.every((entry) => entry.priority === 5), `v${input.version} 缺失 priority → 兜底 5`);
+  }
+
+  const v1WithPriority = { version: 1, title: "t", entries: [{ ...noPriorityEntry(), priority: 7 }] };
+  const parsed = parseTodoJson(JSON.stringify(v1WithPriority), "todos/general-todo.json");
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) assert.equal(parsed.data.entries[0].priority, 7, "全版本可选：v1 里的合法 priority 原样保留");
+});
+
+test("parseTodoJson：priority 出现且合法（1 / 5 / 10 边界）原样保留，不钳制", () => {
+  const input = {
+    version: 3,
+    title: "t",
+    entries: [
+      noPriorityEntry({ id: 1, priority: 1 }),
+      noPriorityEntry({ id: 2, priority: 5 }),
+      noPriorityEntry({ id: 3, priority: 10 }),
+    ],
+  };
+  const parsed = parseTodoJson(JSON.stringify(input), "todos/a-todo.json");
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.deepEqual(parsed.data.entries.map((entry) => entry.priority), [1, 5, 10]);
+});
+
+test("parseTodoJson：priority 出现但非法（字符串/小数/越界/null/布尔）→ BAD_SCHEMA，不静默兜底", () => {
+  for (const bad of ["高", 3.5, 0, 11, null, true]) {
+    const input = { version: 3, title: "t", entries: [noPriorityEntry({ priority: bad })] };
+    const parsed = parseTodoJson(JSON.stringify(input), "todos/a-todo.json");
+    assert.equal(parsed.ok, false, `应拒绝 priority=${JSON.stringify(bad)}`);
+    if (parsed.ok) continue;
+    assert.equal(parsed.code, "BAD_SCHEMA");
+    assert.match(parsed.message, /条目 priority 必须是 1-10 的整数/);
+  }
+});
+
+test("serializeTodo：parse(无 priority 的 JSON) 后每条自动补 priority: 5（写路径顺带落字段）", () => {
+  const parsed = parseTodoJson(JSON.stringify({ version: 3, title: "t", entries: [noPriorityEntry()] }), "todos/x-todo.json");
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  const text = serializeTodo(parsed.data);
+  assert.match(text, /"priority": 5/);
+  const round = parseTodoJson(text, "todos/x-todo.json");
+  assert.equal(round.ok, true);
+  if (round.ok) assert.deepEqual(round.data.entries.map((entry) => entry.priority), [5]);
 });
 
 test("parseTodoJson：非法 JSON → BAD_JSON，合并冲突标记有专门提示", () => {

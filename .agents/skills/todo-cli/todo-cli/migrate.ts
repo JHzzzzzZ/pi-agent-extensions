@@ -20,6 +20,8 @@
  *     保真），完成组 → notes；其余括号组是正文，原地保留；
  *   - 时间戳尽力回填：node:sqlite 可读的遗留 index.db 按（文件，归一化文本）匹配；
  *     不可读/无记录 → null（绝不伪造）。
+ *   - priority（todo-cli-todo:15）：md 无优先级语法 ⇒ from-md 条目一律 5，to-md 不渲染
+ *     （往返抹平非 5 是可接受的逃生降级，记入卡片已知坑）。
  */
 
 import * as fs from "node:fs";
@@ -194,6 +196,7 @@ export function buildTodoData(name: string, doc: LegacyDoc, timestamps?: Readonl
       status: legacy.checked ? "done" : legacy.state,
       branch: legacy.checked ? null : legacy.branch,
       tags: [],
+      priority: 5,
       notes: [...legacy.annotationNotes, ...legacy.sublines],
       createdAt: seeded?.createdAt ?? null,
       claimedAt: seeded?.claimedAt ?? null,

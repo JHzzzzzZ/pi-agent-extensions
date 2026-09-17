@@ -56,6 +56,7 @@ function seedEntries(): TodoEntry[] {
       status: "open",
       branch: null,
       tags: [],
+      priority: 5,
       dependsOn: [],
       notes: [],
       createdAt: null,
@@ -157,6 +158,7 @@ function withEntry(data: TodoFileData, text: string): TodoFileData {
         status: "open",
         branch: null,
         tags: [],
+        priority: 5,
         notes: [],
         createdAt: null,
         claimedAt: null,
@@ -214,7 +216,7 @@ test("中断写：5 轮随机延时 SIGKILL 杀 add，JSON 无半态；残留锁
   const listRes = await runCli(root, ["list"]);
   assert.equal(listRes.code, 0, `list 应 exit 0（stderr=${listRes.stderr.slice(0, 200)}）`);
   const expectedLines = readData(root).entries.map(
-    (entry) => `${STATUS_MARK[entry.status]} general-todo#${entry.id}  ${entry.text}`,
+    (entry) => `${STATUS_MARK[entry.status]} general-todo#${entry.id}  [p${entry.priority}] ${entry.text}`,
   );
   const actualLines = listRes.stdout.split(/\r?\n/).filter((line) => line !== "");
   assert.deepEqual(actualLines, expectedLines, "list 输出必须与 JSON 投影逐行一致");
