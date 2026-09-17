@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流 CLI（仓库内 skill 资产）
 
-> last verified @ 6983cbc
+> last verified @ 5daf197
 
 ## 职责与边界
 
