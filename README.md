@@ -539,7 +539,7 @@ node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts   
 
 ## todo-cli
 
-`todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 撤销 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/依赖/时间戳都是原生字段；schema v3）。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。**回退通道 `reopen`**（见 [`docs/adr/0007-todo-reopen.md`](docs/adr/0007-todo-reopen.md)）：在途条目（aligning/aligned/processing）退回 `open` 池（清 branch/claimedAt/alignedAt，注记留痕，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`），从对齐阶段撤销必带 `--note`、done 拒绝、已是 open 幂等——修的是「状态说在途、事实从未开工」的虚空 processing。**依赖门**（`dependsOn` 规范引用 `文件#id`，见 [`docs/adr/0005-todo-depends-on.md`](docs/adr/0005-todo-depends-on.md)）：依赖未 done（含悬空）时第二次 `claim` fail-closed（`DEP_BLOCKED`），`list` 行尾标阻塞、`triage` 列明细；写路径拒绝悬空/自引用/环，`lint` 另做全量图扫描兑合并产物。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|depends|lock|query|migrate|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
+`todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 撤销 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/依赖/时间戳都是原生字段；schema v4）。**统一全局 id**（`globalId` 全台账唯一、永不回收的机器主键，计数器 `todos/.todo-cli/next-id` 在 `locks/id.lock` 内发号；`文件#id` 展示/引用/对齐文档命名双轨不变；存量旧台账先 `migrate global-id`，迁移前六个写命令报 `GLOBAL_ID_PENDING`；见 [`docs/adr/0008-todo-global-id.md`](docs/adr/0008-todo-global-id.md)）——让跨文件重号与合并仲裁有唯一机器身份。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。**回退通道 `reopen`**（见 [`docs/adr/0007-todo-reopen.md`](docs/adr/0007-todo-reopen.md)）：在途条目（aligning/aligned/processing）退回 `open` 池（清 branch/claimedAt/alignedAt，注记留痕，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`），从对齐阶段撤销必带 `--note`、done 拒绝、已是 open 幂等——修的是「状态说在途、事实从未开工」的虚空 processing。**依赖门**（`dependsOn` 规范引用 `文件#id`，见 [`docs/adr/0005-todo-depends-on.md`](docs/adr/0005-todo-depends-on.md)）：依赖未 done（含悬空）时第二次 `claim` fail-closed（`DEP_BLOCKED`），`list` 行尾标阻塞、`triage` 列明细；写路径拒绝悬空/自引用/环，`lint` 另做全量图扫描兑合并产物。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|depends|lock|query|migrate|globalid|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
 
 ```bash
 node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]                    # 全量盘点（open / aligning / aligned / processing / done）
@@ -552,15 +552,15 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs reopen --file <name> --match "子
 node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file <name> --match "子串" --on 文件#id,...   # 增删直接依赖（add 落盘前校验悬空/自引用/环；remove 只删已声明的）
 node .agents/skills/todo-cli/todo-cli/todo.mjs lint                                # 单向核对 pi.extensions 扩展 ↔ todo 文件 + 依赖图全量扫描（悬空/自引用/环）
 node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]                     # 只读扫描 worktree↔条目关联与遗留（条目 branch 字段 ↔ worktree 分支精确相等；aligning/aligned/processing 三段同构）
-node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md   # md→JSON 一次性迁移（带逐文件等价自检）/ JSON→md 逃生回滚
+node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]   # md→JSON 一次性迁移（带逐文件等价自检）/ JSON→md 逃生回滚 / 存量一次性取全局 id
 node .agents/skills/todo-cli/todo-cli/todo.mjs --help                              # 打印用法
 
 # 任意子命令可前置 --root <dir> 显式指定仓库根（跳过 git 发现，对非 git 目录也适用）
 # 或走包装器：sh .agents/skills/todo-cli/scripts/todo.sh <子命令> [参数]
 ```
 
-- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / dep 增删 / complete 收口）；依赖是一维直接约束（只报直接依赖，done 即解锁，不展开下游）；CLI 只保证迁移顺序、对齐文档结构与依赖图可判定，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 id 取并集手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp 与锁在 gitignore 的 `todos/.todo-cli/`）
-- **测试** — 仓库根 `npm run test:todo`（92 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / reopen 回退与归档 / 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / dep 增删 / complete 收口）；依赖是一维直接约束（只报直接依赖，done 即解锁，不展开下游）；CLI 只保证迁移顺序、对齐文档结构与依赖图可判定，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp、锁与全局 id 计数器在 gitignore 的 `todos/.todo-cli/`）
+- **测试** — 仓库根 `npm run test:todo`（107 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / 全局 id 计数器 / reopen 回退与归档 / 并发/中断真子进程 + 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
@@ -591,7 +591,7 @@ npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 /
 node tools/test-all.mjs --install # 新 worktree：先并行 npm install（--prefer-offline）再跑
 npm run test:contract             # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke                # 安装冒烟工具纯逻辑
-npm run test:todo                 # todo CLI（92 个）
+npm run test:todo                 # todo CLI（107 个）
 node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi）
 ```
 
