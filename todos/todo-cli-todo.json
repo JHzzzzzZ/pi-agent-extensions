@@ -9,6 +9,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ feat/todo-cli-extension，根 2.29.0",
@@ -31,6 +32,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ merge 1fce323，根 2.30.1 / todo-cli 1.0.1：工具名改 `todos`，命令面不变；`index.test.ts` 加回归锁（不得再注册 `todo`）；真机复现→验证（临时配置目录 + 真实 pi --mode rpc，our 14 扩展 + npm 形态 rpiv-todo 同装）：修前报 `Tool \"todo\" conflicts with ...\\todo-cli\\index.ts` 且 exit 1，修后 exit 0、stderr 空、双方命令面齐全（62 条）；install-smoke 14/14 扩展 61 命令",
@@ -48,6 +50,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ team-run-1789100633429（any-dev）：仓库侧转换完成——todo-cli/ 仅剩 core.ts（CLI-only 头注释，导出/行为零变化）、tools/todo.mjs 唯一入口（7 子命令+--help 不变、无 --root）、根 package.json 注销 pi.extensions（14→13）+ 版本 2.31.0、install-smoke 期望表删 todo-cli 条目、知识卡 git mv 至 docs/tools/todo-cli.md 并重写、README/AGENTS/INDEX/session-manager 四处同步；实测 test:contract 3 / test:smoke 19 / test:todo 16（含 3 个进程边界 E2E，任意 cwd spawnSync 真实 node）全绿，install-smoke 真跑 13/13（注意：agent-team 派生会话需先清 PI_AGENT_TEAM_FILE 再跑，否则 9 条 /team* 断言环境性失败，详见 history/team-runs/run-1789100633429/50-acceptance.md），任意 cwd（仓库根与 C:\\Users\\12967）只读命令全过；产出分支 team-run-1789100633429（四写线 --no-ff 合入，末次 merge 7c4f53c），运行记录 history/team-runs/run-1789100633429/（00/10/20×4/30/40/50/90）；配套 skill 为主会话后续（todos/skills-todo.md ecb70e9 已登记）；遗留：general-todo src/ 收纳条目仍列 todo-cli 于 14 插件目录（口径待主会话修）"
@@ -64,6 +67,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ team-run-run-1789118829730：markdown 权威 + node:sqlite 索引 todos/.todo-cli/ 已 gitignore，db status/rebuild/drop，迁移可逆，测试 16→50；history/team-runs/run-1789118829730/"
@@ -80,6 +84,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ team-run-run-1789118829730：list --branch/--tag/--text/--claimed-since/--json AND 组合 + db 子命令；组合查询一条命令；降级环境文本维度可用；history/team-runs/run-1789118829730/"
@@ -96,6 +101,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "随方案 C 根治：note 为 JSON 原生字段（complete --note 逐字进 notes，不解析括号/换行），md 行尾拼接路径删除；单测覆盖含「（）」、换行、超长备注（test/todo-cli.test.ts complete --note 用例）"
@@ -112,6 +118,7 @@
       "status": "done",
       "branch": "feat/todo-cli-json-store",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "feat/todo-cli-json-store：JSON 唯一权威落地（根 2.41.0，merge 0eacb8d）——todo-cli 重构为 schema/lock/query/migrate/core 五模块（删 store.ts sqlite 层），44 测试全绿（并发/中断真子进程 + 迁移 roundtrip）；18 个 md → 18 个 JSON 零丢失验证 18/18（174 顶层条目 open 27/processing 9/done 138、注记 272 条、缩进子行并入 notes）；AGENTS/README/docs 卡/INDEX/ADR-0002/CONTEXT 同步；仓库外 todo-add/todo-triage(survey.sh 委托 CLI)/todo-cli/wrap-up 四 skill × .zcode/.pi 两镜像同步（备份 *.bak-migration）；complete --note 逐字进 notes（L16 bug 根治）"
@@ -128,6 +135,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "03bffa8 已合并；test:todo 50 pass；卡片 last verified @ a44c102"
@@ -144,6 +152,7 @@
       "status": "done",
       "branch": "feat/todo-cli-skill-placement",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "f454160：工具内迁 .agents/skills/todo-cli/todo-cli/（入口与实现、测试同居；tools/todo.mjs 删除不留壳），仓库根改 --root > git rev-parse --show-toplevel > fail-closed，新增 SKILL.md + scripts/todo.sh 与 root-discovery/skill 结构测试（69 全绿）；核实：本机无全局 skill 库，故落点在仓库内（ADR-0004），跨机同步另立接力条目"
@@ -160,6 +169,7 @@
       "status": "done",
       "branch": "feat/todo-cli-depends-on",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "完成 #10 @ merge 7dca0bf（分支 feat/todo-cli-depends-on：3ed8604 代码 + 6dff1ae 文档）：schema v3（dependsOn 原生字段，读 v1/v2 归一空数组、写出一律 v3）；开工门插在第二次 claim（aligned→processing），阻塞报 DEP_BLOCKED 并逐条列等待对象与状态、不写盘；首次 claim 与 align 不受阻；声明入口 add --dep + 新子命令 dep add|remove（写前拒绝悬空/自引用/环，环回显路径）；lint 加依赖图全量扫描（合并产物兜底）；list 行尾阻塞标记 + list --json 的 dependsOn/blockedBy、triage 明细、complete 依赖者提示；悬空引用按阻塞处理；ADR-0005 + 规格 docs/specs/todo-cli-depends-on.md + CONTEXT 五术语 + SKILL/README/卡同步；88 测试全绿（depends 纯函数 7 + CLI 闭环 9 + 并发 dep add 1）、test:contract 3 / test:smoke 21 / lint exit 0；worktree 已 remove。实测教训：依赖校验给 add 的锁临界区加约 1ms 即把 Windows 并发 add 的 rename 争用（EPERM）从 0/8 抬到 4/8，已加空依赖快路径回到同级（2/8 vs 2/8，环境性偶发，见 #13）"
@@ -176,6 +186,7 @@
       "status": "done",
       "branch": "feat/todo-cli-align-gate",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "feat/todo-cli-align-gate：对齐门五态 + schema v2 + align 子命令 + 对齐文档契约已实现并合并（merge 7db5972）；60 测试全绿 + contract/smoke/lint 全绿；ADR-0003 / docs/specs/todo-cli-align-gate.md / 卡 / INDEX / README / AGENTS / CONTEXT 同一变更同步；skills #10 收口（仓库内指针已清）。"
@@ -192,6 +203,7 @@
       "status": "done",
       "branch": "feat/todo-cli-list-file-normalize",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "merge e5235eb（fix bb27c5b + docs 15c7b53）：core 侧归一——runList 改为按 resolveTodoPath 解析后到 docs 取真实归属名回填 filter，查不到（含 Windows 大小写不符）明确报错 exit 1、不再静默空结果；测试 44→46（四写法逐字节一致 + AND 组合 + 真实仓库短名回归锁，修前两条必红）；规格落盘 docs/specs/todo-cli-list-file-normalize.md（本仓首个）；docs/tools/todo-cli.md 契约与 last verified、README 测试数、INDEX 增 specs 路由行同步；根三自检 contract 3 / smoke 21 / todo 46 + lint 全绿。"
@@ -211,6 +223,7 @@
         "tests",
         "flaky"
       ],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T14:31:09.083Z",
@@ -228,6 +241,7 @@
         "cli",
         "state-machine"
       ],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "merge b97e548（feat 287554d / chore(pi) 0673258 根 2.51.0 / docs ca97533）；92 测试全绿 + lint exit 0；真机闭环：9 条虚空 processing（8 条 route A + agent-team#66）已用 reopen 退回 open 池，注记「从未开工：零 claim / 零分支 / 零对齐文档」。实现期偏差：根版本 2.50.0 已被 loop #9 占用，本次实际 bump 到 2.51.0。"
@@ -241,14 +255,17 @@
       "id": 15,
       "globalId": 310,
       "text": "todo 条目优先级（用户 2026-09-15 提出，未领取）：台账支持 1-10 数字优先级，默认 5，agent 登记时可自行判断取值。要求：① 存储层 entries[] 增加 priority 字段，旧条目缺失视作 5（读时兜底，不强制重写既有文件）；② 命令面 add --priority <1-10>，非整数/越界 fail-closed（新错误码，沿用 result union 口径）；③ 查询面 list 展示并按优先级排序（数字大者为高优先、同值内保持 id 稳定次序；是否设为默认排序在对齐时定）、summary 与 list --json 输出该字段；④ 优先级只影响展示/排序/人工排期，不改变五态状态机与依赖门语义（claim/align 不按优先级拦截）；⑤ 文档同步：SKILL.md 命令面、docs/tools/todo-cli.md 卡片、align 模板若要带上字段一并更新。验收：单测覆盖默认值、边界 1 与 10、越界与非法输入拒绝、旧数据（无字段）兼容、排序稳定性、--json 输出；npm run test:todo 全绿；todo lint 不受影响。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/todo-cli-priority",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "完成（2026-09-17）：priority 软字段（1-10，缺省 5，全版本可选不占版本位）+ add --priority（BAD_PRIORITY fail-closed 不写盘）+ list [pN] 标记与 --sort priority（priority desc→file asc→id asc）+ --json 带字段。与 #16 globalId/v4 集成：解 12 文件冲突、ADR 顺延 0009、根版本 2.55.0。merge 5daf197（分支集成 26b39ed）。验证：test:todo 134/134 + lint exit 0 + 全仓 test:all 17/17 套件 2025 用例全绿。"
+      ],
       "createdAt": "2026-09-16T14:27:04.829Z",
       "claimedAt": "2026-09-16T14:51:29.549Z",
-      "completedAt": null,
+      "completedAt": "2026-09-17T01:23:32.132Z",
       "alignedAt": "2026-09-16T15:03:13.159Z"
     },
     {
@@ -258,6 +275,7 @@
       "status": "done",
       "branch": "feat/todo-cli-global-id",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "交付：集成合并 6983cbc（解 concurrency/README/卡片三处冲突，实测 116）+ 根 2.54.0（6782caa，2.53.0 撞号处置）→ 主干 merge 0ac702d → 同 push 迁移 987e0a2（195 条取号 71..311，逐字段零漂移，批准项 B 收口）。门：npm run test:all 17/17 套件 2007/2007 全绿、todo lint exit 0（仓库无根级 typecheck 门）。批准项 A（AGENTS.md 红线 1 改按 globalId 判同）已纳入。留档 history/team-runs/run-20260916-todocli16/ 七文档齐（含主会话集成记录）。"
