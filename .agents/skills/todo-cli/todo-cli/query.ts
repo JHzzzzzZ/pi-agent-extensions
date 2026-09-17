@@ -5,11 +5,13 @@
  * migrate / core，保证查询逻辑可在无文件系统环境下单独验证。方案 C 后 branch/tags/
  * 三时间戳都是 schema 原生字段，不再有「文本派生 vs DB 列」双口径，也没有降级路径。
  *
- * 人读行格式：`${statusMark} ${file}#${id}  ${text}`（file 为去 `.json` 的归属名，
- * id 为文件内稳定编号，id 与文本间两空格）；标记五态见 STATUS_MARKS；阻塞条目行尾追加
- * `（阻塞：等待 <引用清单>）`（todo-cli-todo:10）——阻塞与否由 core 算好（blockedBy 非空），
- * query 层不查台账、不解析依赖图。globalId（todo-cli-todo:16）只进 `--json` 输出形状，
- * 不进人读行（双轨：`文件#id` 是人类契约、globalId 是机器判定身份）。
+ * 人读行格式：`${statusMark} ${file}#${id}  [p${priority}] ${text}`（file 为去 `.json` 的归属名，
+ * id 为文件内稳定编号，id 与文本间两空格；priority 标记由 todo-cli-todo:15 引入，不零填充）；
+ * 标记五态见 STATUS_MARKS；阻塞条目行尾追加 `（阻塞：等待 <引用清单>）`（todo-cli-todo:10）——
+ * 阻塞与否由 core 算好（blockedBy 非空），query 层不查台账、不解析依赖图。
+ * `--sort priority`（todo-cli-todo:15）是首个排序选项：priority 降序 → 默认序（file → id）。
+ * globalId（todo-cli-todo:16）只进 `--json` 输出形状，不进人读行（双轨：`文件#id` 是人类契约、
+ * globalId 是机器判定身份）。
  */
 
 import type { EntryStatus } from "./schema.ts";
@@ -27,6 +29,8 @@ export interface QueryEntry {
   text: string;
   branch: string | null;
   tags: string[];
+  /** 优先级 1-10（10 最高；schema 层保证内存态必有，缺失已兜底 5）。 */
+  priority: number;
   /** 原生依赖引用（规范形态 `文件基名#id`，保序）。 */
   dependsOn: string[];
   /** 派生：未完成的直接依赖引用（空 = 可开工）；非空即阻塞。只有一个派生字段，不另设布尔位。 */
@@ -96,17 +100,24 @@ export function sortQueryEntries(entries: QueryEntry[]): QueryEntry[] {
   });
 }
 
+/** `--sort priority`：priority 降序 → file 升序 → 文件内 id 升序（同值桶 = 默认序）；返回新数组。 */
+export function sortByPriority(entries: QueryEntry[]): QueryEntry[] {
+  // 先按默认序排、再以 priority 降序做稳定 sort：同值桶天然回落 file → id 序（ES2019 起 sort 稳定）。
+  return sortQueryEntries(entries).sort((a, b) => b.priority - a.priority);
+}
+
 /**
  * json=true → `[JSON.stringify(sorted, null, 2)]`（整体一行交给 log）；否则每条
- * `${statusMark(s)} ${file}#${id}  ${text}`，阻塞条目再追加 ` （阻塞：等待 a#1, b#2）`
- * （非阻塞行字节不变）。输出前复用 sortQueryEntries 的稳定排序，任何输入序下与 list 排序一致。
+ * `${statusMark(s)} ${file}#${id}  [p${priority}] ${text}`，阻塞条目再追加
+ * ` （阻塞：等待 a#1, b#2）`（非阻塞部分字节不变）。输出前按 opts.sort 统一排序
+ * （缺省走 sortQueryEntries），任何输入序下与 list 排序一致。
  */
-export function serializeEntries(entries: QueryEntry[], opts: { json: boolean }): string[] {
-  const sorted = sortQueryEntries(entries);
+export function serializeEntries(entries: QueryEntry[], opts: { json: boolean; sort?: "priority" }): string[] {
+  const sorted = opts.sort === "priority" ? sortByPriority(entries) : sortQueryEntries(entries);
   if (opts.json) return [JSON.stringify(sorted, null, 2)];
   return sorted.map(
     (entry) =>
-      `${statusMark(entry.status)} ${entry.file}#${entry.id}  ${entry.text}${
+      `${statusMark(entry.status)} ${entry.file}#${entry.id}  [p${entry.priority}] ${entry.text}${
         entry.blockedBy.length > 0 ? ` （阻塞：等待 ${entry.blockedBy.join(", ")}）` : ""
       }`,
   );
@@ -134,17 +145,22 @@ function readOption(opts: Record<string, unknown>, key: string): string | undefi
 }
 
 /**
- * main 的 parseArgs 产物 → filter + json。仅校验 `--claimed-since`（格式 + 真实日期），
- * 失败返回 `{ok:false, code:"BAD_FILTER", message:"--claimed-since 需要 YYYY-MM-DD 日期"}`
+ * main 的 parseArgs 产物 → filter + json + sort。仅校验 `--claimed-since`（格式 + 真实日期）
+ * 与 `--sort`（只支持 `priority`），失败返回 `{ok:false, code:"BAD_FILTER", message:...}`
  * （静态模板）；其余值不校验（沿旧语义，非法 status 由 applyEntryFilter 给空结果）。
  */
 export function parseFilterOptions(
   opts: Record<string, unknown>,
-): { ok: true; filter: EntryFilter; json: boolean } | { ok: false; code: "BAD_FILTER"; message: string } {
+):
+  | { ok: true; filter: EntryFilter; json: boolean; sort: "priority" | undefined }
+  | { ok: false; code: "BAD_FILTER"; message: string } {
   const claimedSince = opts["claimed-since"];
   if (claimedSince !== undefined && (typeof claimedSince !== "string" || !isValidDate(claimedSince))) {
     return { ok: false, code: "BAD_FILTER", message: BAD_CLAIMED_SINCE };
   }
+  // 空串（parseArgs 的缺值语义）也落此分支：不静默默认。
+  const sort = opts.sort;
+  if (sort !== undefined && sort !== "priority") return { ok: false, code: "BAD_FILTER", message: "--sort 只支持 priority" };
 
   const filter: EntryFilter = {};
   const status = readOption(opts, "status");
@@ -159,5 +175,5 @@ export function parseFilterOptions(
   if (text !== undefined) filter.text = text;
   if (typeof claimedSince === "string") filter.claimedSince = claimedSince;
 
-  return { ok: true, filter, json: opts.json === true };
+  return { ok: true, filter, json: opts.json === true, sort: sort === "priority" ? "priority" : undefined };
 }

@@ -21,6 +21,9 @@
  *     `文件基名#id`，`add --dep` 登记、`dep add/remove` 增删）。依赖未完成（status ≠ done）
  *     时第二次 claim fail-closed（DEP_BLOCKED，条目留在 aligned）；首次 claim 与 align
  *     不受阻。引用归一/环检测/阻塞判定全在 depends.ts（纯函数）。
+ *   - 优先级（todo-cli-todo:15）：条目可选软字段 priority（1-10，10 最高，缺省 5；
+ *     `add --priority` 写入，非法值 BAD_PRIORITY 不写盘）。只影响 list 展示标记
+ *     `[pN]` / `--sort priority` / JSON 输出，不进状态机、依赖门与查重。
  *   - 统一全局 id（todo-cli-todo:16）：条目 globalId 由 `todos/.todo-cli/next-id` 计数器
  *     在 id 锁内发号（全台账唯一、永不回收；计数器不入库，缺失时按台账存量自愈）。
  *     存量按 `migrate global-id` 一次性迁移；六个写命令在缺号台账上 fail-closed
@@ -35,8 +38,8 @@
  * 用法（任意 git 仓库任意 cwd；入口固定为 <仓库>/.agents/skills/todo-cli/todo-cli/todo.mjs）：
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|aligning|aligned|processing|done] [--file general]
- *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
- *   node .agents/skills/todo-cli/todo-cli/todo.mjs add --file general "需求描述" [--tag 词1,词2] [--dep 文件#id,...]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--sort priority] [--json]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs add --file general "需求描述" [--tag 词1,词2] [--dep 文件#id,...] [--priority 1-10]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file general --match "需求描述" [--branch feat/x]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs align --file general --match "需求描述" [--note "说明"]
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file general --match "需求描述" [--note "feat/x：说明"]
@@ -420,11 +423,38 @@ function parseTagsOption(value: unknown): string[] {
   return tags;
 }
 
+type PriorityParse = { ok: true; priority: number } | { ok: false; code: "BAD_PRIORITY"; message: string };
+
+const BAD_PRIORITY: { ok: false; code: "BAD_PRIORITY"; message: string } = {
+  ok: false,
+  code: "BAD_PRIORITY",
+  message: "BAD_PRIORITY：--priority 需要 1-10 的整数（缺省 5）",
+};
+
+/**
+ * `--priority 1-10` → 优先级数字（未提供缺省 5）。空串（parseArgs 的缺值语义）与
+ * 非法形态 fail-closed——不静默默认；前导零（05）按数值 5 接受。消息静态模板不插值输入。
+ */
+function parsePriorityOption(value: unknown): PriorityParse {
+  if (value === undefined) return { ok: true, priority: 5 };
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!/^\d+$/.test(raw)) return BAD_PRIORITY;
+  const priority = Number(raw);
+  if (priority < 1 || priority > 10) return BAD_PRIORITY;
+  return { ok: true, priority };
+}
+
 function runAdd(deps: WriteDeps): number {
   const { repoRoot, opts, now, log } = deps;
   const text = (opts._ as string[]).slice(1).join(" ").trim();
   if (!text) {
     log("缺少需求描述");
+    return 1;
+  }
+  // 优先级先于任何读盘校验（fail-closed：不读、不写）。
+  const parsedPriority = parsePriorityOption(opts.priority);
+  if (!parsedPriority.ok) {
+    log(parsedPriority.message);
     return 1;
   }
   const depOption = opts.dep;
@@ -485,6 +515,7 @@ function runAdd(deps: WriteDeps): number {
       status: "open" as const,
       branch: null,
       tags: parseTagsOption(opts.tag),
+      priority: parsedPriority.priority,
       dependsOn: parsedDeps.refs,
       notes: [],
       createdAt: now(),
@@ -887,7 +918,7 @@ function runList(repoRoot: string, opts: Record<string, unknown>, log: (line: st
     })),
   );
   const sorted = sortQueryEntries(applyEntryFilter(entries, parsed.filter));
-  for (const line of serializeEntries(sorted, { json: parsed.json })) log(line);
+  for (const line of serializeEntries(sorted, { json: parsed.json, sort: parsed.sort })) log(line);
   return 0;
 }
 
@@ -977,7 +1008,7 @@ function runTriage(repoRoot: string, opts: Record<string, unknown>, deps: Record
 const USAGE = `用法：
   node .agents/skills/todo-cli/todo-cli/todo.mjs summary [--json]
   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--status open|aligning|aligned|processing|done] [--file <name>]
-  node .agents/skills/todo-cli/todo-cli/todo.mjs add --file <name> "需求描述" [--tag 词1,词2] [--dep 文件#id,...]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs add --file <name> "需求描述" [--tag 词1,词2] [--dep 文件#id,...] [--priority 1-10]
   node .agents/skills/todo-cli/todo-cli/todo.mjs claim --file <name> --match "子串" [--branch feat/x]
   node .agents/skills/todo-cli/todo-cli/todo.mjs align --file <name> --match "子串" [--note "说明"]
   node .agents/skills/todo-cli/todo-cli/todo.mjs complete --file <name> --match "子串" [--note "说明"]
@@ -985,7 +1016,7 @@ const USAGE = `用法：
   node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file <name> --match "子串" --on 文件#id,...
   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]
-  node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--sort priority] [--json]
   node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]
 
 仓库根默认由 git 自动发现（cwd 起）；也可在任意子命令前追加 --root <dir> 显式指定。`;

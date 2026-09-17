@@ -3,8 +3,11 @@
  *
  * 覆盖：旧 md 解析（标注剥出/缩进子行归并/嵌套括号/CRLF）、规范渲染 roundtrip 恒等、
  * from-md 编排（落盘/删 md/清遗留索引/dry-run/拒绝覆盖/等价自检失败中止/时间戳回填）、
+ * 覆盖：旧 md 解析（标注剥出/缩进子行归并/嵌套括号/CRLF）、规范渲染 roundtrip 恒等、
+ * from-md 编排（落盘/删 md/清遗留索引/dry-run/拒绝覆盖/等价自检失败中止/时间戳回填）、
  * to-md 编排（还原 md、保留 JSON）、migrate global-id 编排（dry-run/稳定顺序取号/
  * 逐字段保全/幂等/重复号预检中止）。全部在 mkdtemp 临时仓库上执行，不碰真实 todos/。
+ * priority（todo-cli-todo:15）：md 无优先级语法 ⇒ 迁移条目一律 5，to-md 不渲染该字段。
  */
 
 import test from "node:test";
@@ -290,6 +293,60 @@ test("migrateToMd：损坏 JSON fail-closed 整体中止，一个 md 都不写",
   assert.equal(fs.existsSync(path.join(root, "todos", "good-todo.md")), false, "任一损坏即中止");
 });
 
+test("buildTodoData：md 无优先级语法 ⇒ 迁移条目 priority 一律 5", () => {
+  const first = buildTodoData("general-todo", parseLegacyMarkdown("- [ ] 甲\n- [x] 乙（完成 收尾）\n"));
+  assert.deepEqual(first.entries.map((entry) => entry.priority), [5, 5]);
+});
+
+test("migrateToMd：带 priority（含非 5）照常渲染；md 无优先级语法，往返抹平为 5", () => {
+  const root = makeRepo();
+  fs.writeFileSync(
+    path.join(root, "todos", "general-todo.json"),
+    JSON.stringify({
+      version: 3,
+      title: "通用 TODO",
+      entries: [
+        {
+          id: 1,
+          text: "高优先条目",
+          status: "open",
+          branch: null,
+          tags: [],
+          priority: 9,
+          dependsOn: [],
+          notes: [],
+          createdAt: null,
+          claimedAt: null,
+          completedAt: null,
+          alignedAt: null,
+        },
+        {
+          id: 2,
+          text: "低优先条目",
+          status: "open",
+          branch: null,
+          tags: [],
+          priority: 1,
+          dependsOn: [],
+          notes: [],
+          createdAt: null,
+          claimedAt: null,
+          completedAt: null,
+          alignedAt: null,
+        },
+      ],
+    }),
+  );
+  const out: string[] = [];
+  assert.equal(migrateToMd(root, { now: NOW, log: (l) => out.push(l) }), 0);
+  const md = fs.readFileSync(path.join(root, "todos", "general-todo.md"), "utf8");
+  assert.equal(md, ["# 通用 TODO", "", "- [ ] 高优先条目", "- [ ] 低优先条目", ""].join("\n"), "渲染不受 priority 影响");
+  assert.equal(md.includes("priority"), false, "md 无优先级语法");
+  assert.doesNotMatch(md, /\[p\d+\]/);
+  const round = buildTodoData("general-todo", parseLegacyMarkdown(md));
+  assert.deepEqual(round.entries.map((entry) => entry.priority), [5, 5], "to-md → from-md 往返抹平非 5（记入卡片已知坑）");
+});
+
 // ---------------------------------------------------------------------------
 // migrate global-id（todo-cli-todo:16）：存量一次性取号
 // ---------------------------------------------------------------------------
@@ -421,4 +478,5 @@ test("migrateFromMd 产 v4 完备（逐条 globalId + 计数器就位）；to-md
   assert.equal(migrateToMd(root, { now: NOW, log: (l) => mdOut.push(l) }), 0);
   const md = fs.readFileSync(path.join(root, "todos", "general-todo.md"), "utf8");
   assert.equal(md, ["# 通用 TODO", "", "- [ ] 甲", "- [x] 乙", "  - 收尾", ""].join("\n"), "globalId 不进 md（逃生舱只装人类契约）");
+
 });

@@ -34,8 +34,8 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs <子命令> [参数]
 ```bash
 todo.mjs summary [--json]                                     # 按文件汇总 open/aligning/aligned/processing/done
 todo.mjs list [--status open|aligning|aligned|processing|done] [--file <名>]   # 状态/文件过滤
-todo.mjs list [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
-todo.mjs add --file <名> "需求描述" [--tag 词1,词2] [--dep 文件#id,...] [--force]   # 追加 open 条目（跨文件查重；--dep 登记即声明依赖）
+todo.mjs list [--branch <子串>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--sort priority] [--json]
+todo.mjs add --file <名> "需求描述" [--tag 词1,词2] [--dep 文件#id,...] [--priority 1-10] [--force]   # 追加 open 条目（跨文件查重；--dep 登记即声明依赖；--priority 缺省 5）
 todo.mjs claim --file <名> --match "子串" [--branch feat/x]    # 两段式领取：open→aligning / aligned→processing
 todo.mjs align --file <名> --match "子串" [--note "说明"]       # 对齐确认：校验对齐文档，aligning→aligned
 todo.mjs dep add|remove --file <名> --match "子串" --on 文件#id,...   # 增删直接依赖（add 写前校验悬空/自引用/环）
@@ -59,6 +59,15 @@ todo.mjs --help
 
 条目可声明 `dependsOn`（规范引用 `文件基名#id`，可跨文件；输入接受 `general#11` / `general-todo#11` 等同 `--file` 口径的写法，存储统一归一）。依赖未 `done`（含指向不存在条目的悬空引用）时，第二次 `claim`（`aligned → processing`）报 `DEP_BLOCKED` 并逐条列出等待对象与状态，条目留在 `aligned`；首次 `claim` 与 `align` 不受此门约束。`add --dep` / `dep add` 在写入前拒绝悬空目标、自引用与成环（`lint` 另做全量图扫描兑合并产物）；`list` 对阻塞条目行尾追加 `（阻塞：等待 a#1, b#2）`，`list --json` 带 `dependsOn` 与 `blockedBy`（非空即阻塞），`triage` 在 aligned 段列明细，`complete` 输出直接依赖者提示。决策见 ADR-0005。
 
+### 优先级（priority）
+
+条目可选软字段 `priority`（整数 1-10，**10 最高**，缺省 5），只影响展示/排序/人工排期：
+
+- `add --priority 1-10` 写入（缺省 5；非整数/越界/裸 `--priority` 报 `BAD_PRIORITY` + exit 1 **不写盘**；前导零 `05` 按数值 5 接受）；成功日志不回显优先级。
+- `list` 人读行在 `文件#id` 两空格后显示 `[pN]`（不零填充，如 `[p7]` / `[p10]`）；`list --sort priority` 按 `priority 降序 → file 升序 → id 升序` 排（同值桶保持默认序）；`--sort` 只支持 `priority`，其它值/空串报 `BAD_FILTER`；`list --json` 带 `priority`。
+- **全版本可选软字段**：旧文件缺字段读时兜底 5、读命令不写盘；任一写操作重写文件时顺带补 5（**不 bump 版本位**——版本位 v3→v4 归 globalId，本字段对 v1-v4 都语义一致地可选）。字段出现但非法（`"高"`/`3.5`/`0`/`11`/`null`）报 `BAD_SCHEMA`（fail-closed，不静默兜底）。
+- **不进**状态机、依赖门、查重与 `summary`/`triage` 输出；无 `priority set`（改值走 `reopen` → 重登记）。决策见 ADR-0009。
+
 ### 全局 id（globalId）
 
 条目新增 `globalId` 字段（schema v4）：**全台账唯一、永不回收**的统一主键，由 `todos/.todo-cli/next-id` 计数器在 `locks/id.lock` 内发号（`add` 与迁移落盘时自动取号，失败/中止烧掉的号留缺口不回收）。**双轨**：`文件#id` 继续承担展示 / `dependsOn` 引用 / 对齐文档命名（人类契约不变），`globalId` 只进 `list --json` 与机器判定——`lint` 查重、跨分支合并冲突按其判同条目取并集。计数器被 gitignore（fresh clone 可能缺失），缺失时自愈为 `max(全台账条目 id, globalId) + 1`；损坏报 `ID_COUNTER_CORRUPT`（删该文件重跑即自愈）。旧 v1/v2/v3 文件读入时 `globalId` 归一为 null：读命令（`list`/`summary`/`triage`/`lint`）照常可读（`lint` 报 `globalId 缺失` 引导），六个写命令（`add`/`claim`/`align`/`complete`/`reopen`/`dep`）fail-closed 报 `GLOBAL_ID_PENDING`——**先跑 `migrate global-id`**（`--dry-run` 只预演：预检重号中止 / 无缺口幂等零动作 / 迁移中断后重跑接续，已写文件保留）。
@@ -81,4 +90,4 @@ todo.mjs --help
 
 ## 设计权威
 
-命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）、`docs/adr/0007-todo-reopen.md`（回退与归档决策）、`docs/adr/0008-todo-global-id.md`（全局 id 与双轨决策）。
+命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）、`docs/adr/0007-todo-reopen.md`（回退与归档决策）、`docs/adr/0008-todo-global-id.md`（全局 id 与双轨决策）、`docs/adr/0009-todo-priority-soft-field.md`（优先级软字段决策）。

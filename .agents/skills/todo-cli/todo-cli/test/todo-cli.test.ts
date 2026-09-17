@@ -79,7 +79,7 @@ function writeAlignDoc(root, name, id, overrides = {}) {
   return file;
 }
 
-/** 内联条目构造：默认 v4 全字段（globalId/alignedAt/dependsOn 原生；globalId 默认取 id，只用于读断言时 fixture 也不必手写）。 */
+/** 内联条目构造：默认 v4 全字段（globalId / alignedAt / dependsOn / priority 原生；globalId 默认取 id，只用于读断言时 fixture 也不必手写）。 */
 function entry(id, text, status, extra = {}) {
   return {
     id,
@@ -88,6 +88,7 @@ function entry(id, text, status, extra = {}) {
     status,
     branch: null,
     tags: [],
+    priority: 5,
     dependsOn: [],
     notes: [],
     createdAt: null,
@@ -154,6 +155,7 @@ test("main：add/dup/claim/align/complete 在临时仓库上闭环，JSON 字段
     status: "open",
     branch: null,
     tags: [],
+    priority: 5,
     dependsOn: [],
     notes: [],
     createdAt: "2026-09-12T00:00:00.000Z",
@@ -233,7 +235,7 @@ test("main：add 落盘全局 id（递增）；list --json 带 globalId，人读
 
   out.length = 0;
   assert.equal(main(["list"], deps), 0);
-  assert.deepEqual(out, ["[ ] general-todo#1  全局 id 甲", "[ ] general-todo#2  全局 id 乙"], "人类可读行不含 globalId（双轨）");
+  assert.deepEqual(out, ["[ ] general-todo#1  [p5] 全局 id 甲", "[ ] general-todo#2  [p5] 全局 id 乙"], "人类可读行不含 globalId（双轨；priority 标记按 #15 契约恒显）");
 
   out.length = 0;
   assert.equal(main(["summary"], deps), 0);
@@ -281,7 +283,7 @@ test("main：GLOBAL_ID_PENDING 写门禁——未迁移条目挡住六个写命�
   // 读命令容忍：迁移期间台账仍可读（可观测性不倒）；lint 报缺失引导迁移
   out.length = 0;
   assert.equal(main(["list"], deps), 0);
-  assert.deepEqual(out, ["[ ] general-todo#1  未迁移条目", "[ ] general-todo#2  待对齐未迁移"]);
+  assert.deepEqual(out, ["[ ] general-todo#1  [p5] 未迁移条目", "[ ] general-todo#2  [p5] 待对齐未迁移"]);
   out.length = 0;
   assert.equal(main(["list", "--json"], deps), 0);
   assert.deepEqual(JSON.parse(out.join("\n")).map((row) => row.globalId), [null, null], "未迁移条目在 --json 里是 null 瞬态");
@@ -669,7 +671,7 @@ test("main：add --tag 原生标签字段 + list --tag 精确过滤", () => {
 
   const out = [];
   assert.equal(main(["list", "--tag", "性能"], { ...deps, log: (l) => out.push(l) }), 0);
-  assert.deepEqual(out, ["[ ] general-todo#1  标签条目"]);
+  assert.deepEqual(out, ["[ ] general-todo#1  [p5] 标签条目"]);
 });
 
 test("main：list 五态标记与过滤；--status/--branch/--text/--claimed-since 组合", () => {
@@ -691,24 +693,24 @@ test("main：list 五态标记与过滤；--status/--branch/--text/--claimed-sin
 
   assert.equal(main(["list"], deps), 0);
   assert.deepEqual(out, [
-    "[ ] general-todo#1  未领取",
-    "[?] general-todo#2  对齐中",
-    "[>] general-todo#3  已对齐",
-    "[~] general-todo#4  进行中",
-    "[x] general-todo#5  已完成",
+    "[ ] general-todo#1  [p5] 未领取",
+    "[?] general-todo#2  [p5] 对齐中",
+    "[>] general-todo#3  [p5] 已对齐",
+    "[~] general-todo#4  [p5] 进行中",
+    "[x] general-todo#5  [p5] 已完成",
   ]);
 
   out.length = 0;
   assert.equal(main(["list", "--status", "aligning"], deps), 0);
-  assert.deepEqual(out, ["[?] general-todo#2  对齐中"]);
+  assert.deepEqual(out, ["[?] general-todo#2  [p5] 对齐中"]);
 
   out.length = 0;
   assert.equal(main(["list", "--status", "aligned"], deps), 0);
-  assert.deepEqual(out, ["[>] general-todo#3  已对齐"]);
+  assert.deepEqual(out, ["[>] general-todo#3  [p5] 已对齐"]);
 
   out.length = 0;
   assert.equal(main(["list", "--status", "done"], deps), 0);
-  assert.deepEqual(out, ["[x] general-todo#5  已完成"]);
+  assert.deepEqual(out, ["[x] general-todo#5  [p5] 已完成"]);
 
   out.length = 0;
   assert.equal(main(["list", "--branch", "feat/a", "--status", "aligned", "--json"], deps), 0);
@@ -720,7 +722,7 @@ test("main：list 五态标记与过滤；--status/--branch/--text/--claimed-sin
 
   out.length = 0;
   assert.equal(main(["list", "--claimed-since", "2026-09-12"], deps), 0, "时间维度是一等公民（无降级）");
-  assert.deepEqual(out, ["[?] general-todo#2  对齐中", "[>] general-todo#3  已对齐", "[~] general-todo#4  进行中"]);
+  assert.deepEqual(out, ["[?] general-todo#2  [p5] 对齐中", "[>] general-todo#3  [p5] 已对齐", "[~] general-todo#4  [p5] 进行中"]);
 
   out.length = 0;
   assert.equal(main(["list", "--text", "注记内容不存在"], deps), 0);
@@ -756,14 +758,14 @@ test("main：list --file 短名/全名/.json/.md 四写法一致；不存在仍 
 
   const full = run(["list", "--file", "general-todo"]);
   assert.equal(full.code, 0);
-  assert.deepEqual(full.lines, ["[ ] general-todo#1  未领取", "[~] general-todo#2  进行中", "[x] general-todo#3  已完成"]);
+  assert.deepEqual(full.lines, ["[ ] general-todo#1  [p5] 未领取", "[~] general-todo#2  [p5] 进行中", "[x] general-todo#3  [p5] 已完成"]);
   assert.ok(full.lines.every((line) => line.includes("general-todo#")), "不得混入其它文件条目");
 
   for (const name of ["general", "general-todo", "general-todo.json", "general-todo.md"]) {
     assert.deepEqual(run(["list", "--file", name]).lines, full.lines, `--file ${name} 应与全名输出逐字节一致`);
   }
 
-  assert.deepEqual(run(["list", "--file", "general", "--status", "open"]).lines, ["[ ] general-todo#1  未领取"], "短名与其它 flag AND 组合");
+  assert.deepEqual(run(["list", "--file", "general", "--status", "open"]).lines, ["[ ] general-todo#1  [p5] 未领取"], "短名与其它 flag AND 组合");
   const json = run(["list", "--file", "general", "--json"]);
   assert.equal(json.code, 0);
   assert.equal(JSON.parse(json.lines.join("\n")).length, full.lines.length);
@@ -771,6 +773,191 @@ test("main：list --file 短名/全名/.json/.md 四写法一致；不存在仍 
   const missing = run(["list", "--file", "nosuch"]);
   assert.equal(missing.code, 1, "不存在的文件明确报错，不倒向空结果");
   assert.match(missing.lines.join("\n"), /找不到 todo 文件：nosuch/);
+});
+
+// ---------------------------------------------------------------------------
+// 优先级 1-10（todo-cli-todo:15）：add --priority / list [pN] / --sort priority
+// ---------------------------------------------------------------------------
+
+test("main：add --priority——缺省 5、边界 1/10 落盘、前导零 05 按数值 5、成功日志不回显优先级", () => {
+  const root = makeRepo({ "general-todo": undefined });
+  const deps = { repoRoot: root, log: () => {}, now: () => "2026-09-12T00:00:00.000Z" };
+
+  assert.equal(main(["add", "--file", "general", "缺省优先级条目"], deps), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[0].priority, 5, "缺省 = 5");
+
+  const out = [];
+  assert.equal(main(["add", "--file", "general", "最高优先级条目", "--priority", "10"], { ...deps, log: (l) => out.push(l) }), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[1].priority, 10, "上边界 10");
+  assert.equal(out.join("\n"), "已登记到 todos/general-todo.json：最高优先级条目", "成功日志不回显优先级");
+
+  assert.equal(main(["add", "--file", "general", "最低优先级条目", "--priority", "1"], deps), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[2].priority, 1, "下边界 1");
+
+  assert.equal(main(["add", "--file", "general", "前导零条目", "--priority", "05"], deps), 0);
+  assert.equal(readRepoData(root, "general-todo").entries[3].priority, 5, "05 按数值 5 接受");
+});
+
+test("main：add --priority 非法 fail-closed——exit 1 + BAD_PRIORITY + 不写盘（目标文件不存在也不创建）", () => {
+  const root = makeRepo({
+    "general-todo": { version: 3, title: "t", entries: [entry(1, "占位条目", "open")] },
+  });
+  const file = path.join(root, "todos", "general-todo.json");
+  const before = fs.readFileSync(file, "utf8");
+  for (const value of ["0", "11", "3.5", "abc", "1e1", ""]) {
+    const out = [];
+    const args =
+      value === ""
+        ? ["add", "--file", "general", "非法优先级条目", "--priority"]
+        : ["add", "--file", "general", "非法优先级条目", "--priority", value];
+    assert.equal(
+      main(args, { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-12T00:00:00.000Z" }),
+      1,
+      `--priority ${value === "" ? "(缺值)" : value} 应 exit 1`,
+    );
+    assert.match(out.join("\n"), /BAD_PRIORITY：--priority 需要 1-10 的整数（缺省 5）/);
+  }
+  assert.equal(fs.readFileSync(file, "utf8"), before, "拒绝时文件字节不变");
+
+  const missing = [];
+  assert.equal(
+    main(["add", "--file", "brand-new", "非法优先级条目", "--priority", "0"], { repoRoot: root, log: (l) => missing.push(l) }),
+    1,
+  );
+  assert.equal(fs.existsSync(path.join(root, "todos", "brand-new-todo.json")), false, "目标文件不得被创建");
+});
+
+test("main：旧数据兼容——无 priority 的 v3 文件 list 显示 [p5] 且零写盘；写路径重写后全量补 5、升 v4", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        { id: 1, globalId: 11, text: "旧条目一", status: "open", branch: null, tags: [], dependsOn: [], notes: [], createdAt: null, claimedAt: null, completedAt: null, alignedAt: null },
+        { id: 2, globalId: 12, text: "旧条目二", status: "aligned", branch: "feat/x", tags: [], dependsOn: [], notes: [], createdAt: null, claimedAt: null, completedAt: null, alignedAt: "2026-09-13T00:00:00.000Z" },
+      ],
+    },
+  });
+  const file = path.join(root, "todos", "general-todo.json");
+  const before = fs.readFileSync(file, "utf8");
+  const out = [];
+  assert.equal(main(["list"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.deepEqual(out, ["[ ] general-todo#1  [p5] 旧条目一", "[>] general-todo#2  [p5] 旧条目二"]);
+  assert.equal(fs.readFileSync(file, "utf8"), before, "读命令不写盘（旧文件字节不变）");
+
+  // 已取号的旧文件（v3 带合法 globalId，迁移产物/合并产物的形态）：写路径顺带补 priority 并升 v4
+  const deps = { repoRoot: root, log: () => {}, now: () => "2026-09-14T00:00:00.000Z" };
+  assert.equal(main(["claim", "--file", "general", "--match", "旧条目一", "--branch", "feat/a"], deps), 0);
+  const data = readRepoData(root, "general-todo");
+  assert.equal(data.version, 4, "写路径升 v4（版本位归 globalId 姊妹单）");
+  assert.deepEqual(data.entries.map((entry) => entry.priority), [5, 5], "缺失字段顺带补 5");
+  assert.deepEqual(data.entries.map((entry) => entry.globalId), [11, 12], "既有 globalId 逐条保全");
+  assert.equal(data.entries[0].status, "aligning");
+});
+
+test("main：list --sort priority 端到端——序 = (priority desc, file asc, id asc)；默认 list 序不变；非法值报 BAD_FILTER", () => {
+  const root = makeRepo({
+    "a-todo": {
+      version: 3,
+      title: "a",
+      entries: [
+        entry(1, "甲", "open", { priority: 5 }),
+        entry(2, "乙", "open", { priority: 9 }),
+        entry(3, "丙", "open", { priority: 7 }),
+        entry(4, "丁", "open", { priority: 9 }),
+      ],
+    },
+    "b-todo": {
+      version: 3,
+      title: "b",
+      entries: [entry(1, "戊", "open", { priority: 9 }), entry(2, "己", "open", { priority: 1 }), entry(3, "庚", "open", { priority: 10 })],
+    },
+  });
+  const out = [];
+  assert.equal(main(["list", "--sort", "priority"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.deepEqual(out, [
+    "[ ] b-todo#3  [p10] 庚",
+    "[ ] a-todo#2  [p9] 乙",
+    "[ ] a-todo#4  [p9] 丁",
+    "[ ] b-todo#1  [p9] 戊",
+    "[ ] a-todo#3  [p7] 丙",
+    "[ ] a-todo#1  [p5] 甲",
+    "[ ] b-todo#2  [p1] 己",
+  ]);
+
+  out.length = 0;
+  assert.equal(main(["list"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.deepEqual(
+    out,
+    [
+      "[ ] a-todo#1  [p5] 甲",
+      "[ ] a-todo#2  [p9] 乙",
+      "[ ] a-todo#3  [p7] 丙",
+      "[ ] a-todo#4  [p9] 丁",
+      "[ ] b-todo#1  [p9] 戊",
+      "[ ] b-todo#2  [p1] 己",
+      "[ ] b-todo#3  [p10] 庚",
+    ],
+    "默认序仍是 file asc → id asc（priority 不参与）",
+  );
+
+  out.length = 0;
+  assert.equal(main(["list", "--sort", "foo"], { repoRoot: root, log: (l) => out.push(l) }), 1);
+  assert.match(out.join("\n"), /--sort 只支持 priority/);
+});
+
+test("main：默认 list 输出 = 现版格式逐行 + [pN] 段（标记外逐字节一致）", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [
+        entry(1, "未领取", "open", { priority: 5 }),
+        entry(2, "被阻塞", "aligned", { priority: 7, dependsOn: ["general-todo#1"], alignedAt: "2026-09-13T00:00:00.000Z" }),
+        entry(3, "已完成", "done", { priority: 10, completedAt: "2026-09-11T00:00:00.000Z" }),
+      ],
+    },
+  });
+  // 现版（#15 之前）的逐字节形态：唯一预期差异是在 file#id 后插入 ` [pN]`
+  const oldLines = [
+    "[ ] general-todo#1  未领取",
+    "[>] general-todo#2  被阻塞 （阻塞：等待 general-todo#1）",
+    "[x] general-todo#3  已完成",
+  ];
+  const priorities = [5, 7, 10];
+  const out = [];
+  assert.equal(main(["list"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  const withMark = oldLines.map((line, i) => line.replace(/(#\d+ {2})/, `$1[p${priorities[i]}] `));
+  assert.deepEqual(out, withMark, "标记之外逐字节一致（序、措辞、阻塞后缀不动）");
+  assert.deepEqual(out, [
+    "[ ] general-todo#1  [p5] 未领取",
+    "[>] general-todo#2  [p7] 被阻塞 （阻塞：等待 general-todo#1）",
+    "[x] general-todo#3  [p10] 已完成",
+  ]);
+});
+
+test("main：list --json 带 priority；summary 不含 priority（人读与 --json 都不变）", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [entry(1, "高优先", "open", { priority: 9 }), entry(2, "缺省优先", "open")],
+    },
+  });
+  const out = [];
+  assert.equal(main(["list", "--json"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  const rows = JSON.parse(out.join("\n"));
+  assert.equal(rows[0].priority, 9);
+  assert.equal(rows[1].priority, 5, "JSON 中的缺省值也是 5");
+
+  out.length = 0;
+  assert.equal(main(["summary"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.match(out.join("\n"), /^general-todo\s+open 2  aligning 0  aligned 0  processing 0  done 0  total 2$/);
+  assert.equal(out.join("\n").toLowerCase().includes("priority"), false, "summary 不加优先级");
+
+  out.length = 0;
+  assert.equal(main(["summary", "--json"], { repoRoot: root, log: (l) => out.push(l) }), 0);
+  assert.deepEqual(JSON.parse(out.join("\n")), [{ name: "general-todo", open: 2, aligning: 0, aligned: 0, processing: 0, done: 0, total: 2 }]);
 });
 
 test("main：损坏 JSON fail-closed——summary/list/add 都明确报错退出 1，绝不静默修复", () => {
@@ -992,11 +1179,11 @@ test("main：list 阻塞标记（非阻塞行字节不变）+ --json 带 depends
 
   assert.equal(main(["list"], deps), 0);
   assert.deepEqual(out, [
-    "[~] general-todo#1  前提",
-    "[>] general-todo#2  被阻塞 （阻塞：等待 general-todo#1）",
-    "[ ] general-todo#3  无依赖",
-    "[ ] general-todo#4  依赖已完成",
-    "[x] general-todo#5  已完成前提",
+    "[~] general-todo#1  [p5] 前提",
+    "[>] general-todo#2  [p5] 被阻塞 （阻塞：等待 general-todo#1）",
+    "[ ] general-todo#3  [p5] 无依赖",
+    "[ ] general-todo#4  [p5] 依赖已完成",
+    "[x] general-todo#5  [p5] 已完成前提",
   ]);
 
   out.length = 0;
@@ -1303,4 +1490,34 @@ test("CLI E2E：未知命令退出 1 并提示（非仓库 cwd 也不需要仓�
   assert.match(res.stdout, /未知命令：definitely-not-a-command/);
   assert.match(res.stdout, /用法/);
   assert.equal(res.stderr, "");
+});
+
+test("CLI E2E：--help 含 --priority / --sort；拷工具进临时仓库 spawn add --priority 9 → list --sort priority", { timeout: 120_000 }, () => {
+  const help = runCli(["--help"], os.tmpdir());
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /--priority 1-10/, "USAGE 同步说明 add --priority");
+  assert.match(help.stdout, /--sort priority/, "USAGE 同步说明 list --sort");
+
+  // 写操作不进真的 todos/：借 concurrency 的 fixture 模式把工具拷进临时仓库，用 --root 驱动真实子进程。
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-priority-e2e-"));
+  fs.mkdirSync(path.join(root, "todos"), { recursive: true });
+  const toolDir = path.join(root, ".agents", "skills", "todo-cli", "todo-cli");
+  fs.mkdirSync(toolDir, { recursive: true });
+  for (const file of fs.readdirSync(path.join(HERE, ".."))) {
+    if (file === "todo.mjs" || file.endsWith(".ts")) fs.copyFileSync(path.join(HERE, "..", file), path.join(toolDir, file));
+  }
+  const cli = path.join(toolDir, "todo.mjs");
+  const run = (args) => spawnSync(process.execPath, [cli, "--root", root, ...args], { cwd: os.tmpdir(), encoding: "utf8", timeout: 30_000 });
+
+  const add = run(["add", "--file", "general", "九号需求", "--priority", "9"]);
+  assert.equal(add.status, 0, `add exit ${add.status}（stderr=${add.stderr.slice(0, 200)}）`);
+  assert.equal(add.stderr, "");
+
+  const list = run(["list", "--sort", "priority"]);
+  assert.equal(list.status, 0);
+  assert.match(list.stdout, /\[p9\] 九号需求/);
+
+  const json = run(["list", "--json"]);
+  assert.equal(json.status, 0);
+  assert.equal(JSON.parse(json.stdout)[0].priority, 9, "真实入口的 JSON 落字段");
 });

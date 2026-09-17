@@ -1,6 +1,6 @@
 # test-all — 仓库全量测试入口（tools/test-all.mjs）
 
-> last verified @ 3be25cc
+> last verified @ 36a6314
 
 ## 职责与边界
 
@@ -10,7 +10,7 @@
 
 ## 套件清单与口径
 
-`DEFAULT_SUITES`（`tools/test-all.mjs` 顶部常量）逐条镜像各插件 README / `package.json` 的测试命令：12 个扩展 + agent-manager + 根三套自检（contract / smoke / todo）+ test-all 自身 = **17 套件**（用例 1902）。
+`DEFAULT_SUITES`（`tools/test-all.mjs` 顶部常量）逐条镜像各插件 README / `package.json` 的测试命令：12 个扩展 + agent-manager + 根三套自检（contract / smoke / todo）+ test-all 自身 = **17 套件**（`npm run test:todo` 集成后实测 134/134）。
 
 - **serial 三条**（负载敏感，运行期独占、断言绝不放宽）：`pwr`（含 `test/perf.test.ts` 300ms 门）、`agent-manager`（core 性能门）、`root:todo`（真子进程并发/中断用例）。serial 语义 = 启动前等其它套件排空、运行中不启动任何新套件。
 - 覆盖只增不减由 `test/test-all.test.ts` 锁定：形状/名字唯一/serial 集合/「`pi.extensions` 全部扩展 + 根三套自检」都有登记。

@@ -22,6 +22,11 @@
  * （旧版缺 dependsOn 视为 []）；v1/v2 文件被写一次即整体升版。schema 层不校验引用存在性/环——
  * 那是 depends.ts 的职责（这里只管字段形态）。
  *
+ * priority（todo-cli-todo:15，软字段）：1-10 整数（10 最高，缺省 5）。它是首个不走版本门控的
+ * 字段——对 1/2/3/4 都语义一致地可选：JSON 缺失读时兜底 5；出现但非法是结构损坏
+ * （BAD_SCHEMA，fail-closed 不静默兜底——「绝不猜」信条）。版本位 v3→v4 归姊妹单的
+ * globalId，本字段不占版本位；只影响展示/排序/人工排期，不进状态机与依赖门。
+ *
  * schema v4（todo-cli-todo:16 统一全局 id）：条目新增 globalId（全台账唯一、永不回收的统一主键，
  * 计数器与写门禁在 globalid.ts/core.ts）。兼容口径：读 1|2|3|4 都归一成 4，写出一律 4；
  * v4 条目的 globalId 是必填正整数（缺失/非正整数即结构损坏，fail-closed）；v1-v3 缺字段归一为
@@ -48,6 +53,9 @@ export interface TodoEntry {
   branch: string | null;
   /** 标签（add --tag 写入，list --tag 精确匹配）。 */
   tags: string[];
+  /** 优先级 1-10（10 最高；todo-cli-todo:15）。全版本可选软字段：JSON 缺失读时兜底 5；
+   *  出现但非 1-10 整数是结构损坏（BAD_SCHEMA）。只影响展示/排序/人工排期，不进状态机与依赖门。 */
+  priority: number;
   /** 依赖引用（规范形态 `文件基名#id`，可跨文件，保序）：被引用条目未 done 则本条目不得开工。 */
   dependsOn: string[];
   /** 注记池：完成备注、迁移的历史标注、缩进子行，保序。 */
@@ -105,6 +113,12 @@ function validateEntry(value: unknown, label: string, version: TodoFileVersion):
   if (typeof value.status !== "string" || !ENTRY_STATUSES.includes(value.status as EntryStatus)) return "条目 status 非法";
   if (stringOrNull(value.branch) === undefined) return "条目 branch 必须是字符串或 null";
   if (stringArray(value.tags) === undefined) return "条目 tags 必须是字符串数组";
+  // priority（todo-cli-todo:15）：全版本可选软字段——缺失兜底 5；出现则必须是 1-10 整数。
+  if (value.priority !== undefined) {
+    if (typeof value.priority !== "number" || !Number.isInteger(value.priority) || value.priority < 1 || value.priority > 10) {
+      return "条目 priority 必须是 1-10 的整数";
+    }
+  }
   if (stringArray(value.notes) === undefined) return "条目 notes 必须是字符串数组";
   for (const field of ["createdAt", "claimedAt", "completedAt"] as const) {
     if (stringOrNull(value[field]) === undefined) return `条目 ${field} 必须是字符串或 null`;
@@ -155,6 +169,7 @@ export function parseTodoJson(content: string, label: string): ParseTodoResult {
       status: record.status as EntryStatus,
       branch: stringOrNull(record.branch) ?? null,
       tags: stringArray(record.tags) ?? [],
+      priority: (record.priority as number | undefined) ?? 5,
       dependsOn: version >= 3 ? (stringArray(record.dependsOn) ?? []) : [],
       notes: stringArray(record.notes) ?? [],
       createdAt: stringOrNull(record.createdAt) ?? null,
