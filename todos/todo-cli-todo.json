@@ -255,14 +255,16 @@
       "id": 16,
       "globalId": 311,
       "text": "todo 统一全局 id（用户 2026-09-15 提出，repo-dev 首单候选）：当前条目 id 是文件内 max+1、跨文件会重号（todo-cli#15 与 general#15 是两个不同条目却都叫 15），查重/引用/对齐文档命名/依赖引用全以「文件#id」为准，人机都容易混。要求：所有 todos/*.json 的条目支持统一唯一 id（类似数据库主键，全台账从不重复、永不复用）。待定口径（对齐时定）：① id 形态（全局自增整数+跨文件计数器文件 vs 时间戳型 ULID）；② 引用与展示格式（文件#id 双轨保留 or 全局 id 单轨；dependsOn 规范引用、align 文档命名 todos/align/<名>#<id>.md、--match 口径是否跟随）；③ 存量条目分配方式（一次性迁移全量写盘 vs 惰性分配——注意 #14 教训：批量重写须逐字段保全时间戳/notes）；④ 跨文件计数器的锁与并发语义（沿用每文件锁不够，需全局唯一性保证）；⑤ 与已领取的 #15（优先级）的先后关系（统一 id 改 list 展示，宜先行）。验收：新登记/领取/引用/查重按全局 id 全链路跑通；存量条目 id 无一丢失或改义；test:todo 全绿；SKILL.md + docs/tools/todo-cli.md 卡片同步。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/todo-cli-global-id",
       "tags": [],
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付：集成合并 6983cbc（解 concurrency/README/卡片三处冲突，实测 116）+ 根 2.54.0（6782caa，2.53.0 撞号处置）→ 主干 merge 0ac702d → 同 push 迁移 987e0a2（195 条取号 71..311，逐字段零漂移，批准项 B 收口）。门：npm run test:all 17/17 套件 2007/2007 全绿、todo lint exit 0（仓库无根级 typecheck 门）。批准项 A（AGENTS.md 红线 1 改按 globalId 判同）已纳入。留档 history/team-runs/run-20260916-todocli16/ 七文档齐（含主会话集成记录）。"
+      ],
       "createdAt": "2026-09-16T14:58:14.486Z",
       "claimedAt": "2026-09-16T15:00:22.460Z",
-      "completedAt": null,
+      "completedAt": "2026-09-17T01:17:18.183Z",
       "alignedAt": "2026-09-16T15:03:12.979Z"
     }
   ]
