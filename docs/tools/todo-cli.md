@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流 CLI（仓库内 skill 资产）
 
-> last verified @ 287554d
+> last verified @ bef5644
 
 ## 职责与边界
 
@@ -33,7 +33,7 @@
 - `.agents/skills/todo-cli/todo-cli/core.ts` — CLI 调度 `main(argv, deps)`（`repoRoot`/`cwd`/`log`/`now`/`execGit` 可注入）+ `resolveRepoRoot`（根发现纯函数）+ 查重/路径安全/lint（含依赖图全量扫描）/triage 纯函数 + 十子命令（含 `dep add|remove` 与 `reopen`）与 migrate 接线。
 - `.agents/skills/todo-cli/todo-cli/todo.mjs` — 唯一 CLI 入口（与实现同目录）：`export * from "./core.ts"` + 直接运行时转发 `main`。
 - `.agents/skills/todo-cli/SKILL.md` + `scripts/todo.sh` — 技能面：命令参考卡（frontmatter 合法即被 Pi 当项目级 skill 加载）与包装器（定位内层工具，不指向已删除的旧入口）。
-- `test/`（同一 `todo-cli/` 目录内）— `todo-cli.test.ts`(34，命令闭环：两段式 claim / align 门 / complete 收口门 / reopen 回退与归档 / list / summary / lint / triage + fail-closed + 5 个只读进程边界 E2E)、`root-discovery.test.ts`(7，`--root`/git/失败路径纯测 + 真实 `git init` 子目录发现 E2E)、`skill.test.ts`(2，SKILL.md frontmatter 与命令面 + 包装器指向)、`schema.test.ts`(8)、`align.test.ts`(6)、`depends.test.ts`(7)、`lock.test.ts`(8)、`query.test.ts`(6)、`migrate.test.ts`(9)、`concurrency.test.ts`(4，真子进程并发 add/claim/align/dep)、`interrupt.test.ts`(1，SIGKILL 轮次 + stale 自愈 + tmp 清理)。
+- `test/`（同一 `todo-cli/` 目录内）— `todo-cli.test.ts`(34，命令闭环：两段式 claim / align 门 / complete 收口门 / reopen 回退与归档 / list / summary / lint / triage + fail-closed + 5 个只读进程边界 E2E)、`root-discovery.test.ts`(7，`--root`/git/失败路径纯测 + 真实 `git init` 子目录发现 E2E)、`skill.test.ts`(2，SKILL.md frontmatter 与命令面 + 包装器指向)、`schema.test.ts`(8)、`align.test.ts`(6)、`depends.test.ts`(7)、`lock.test.ts`(8)、`query.test.ts`(6)、`migrate.test.ts`(9)、`concurrency.test.ts`(4，真子进程并发 add/claim/align/dep；经 `withFailureScene` 接线失败现场)、`interrupt.test.ts`(1，SIGKILL 轮次 + stale 自愈 + tmp 清理；同接线)、`failure-scene.ts`（失败现场诊断 helper，不匹配 `*.test.ts` glob 且不进 fixture 拷贝清单）、`failure-scene.test.ts`(9，现场渲染/同一 Error 重抛/碰撞序号/真子进程注入契约)。
 
 ## 核心数据流
 
@@ -107,6 +107,8 @@ argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repo
 - **依赖是直接约束，不传递**：A 依赖 B、B 依赖 C 时，A 只等 B 的 `status`（B 从 aligned 进 processing 后 A 仍在等）；B 一旦 done（含取消/搁置收口），A 立即解锁——不检验 B 的前提当时是否真成立，那一步靠 `complete` 的依赖者提示 + 人工重判。
 - **悬空引用会阻塞（不是放行）**：合并后引用的 id 不存在时按阻塞处理（提示标「不存在」），要么补条目、要么 `dep remove` 清掉；`lint` 会报。
 - **Windows rename 争用（EPERM）**：并发写时 `atomicWriteFile` 的 temp→rename 偶发 `EPERM: operation not permitted, rename`（真子进程并发用例在负载下可见，跟踪项 `todo-cli-todo.json` #13）；写路径（尤其 `add` 的锁临界区）变慢会明显放大该概率——依赖校验因此带无依赖快路径。复跑即可：原子写不会留半态，与数据正确性无关。
+  - **失败现场（#13 第一步，2026-09-17）**：concurrency/interrupt 用例经 `test/failure-scene.ts` 包装，失败即落 `${TMPDIR}/todo-cli-failure-scenes/<UTC紧凑戳>-<净化用例名>[-N].md`——完整 stack、子进程时间线（含逐 close 剩余锁快照）、各子进程 stdout/stderr 全文；失败消息尾行 `[失败现场] <路径>`。通过路径零写盘（无激活场景时 `activeSceneSink()` 返回 null 全短路）；目录不自动清理，证据留到人工判读。
+  - **负载实验结论**：8 写者真实子进程持续 add(+list)（临时仓 `--root`，绝不指向主仓 `todos/`）+ 10 轮 `npm run test:todo` → 10×101 全绿、零现场文件（test:todo 的短促并发形状未复现）；但同负载写者侧复现 EPERM：约 2–3 千条台账 8 写者并发写失败率 2%–23%（持续写压 + 大台账），纯写负载（无并发读）亦复现，≤800 条台账 60s/787 写零失败。判读要点：现场「子进程输出」节的 `errno -4048 / syscall rename / 目标路径` = rename 争用而非锁失效（「备注」节剩余锁快照显示锁被正常持有/等待）；失败 fail-closed（原子写不留半态、条目未落盘、复跑即可），与数据正确性无关。维持观察：test:todo 再遇并发失败先读失败消息尾行的现场路径。
 - **`--match` 是子串不是全文**：多条包含该子串报歧义；改写条目文本后旧 match 失效；notes 内容匹配不到（设计如此，防误伤）。
 - **对齐文档只校验结构**：小节标题 + 任意非空正文即通过（模板里的提示行也算正文）；`claim` 不代建文件，未写文档就跑 `align` 必报 `ALIGN_DOC_MISSING`。
 - **v3 升版一次性生效**：任一写操作重写整文件 ⇒ 该文件整体变 v3（`version: 3` + 每条 `dependsOn: []`/`alignedAt` 补齐，diff 一次性）；旧版 CLI 读到 v3 直接报错，回滚走 git 历史。
@@ -121,7 +123,7 @@ argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repo
 
 ## 改动清单
 
-- 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；92 个，2026-09-15 实测全绿，含 7 个依赖图纯函数用例、reopen 回退/归档用例与并发真子进程用例）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
+- 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；101 个，2026-09-17 实测全绿，含 7 个依赖图纯函数用例、reopen 回退/归档用例、9 个失败现场 helper 契约用例与并发真子进程用例）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
 - 改行为：同步 `test/todo-cli.test.ts`（命令面）/ `test/root-discovery.test.ts`（根发现）+ 本卡；改命令面：同步 `core.ts` 的 `USAGE` + `SKILL.md` + 本卡。
 - 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0002`/`0003`/`0005` 同步。
 - 新增子命令/flags：先补测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变（`REPO_COMMANDS` 同步，否则新命令会被当未知命令）。
