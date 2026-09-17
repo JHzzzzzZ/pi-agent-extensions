@@ -36,6 +36,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 - `.agents/skills/todo-cli/` — 仓库内项目级 skill：`SKILL.md`（命令参考卡）+ `scripts/todo.sh` 包装器 + `todo-cli/`（todo CLI 入口与实现同居，任意 git 仓库任意 cwd 可用；仓库根解析 = `--root` > `git rev-parse --show-toplevel`，见 `docs/tools/todo-cli.md`）。
 - `src/extensions/<插件名>/` — 12 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
 - `agent-manager/` — 独立 Node 工具，**非扩展**：不 import 宿主 SDK、不注册 pi 扩展点、已从根 `pi.extensions` 注销，仅 listen `127.0.0.1`；边界与数据流见 `docs/tools/agent-manager.md`。
+- `history/team-runs/<runId>/` — repo-dev 团队 run 的本地留档目录（`history/` 已 gitignore，不入库）：每 run 固定七份文档 `00-task` / `10-design` / `20-writer-N` / `30-integration` / `40-review` / `50-acceptance` / `90-run-report`，头部带元数据（runId / 日期 / 参与成员），单作者执笔、定稿后只追加不改写。
 
 ## 开发命令
 
