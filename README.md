@@ -599,3 +599,4 @@ node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi�
 - **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`src/extensions/pwr/vendor/acorn.mjs` 为生成文件，勿修改
+- **团队 run 留档**：repo-dev 团队每 run 在 `history/team-runs/<runId>/` 留固定七份文档 `00-task` / `10-design` / `20-writer-N` / `30-integration` / `40-review` / `50-acceptance` / `90-run-report`（头部元数据 runId / 日期 / 参与成员；单作者执笔、定稿后只追加不改写；`history/` 已 gitignore 不入库）
