@@ -49,7 +49,7 @@
 - `migrate.test.ts`：⑩ 稳定顺序取号 + 逐字段保全（全时间戳/tags/dependsOn/多 notes 深比对）+ dry-run 零写盘零取号；⑪ 幂等重跑零动作零写盘 + 重复号预检中止零写盘；⑫ from-md 产 v4 完备（逐条 `globalId` + 计数器就位）、to-md 对 v4 照常（`globalId` 不进 md）。
 - `concurrency.test.ts`：⑬ 跨文件 3+3 真子进程并发 add——唯一性只靠 `id.lock`、6 条全落全互异、计数器 = max+1、locks 零残留、stderr 恒空；⑭ 既有同文件并发 add 追加 `globalId` 互异断言。
 - `interrupt.test.ts`：⑮ SIGKILL 风暴后全台账 `globalId` 互异、计数器 ≥ `max(globalId)+1`（烧号/缺口允许，重号与倒退不允许）。
-- 必跑门：`npm run test:todo`（116 个全绿）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；人类输出契约的字节级回归由既有用例承担，除「version 字面量 3→4」的刻意更新外不改语义。
+- 必跑门：`npm run test:todo`（134 个全绿，含 #15 priority 集成用例；本单交付时段为 116）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；人类输出契约的字节级回归由既有用例承担，除「version 字面量 3→4」的刻意更新外不改语义。
 
 ## 范围外
 
