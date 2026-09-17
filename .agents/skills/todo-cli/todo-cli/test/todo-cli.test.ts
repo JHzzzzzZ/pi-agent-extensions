@@ -79,10 +79,11 @@ function writeAlignDoc(root, name, id, overrides = {}) {
   return file;
 }
 
-/** 内联条目构造：默认 v3 全字段（alignedAt / dependsOn 原生）。 */
+/** 内联条目构造：默认 v4 全字段（globalId/alignedAt/dependsOn 原生；globalId 默认取 id，只用于读断言时 fixture 也不必手写）。 */
 function entry(id, text, status, extra = {}) {
   return {
     id,
+    globalId: id,
     text,
     status,
     branch: null,
@@ -95,6 +96,22 @@ function entry(id, text, status, extra = {}) {
     alignedAt: null,
     ...extra,
   };
+}
+
+/** 未迁移条目（v1-v3 形态：没有 globalId 字段）——写门禁/迁移用例的输入。 */
+function legacyEntry(id, text, status, extra = {}) {
+  const { globalId, ...rest } = entry(id, text, status, extra);
+  return rest;
+}
+
+/** 旧版（v3）JSON 直写：globalId 可缺可带（未迁移 / 合并产物两种输入形态）。 */
+function writeLegacyTodo(root, name, entries) {
+  fs.writeFileSync(path.join(root, "todos", `${name}.json`), `${JSON.stringify({ version: 3, title: "t", entries }, null, 2)}\n`);
+}
+
+/** 全台账计数器路径（todos/.todo-cli/next-id）。 */
+function counterFile(root) {
+  return path.join(root, "todos", ".todo-cli", "next-id");
 }
 
 test("normalizeText / findDuplicateHits：归一化查重口径不变（标注/空白/大小写/句读差异不算新）", () => {
@@ -128,10 +145,11 @@ test("main：add/dup/claim/align/complete 在临时仓库上闭环，JSON 字段
 
   assert.equal(main(["add", "--file", "general", "第一条需求"], deps), 0);
   let data = readRepoData(root, "general-todo");
-  assert.equal(data.version, 3, "新建文件即 v3");
+  assert.equal(data.version, 4, "新建文件即 v4");
   assert.equal(data.entries.length, 1);
   assert.deepEqual(data.entries[0], {
     id: 1,
+    globalId: 1,
     text: "第一条需求",
     status: "open",
     branch: null,
@@ -201,10 +219,150 @@ test("main：add/dup/claim/align/complete 在临时仓库上闭环，JSON 字段
   assert.match(out.join("\n"), /已完成（状态未变）/);
 });
 
+test("main：add 落盘全局 id（递增）；list --json 带 globalId，人读行与 summary 字节不变", () => {
+  const root = makeRepo({ "general-todo": undefined });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-16T00:00:00.000Z" };
+
+  assert.equal(main(["add", "--file", "general", "全局 id 甲"], deps), 0);
+  assert.equal(main(["add", "--file", "general", "全局 id 乙"], deps), 0);
+  const data = readRepoData(root, "general-todo");
+  assert.equal(data.version, 4);
+  assert.deepEqual(data.entries.map((e) => e.globalId), [1, 2], "连续 add 取号递增");
+  assert.equal(fs.readFileSync(counterFile(root), "utf8"), "3\n", "计数器持久（下一个待发号）");
+
+  out.length = 0;
+  assert.equal(main(["list"], deps), 0);
+  assert.deepEqual(out, ["[ ] general-todo#1  全局 id 甲", "[ ] general-todo#2  全局 id 乙"], "人类可读行不含 globalId（双轨）");
+
+  out.length = 0;
+  assert.equal(main(["summary"], deps), 0);
+  assert.match(out.join("\n"), /^general-todo\s+open 2  aligning 0  aligned 0  processing 0  done 0  total 2$/, "summary 输出不含 globalId");
+
+  out.length = 0;
+  assert.equal(main(["list", "--json"], deps), 0);
+  const rows = JSON.parse(out.join("\n"));
+  assert.deepEqual(rows.map((row) => row.globalId), [1, 2], "list --json 是 globalId 的唯一输出面");
+});
+
+test("main：GLOBAL_ID_PENDING 写门禁——未迁移条目挡住六个写命令，读命令与 lint 照常（报缺失行）", () => {
+  const root = makeRepo({
+    "general-todo": {
+      version: 3,
+      title: "t",
+      entries: [legacyEntry(1, "未迁移条目", "open"), legacyEntry(2, "待对齐未迁移", "open")],
+    },
+  });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ pi: { extensions: [] } }));
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-16T00:00:00.000Z" };
+  const filePath = path.join(root, "todos", "general-todo.json");
+  const snapshot = fs.readFileSync(filePath, "utf8");
+
+  const commands = [
+    ["add", "--file", "general", "新条目"],
+    ["claim", "--file", "general", "--match", "未迁移条目"],
+    ["align", "--file", "general", "--match", "未迁移条目"],
+    ["complete", "--file", "general", "--match", "未迁移条目"],
+    ["reopen", "--file", "general", "--match", "未迁移条目"],
+    ["dep", "add", "--file", "general", "--match", "未迁移条目", "--on", "general-todo#2"],
+  ];
+  for (const args of commands) {
+    out.length = 0;
+    assert.equal(main(args, deps), 1, `${args.join(" ")} 应被门禁挡下`);
+    assert.match(
+      out.join("\n"),
+      /GLOBAL_ID_PENDING：仍有 2 条条目缺 globalId（如 todos\/general-todo\.json），先运行 migrate global-id/,
+    );
+    assert.equal(fs.readFileSync(filePath, "utf8"), snapshot, `${args[0]} 不得写盘`);
+  }
+  assert.equal(fs.existsSync(counterFile(root)), false, "门禁失败零副作用：不取号");
+
+  // 读命令容忍：迁移期间台账仍可读（可观测性不倒）；lint 报缺失引导迁移
+  out.length = 0;
+  assert.equal(main(["list"], deps), 0);
+  assert.deepEqual(out, ["[ ] general-todo#1  未迁移条目", "[ ] general-todo#2  待对齐未迁移"]);
+  out.length = 0;
+  assert.equal(main(["list", "--json"], deps), 0);
+  assert.deepEqual(JSON.parse(out.join("\n")).map((row) => row.globalId), [null, null], "未迁移条目在 --json 里是 null 瞬态");
+  out.length = 0;
+  assert.equal(main(["summary"], deps), 0);
+  assert.match(out.join("\n"), /general-todo\s+open 2/);
+  out.length = 0;
+  assert.equal(main(["lint"], deps), 1, "lint 是读命令：报缺失但不挡读写之外的任何东西");
+  assert.match(out.join("\n"), /✗ globalId 缺失：general-todo#1（未迁移）/);
+  assert.match(out.join("\n"), /✗ globalId 缺失：general-todo#2（未迁移）/);
+});
+
+test("main：全局 id 不回收——complete/reopen 不动计数器，再 add 取新号不复用", () => {
+  const root = makeRepo({ "general-todo": undefined });
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-16T00:00:00.000Z" };
+
+  assert.equal(main(["add", "--file", "general", "第一条"], deps), 0);
+  assert.equal(main(["add", "--file", "general", "第二条"], deps), 0);
+  assert.equal(fs.readFileSync(counterFile(root), "utf8"), "3\n");
+
+  assert.equal(main(["complete", "--file", "general", "--match", "第一条"], deps), 0);
+  assert.equal(fs.readFileSync(counterFile(root), "utf8"), "3\n", "收口不归还号");
+
+  assert.equal(main(["claim", "--file", "general", "--match", "第二条", "--branch", "feat/x"], deps), 0);
+  assert.equal(main(["reopen", "--file", "general", "--match", "第二条", "--note", "重估"], deps), 0);
+  let data = readRepoData(root, "general-todo");
+  assert.deepEqual(data.entries.map((e) => e.globalId), [1, 2], "状态迁移不改写既有 globalId");
+  assert.equal(data.entries[1].status, "open");
+  assert.equal(fs.readFileSync(counterFile(root), "utf8"), "3\n", "撤销不归还号");
+
+  assert.equal(main(["add", "--file", "general", "第三条"], deps), 0);
+  data = readRepoData(root, "general-todo");
+  assert.deepEqual(data.entries.map((e) => e.globalId), [1, 2, 3], "新号继续前进，不复用已收口的 1");
+  assert.equal(fs.readFileSync(counterFile(root), "utf8"), "4\n");
+});
+
+test("main：lint 逮住跨文件重复 globalId；手工仲裁 + 迁移后 lint 通过", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "todo-cli-lint-globalid-"));
+  fs.mkdirSync(path.join(root, "todos"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ pi: { extensions: [] } }));
+  const merged = (id, globalId) => ({
+    id,
+    globalId,
+    text: `条目 ${id}`,
+    status: "open",
+    branch: null,
+    tags: [],
+    dependsOn: [],
+    notes: [],
+    createdAt: null,
+    claimedAt: null,
+    completedAt: null,
+    alignedAt: null,
+  });
+  writeLegacyTodo(root, "a-todo", [merged(1, 7)]);
+  writeLegacyTodo(root, "b-todo", [merged(1, 7)]);
+  const out = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l) };
+
+  assert.equal(main(["lint"], deps), 1);
+  assert.match(out.join("\n"), /✗ globalId 重复：7（a-todo#1 与 b-todo#1）/, "同一 globalId 两次出现即漏仲裁，lint 兜底");
+
+  // 手工仲裁（b 改 8）+ 新增缺号文件，迁移取号后全台账健康
+  writeLegacyTodo(root, "b-todo", [merged(1, 8)]);
+  writeLegacyTodo(root, "c-todo", [legacyEntry(1, "待迁移条目", "open")]);
+  out.length = 0;
+  assert.equal(main(["lint"], deps), 1);
+  assert.match(out.join("\n"), /✗ globalId 缺失：c-todo#1（未迁移）/);
+  out.length = 0;
+  assert.equal(main(["migrate", "global-id"], deps), 0);
+  assert.match(out.join("\n"), /已迁移全局 id：1 个文件 · 1 条条目取号 9\.\.9（等价自检通过）/);
+  out.length = 0;
+  assert.equal(main(["lint"], deps), 0);
+  assert.match(out.join("\n"), /lint 通过/);
+});
+
 test("main：claim 两段式迁移表——aligning/processing 幂等，aligned 覆盖或保留 branch", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 2,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "对齐中条目", "aligning", { branch: "feat/old", claimedAt: "2026-09-01T00:00:00.000Z" }),
@@ -250,7 +408,7 @@ test("main：claim 两段式迁移表——aligning/processing 幂等，aligned 
 test("main：align 失败路径——NOT_ALIGNING / ALIGN_DOC_MISSING / ALIGN_DOC_INCOMPLETE 均不写盘", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 2,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "未领取条目", "open"),
@@ -300,7 +458,7 @@ test("main：align 失败路径——NOT_ALIGNING / ALIGN_DOC_MISSING / ALIGN_DO
 test("main：complete 收口门——aligning/aligned 必带 --note，open/processing 可选", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 2,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "未领取条目", "open"),
@@ -353,7 +511,7 @@ test("main：complete --note 原样进 notes——含全角括号、换行、超
 test("main：reopen 三来源回 open——清 branch/claimedAt/alignedAt，注记带源状态，其余字段不动", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "对齐中条目", "aligning", {
@@ -376,7 +534,7 @@ test("main：reopen 三来源回 open——清 branch/claimedAt/alignedAt，注�
         }),
       ],
     },
-    "other-todo": { version: 3, title: "t", entries: [entry(9, "被依赖条目", "done", { completedAt: "2026-09-03T00:00:00.000Z" })] },
+    "other-todo": { version: 4, title: "t", entries: [entry(9, "被依赖条目", "done", { completedAt: "2026-09-03T00:00:00.000Z" })] },
   });
   const out = [];
   const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
@@ -415,7 +573,7 @@ test("main：reopen 三来源回 open——清 branch/claimedAt/alignedAt，注�
 test("main：reopen 门与幂等——done 拒绝、note 门、0/多匹配 fail-closed、已是 open 字节不变", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "未领取条目", "open"),
@@ -461,7 +619,7 @@ test("main：reopen 门与幂等——done 拒绝、note 门、0/多匹配 fail-
 test("main：reopen 归档对齐文档——规范路径腾空、重领必重写；无文档跳过；归档失败不写盘", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "有文档条目", "aligned", { branch: "feat/a", alignedAt: "2026-09-02T00:00:00.000Z" }),
@@ -674,7 +832,7 @@ test("lint：注册扩展 ↔ todos/<名>-todo.json 一一对应（一个方向�
 
 test("main：add --dep 写入归一后的规范引用；非法/悬空引用拒绝且不写盘", () => {
   const root = makeRepo({
-    "general-todo": { version: 3, title: "t", entries: [entry(1, "已有前提", "open")] },
+    "general-todo": { version: 4, title: "t", entries: [entry(1, "已有前提", "open")] },
   });
   const out = [];
   const deps = { repoRoot: root, log: (l) => out.push(l), now: () => "2026-09-14T00:00:00.000Z" };
@@ -694,7 +852,7 @@ test("main：add --dep 写入归一后的规范引用；非法/悬空引用拒�
 test("main：dep add / dep remove —— 追加去重、幂等、缺引用与校验失败都不写盘", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "已完成前提", "done", { completedAt: "2026-09-10T00:00:00.000Z" }),
@@ -736,7 +894,7 @@ test("main：dep add / dep remove —— 追加去重、幂等、缺引用与校
 test("main：dep add 拒绝成环（回显环路径）且不写盘", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "环甲", "aligned", { dependsOn: ["general-todo#2"] }),
@@ -754,7 +912,7 @@ test("main：dep add 拒绝成环（回显环路径）且不写盘", () => {
 test("main：claim 依赖门——被阻塞 fail-closed 不写盘，前提完成后可开工；首次领取与 align 不受阻", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "前提条目", "open"),
@@ -793,7 +951,7 @@ test("main：claim 依赖门——被阻塞 fail-closed 不写盘，前提完成
 test("main：依赖未完成时的开工门与解锁（done 即解锁，含悬空引用算阻塞）", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "悬空前提", "aligned", { dependsOn: ["general-todo#99"], alignedAt: "2026-09-13T01:00:00.000Z" }),
@@ -818,7 +976,7 @@ test("main：依赖未完成时的开工门与解锁（done 即解锁，含悬�
 test("main：list 阻塞标记（非阻塞行字节不变）+ --json 带 dependsOn/blockedBy；summary 不变", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "前提", "processing", { branch: "feat/a" }),
@@ -858,7 +1016,7 @@ test("main：list 阻塞标记（非阻塞行字节不变）+ --json 带 depends
 test("main：complete 提示直接依赖者（已完成的依赖者不进提示）", () => {
   const root = makeRepo({
     "general-todo": {
-      version: 3,
+      version: 4,
       title: "t",
       entries: [
         entry(1, "被依赖的前提", "processing", { branch: "feat/a" }),
@@ -883,7 +1041,7 @@ test("lint：扩展核对之外扫描依赖悬空/自引用/环", () => {
   fs.writeFileSync(
     file,
     serializeTodo({
-      version: 3,
+      version: 4,
       title: "myext TODO",
       entries: [
         entry(1, "悬空", "open", { dependsOn: ["myext-todo#9"] }),
@@ -902,7 +1060,7 @@ test("lint：扩展核对之外扫描依赖悬空/自引用/环", () => {
   assert.match(text, /✗ myext-todo#3 依赖成环：myext-todo#3 → myext-todo#4 → myext-todo#3/);
   assert.equal(text.includes("myext-todo#5"), false, "干净条目不进问题清单");
 
-  fs.writeFileSync(file, serializeTodo({ version: 3, title: "clean", entries: [entry(1, "干净", "open")] }));
+  fs.writeFileSync(file, serializeTodo({ version: 4, title: "clean", entries: [entry(1, "干净", "open")] }));
   out.length = 0;
   assert.equal(main(["lint"], { repoRoot: root, log: (l) => out.push(l) }), 0);
   assert.match(out.join("\n"), /lint 通过/);
@@ -943,7 +1101,7 @@ const TRIAGE_DOCS = [
   {
     name: "a-todo",
     data: {
-      version: 3,
+      version: 4,
       title: "a",
       entries: [
         entry(1, "在做的需求", "processing", { branch: "feat/live-thing" }),

@@ -5,11 +5,15 @@
  *   - `migrate from-md`（一次性权威切换）：todos/*.md → todos/*.json，等价自检通过后
  *     删除 md 与遗留 node:sqlite 索引（todos/.todo-cli/index.db*）。自检 = 逐文件
  *     「渲染 → 再解析 → 再构建」与首次构建 deepEqual（文本/状态/分支/注记零丢失），
- *     任何文件不过关就整体中止、一个字节都不写。
+ *     任何文件不过关就整体中止、一个字节都不写；落盘时每文件锁内逐条取全局 id，
+ *     一步到位产 v4 完备台账（不产生 v3 中间态）。
  *   - `migrate to-md`（常驻逃生回滚，不是视图）：todos/*.json → 规范形态 md（条目 +
  *     `（aligning|aligned|processing…）`标记 + 注记作缩进子行），JSON 保留不动；配合 git
  *     历史里的旧版 CLI 即可回到纯 markdown 工作流。规范形态 ≠ 迁移前原文件（rawText 已按
- *     方案 C 放弃，手写标注由 notes 承载）。
+ *     方案 C 放弃，手写标注由 notes 承载）；md 无 globalId 语法（渲染函数按字段取用，自动忽略）。
+ *   - `migrate global-id [--dry-run]`（todo-cli-todo:16）：存量条目一次性取全局 id。逐文件
+ *     锁内新鲜重读 → 数组序逐条取号 → 等价自检（逐字段零漂移/新号单调）→ 落盘；
+ *     幂等（无缺口即零动作零写盘）；已有重复号先中止交人工仲裁（lint 同一口径）。
  *
  * 解析规则（等价口径 = 「全部文本零丢失」）：
  *   - 顶层条目 = 行首 `- [x]/[ ]`；一切缩进行（带不带 checkbox）并入上一条顶层条目
@@ -28,7 +32,9 @@ import { createRequire } from "node:module";
 
 import { normalizeText, parseTodoJson, serializeTodo } from "./schema.ts";
 import type { TodoEntry, TodoFileData } from "./schema.ts";
-import { acquireTodoLock, atomicWriteFile, runtimeDir, tmpDirFor } from "./lock.ts";
+import { acquireTodoLock, atomicWriteFile, runtimeDir, tmpDirFor, withTodoLock } from "./lock.ts";
+import { allocateGlobalId, findGlobalIdProblems, peekNextGlobalId, verifyGlobalIdMigration } from "./globalid.ts";
+import type { GlobalIdDoc } from "./globalid.ts";
 
 // ---------------------------------------------------------------------------
 // 旧 markdown 解析（纯函数）
@@ -181,7 +187,7 @@ export function parseLegacyMarkdown(content: string): LegacyDoc {
   return doc;
 }
 
-/** LegacyDoc → TodoFileData（timestamps：`名\u0000归一化原文` → 三时间戳）。 */
+/** LegacyDoc → TodoFileData（timestamps：`名\u0000归一化原文` → 三时间戳）；globalId 先置 null，由 from-md 编排取号。 */
 export function buildTodoData(name: string, doc: LegacyDoc, timestamps?: ReadonlyMap<string, { createdAt: string | null; claimedAt: string | null; completedAt: string | null }>): TodoFileData {
   const entries: TodoEntry[] = [];
   let id = 0;
@@ -190,6 +196,7 @@ export function buildTodoData(name: string, doc: LegacyDoc, timestamps?: Readonl
     const seeded = timestamps?.get(`${name}\u0000${normalizeText(legacy.raw)}`);
     entries.push({
       id,
+      globalId: null,
       text: legacy.text,
       status: legacy.checked ? "done" : legacy.state,
       branch: legacy.checked ? null : legacy.branch,
@@ -202,7 +209,7 @@ export function buildTodoData(name: string, doc: LegacyDoc, timestamps?: Readonl
       alignedAt: null,
     });
   }
-  return { version: 3, title: doc.title ?? `${name} TODO`, entries };
+  return { version: 4, title: doc.title ?? `${name} TODO`, entries };
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +352,16 @@ export function migrateFromMd(repoRoot: string, deps: MigrateDeps & { dryRun: bo
       return 1;
     }
     try {
+      // 每文件锁内逐条取号：from-md 产出 v4 完备台账（一步到位，不留 v3 中间态）。
+      for (const entry of item.data.entries) {
+        if (entry.globalId !== null) continue;
+        const allocated = allocateGlobalId(repoRoot);
+        if (!allocated.ok) {
+          deps.log(allocated.message);
+          return 1;
+        }
+        entry.globalId = allocated.value;
+      }
       atomicWriteFile(item.file, serializeTodo(item.data), { tmpDir: tmpDirFor(repoRoot) });
     } finally {
       lock.release();
@@ -400,5 +417,120 @@ export function migrateToMd(repoRoot: string, deps: MigrateDeps): number {
     }
   }
   deps.log(`已还原 ${rendered.length} 个 markdown（todos/*.json 保留不动；彻底回到 md 工作流需切回旧版 CLI）`);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// migrate global-id（todo-cli-todo:16）：存量一次性取号
+// ---------------------------------------------------------------------------
+
+/** 读 `todos/` 全部 JSON（按文件名排序）；迁移预检/收尾复检与 core 同口径（避免 import core 成环）。 */
+function readAllTodoDocs(repoRoot: string): { ok: true; docs: GlobalIdDoc[] } | { ok: false; message: string } {
+  const dir = path.join(repoRoot, "todos");
+  if (!fs.existsSync(dir)) return { ok: true, docs: [] };
+  const docs: GlobalIdDoc[] = [];
+  for (const fileName of fs.readdirSync(dir).sort()) {
+    if (!fileName.endsWith(".json")) continue;
+    const parsed = parseTodoJson(fs.readFileSync(path.join(dir, fileName), "utf8"), `todos/${fileName}`);
+    if (!parsed.ok) return { ok: false, message: parsed.message };
+    docs.push({ name: fileName.slice(0, -5), data: parsed.data });
+  }
+  return { ok: true, docs };
+}
+
+/**
+ * `migrate global-id [--dry-run]`：给存量未迁移条目一次性发全局 id。
+ * 稳定顺序 = 文件名 sort（readdirSync）→ 文件内数组序（单次运行下确定可复现；并发运行时
+ * 唯一性仍由计数器保证，仅全局顺序不再确定）。逐文件临界区内新鲜重读（JSON 自身是权威），
+ * 等价自检不过则该文件零写、整体中止（已写文件保留 + 号已烧不回收——幂等重跑接续）。
+ */
+export function migrateGlobalId(repoRoot: string, deps: { log: (line: string) => void; dryRun: boolean }): number {
+  const loaded = readAllTodoDocs(repoRoot);
+  if (!loaded.ok) {
+    deps.log(loaded.message);
+    return 1;
+  }
+  const duplicated = findGlobalIdProblems(loaded.docs).filter((problem) => problem.code === "GLOBAL_ID_DUP");
+  if (duplicated.length > 0) {
+    for (const problem of duplicated) deps.log(`globalId 重复：${problem.detail}`);
+    deps.log("先手工仲裁重复的 globalId（合并冲突按 globalId 判同条目），再重跑 migrate global-id");
+    return 1;
+  }
+  const pending = loaded.docs
+    .map((doc) => ({ name: doc.name, missing: doc.data.entries.filter((entry) => entry.globalId === null).length }))
+    .filter((item) => item.missing > 0);
+  if (pending.length === 0) {
+    deps.log("没有需要迁移的条目");
+    return 0;
+  }
+  const total = pending.reduce((sum, item) => sum + item.missing, 0);
+  const peek = peekNextGlobalId(repoRoot, loaded.docs);
+  if (!peek.ok) {
+    deps.log(peek.message);
+    return 1;
+  }
+  if (deps.dryRun) {
+    deps.log(`演练：将迁移 ${pending.length} 个文件 · ${total} 条条目（起始号 ${peek.value}）`);
+    return 0;
+  }
+
+  let files = 0;
+  let allocatedCount = 0;
+  let firstId = 0;
+  let lastId = 0;
+  for (const item of pending) {
+    const file = path.join(repoRoot, "todos", `${item.name}.json`);
+    const locked = withTodoLock(
+      repoRoot,
+      item.name,
+      (): { ok: true; allocated: number[] } | { ok: false; message: string } => {
+        const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${item.name}.json`);
+        if (!parsed.ok) return { ok: false, message: parsed.message };
+        const before = structuredClone(parsed.data);
+        const allocated: number[] = [];
+        for (const entry of parsed.data.entries) {
+          if (entry.globalId !== null) continue;
+          const next = allocateGlobalId(repoRoot);
+          if (!next.ok) return { ok: false, message: next.message };
+          entry.globalId = next.value;
+          allocated.push(next.value);
+        }
+        const problem = verifyGlobalIdMigration(before, parsed.data);
+        if (problem !== null) return { ok: false, message: `等价校验失败：todos/${item.name}.json（${problem}，中止迁移）` };
+        atomicWriteFile(file, serializeTodo(parsed.data), { tmpDir: tmpDirFor(repoRoot) });
+        return { ok: true, allocated };
+      },
+    );
+    if (!locked.ok) {
+      deps.log(locked.message);
+      return 1;
+    }
+    if (!locked.value.ok) {
+      deps.log(locked.value.message);
+      return 1;
+    }
+    if (locked.value.allocated.length === 0) continue;
+    files += 1;
+    allocatedCount += locked.value.allocated.length;
+    const min = Math.min(...locked.value.allocated);
+    const max = Math.max(...locked.value.allocated);
+    if (firstId === 0 || min < firstId) firstId = min;
+    if (max > lastId) lastId = max;
+  }
+
+  // 收尾全台账复检：不漏下一个还缺号/重号的条目。
+  const recheck = readAllTodoDocs(repoRoot);
+  if (!recheck.ok) {
+    deps.log(recheck.message);
+    return 1;
+  }
+  const remaining = findGlobalIdProblems(recheck.docs);
+  if (remaining.length > 0) {
+    for (const problem of remaining) {
+      deps.log(problem.code === "GLOBAL_ID_MISSING" ? `globalId 缺失：${problem.detail}（未迁移）` : `globalId 重复：${problem.detail}`);
+    }
+    return 1;
+  }
+  deps.log(`已迁移全局 id：${files} 个文件 · ${allocatedCount} 条条目取号 ${firstId}..${lastId}（等价自检通过）`);
   return 0;
 }

@@ -21,6 +21,10 @@
  *     `文件基名#id`，`add --dep` 登记、`dep add/remove` 增删）。依赖未完成（status ≠ done）
  *     时第二次 claim fail-closed（DEP_BLOCKED，条目留在 aligned）；首次 claim 与 align
  *     不受阻。引用归一/环检测/阻塞判定全在 depends.ts（纯函数）。
+ *   - 统一全局 id（todo-cli-todo:16）：条目 globalId 由 `todos/.todo-cli/next-id` 计数器
+ *     在 id 锁内发号（全台账唯一、永不回收；计数器不入库，缺失时按台账存量自愈）。
+ *     存量按 `migrate global-id` 一次性迁移；六个写命令在缺号台账上 fail-closed
+ *     （GLOBAL_ID_PENDING），读命令容忍 null 瞬态；只有 `list --json` 输出 globalId。
  *   - 全部写操作经 `todos/.todo-cli/locks/<名>.lock` 跨进程互斥 + temp+rename 原子落盘
  *     （lock.ts；sqlite 索引层已删除，`--claimed-since` 等时间维度成为一等公民）；
  *   - 只读写仓库 `todos/` 目录内的文件，路径穿越直接拒绝；不自动 commit；
@@ -40,7 +44,7 @@
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file general --match "需求描述" --on 文件#id,...
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
- *   node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]
  * 任意子命令前置 `--root <dir>` 可显式指定仓库根（跳过 git 发现；对非 git 目录也适用）。
  *
  * 纯函数（findDuplicateHits / resolveTodoPath / parseWorktrees / parseMergedBranches /
@@ -57,7 +61,9 @@ import { ALIGN_SECTIONS, alignDocPath, alignDocRelPath, archiveStamp, reopenArch
 import { blockedByMap, blockingDeps, checkDepWrite, DepProblemCodes, dependentsOf, findDepProblems, normalizeDepRef } from "./depends.ts";
 import type { DepEntry, DepProblem } from "./depends.ts";
 import { atomicWriteFile, installProcessHooks, tmpDirFor, withTodoLock } from "./lock.ts";
-import { migrateFromMd, migrateToMd } from "./migrate.ts";
+import { allocateGlobalId, findGlobalIdProblems } from "./globalid.ts";
+import type { GlobalIdDoc, GlobalIdProblem } from "./globalid.ts";
+import { migrateFromMd, migrateGlobalId, migrateToMd } from "./migrate.ts";
 import { applyEntryFilter, parseFilterOptions, serializeEntries, sortQueryEntries } from "./query.ts";
 import type { QueryEntry } from "./query.ts";
 
@@ -200,6 +206,23 @@ function depProblemLine(problem: DepProblem): string {
   return `✗ ${problem.owner} ${label}：${problem.detail}`;
 }
 
+/** 全局 id 问题行（lint 人读扫描；main 统一加 `✗ ` 前缀）。 */
+function globalIdProblemLine(problem: GlobalIdProblem): string {
+  return problem.code === "GLOBAL_ID_MISSING" ? `globalId 缺失：${problem.detail}（未迁移）` : `globalId 重复：${problem.detail}`;
+}
+
+/**
+ * 写路径的全局 id 门禁：已读到的 docs 里任一条目缺 globalId 就 fail-closed（静态消息、
+ * 零写盘零取号）。只在写路径挂——list/summary/triage/lint 在迁移期间必须照常可读
+ * （可观测性不倒）。
+ */
+function globalIdGateMessage(docs: readonly GlobalIdDoc[]): string | null {
+  const missing = findGlobalIdProblems(docs).filter((problem) => problem.code === "GLOBAL_ID_MISSING");
+  if (missing.length === 0) return null;
+  const first = docs.find((doc) => doc.data.entries.some((entry) => entry.globalId === null));
+  return `GLOBAL_ID_PENDING：仍有 ${missing.length} 条条目缺 globalId（如 todos/${first?.name ?? ""}.json），先运行 migrate global-id`;
+}
+
 /**
  * `--dep a#1,b#2` / `--on a#1,b#2` → 归一引用清单（去重保序）；任一项非法即整体失败。
  * 逗号分隔与 --tag 同构（parseArgs 对重复 flag 只留最后一个，不预留重复 flag 形态）。
@@ -244,7 +267,11 @@ export function lintTodos(repoRoot: string): string[] {
   // 依赖图兜底：跨分支合并能造出写路径没见过的悬空引用与环（ADR-0005）。
   const all = readTodoDocs(repoRoot);
   if (!all.ok) problems.push(all.message);
-  else problems.push(...findDepProblems(depIndex(all.docs)).map(depProblemLine));
+  else {
+    problems.push(...findDepProblems(depIndex(all.docs)).map(depProblemLine));
+    // 全局 id 兜底：跨分支合并能造出重复号，写门禁之外由 lint 兜住漏网（todo-cli-todo:16）。
+    problems.push(...findGlobalIdProblems(all.docs).map(globalIdProblemLine));
+  }
   return problems;
 }
 
@@ -412,6 +439,12 @@ function runAdd(deps: WriteDeps): number {
     log(all.message);
     return 1;
   }
+  // 写门禁：未迁移台账上登记会被挡下（不烧号、不写盘），先 migrate global-id。
+  const gate = globalIdGateMessage(all.docs);
+  if (gate !== null) {
+    log(gate);
+    return 1;
+  }
   const duplicateInput = all.docs.flatMap((doc) =>
     doc.data.entries.map((entry) => ({ name: doc.name, id: entry.id, status: entry.status, text: entry.text })),
   );
@@ -435,12 +468,19 @@ function runAdd(deps: WriteDeps): number {
     } else {
       data = emptyTodoData(name);
     }
+    // 临界区内新鲜 parse 后再判一次：堵住「锁外读到已迁移、锁内已被重写回未迁移」的竞态窗口。
+    const gate = globalIdGateMessage([{ name, data }]);
+    if (gate !== null) return { ok: false, message: gate };
     const id = nextId(data.entries);
     // 依赖写在落盘前校验（目标存在 / 非自身 / 不成环）——_fail-closed，不给 --force 旁路。
     const problems = checkDepWrite({ file: name, id, dependsOn: parsedDeps.refs }, entryIndex);
     if (problems.length > 0) return { ok: false, message: problems.map(depProblemMessage).join("\n") };
+    // 取号在依赖校验之后：普通登记失败（依赖/锁）不烧号；取号后写盘失败留缺口（永不回收）。
+    const allocated = allocateGlobalId(repoRoot);
+    if (!allocated.ok) return { ok: false, message: allocated.message };
     const entry = {
       id,
+      globalId: allocated.value,
       text,
       status: "open" as const,
       branch: null,
@@ -493,6 +533,8 @@ function runClaim(deps: WriteDeps): number {
     // 依赖门要解析跨文件引用——读全量台账（任一文件损坏整体 fail-closed，与其它命令同口径）。
     const all = readTodoDocs(repoRoot);
     if (!all.ok) return { ok: false, message: all.message };
+    const gate = globalIdGateMessage(all.docs);
+    if (gate !== null) return { ok: false, message: gate };
     const doc = all.docs.find((item) => item.name === name);
     if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
     const located = locateEntry(doc.data, match);
@@ -553,6 +595,8 @@ function runAlign(deps: WriteDeps): number {
     if (!fs.existsSync(file)) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
     const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
     if (!parsed.ok) return { ok: false, message: parsed.message };
+    const gate = globalIdGateMessage([{ name, data: parsed.data }]);
+    if (gate !== null) return { ok: false, message: gate };
     const located = locateEntry(parsed.data, match);
     if (!("entry" in located)) {
       return { ok: false, message: `${located.code}：${located.code === "NOT_FOUND" ? "没有匹配条目" : "匹配到多条，请缩小范围"}` };
@@ -600,6 +644,8 @@ function runComplete(deps: WriteDeps): number {
   const result = withTodoLock(repoRoot, name, (): CompleteOutcome => {
     const all = readTodoDocs(repoRoot);
     if (!all.ok) return { ok: false, message: all.message };
+    const gate = globalIdGateMessage(all.docs);
+    if (gate !== null) return { ok: false, message: gate };
     const doc = all.docs.find((item) => item.name === name);
     if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
     const located = locateEntry(doc.data, match);
@@ -656,6 +702,8 @@ function runReopen(deps: WriteDeps): number {
   const result = withTodoLock(repoRoot, name, (): ReopenOutcome => {
     const all = readTodoDocs(repoRoot);
     if (!all.ok) return { ok: false, message: all.message };
+    const gate = globalIdGateMessage(all.docs);
+    if (gate !== null) return { ok: false, message: gate };
     const doc = all.docs.find((item) => item.name === name);
     if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
     const located = locateEntry(doc.data, match);
@@ -743,6 +791,8 @@ function runDep(deps: WriteDeps): number {
   const result = withTodoLock(repoRoot, name, (): DepOutcome => {
     const all = readTodoDocs(repoRoot);
     if (!all.ok) return { ok: false, message: all.message };
+    const gate = globalIdGateMessage(all.docs);
+    if (gate !== null) return { ok: false, message: gate };
     const doc = all.docs.find((item) => item.name === name);
     if (doc === undefined) return { ok: false, message: `找不到 todo 文件：${opts.file}` };
     const located = locateEntry(doc.data, match);
@@ -936,7 +986,7 @@ const USAGE = `用法：
   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]
   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--json]
-  node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md
+  node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]
 
 仓库根默认由 git 自动发现（cwd 起）；也可在任意子命令前追加 --root <dir> 显式指定。`;
 
@@ -1010,7 +1060,8 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
       return migrateFromMd(repoRoot, { now, log, dryRun: opts["dry-run"] === true, force: opts.force === true });
     }
     if (sub === "to-md") return migrateToMd(repoRoot, { now, log });
-    log(`未知 migrate 子命令：${sub ?? ""}（可用：from-md [--dry-run] [--force] | to-md）`);
+    if (sub === "global-id") return migrateGlobalId(repoRoot, { log, dryRun: opts["dry-run"] === true });
+    log(`未知 migrate 子命令：${sub ?? ""}（可用：from-md [--dry-run] [--force] | to-md | global-id [--dry-run]）`);
     return 1;
   }
 
