@@ -1,9 +1,10 @@
 {
-  "version": 3,
+  "version": 4,
   "title": "todo-cli TODO",
   "entries": [
     {
       "id": 1,
+      "globalId": 296,
       "text": "制作一个 agentic 的 todo 管理 CLI（来源：用户需求 2026-09-12；默认形态：Pi 扩展 + CLI 式命令，读写本仓库 `todos/<插件名>-todo.md` 工作流文件）",
       "status": "done",
       "branch": null,
@@ -25,6 +26,7 @@
     },
     {
       "id": 2,
+      "globalId": 297,
       "text": "工具名去冲突（用户实测报错）：本扩展注册的 agent 工具 `todo` 与已装第三方扩展 `@juicesharp/rpiv-todo`（同名工具 `todo`，管会话任务列表）冲突——宿主工具注册表无命名空间，后加载的一方整个扩展加载失败（`Error: Failed to load extension \"...rpiv-todo\\index.ts\": Tool \"todo\" conflicts with ...\\todo-cli\\index.ts`）。插件侧避让：工具改名 `todos`（命令面 `/todo` 与 `/todo:*` 不变；对方命令名是 `todos`，属另一注册表）。验收：todo-cli 测试 + 根 test:todo/test:contract/test:smoke 全绿、`node tools/install-smoke.mjs` 14/14、与 rpiv-todo 同装不再报冲突；同步 docs 卡 / README / AGENTS / 本条进展。",
       "status": "done",
       "branch": null,
@@ -41,6 +43,7 @@
     },
     {
       "id": 3,
+      "globalId": 298,
       "text": "形态纠正为通用命令行 CLI（用户 2026-09-11）：todo 工具应为独立 CLI 而非 Pi 插件——删除扩展接线（index.ts / index.test.ts / package.json 的 pi 字段与 typebox 依赖），保留 todo-cli/core.ts + tools/todo.mjs 为唯一 CLI 入口（任意 cwd 可调用、零 pi 依赖）；根 package.json pi.extensions 注销（14→13 扩展）并同步 install-smoke 期望表 / README / AGENTS / docs 卡（移出 docs/extensions）/ 版本号；配套改为用户级 skill（~/.pi/agent/skills/todo-cli/，主会话创建）教 agent 直接调用 CLI，todo-add / todo-triage skill 的机械步骤改走 CLI。验收：CLI 任意 cwd 跑通（summary/list/add/claim/complete/lint/triage/--help）、无 @earendil-works 引用；根 test:contract / test:smoke / test:todo 全绿；node tools/install-smoke.mjs 13/13 扩展；文档四处同步。（完成 team-run-1789100633429 → merge 4951d9a，根 2.31.0（13 扩展 ：todo-cli/ 仅剩 core.ts（CLI-only ，tools/todo.mjs 唯一入口；test:contract 3 · test:smoke 19 · test:todo 16（含 3 个进程边界 E2E · install-smoke 13/13 全绿；配套 skill 见 todos/skills-todo.md（~/.pi/agent/skills/todo-cli/ ）",
       "status": "done",
       "branch": null,
@@ -56,6 +59,7 @@
     },
     {
       "id": 4,
+      "globalId": 299,
       "text": "持久化改造：markdown → 数据库（用户 2026-09-11 提出）。当前实现直接读写 todos/*-todo.md 文本（解析/查重/CRLF 保持全靠字符串处理），优化为数据库持久化：条目结构化字段（状态/文本/文件归属/processing 标记/分支引用/时间戳），写操作单条原子、并发安全，查询/聚合/查重不再扫全部文件。必须保留：现有七子命令 CLI 契约与退出码、skill 配套（todo-add/todo-triage/todo-cli）、AGENTS.md 登记工作流、lint 的扩展↔todo 对应、人工可读的 markdown 视图（导出或双向同步二选一）、历史条目迁移与回滚。待决策（开工前定）：存储选型（node:sqlite 内置 vs 单文件 JSON+锁 vs 其它）、markdown 是权威还是导出视图、迁移与双写策略、无数据库环境的降级。验收：现有 16 个测试与真实 todos/ 行为零破坏（或迁移后等价证明）、并发写/中断写测试、迁移脚本可逆、文档四处同步。",
       "status": "done",
       "branch": null,
@@ -71,6 +75,7 @@
     },
     {
       "id": 5,
+      "globalId": 300,
       "text": "元数据化筛选查询（用户 2026-09-11 提出）：todo-cli 支持按 metadata 筛选/查询——① 状态类（未领取 open / 进行中 processing / 已完成 done）；② 归属类（不同插件/软件，如只看 todo-cli 的条目）；③ 更多维度待定（标签/负责人/时间范围/关键词等）。现状：list --status 与 list --file 已覆盖 ① ② 的基本形态；本条把筛选升级为结构化 metadata 查询（组合条件、可扩展维度、稳定输出），与「持久化改造」条目配套（DB 化后 metadata 才有一等公民位置）。待细化（开工前定）：metadata 字段集与来源（条目文本约定 vs 结构化列）、查询语法（flags vs 表达式）、输出格式（人读/--json）、与 skill 的配合。验收：组合条件查询（如「processing 且 file=todo-cli」）一条命令完成；筛选有测试；CLI 契约向后兼容；todo-cli/todo-triage skill 同步用法。",
       "status": "done",
       "branch": null,
@@ -86,6 +91,7 @@
     },
     {
       "id": 6,
+      "globalId": 301,
       "text": "complete --note 处理有缺陷（2026-09-11 实测 agent-team-todo:116 收尾）：备注里的全角右括号「）」被吞掉、「完成」前缀重复——写入结果是「（完成 完成 … statusTaskText( ——」。要求：note 只整体包裹、不解析内部括号与换行；补单测覆盖含「（）」、换行、超长备注的 complete 输入。",
       "status": "done",
       "branch": null,
@@ -101,6 +107,7 @@
     },
     {
       "id": 7,
+      "globalId": 302,
       "text": "存储架构迁移方案 C：JSON 权威、去掉 markdown（用户 2026-09-11 讨论后指定登记）——todos/<名>.json 为唯一持久真相，CLI 是唯一读写入口；状态/文本/注记/分支引用/标签/三时间戳为原生字段，无 sqlite 索引层、无漂移、无 node:sqlite 实验依赖；JSON 进 git 可 diff。必须保留：七子命令 CLI 契约（--file 指向 .json）与退出码、lint 的扩展↔todo 对应（文件名改 .json）、AGENTS 登记工作流、skill 配套、list 即人类视图（明确不再保留 md 视图，同时改写 L14 验收里「人工可读 markdown 视图必须保留」条）。并发：自研锁（stale/重入/中断释放）+ temp+rename 原子写，配真实子进程并发/中断测试。迁移：18 文件/189 条 + 注记与缩进子行迁移进 notes，迁移可逆。同步改：AGENTS 红线 2/7、lint、README、docs/tools/todo-cli.md、triage 映射口径、三个 todo skill（仓库外，需用户批准）。待决策（开工前定）：单文件 vs 每插件一文件；条目 schema（原 md 文本是否保留）；锁实现；分支合并冲突策略；是否接受彻底无 md。验收：迁移后等价证明（条目数/状态/注记零丢失）、并发写不丢、lint exit 0、文档四处同步、回滚可还原 md 形态。",
       "status": "done",
       "branch": "feat/todo-cli-json-store",
@@ -116,6 +123,7 @@
     },
     {
       "id": 8,
+      "globalId": 303,
       "text": "清理 docs/tools/todo-cli.md 的环境剥离前缀残留：成员侧 env 根治（638eb0f）后「必跑」里的 env -u PI_AGENT_TEAM_* 前缀说明已失效，删掉该句并更新 last verified",
       "status": "done",
       "branch": null,
@@ -131,6 +139,7 @@
     },
     {
       "id": 9,
+      "globalId": 304,
       "text": "目录重构 + skill 化（用户 2026-09-12）：① CLI 入口 tools/todo.mjs 移入实现目录（todo-cli/todo.mjs，入口与实现同居）；② 整个 todo-cli/ 搬进全局 skill 目录 ~/.pi/agent/skills/todo-cli/todo-cli/（用户原话 .agent/skills/todo-cli/todo-cli）；③ 基于搬入的工具新建/改写 ~/.pi/agent/skills/todo-cli/SKILL.md，描述 todo-cli 怎么用（命令参考卡，边界沿用 skills-todo #6 决议：让出登记/盘点意图词给 todo-add / todo-triage）。待对齐（开工前定）：a) 仓库是否彻底移除 todo-cli（含 test/todo-cli.test.ts、todo-cli/test/*、根 package.json 的 test:todo 脚本）还是保留镜像/软链，仓库侧测试门怎么办；b) REPO_ROOT 解析——现由脚本位置 path.resolve(HERE,\"..\") 得仓库根，搬出仓库后必须改为 cwd/`git rev-parse --show-toplevel` 自动发现（或 --root 覆盖），保证任意 git 仓库任意 cwd 可用；c) 既有 skills-todo #5/#6/#8 描述的 ~/.pi/agent/skills/todo-cli/（SKILL.md + scripts/todo.sh）是更新还是重建，.zcode/.pi 两镜像与 skills README 索引如何同步；d) AGENTS.md 红线 2/7、docs/tools/todo-cli.md（含 INDEX 路由）、README、.gitattributes（todos/*.json LF）等引用点全部同步。仓库外改动需用户逐次批准（红线 1）。验收：任意 git 仓库任意 cwd 跑通七子命令 + list 查询 flags；SKILL.md 命令面与 CLI 实际行为逐条一致、触发词不与 todo-add/todo-triage 重叠；本仓库 AGENTS/README/docs 引用零残留（或明确单点入口）；真实 todos/ 上 summary/lint 零破坏。",
       "status": "done",
       "branch": "feat/todo-cli-skill-placement",
@@ -146,6 +155,7 @@
     },
     {
       "id": 10,
+      "globalId": 305,
       "text": "todo 依赖关系（用户 2026-09-12）：条目之间可声明依赖——todo1 依赖 todo2 时，todo2 未完成（status ≠ done）则 todo1 不可领取，claim 失败并输出阻塞提示（指明未完成依赖的文件#id 与状态）。待对齐（开工前定）：① 依赖引用形态（同文件数值 id vs 跨文件 文件名#id，是否允许跨文件依赖）；② 声明入口（add --dep 与后续增删依赖的子命令形态）；③ 阻塞语义边界（只拦 claim，还是同时影响 list/summary/triage 的排序与展示；被阻塞条目的状态显示与退出码）；④ 环检测（A→B→A 拒绝登记还是 lint 报错）与悬空依赖（指向不存在条目）如何处理；⑤ schema 演进（新增 dependsOn 字段，旧文件缺字段按空数组容错，不回填、是否 bump version）。验收：依赖未完成时 claim 非零退出且提示可断言；依赖完成后同一命令可领取；环/悬空依赖被拒绝且有测试；旧 todos/*.json 解析零破坏（18 文件全量可读）；单测覆盖含跨文件与锁路径。",
       "status": "done",
       "branch": "feat/todo-cli-depends-on",
@@ -161,6 +171,7 @@
     },
     {
       "id": 11,
+      "globalId": 306,
       "text": "状态机扩展为对齐驱动：open → aligning → aligned → processing → done（用户 2026-09-12）。语义：open=未领取；首次领取进入 aligning——此阶段必须与人工达成一致、对齐人类意图、消除模糊地带并产出对齐文档，写代码被禁止；人工确认后进入 aligned=已对齐待开工；在 aligned 上再次领取进入 processing；从 processing 起直到代码上库（merge/commit）全程无需任何人工参与（无人值守闭环）。待对齐（开工前定）：① 对齐文档落点与契约（todos/align/<名>#<id>.md 还是 notes 内，格式与必填字段）；② 命令面（新增 align start/confirm 子命令，还是 claim 分模式；人工确认门的触发方式与 fail-closed 语义）；③ 状态与时间戳字段（是否新增 alignedAt；claimedAt 在 aligning/aligned/processing 三态下如何取值；aligned 重复领取的幂等性）；④ 与\"todo 依赖关系\"条目的交互顺序（依赖检查在进入 aligning 前还是对齐确认后）；⑤ 历史数据（现有 open/processing/done 保持原义不强制回退；历史 processing 是否要求补对齐文档）；⑥ ENTRY_STATUSES/schema 校验、summary/list/triage/lint 输出与统计口径、AGENTS.md 红线 2 的「领取即 processing」表述、todo-add/todo-triage/todo-cli/wrap-up 四个 skill 与 docs/tools/todo-cli.md 同步。验收：状态迁移表显式化（非法迁移明确拒绝并有测试）、aligning 无对齐文档/无人工确认不得进 aligned、aligned 未领取不得进入 processing（提示可断言）、processing→done 无人工门（无人值守闭环）、全链路单测（含真实子进程锁路径）、文档四处同步。",
       "status": "done",
       "branch": "feat/todo-cli-align-gate",
@@ -176,6 +187,7 @@
     },
     {
       "id": 12,
+      "globalId": 307,
       "text": "list --file 短名静默返回空（2026-09-12 实测发现，本次登记时撞见）：resolveTodoPath 会把 `--file todo-cli` 归一为 todo-cli-todo.json（add/claim/complete 都正常），但 runList 的过滤直接把原始 opts.file 与 doc.name（todo-cli-todo）比较——query.ts 注释「core 负责从 --file 归一」未实现，于是 `list --file general` 返回 0 行且退出码 0（沉默错误；`--file general-todo` 才正确）。要求：core 归一后传入 filter（与 add/claim/complete 同口径），补测试覆盖短名/全名/.json 后缀/不存在文件（不存在仍报错 exit 1）。验收：短名与全名输出逐字节一致、有测试锁定；docs/tools/todo-cli.md 的 --file 说明与实现对齐。",
       "status": "done",
       "branch": "feat/todo-cli-list-file-normalize",
@@ -191,9 +203,10 @@
     },
     {
       "id": 13,
+      "globalId": 308,
       "text": "test:todo 偶发失败（2026-09-14 实测）：并发负载下（同仓另有会话在跑 todo CLI 写操作）首跑 42/44、fail 2（疑为 concurrency.test.ts 真子进程用例），独立复跑两次均 44/44 全绿。要求：捕获失败时的用例名与 stderr 后再判定是锁等待/超时预算问题还是测试自身竞态；若确认负载敏感则放宽等待预算或标注串行，保持真子进程语义不退化。",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/todo-cli-13",
       "tags": [
         "tests",
         "flaky"
@@ -207,6 +220,7 @@
     },
     {
       "id": 14,
+      "globalId": 309,
       "text": "reopen 子命令：把在途条目退回未领取（用户 2026-09-15）。背景：五态是前向机（open→aligning→aligned→processing→done），claim 在 processing 上幂等 no-op，docs/tools/todo-cli.md 明写「历史 processing 不回退状态」——实际撞上：9 条虚空 processing（8 条 route A 上游根修跨插件登记 + agent-team#66）零 claim / 零分支 / 零对齐文档，却没有任何受支持手段退回 open；唯一替代 migrate to-md → from-md --force 会重建全台账并丢 createdAt 18 / claimedAt 18 / completedAt 20 / alignedAt 8 / tags 8。要求：新增第 10 个子命令 reopen --file <名> --match \"子串\" [--note \"原因\"]——来源 aligning / aligned / processing 一律 → open，清空 branch / claimedAt / alignedAt，notes 追加「撤销 <日期>：回到未领取」（--note 并入）；done 拒绝（撤销已完成另条登记）；已是 open 幂等 changed:false；沿用既有锁 / 原子写 / 匹配口径（0 条或多条匹配 fail-closed 报错）。契约变更同步：USAGE + SKILL.md + docs/tools/todo-cli.md + todo-cli 卡（五态图与子命令面）；TDD 先红后绿（三来源各一例 + 幂等 + done 拒绝 + 多匹配 fail-closed）。验收：npm run test:todo 全绿 + 用它把本次 9 条虚空 processing 撤销为 open（未领取）。",
       "status": "done",
       "branch": "feat/todo-cli-reopen",
@@ -225,9 +239,10 @@
     },
     {
       "id": 15,
+      "globalId": 310,
       "text": "todo 条目优先级（用户 2026-09-15 提出，未领取）：台账支持 1-10 数字优先级，默认 5，agent 登记时可自行判断取值。要求：① 存储层 entries[] 增加 priority 字段，旧条目缺失视作 5（读时兜底，不强制重写既有文件）；② 命令面 add --priority <1-10>，非整数/越界 fail-closed（新错误码，沿用 result union 口径）；③ 查询面 list 展示并按优先级排序（数字大者为高优先、同值内保持 id 稳定次序；是否设为默认排序在对齐时定）、summary 与 list --json 输出该字段；④ 优先级只影响展示/排序/人工排期，不改变五态状态机与依赖门语义（claim/align 不按优先级拦截）；⑤ 文档同步：SKILL.md 命令面、docs/tools/todo-cli.md 卡片、align 模板若要带上字段一并更新。验收：单测覆盖默认值、边界 1 与 10、越界与非法输入拒绝、旧数据（无字段）兼容、排序稳定性、--json 输出；npm run test:todo 全绿；todo lint 不受影响。",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/todo-cli-priority",
       "tags": [],
       "dependsOn": [],
       "notes": [],
@@ -238,9 +253,10 @@
     },
     {
       "id": 16,
+      "globalId": 311,
       "text": "todo 统一全局 id（用户 2026-09-15 提出，repo-dev 首单候选）：当前条目 id 是文件内 max+1、跨文件会重号（todo-cli#15 与 general#15 是两个不同条目却都叫 15），查重/引用/对齐文档命名/依赖引用全以「文件#id」为准，人机都容易混。要求：所有 todos/*.json 的条目支持统一唯一 id（类似数据库主键，全台账从不重复、永不复用）。待定口径（对齐时定）：① id 形态（全局自增整数+跨文件计数器文件 vs 时间戳型 ULID）；② 引用与展示格式（文件#id 双轨保留 or 全局 id 单轨；dependsOn 规范引用、align 文档命名 todos/align/<名>#<id>.md、--match 口径是否跟随）；③ 存量条目分配方式（一次性迁移全量写盘 vs 惰性分配——注意 #14 教训：批量重写须逐字段保全时间戳/notes）；④ 跨文件计数器的锁与并发语义（沿用每文件锁不够，需全局唯一性保证）；⑤ 与已领取的 #15（优先级）的先后关系（统一 id 改 list 展示，宜先行）。验收：新登记/领取/引用/查重按全局 id 全链路跑通；存量条目 id 无一丢失或改义；test:todo 全绿；SKILL.md + docs/tools/todo-cli.md 卡片同步。",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/todo-cli-global-id",
       "tags": [],
       "dependsOn": [],
       "notes": [],

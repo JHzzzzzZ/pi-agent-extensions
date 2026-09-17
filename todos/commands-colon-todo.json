@@ -1,13 +1,15 @@
 {
-  "version": 1,
+  "version": 4,
   "title": "commands-colon-todo",
   "entries": [
     {
       "id": 1,
+      "globalId": 194,
       "text": "命令面全量改为冒号命名空间式",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：6 插件全量冒号化——agent-team v1.12.0 / pwr v2.8.0 / opencode-bridge v1.7.0 / loop v1.6.0 / goal v1.3.0 / solo-mode v1.2.0；48 条命令经真实 pi loader 冒烟全部注册且有描述；旧空格写法只提示改名、绝不执行；详见各插件条目的完成记录",
         "需求（2026-09-11，用户提出）：把全仓所有\"子命令式\"命令（空格分词，如 `/team run`、`/loop list`）全部改成冒号形式，如 `/team:run`。",
@@ -26,7 +28,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

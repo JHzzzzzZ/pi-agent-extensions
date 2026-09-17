@@ -1,9 +1,10 @@
 {
-  "version": 3,
+  "version": 4,
   "title": "TODO",
   "entries": [
     {
       "id": 1,
+      "globalId": 121,
       "text": "修复 `view` 视角下，leader 派活给成员后切换视角时上方不断出现换行重影的问题。（首轮：指纹门控+按 id 选中+帧高消抖，未根除，见第二轮条）",
       "status": "done",
       "branch": null,
@@ -17,6 +18,7 @@
     },
     {
       "id": 2,
+      "globalId": 122,
       "text": "view 顶部标题+页签堆叠依旧（第二轮：overlay 加 maxHeight 85% + margin 1 与参考对齐，viewer 打开期间暂停并隐藏下方 widget 亮块）。105 测试 + typecheck 全绿；但用户真机截图实锤依旧堆叠（53s/54s、1m26s/1m27s 标题并存），见第三轮条。",
       "status": "done",
       "branch": null,
@@ -30,6 +32,7 @@
     },
     {
       "id": 3,
+      "globalId": 123,
       "text": "view 标题+页签堆叠第三轮（照抄 pi-subagents fleet 壳——options 一字不差 + 标题去 elapsed 静态化 + openViewer 互斥防双 overlay；elapsed 只留下方 widget，viewer 内零每秒文本）。测试补录：viewer-host（真实 TuiMainScreen + scrollback 仿真器，单实例恒 1 组 chrome）、viewer-mutex（接线层互斥回归，旧版双 overlay 快速失败）。109 测试 + typecheck 全绿；等用户真机确认。",
       "status": "done",
       "branch": null,
@@ -43,6 +46,7 @@
     },
     {
       "id": 4,
+      "globalId": 124,
       "text": "支持与各个 agent 进行动态对话。（验证中：count-duet 团队 1-10 轮流计数已跑通，5 次串行派单；1-1000 逐个派单超预算待分批方案确认）",
       "status": "done",
       "branch": "feat/agent-team-member-dialogue",
@@ -58,6 +62,7 @@
     },
     {
       "id": 5,
+      "globalId": 125,
       "text": "viewer 升级「类主界面」全页模式（路径 1：同进程内嵌，用户 2026-09-10 提出，未领取）：用 `ctx.ui.custom(factory)` **不传 overlay** 打开全页组件——官方语义是接管内容区并拿走键盘焦点（snake.ts 先例），区别于现有 /team:view 的 overlay 浮层。页面内部用 pi-tui 现成组件重组主界面观感：Editor（主界面同款输入组件，替代 v1.6.0 的右栏单行输入）+ Markdown（对话气泡）+ ScrollView（转录滚动）+ 状态行。复用既有资产：v1.6.0 `chat.ts` 队列/链式派单语义（Editor 提交接这里，不新造派单通道）、leader 成员 JSON 事件流与 run artifacts 回放（转录数据源）。明确边界：custom 是模态的（主界面核心 Editor 挂起，符合预期）；斜杠命令面板/compaction/消息持久化是主会话专属，不在范围。验收：全页打开与 Esc 返回 roster/viewer；页内 Editor 输入经 chat 队列送达且回复流式渲染；与现有 overlay viewer 的互斥/切换关系明确不双开；host 级测试（沿 viewer-host 真实 TuiMainScreen + 假终端模式）+ typecheck 绿。设计自由度留给领取者：入口形态（viewer 内切全页 vs 独立命令）、全页与 overlay 两模式并存或替代。背景：pi 无\"第二个主界面\"接口（单进程单 TuiMainScreen），路径 2（`pi --session` 真·第二个主界面）被 agent-team 子进程 `--no-session` 阻断（cockpit.ts:538、dispatch.ts:357），路径 3（宿主多标签）超出扩展 API——路径 1 是当前唯一可同进程落地的形态。",
       "status": "open",
       "branch": null,
@@ -71,6 +76,7 @@
     },
     {
       "id": 6,
+      "globalId": 126,
       "text": "view 场景下支持用户与各 agent 直接对话：viewer 内选中成员/leader 后按 `m` 进入右栏输入行，Enter 提交；消息按直接派单语义到达——复用 startBackgroundRun（含 model 预检）以消息为 task 发起新后台 run，run 运行中则排队、落定（completed）后链式派出；回复经新 run transcript 展示，报告照常 followUp 送达主会话。架构约束：成员子进程归 leader 派生，cockpit 无通道注入消息，“动态对话”=派单语义。（v1.6.0 合入 feat/agent-team-view-chat：`chat.ts` 纯逻辑 + index 接线，队列/链式门控，chat/viewer-chat/viewer-chat-host 测试锁定）",
       "status": "done",
       "branch": null,
@@ -84,6 +90,7 @@
     },
     {
       "id": 7,
+      "globalId": 127,
       "text": "将 team 的 view 界面改成左右分栏式（对照 pi-subagents fleet inspector 布局，截图存于 `agent-team/docs/assets/view-split-layout-reference.png`）：左栏成员列表（状态标记 pending/complete/failed + agent id），右栏当前选中成员的运行详情（runId / State / Step / Transcript tail），底部按键提示栏；替代现有顶部页签切换（`buildViewerData` 页签排序随之退役或改造），键盘导航与选中保持按 actor id，同步更新 tui-sync 对照矩阵。（v1.7.0：左栏 roster（选中 `›` + 状态图标 + label + actor id，右对齐状态文本，窗口化滚动，排序沿用 leader 首位 + actor id）；右栏 = 三行元信息头 `Run:`/`State:`/`成员:`（固定不滚，键名加粗，无 Step 行——成员子进程无步进状态，不新增数据管道）+ 完整转录正文（滚动/follow/Markdown/x 工具行保留）；底部图例独立成行 + 成员 i/n；`VIEWER_CHROME_ROWS` 3→6、帧高公式换 fleet `max(2, floor(rows*0.85)-6)`、最小宽度门 36 列；键位不变、选中仍钉 actor id；确认横幅/notice 按右栏 detail 宽换行后占正文窗口顶部、帧总高不变；与 v1.6.0 发消息错峰合入、版本顺延 1.7.0。tui-sync §3.2 改写 + §4 几何字面量 + §5 登记）",
       "status": "done",
       "branch": null,
@@ -97,6 +104,7 @@
     },
     {
       "id": 8,
+      "globalId": 128,
       "text": "补齐 `view` 视角下的功能，例如停止 agent。（v1.4.0：viewer 内 `D` 停止整个 run——两步确认横幅占正文窗口顶部、帧总高不变，busy 守卫防重复，`stopAndSettle()` 与 team_stop 同语义，settled/未落定/异常分别映射 success/warning/error notice；`r`/`R` 手动刷新绕过指纹门控。停止粒度 = 整个 run，按成员停不可行——成员子进程归 leader 进程管。19 个新测试，全量 166）",
       "status": "done",
       "branch": null,
@@ -110,6 +118,7 @@
     },
     {
       "id": 9,
+      "globalId": 129,
       "text": "根 README 为每个插件增加效果示意图",
       "status": "done",
       "branch": null,
@@ -123,6 +132,7 @@
     },
     {
       "id": 10,
+      "globalId": 130,
       "text": "devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞",
       "status": "done",
       "branch": null,
@@ -136,6 +146,7 @@
     },
     {
       "id": 11,
+      "globalId": 131,
       "text": "参照 pi-subagents（v0.66.0）对齐 agent-team 可靠性：async-first 统一 + run 落盘/reconcile + 预算可配可见 + doctor 自检 + model 预检。v1.5.0（feat/agent-team-reliability；与 viewer D 停止的 1.4.0 错峰）：",
       "status": "done",
       "branch": null,
@@ -156,6 +167,7 @@
     },
     {
       "id": 12,
+      "globalId": 132,
       "text": "修复每次 `/reload` 后 team 相关工具消失的问题（globalThis 双加载守卫跨 reload 常驻，entry 直接 return）。（v1.3.1：守卫命中后注册 session_shutdown 处理器删标志——pi 保证重绑扩展（reload/new/resume/fork/switch）前必发该事件，下次加载重新注册全部工具/命令/widget；同进程真双加载（无 shutdown 间隔）仍被抑制。新增 3 测试：reload 重注册 / 双加载抑制 / shutdown 幂等；147 测试 + typecheck 全绿；并入 feat/agent-team-clear 后测试断言同步 /team:clear）",
       "status": "done",
       "branch": null,
@@ -169,6 +181,7 @@
     },
     {
       "id": 13,
+      "globalId": 133,
       "text": "新增停止工具并暴露给 agent（如 `team_stop`：按 runId 停止运行中的团队派单）",
       "status": "done",
       "branch": null,
@@ -187,6 +200,7 @@
     },
     {
       "id": 14,
+      "globalId": 134,
       "text": "agent-team 的 TUI 与 pi-subagents 同步，所有细节同步到代码层级",
       "status": "done",
       "branch": null,
@@ -205,6 +219,7 @@
     },
     {
       "id": 15,
+      "globalId": 135,
       "text": "终态亮块可消除：run 结束后终态行常驻且无法关闭（/reload 后还会重新挂载），需要退出路径",
       "status": "done",
       "branch": null,
@@ -222,6 +237,7 @@
     },
     {
       "id": 16,
+      "globalId": 136,
       "text": "按键未对齐：真机使用中 viewer/widget 按键行为与 pi-subagents fleet 不一致（v1.8.0，feat/agent-team-viewer-keys → da59366）",
       "status": "done",
       "branch": null,
@@ -239,6 +255,7 @@
     },
     {
       "id": 17,
+      "globalId": 137,
       "text": "viewer/widget 重复行第四轮：v1.7.0 分栏改版后真机仍有重复行出现",
       "status": "done",
       "branch": null,
@@ -260,6 +277,7 @@
     },
     {
       "id": 18,
+      "globalId": 138,
       "text": "支持运行中的 run 中途插话（steer 语义）：viewer 发消息当前是派单语义（排队 → run 落定后链式派出），用户实测\"数数途中打招呼，任务结束才收到回复\"——期望不打断任务、让正在干活的 leader/成员尽快看到插话并回应。",
       "status": "done",
       "branch": null,
@@ -278,6 +296,7 @@
     },
     {
       "id": 19,
+      "globalId": 139,
       "text": "login 时上下键冲突：Pi 的 login（登录/鉴权选择）界面中，team widget 的上下键选中激活与界面的选项上下选择冲突，导致无法选择选项。（v1.9.1，feat/agent-team-widget-focus → 7b56797）根因：v1.8.0 抄 fleet-status 门控只抄了「编辑器为空」半条，漏掉 `editorHasFocus()` 短路——宿主 `/login` 经 showSelector 把主编辑器替换为选择器并 setFocus（非 overlay），而 pi-tui 扩展 onTerminalInput 监听器**先于**聚焦组件，widget consume 即抢键。交付：`probeEditorFocus`（`getFocusedComponent()` 优先/`focusedComponent` 字段回退/未知→undefined 降级）+ `editorFocus` 端口，index 经 factory 形态 setWidget 一次性捕获宿主 TUI；焦点确定非编辑器时 widget 完全不介入（含 alt 通道）、选中态退出让行。测试 279→290（本分支新增 11：widget 7 + widget-focus-host 3 真宿主 + viewer-mutex 接线 1）；两条 README/docs 卡/tui-sync/incidents/AGENTS 同步；agent-team 1.9.1 / 根 2.17.1。真机验收待用户：有亮块时 /login、/model 选择器方向键不再被抢。",
       "status": "done",
       "branch": null,
@@ -291,6 +310,7 @@
     },
     {
       "id": 20,
+      "globalId": 140,
       "text": "命令风格统一（跨插件）：冒号命名空间式 `/team:run|stop|status|view|clear|doctor` 与 loop 的子命令式 `/loop list|pause|resume|delete|clear` 用法不一致，需统一（倾向于哪种、是否连带 provider-quota `/quota`、如何向后兼容旧写法待定）。跨插件需求，已在 loop-todo.md 同步登记。",
       "status": "done",
       "branch": null,
@@ -306,6 +326,7 @@
     },
     {
       "id": 21,
+      "globalId": 141,
       "text": "状态条时钟统一与排序（跨插件）：widget 与 cockpit 进度 ticker 改走 `aligned-ticker.ts` 对齐墙钟秒节拍；契约 `docs/cross/status-bar.md`。",
       "status": "done",
       "branch": null,
@@ -321,6 +342,7 @@
     },
     {
       "id": 22,
+      "globalId": 142,
       "text": "状态条对齐 pi-subagents fleet-status：触发形式（数据驱动活跃表面 + 事件/定时刷新）+ 组件式渲染",
       "status": "done",
       "branch": null,
@@ -347,6 +369,7 @@
     },
     {
       "id": 23,
+      "globalId": 143,
       "text": "`/team` 帮助与命令编排合理性：原问题（`/team help` 被当作团队名、与 `/workflows help` 不对称、`help` 未进保留词）随 v1.12.0 冒号化消失——裸 `/team` 任何带参输入（含 `help`）都显示完整用法（列出全部 `/team:*` 命令与用法），参数路由与 `RESERVED_TEAM_COMMAND_NAMES` 保留词概念整体退役；命令面固定为 list/run/status/stop/view/clear/doctor，`getArgumentCompletions` 不再参与（本插件无子命令补全）。独立 `help` 子命令不再必要；若后续仍要，可在冒号面上加 `/team:help`（本条目已关闭，需要时重开）。",
       "status": "done",
       "branch": null,
@@ -362,6 +385,7 @@
     },
     {
       "id": 24,
+      "globalId": 144,
       "text": "widget 默认态太丑：亮块常显 2-3 行，需按 pi-subagents fleet-status 折叠——默认只留一行小提示，按 `↓`/`←` 才展开（用户 2026-09-10 截图反馈；完成 2026-09-14 @ merge 073d66b，agent-team 1.11.0 / 307 测试）",
       "status": "done",
       "branch": null,
@@ -390,6 +414,7 @@
     },
     {
       "id": 25,
+      "globalId": 145,
       "text": "真正并发跑多个 team run",
       "status": "done",
       "branch": null,
@@ -409,6 +434,7 @@
     },
     {
       "id": 26,
+      "globalId": 146,
       "text": "widget 展开态改 team + 成员树",
       "status": "done",
       "branch": null,
@@ -438,6 +464,7 @@
     },
     {
       "id": 27,
+      "globalId": 147,
       "text": "命令面改冒号形式（跨插件，全量任务一部分）：`/team run|status|stop|view|clear|doctor` → `/team:run` 等；`/team <团队名> <任务>` 参数路由去留与保留字冲突（团队名撞 `run` 等）待定。全量清单与待定项见 `todos/commands-colon-todo.md`。",
       "status": "done",
       "branch": null,
@@ -453,6 +480,7 @@
     },
     {
       "id": 28,
+      "globalId": 148,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件下方亮块（belowEditor 独立栈）与 cockpit 进度 ticker 直接受影响。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
       "status": "done",
       "branch": "feat/status-bar-widget-band",
@@ -470,6 +498,7 @@
     },
     {
       "id": 29,
+      "globalId": 149,
       "text": "viewer 显示 teammate 详细信息（如每个成员使用的模型）",
       "status": "done",
       "branch": null,
@@ -489,6 +518,7 @@
     },
     {
       "id": 30,
+      "globalId": 150,
       "text": "widget 真机反馈：诊断结论——成员行本身正常（真实宿主逐帧导航/enter 定位该成员，诊断已转为永久回归测试）；「选不中成员」的根因是独立任务行排在成员后：光标到底落在 `任务:` 行、enter 打开的却是 leader（假成员陷阱）。修复：任务摘要并入 leader 行（`leader <团队> · <任务摘要> ▶ running · …`，44 字截断），删除独立任务行——末行恒为成员行，`↓`/`j` 到底即最后一个成员；截图存档 `agent-team/docs/assets/widget-tree-feedback.png`；323 测试 + typecheck 绿。",
       "status": "done",
       "branch": null,
@@ -504,6 +534,7 @@
     },
     {
       "id": 31,
+      "globalId": 151,
       "text": "widget/viewer 按键双触发：根因 = Kitty 键盘协议 flag 2 下每次按键额外发 release 事件（`:3` 编码，如 `\\x1b[1;1:3B`），release 同样能被 `matchesKey` 命中且 reducer 未过滤——一次按键生效两次（激活+移动/跳两行/开关两回），也是「选不中成员」的真凶（跳过成员行）。修复：widget `handleWidgetKey` + viewer `handleViewerKey` 顶部统一 `isKeyRelease` 短路（照 fleet-status.ts:699）；repeat（`:2`）保留供长按连移。测试：3 个新回归（reducer release 全忽略、controller press+release 只移动一格、viewer release 零状态变化含确认态）326 全绿 + typecheck；参考截图存档 `agent-team/docs/assets/widget-fleet-status-reference.png`。",
       "status": "done",
       "branch": null,
@@ -519,6 +550,7 @@
     },
     {
       "id": 32,
+      "globalId": 152,
       "text": "viewer 运行中成员模型升级为「实际值」：当前 live 阶段成员 `模型:` 显示团队文件声明值（`MemberProgress.model`），只有终态优先 `member.usage?.model`（子进程 message_end 实际上报）。runner 已把成员实际模型折进 dispatch 结果 `usage.model`（`runner.ts` `outcome.usage.model = msg.model`，`parseDispatchMemberResults` 已透传 usage），cockpit 收到 `team_dispatch` 结果时把 `progress.members[].model` 覆盖为实际值即可——等待一次真实多模型派单验证声明值与实际值不同时才动手（避免无谓改动）。",
       "status": "done",
       "branch": null,
@@ -534,6 +566,7 @@
     },
     {
       "id": 33,
+      "globalId": 153,
       "text": "widget 展开态在大团队（成员 ≥7）下撞宿主 10 行上限：宿主 `setExtensionWidget` 对 `string[]` 硬截 `MAX_WIDGET_LINES = 10`（`pi-coding-agent/dist/modes/interactive/interactive-mode.js`）并追加 `... (widget truncated)`；当前展开态 = main + leader + N 成员 + 提示行 ⇒ N ≥ 7 时尾部行不可见，而方向键仍可把光标移到不可见行（`buildWidgetView` 无窗口化、controller 无行数感知）。验证方向：真机 8 成员团队展开，确认截断与\"选中到看不见的行\"；若成立，参考 viewer roster 的窗口化滚动做同款（窗口 + `已折叠 N 行` 提示），或把提示行固定在窗口内。",
       "status": "done",
       "branch": null,
@@ -550,6 +583,7 @@
     },
     {
       "id": 34,
+      "globalId": 154,
       "text": "team 状态显示的任务文本超长导致换行：`/team:status` 与 `team_status` 输出的 `任务:` 行直接全文回显 `progress.task` / `record.task`（`cockpit.ts:131` / `:159`，既不压平换行也不截断）——派单时写了长任务/多行任务，状态输出就在 `任务:` 段铺满屏幕（本会话 count-duet 实测：任务含换行 + 验收条款，该段占 8+ 行且每行按任务原换行断开）。",
       "status": "done",
       "branch": null,
@@ -569,6 +603,7 @@
     },
     {
       "id": 35,
+      "globalId": 155,
       "text": "支持派单到其它 agent CLI（第一版仅 codex 与 claude code；来源：用户 2026-09-11）：团队配置可按成员（及 leader）声明外部 CLI 后端，任务经该 CLI 的非交互模式执行，结果摘要/使用量折回既有 run 记录、报告 followUp 与 viewer/status 链路；与现有「成员 = pi 子进程」默认契约并存，不改变未声明时的行为。",
       "status": "done",
       "branch": null,
@@ -586,6 +621,7 @@
     },
     {
       "id": 36,
+      "globalId": 156,
       "text": "**P0 回归：成员派发死锁（v1.15.0 / 819553a 引入，两次真机派单 100% 复现）**：`runner.ts:52` 的 `defaultSpawn` 在该 commit 把 stdio 从 `[\"ignore\",\"pipe\",\"pipe\"]` 改成 `[\"pipe\",\"pipe\",\"pipe\"]`；成员走 `--mode json -p`、prompt 全在 argv（`dispatch.ts:357`），**全仓没有任何地方 end 成员 stdin**（`stdin.end()` 适配器只被 leader RPC 用，见 `cockpit.ts:252`），而 pi 0.85.1 在 `-p` 下**读 stdin 到 EOF 才推进** → 成员进程永久静默、leader 同步等子进程退出 = 死锁（run 永远停在 running，只能靠 stop 解除）。（完成 fix/agent-team-member-stdin：`PiSpawn`/`runChildPi` stdin 默认 ignore（leader RPC 显式 pipe ；真实子进程回归用例（runner.test.ts 默认模式见 EOF 即退出，修复前必红 + 接线断言（成员 ignore / leader pipe，354→356 测试 ；真机端到端（真实 dispatch + 真实 pi + deepseek-flash 11.2s 返回「51」；docs 卡/incidents/AGENTS/README×2 同步；agent-team 1.15.1 / 根 2.30.2，merge 4a39395）",
       "status": "done",
       "branch": null,
@@ -607,6 +643,7 @@
     },
     {
       "id": 37,
+      "globalId": 157,
       "text": "viewer `模型:` 行口径不一致（缺 provider 前缀）：团队文件声明的是 `provider/id`（count-duet 声明 `opencode-go/deepseek-flash`），但 viewer 终态优先取子进程自报的实际值（`runner.ts` 的 `outcome.usage.model = msg.model`，pi 的 `message_end` 里是**裸 id** `deepseek-flash`）——同一信息三种口径：viewer live / 回退 = `opencode-go/deepseek-flash`、viewer 终态 = `deepseek-flash`、`/team:status` 走 `member.model` 声明值 = 带前缀（2026-09-11 真机反馈）。",
       "status": "done",
       "branch": null,
@@ -625,6 +662,7 @@
     },
     {
       "id": 38,
+      "globalId": 158,
       "text": "widget 树连接符美化：成员行前缀 `|- ` 改 box-drawing —— 中间项 `├─ `、最后一项用圆角 `╰─ `（方角是 `└─`；fleet-status 用方角，见 fleet-status.ts:811/874 `last ? \"└─\" : \"├─\"`，本仓库按用户「圆角」要求取 `╰─` 并在 tui-sync 差异表登记）。约束：与 main/leader 行 gutter 对齐、前缀显示宽度与 `|- ` 等宽（不动 truncateVisible 预算）、选中行 `▸ ` 前缀不受影响。同步 agent-team/docs/tui-sync.md（差异表 + §4 字面量）与 widget 测试字面量。验收：真机展开态非末行 `├─`、末行圆角，全量测试 + typecheck 绿。",
       "status": "done",
       "branch": null,
@@ -640,6 +678,7 @@
     },
     {
       "id": 39,
+      "globalId": 159,
       "text": "亮块加背景高亮（用户 2026-09-11 真机反馈，指向折叠态单行 `agent-team any-dev · ↓/← 查看详情`）：折叠行与展开态各行都要有背景色，选中行用更强的选中背景区分。实现要点：① 背景经 theme.bg(\"userMessageBg\", …) 取宿主主题色（viewer bubble 同款，viewer.ts:84）——取不到主题时降级为无背景，深浅主题都要可读；② widget 仍走纯字符串 setWidget(key, string[])，ANSI 背景随字符串传递，需真机确认宿主 widget 渲染路径对背景的处理（残影/行宽断言史，见 docs/incidents.md），并登记 tui-sync 差异表 + §4 字面量；③ 整行背景必须把行**补足到可用宽度**（当前 renderWidgetView 只 truncateVisible 截断、不补齐，背景块会参差），宽度仍按 CJK 双宽计算，宿主超宽行会断言崩溃。验收：真机折叠/展开态都有连续背景、选中行可辨、与末行圆角连接符共存、窄宽度不崩，全量测试 + typecheck 绿。",
       "status": "done",
       "branch": null,
@@ -655,6 +694,7 @@
     },
     {
       "id": 40,
+      "globalId": 160,
       "text": "成员 worktree 重派失败 + 报错吞掉真因（真机 any-dev run-1789100633429 / run-1789100834291 实锤）：leader 二次派发同一成员时 `createWorktree`（worktree.ts:69）仍执行 `git worktree add <path> -b team/<runId>/<member>`，分支/工作树已存在 → git 非零退出；而 `worktreeError()`（worktree.ts:100）**只取 stderr 首行**，拿到的正是 git 的进度行 \"Preparing worktree (new branch '…')\"，真正的 `fatal: a branch named '…' already exists` 被丢弃（实测 git 先输出进度行、第二行才是 fatal）——用户看到的报错等于没有信息。要求：① 错误文案取真因（跳过 Preparing worktree / HEAD is now at 等进度行，保留 fatal/error 行，仍压单行 + 长度上限）；② 重派语义明确化：同一 run 内同成员二次派发应**复用已存在的 worktree/branch**（当前直接 failed），或改用可区分的错误码 + 可操作提示；③ 验收：真实临时 git 仓库集成测试覆盖「同 run 二次派发同一成员」「分支已存在」两条路径与错误文案含 fatal 真因，真机重跑 any-dev 类多成员团队不再出现 WORKTREE_UNAVAILABLE，全量测试 + typecheck 绿。",
       "status": "done",
       "branch": null,
@@ -670,6 +710,7 @@
     },
     {
       "id": 41,
+      "globalId": 161,
       "text": "view 界面显示各个成员（含 leader）的 thinking level（用户 2026-09-11 提出；现状右栏详情头只显示「模型: provider/id」，需在同一界面补 thinking 级别；数据来源（team 配置 model 后缀 / 子进程上报）与落点（roster 行 / 详情头）实现时定）",
       "status": "done",
       "branch": null,
@@ -685,6 +726,7 @@
     },
     {
       "id": 42,
+      "globalId": 162,
       "text": "status.json 终态 startedAt 写成结束时刻（cockpit.ts:440 终态 persist 传 startedAt: now()）：run-1789104483761 实测终态快照 startedAt=updatedAt=06:06:10，而 run 实际 05:28:06 开始——按 status.json 算 elapsed 恒为 0。要求：终态沿用 claim 时写入的 startedAt，补单测锁定两次写入一致。",
       "status": "done",
       "branch": null,
@@ -700,6 +742,7 @@
     },
     {
       "id": 43,
+      "globalId": 163,
       "text": "跨会话 reconcile 误杀在跑的 run：另一个 pi 会话 session_start 时把本会话正在跑的 run 翻成 failed（reconcile 只排除本进程 in-memory run）——run-1789104483761 开始 2 秒后 status.json 被写成 failed + 孤儿 leader 诊断，而 run 实际正常跑到 completed。要求：带属主标识（或 leaderPid 探活）判定后再翻，只允许属主会话 reconcile；补两会话场景测试。",
       "status": "done",
       "branch": null,
@@ -715,6 +758,7 @@
     },
     {
       "id": 44,
+      "globalId": 164,
       "text": "成员子进程继承 PI_AGENT_TEAM_FILE/NAME/RUN_ID 导致被测扩展进 leader 模式：run-1789104483761 的 writer 在 agent-team 目录跑全量测试时 109 个用例假红（测试子进程继承这三个变量 → index.ts 走 leader 模式），必须 env -u 才能跑，浪费 3.5 分钟。要求：源头修——runner 派生成员时剥离这三个变量（成员不需要它们），install-smoke 的剥离条目（general-todo:12）并入同一语义。（完成 2026-09-11 @ 638eb0f，fast-dev run-1789118889900（首跑 run-1789115942094 因 leader 429 中断、重跑复核 PASS ：成员 spawn env 经 stripLeaderEnv 剥离 PI_AGENT_TEAM_FILE/NAME/RUN_ID（其余变量保留，真实 node 子进程边界测试锁定 ；leader 与成员 args 加 --exclude-tools subagent,team_run（防嵌套派生绕过 run 预算/记录，exclude 优先于 --tools ；agent-team 1.17.1 / 根 2.32.5；全量 431 测试 + typecheck + 根契约 3/19/16 全绿）",
       "status": "done",
       "branch": null,
@@ -728,6 +772,7 @@
     },
     {
       "id": 45,
+      "globalId": 165,
       "text": "团队级与成员级 worktree 分支命名冲突导致成员 worktree 必然失败（真机 run-1789108491578 实锤，2026-09-11）：cockpit.ts:492 团队共享 worktree 分支取 team/<runId>，而 dispatch.ts:318 成员分支取 team/<runId>/<member> —— git ref 不能既是文件又是目录（refs/heads/team/run-X 已存在 ⇒ refs/heads/team/run-X/writer-1 无法创建），首个成员派发即 WORKTREE_UNAVAILABLE；真机同 run 的 leader 自行把团队分支改名为连字符 team-run-<runId> 后恢复（历史成功 run 的团队分支均为 team-run-<runId> 连字符形式）。要求：① 消解命名空间冲突（团队侧改 team-run-<runId>，或成员侧改成不在团队分支路径下），并对既有 worktree/branch 语义向后兼容；② TDD：真实临时 git 仓库集成测试先复现「团队分支 team/<runId> + 成员 worktree 派发」必红，再实现到绿；③ 验收：真机 any-dev 类 team.worktree=true 团队首次派发成员成功，全量测试 + typecheck 绿，worktree.ts 头注释与 leader 提示词中的分支契约同步。（完成 完成 2026-09-11 @ merge 0acf434，fast-dev run-1789109309942 / agent-team 1.15.5 / 根 2.31.4：团队共享 worktree 分支改 team-run-<runId>（成员分支 team/<runId>/<member> 不变 ，两处模板收敛为 worktree.ts 单一来源 teamWorktreeBranch/memberWorktreeBranch；新增 4 例真实临时 git 仓库组合/兼容测试（团队+成员同 run 共存、dispatch 首次派发成功、模板纯断言、旧命名重派走可操作提示不静默删 ，变异法复现红→绿，全量 388 测试 + typecheck + 契约 3/3 全绿；docs 卡/incidents/两份 README 与 AGENTS/版本四同步。合并时与并行 run-1789104779153 冲突就地解决）",
       "status": "done",
       "branch": null,
@@ -741,6 +786,7 @@
     },
     {
       "id": 46,
+      "globalId": 166,
       "text": "viewer 缺运行状态可见性：spawn 后看不出成员/leader 在 thinking、跑工具还是卡住，/team:view 可能长时间无变化，用户不知道 run 在干什么。需求：view 界面加运行状态行，展示当前活动（如 thinking / 工具调用 / 等待模型响应 / 距上次输出时长），事件驱动刷新。（用户 2026-09-11 真机反馈；验收：真实派单时状态随活动变化、长时间无输出时可辨认；与本文件 thinking level 条目是不同信息——那是配置级别，本条是实时活动指示）（完成 完成 fast-dev run-1789116276716；agent-team 1.17.0；merge 69301e5；427 测试 + typecheck + 契约绿；独立 checker（pi-subagents reviewer PASS）",
       "status": "done",
       "branch": null,
@@ -754,6 +800,7 @@
     },
     {
       "id": 47,
+      "globalId": 167,
       "text": "成员交付完成仍被判 CHILD_FAILED（真机 run-1789104779153 实锤）：writer 第 2 轮与 checker 都在产出完整报告与 commit 之后被判 failed（CHILD_FAILED）错误 terminated——runner.ts 的 outcome.errorMessage 一旦置位就不清除（任意一轮 assistant 消息带 errorMessage 即永久生效），dispatch.ts:403 见 errorMessage 即判 failed；风险是 leader 按「环境级失败不重试」规则会丢弃已完成的工作或重复派发（本轮 leader 自行判断保留，属运气）。要求：① 终态判定区分「进行中被终止」与「完成后收尾异常」（最后一轮 stopReason 非 error 且已有最终文本时不应判 failed），或把 errorMessage 按轮次作用域化（仅最后一轮生效）；② 结果对象带 exitCode/终止原因供诊断；③ TDD：真实子进程用例复现「输出完整后进程异常退出/被终止 → 不应判 failed」先红，再实现到绿；④ 验收：同类 run 不再出现完成即 CHILD_FAILED，全量测试 + typecheck 绿。",
       "status": "done",
       "branch": "feat/agent-team-child-failed",
@@ -770,6 +817,7 @@
     },
     {
       "id": 48,
+      "globalId": 168,
       "text": "run 记录不自动归档，记录只留在未合并的 worktree 里会丢失（来源 ana.md §5 B9；实测 any-dev run-1789100834291：run 未落终态被翻 failed，40-review.md 在而 50-acceptance.md / 90-run-report.md 缺失，记录仅存在于 ~/.pi/agent/teams/worktrees/run-1789100834291/team/.pi/team-runs/ 下，主仓库 history/team-runs/ 无副本；fast-dev run 靠 leader 手工落 .pi/team-runs/<runId>.md 才留档）。要求：run 落终态（completed/failed/aborted，含主会话退出后被 reconcile 翻成的 failed）时，把 run 记录目录（<项目>/.pi/team-runs/<runId>/）自动归档到仓库 history/team-runs/<runId>/（项目已有记录惯例则跟随）；同名目录已存在时不覆盖、冲突保留双方并标注；归档失败只记诊断不改 run 终态。验收：真机 run 终态后 history/team-runs/ 出现完整记录目录；主会话中途退出（reconcile 路径）同样归档；单测覆盖归档成功/目标已存在/写失败三条路径；全量测试 + typecheck 绿。（完成 完成 2026-09-11 @ 4230933，fast-dev run-1789118830531 / agent-team 1.20.0 / 根 2.32.8：archive.ts 终态+reconcile 归档（不覆盖、冲突 .conflict-<UTC> 双留、失败只 warning 不改终态 ，481 测试 + typecheck 0；证据见 history/team-runs/run-1789118830531/）",
       "status": "done",
       "branch": null,
@@ -783,6 +831,7 @@
     },
     {
       "id": 49,
+      "globalId": 169,
       "text": "model 预检不识别思考后缀导致带级别团队全部被拒： 直接以 `provider/id:max` 原串查注册表（MODEL_NOT_FOUND），而宿主 `--model provider/id:level` 本就支持级别后缀；用户 2026-09-11 把所有团队 model 设为 :max 后真机爆错、团队不可用。要求：预检先用 config.ts splitModelThinking 剥离合法级别后缀（off/minimal/low/medium/high/xhigh/max）再查注册表，非法后缀不剥离；auth 告警与报错文案保留原始引用；补单测（带级别通过 / 非法后缀仍拒 / 无级别不回归）。",
       "status": "done",
       "branch": null,
@@ -798,6 +847,7 @@
     },
     {
       "id": 50,
+      "globalId": 170,
       "text": "team 内共用消息板 + @ 路由（用户提出，本会话登记；架构评估后建议分档落地）：agent 输出可向团队共享板面投递消息，`@<成员>` 触发被 @ 的成员、无 @ 时交给 leader 判断。评估结论：① 「无 @ → leader」现状已存在（所有 dispatch 结果本就回到 leader 上下文），真正新增的只有 @ 旁路；② 成员是 `--mode json -p --no-session` 一次性子进程（dispatch.ts:357），「触发」语义 = 再派一单，不省进程/回合成本，被触发者要看到板面历史必须每次注入 prompt（token 随轮数增长）；③ 旁路路由引入第二个调度者，需同时定义跨触发链预算账本（现 budget 为 run 级）、终止条件、去重、失败处理，并打破「leader 是唯一中枢、成员不可注入」不变量；④ 板面落盘位置（run 目录 vs worktree）、并发写、@ 误触发（自然语言提及 vs 路由指令需机器可读标记）、agent 间 prompt injection 放大均为新复杂度。建议路线：先做廉价 prototype（两个真实 pi 子进程交替接力 N 轮，测成本/延迟/终止语义）拿数据；最小可做形态 = leader 中介的 board（run 目录 append-only 文件 + leader 读写工具，@ 只作给 leader 的提示、不旁路路由）；broker / 常驻成员 / 确定性互发推迟到第二个真机案例（rule of three）。注意驱动场景 count-duet 1-1000 的瓶颈实为每步一个进程 + 一个 LLM 回合，消息板不改变该成本，应与既有「动态对话」条目的分批方案合并考虑。",
       "status": "open",
       "branch": null,
@@ -811,6 +861,7 @@
     },
     {
       "id": 51,
+      "globalId": 171,
       "text": "leader 可向主会话提问（人工澄清 / 决策确认，消减需求不明确时的瞎猜；用户提出，本会话登记）：run 运行中 leader 遇到歧义或需拍板时，能向主会话发起提问并阻塞等待回答，回答经 cockpit 回写后 leader 携带答案继续任务；不明确时不硬猜、不空转到超预算。可行性证据（已核 pi 0.85.1 官方文档 docs/rpc.md「Extension UI Protocol」）：RPC 模式下 `ctx.ui.select/confirm/input/editor` 是 dialog 方法——子进程 stdout 发 `extension_ui_request`（含 id/method/timeout），阻塞等待客户端经 stdin 回 `extension_ui_response`（含 id + value/cancelled）；`ctx.hasUI === true`；leader 已是 `--mode rpc`，cockpit 目前只容忍（忽略）这类 wire 行。待决策：① 主会话侧呈现形态（宿主对话框 / widget 提示 / viewer notice）与等待语义（主 agent 回合被阻塞 vs 非阻塞排队）；② 无 UI 或后台无人值守 run 的降级（超时默认值 / 失败即回传给 leader 自行决策）；③ 与既有上行通道的关系（那条是 user→leader 单向，本需求是反向，可复用同一 stdin）；④ 提问与回答计入 run 记录 / transcript 与 viewer 展示；⑤ 防挂起（任何阻塞等待必须有超时或 abort 清理路径，对齐 v1.15.0 教训）。验收：真实 pi 子进程端到端测试（leader 触发 input dialog → cockpit 收到 extension_ui_request → 回写 response → leader 继续并完成 run）；timeout / 无 UI / stop 三条降级路径有测试；全量测试 + typecheck 绿。（完成 2026-09-11 @ merge 772ef36 / feat/agent-team-ask / agent-team 1.19.0 / 根 2.32.7：leader 模式新增 team_ask（自由文本/选项、默认 10 分钟、clamp 30s~30min → pi RPC dialog 协议 → cockpit AskChannel → 主会话宿主对话框（askPortFrom，!hasUI 立即 unavailable → 回写 leader stdin；超时/取消/无 UI/stop 全部 fail-closed 回 cancelled，工具结果引导 leader 不追问、按合理假设继续并在报告声明；问答落 transcript（question/answer/system + viewer 独立成块（tui-sync §3.19 + 等待期 leader activity；19 ask 单测 + 5 cockpit 桥测 + 4 真实 pi 子进程 E2E（作答/宿主取消/无 UI/pi 自身超时 ，442→475 测试全绿 + typecheck 零错误；docs 卡/README×2/AGENTS×2/tui-sync 四同步）",
       "status": "done",
       "branch": null,
@@ -824,6 +875,7 @@
     },
     {
       "id": 52,
+      "globalId": 172,
       "text": "run 意外中断后续跑（断点恢复 + 换模型接手）：leader 因套餐额度耗尽/进程被杀等意外终止落 failed 后无法继续——leader 子进程以 --mode rpc --no-session 启动（无会话文件）、模型只来自团队文件（team_run 无模型参数），今天只能改团队文件重派新 run，而新 runId = 新 worktree、leader 记忆为零，旧 run 未提交产物不会自动接手（来源：用户 2026-09-11 提出，场景=leader 额度挂掉后换有额度模型继续）。需求：以既有 run 为起点续跑——① 沿用同一 worktree/分支与任务上下文（至少自动带上旧 run 产物路径与转录摘要）；② 支持换模型（leader/成员从无额度模型切到有额度模型，含 provider/id:level 后缀）；③ 终态记录标注续跑来源（parent runId）供 viewer/status 展示；④ 与既有终态语义兼容（旧 failed run 记录保留）。验收：真机额度中断 → 续跑 run 在旧 worktree 上接着干且换后模型可核验；单测覆盖续跑记录链与模型替换；全量测试 + typecheck 绿。相关：本文件 CHILD_FAILED 误判条目（errorMessage 不清除会让可续场景被误判 failed）、run 记录自动归档条目。（完成 merge 5c41e1c / agent-team 1.21.0 / 根 2.34.0 / 512 测试全绿 + typecheck 零错误：leader 会话落盘（--session-dir + team_resume//team:resume 原地续写（--session，无交接摘要 + 父 worktree 复用（restoreWorktree prune 重试/成员树 env 别名；不可恢复硬失败 + 本次续跑模型覆盖（leader --model / 成员 PI_AGENT_TEAM_MEMBER_MODELS，不改团队文件 + parentRunId lineage（status/viewer「续跑自 …」 + RUN_NOT_TERMINAL/RESUME_UNAVAILABLE 错误码；真机验证：真实 pi --session 续写（resume-host-smoke 与真实模型续跑（新 leader 记得原任务、模型覆盖生效、会话文件 6→9 行原地追加 ；docs 四处同步 + 续跑题已真机核验（待办④项验收对照 ）",
       "status": "done",
       "branch": null,
@@ -837,6 +889,7 @@
     },
     {
       "id": 53,
+      "globalId": 173,
       "text": "失败终态不通知主 agent（用户指出，不符合预期）：后台（followUp）路径下 `finalizeRun`（index.ts:621-641）只在 `record.status === \"completed\"` 时调 `deliverRunResult`，failed/aborted 仅 `ui.notify` 给用户端一个瞬态提示——派单的主 agent（team_run 调用方）收不到任何失败信息，无法据此重试/换策略/如实转告用户；而派单时 notify 已承诺「完成后报告自动送达」。同类漏报还有两处：coordinator 派发级失败（`!result.ok` 分支）与 `.catch` 异常分支都只 notify、不送达、也不落 run 记录。wait:true 内联路径正常（返回 isError）。需求：任何终态失败都应在主会话产生 followUp（status + error + 已完成的成员结果摘要/部分报告；leader 失败前可能已产出 `record.report`）。待决策：① aborted 是否也送达（现 team_stop 契约写「停止后该 run 的报告 followUp 不再送达」，至少应送达简短中止说明，避免主 agent 空等）；② 送达内容形态（错误摘要 + 部分报告 vs 完整报告）与长度上限；③ 崩溃/派发级失败确无 record 时的送达文本与是否补落记录；④ 与 `chat.onRunFinalized(\"failed\")` 清队列的既有语义不得互相干扰；⑤ 用户端 UI notify 与 followUp 的观感分工（避免同一信息双份提示）。验收：真实失败 run 三条路径（leader 非零退出 / model 预检失败 / start 失败）主会话收到 followUp；aborted 语义明确并被测试锁定；全量测试 + typecheck 绿。（完成 feat/agent-team-failed-notify：失败终态必达 + 启动级失败补记录，merge 94d6085（agent-team 1.18.0 / 根 2.32.6，442 测试全绿 ）",
       "status": "done",
       "branch": null,
@@ -850,6 +903,7 @@
     },
     {
       "id": 54,
+      "globalId": 174,
       "text": "leader 子进程 env 为替换语义（cockpit 只传 3 个 PI_AGENT_TEAM_* 键）：POSIX 上 leader/member 失去 PATH/API key 等环境继承（Windows libuv 自动补系统变量无碍）；建议 cockpit 侧改传 process.env 展开合并表（成员侧 stripLeaderEnv 已有过滤基础），并补 POSIX 语义测试。（检查器 fast-dev run-1789118889900 发现，非本次引入）（完成 fast-dev run-1789135559088 checker PASS；merge e9e8283（agent-team 1.21.1 / 根 2.34.1 ；全量 514 pass + typecheck 0（主工作区分两段重跑 234+280 一致 ；POSIX 真机未验证（语义测试锁定 ）",
       "status": "done",
       "branch": null,
@@ -863,6 +917,7 @@
     },
     {
       "id": 55,
+      "globalId": 175,
       "text": "view 界面挡住 team_ask 提问且无法退出 view（用户 2026-09-11 真机反馈）：停留在 /team:view overlay 时 leader 发起 team_ask，宿主对话框被 overlay 盖住/拿不到焦点，用户看不到问题也无法按键退出 viewer，只能干等提问超时。要求：viewer 打开期间收到提问必须有可见且可操作的呈现（对话框置顶 overlay / viewer 内 notice + 页内作答 / 先收起 viewer 再弹），Esc 与按键语义不互吞——viewer 可退出、提问可作答或取消；等待/超时/取消三条路径行为明确、防挂起。验收：真实宿主测试（viewer-host 模式）复现遮挡并锁定修复；真机验证 view 中提问可见可答、Esc 可退出 view；全量测试 + typecheck 绿。相关代码：askPortFrom（index.ts:159，ctx.ui.select/input 宿主对话框）、openViewer overlay（index.ts:586）与 team_ask 条目（本文件）",
       "status": "done",
       "branch": null,
@@ -878,6 +933,7 @@
     },
     {
       "id": 56,
+      "globalId": 176,
       "text": "用户插队（steer/排队）输入的 prompt 在界面无显示，需要突出：run 运行中用户发出的消息在 UI 只剩一句 notice（chat.ts「已插话给 X（steer）：不打断当前任务…」），用户输入原文在 viewer 与 run 转录里都看不到，无法确认自己发了什么（用户 2026-09-11 真机反馈）。要求：用户输入原文在可见处突出呈现——viewer 独立高亮块（复用宿主 userMessageBg 类样式，与 agent/leader 输出视觉区分）并落 run 转录（team_transcript / /team:view 可复查），覆盖 steer 即时送达与排队链式两条路径；实现时确认两路径统一呈现（排队消息在派出后也保留在转录）。验收：真机运行中发消息后立即可见原文与高亮样式，回看转录可查到该输入，全量测试 + typecheck 绿。",
       "status": "done",
       "branch": "feat/agent-team-steer-input-visible",
@@ -894,6 +950,7 @@
     },
     {
       "id": 57,
+      "globalId": 177,
       "text": "AGENTS.md 新增规则红线（用户 2026-09-11 提出）：agent team 出具方案后、实施改动之前必须用 team_ask 请用户审批方案，未获同意不得动代码",
       "status": "done",
       "branch": null,
@@ -909,6 +966,7 @@
     },
     {
       "id": 58,
+      "globalId": 178,
       "text": "team_ask 提问界面截断并压平长文本，方案看不全（用户 2026-09-11 提出）：buildAskTitle（agent-team/ask.ts:313-316）把 question 压成单行（\\s+ 归一为空格）并硬截 300 字符（MAX_ASK_TITLE_CHARS，超出直接加 …），长方案/多段内容在 select/input 宿主对话框里读不全。要求：ask 界面完整呈现提问全文——长文本改走多行/可滚动呈现（或 editor 方法），select 选项同样不得静默截断；保留超时/Esc 取消与 fail-closed 语义不变；补测试覆盖超长提问（>300 字符、含换行多段方案）内容完整可见。",
       "status": "done",
       "branch": "feat/agent-team-ask-fulltext",
@@ -925,6 +983,7 @@
     },
     {
       "id": 59,
+      "globalId": 179,
       "text": "单 team 成员并行上限 4 → 8：MAX_PARALLEL_MEMBERS 协议常量提升（用户 2026-09-11 要求）；测试/leader 提示词/文档联动",
       "status": "done",
       "branch": null,
@@ -940,6 +999,7 @@
     },
     {
       "id": 60,
+      "globalId": 180,
       "text": "成员 worktree 分支被成员自建分支改写后重派必失败（真机 run-1789133982726 实锤，2026-09-12 用户报告）：成员按工作流（本例 leader 派单文本直接指示 `git switch -c feat/agent-team-multi-run-core team-run-run-1789133982726`）在自己的 worktree 里自建分支后，同 run 回派同成员时 `createWorktree`（worktree.ts:167）命中「路径已注册但分支 ≠ team/<runId>/<member>」→ WORKTREE_UNAVAILABLE；leader 只能手工进成员 worktree 把分支 switch 回契约分支再重派（白派一次 + 约 48s），且报错提示是破坏性的 `git worktree remove --force`（照做即删成员工作区；契约分支其实一直空闲）。要求（B 档自愈，用户 2026-09-12 选定）：① 路径已注册但分支不匹配时，若期望分支存在、未被任何 worktree 检出、且该 worktree 干净（`git status --porcelain` 空）→ 自动切回契约分支并在派发结果/进度里标注「已切回」，视为成功；② 不满足自愈条件（脏工作区 / 期望分支被别处检出 / 期望分支不存在）→ 保持 WORKTREE_UNAVAILABLE，但文案改为非破坏性可操作提示（当前分支 + 期望分支 + `git -C \"<path>\" switch <期望分支>`，脏工作区提示先提交），删除 remove --force 建议；③ 既有 v1.15.2 复用路径（同分支复用 / 分支空闲 attach）语义不变；④ TDD：真实临时 git 仓库用例先复现「成员切分支后重派」红，再实现到绿（覆盖干净自愈、脏不自愈、分支被别处检出、期望分支缺失、dispatch 级集成）；⑤ 验收：agent-team 全量测试只增不减 + typecheck 0 + 根 test:contract（如触及）全绿，docs/extensions/agent-team.md + docs/incidents.md + README/AGENTS/版本四同步。不做：成员侧 prompt 告知（C 档，另议）。（完成 完成 2026-09-12 @ merge fefe9f8，fast-dev run-1789145580169（会话退出被 reconcile 翻 failed，工作已绿，由主会话合并 / agent-team 1.24.0 / 根 2.37.0 / 测试 520→525：createWorktree 分支漂移自愈——期望分支存在 + 未被任何 worktree 检出 + worktree 干净 ⇒ git switch 自动切回并返回 switchedBackFrom（dispatch 进度与结果各一行「已从 X 切回」 ；四类不满足场景仍 WORKTREE_UNAVAILABLE，但文案给当前/期望分支 + git -C <path> switch <期望分支>（脏区注明 commit/stash ，remove --force 建议彻底删除；既有复用/attach/目录占用语义不变；测试 test/worktree-branch-heal.test.ts 5 例（真实临时 git 仓库，含 dispatch 级二次派发 ；主干复跑 agent-team 525/525 + typecheck 0 + 根契约 3/3；并行 run-1789134203331/1789133982726 续跑需按 1.24.0/525 对齐版本）",
       "status": "done",
       "branch": null,
@@ -953,6 +1013,7 @@
     },
     {
       "id": 61,
+      "globalId": 181,
       "text": "多 run 并发下 /team:stop 省略 runId 的队列语义不一致：命令路径清全队列、工具路径只清该 run 队列（reviewer LOW①，run-1789133982726 交付）：统一契约 + 测试 + 文档（用户 2026-09-12）",
       "status": "done",
       "branch": "feat/agent-team-stop-queue-scope",
@@ -968,6 +1029,7 @@
     },
     {
       "id": 62,
+      "globalId": 182,
       "text": "run 记录归档跨机迁移路径缺失：主干 .gitignore 追加 history/ 后新 run 记录不再入库、仅本地留存（run-1789133982726 交付报告第 4 点）：明确 history/ 的备份/同步策略或恢复入库条件（用户 2026-09-12）",
       "status": "open",
       "branch": null,
@@ -981,6 +1043,7 @@
     },
     {
       "id": 63,
+      "globalId": 183,
       "text": "团队文件 description 含 ASCII「: 」时 frontmatter 解析失败被吞、团队静默从 /team:list 消失（v1.26.0 QA 真机发现）：要求解析失败可见（列表/doctor 显示「定义不可用 + 原因」）或容忍含冒号标量；补单测覆盖含「: 」/引号/多行块标量。",
       "status": "done",
       "branch": "feat/team-frontmatter",
@@ -997,6 +1060,7 @@
     },
     {
       "id": 64,
+      "globalId": 184,
       "text": "外部 CLI 后端 v2 待定项（承接 L121「待实现时定」）：① 外部 leader 形态（MCP 桥或单角色直派）；② codex 费用口径（cost 恒 0、不入 cost 预算）与用量统计；③ 外部成员 sandbox/权限面配置化（当前 tools: 白名单对外部成员忽略）。",
       "status": "open",
       "branch": null,
@@ -1010,6 +1074,7 @@
     },
     {
       "id": 65,
+      "globalId": 185,
       "text": "cockpit leader env 继承语义的 POSIX 专用测试：v1.26.0 F1 修复（leader env = 父环境 + 三键覆盖）仅 Windows 侧有测试锁定，补 Linux/macOS 用例（PATH/代理变量透传一致）防平台回归。",
       "status": "open",
       "branch": null,
@@ -1023,6 +1088,7 @@
     },
     {
       "id": 66,
+      "globalId": 186,
       "text": "外部 CLI 成员 thinking/reasoning 级别映射（v1.26.0 缺口，用户 2026-09-12 追问）：外部成员 model 原串直传 CLI，写 :level 后缀会被当成模型名报错（当前无任何级别参数注入，见 external.ts buildExternalArgs）——实际级别只能跟随各 CLI 全局配置（codex ~/.codex/config.toml 的 model_reasoning_effort；claude --effort 默认）。要求：按成员指定级别——codex 注入 -c model_reasoning_effort=<level>、claude 注入 --effort <level>；设计待定：per-member 字段（如 thinking:）还是解析 model 的 :level 后缀映射（pi 的 off/minimal/low/medium/high/xhigh/max → 各 CLI 支持集，claude 仅 low/medium/high/xhigh/max）；预检对非法级别 fail-closed；README §7 + docs 卡同步。",
       "status": "done",
       "branch": "feat/agent-team-external-thinking",
@@ -1039,6 +1105,7 @@
     },
     {
       "id": 67,
+      "globalId": 187,
       "text": "httpProxy 环境下外部 claude 成员必挂（本地 BASE_URL 被代理劫持 405 CONNECT only；用户 2026-09-12 真机复现）：v1.26.0 的 leader/成员 env 只做「继承+覆盖」，不合成 NO_PROXY——宿主 applyHttpProxySettings 只注入 HTTP(S)_PROXY，用户的 claude 中继（ANTHROPIC_BASE_URL=http://127.0.0.1:15721）在无 NO_PROXY 时被客户端强制走 10899 CONNECT-only 桥 → 每次派单 405。QA 验收时驱动 env 自带 NO_PROXY，掩盖了该缺口。要求：① 成员/leader 派发对本地回环地址默认注入 NO_PROXY 覆盖（127.0.0.1,localhost；用户显式值优先不覆盖）；或 ② run 预检/doctor 在检测到 httpProxy 且 NO_PROXY 缺失时给出可操作告警；README §7 + docs 卡 + incidents 同步。验收：无 NO_PROXY 且 httpProxy 已设的真实环境，claude 外部成员派单成功；单测锁「默认注入且不覆盖显式值」。",
       "status": "done",
       "branch": "feat/agent-team-http-proxy-no-proxy",
@@ -1055,6 +1122,7 @@
     },
     {
       "id": 68,
+      "globalId": 188,
       "text": "team_ask 长回答输入（#58 范围外，用户 2026-09-14 确认不入该条目）：回答输入仍走 ctx.ui.input 单行 + MAX_ASK_ANSWER_BYTES=4096 字节截断，长文本答复（多段说明/粘贴方案）输入与呈现都受限。要求：长回答改走 editor 多行输入（或自绘滚动视图），答案上限与省略标注口径与 #58 题面一致；问答转录同步完整答案；保留超时/Esc/fail-closed 语义。验收：长回答（>4096 字节、含多段）可完整输入并被 leader 收到，单测 + 宿主级渲染测试锁定，文档同步。",
       "status": "open",
       "branch": null,
@@ -1068,6 +1136,7 @@
     },
     {
       "id": 69,
+      "globalId": 189,
       "text": "failure-delivery.test.ts 第 3 例（worktree pre-flight failure）在本机必失败：setup 用 os.tmpdir() 建项目目录，而本机 HOME（C:\\Users\\蒋晗）自带 .git（dotfiles 仓库）→ 临时目录落在 git 仓库内，createWorktree 成功、leader 照常 spawn（断言 'no leader spawned' 挂）。要求：用例不再依赖「tmpdir 不在任何 git 仓库里」这一环境假设——显式构造非仓库 cwd（如自建目录 + 断掉 git 发现）或注入失败路径，保持真实 git 语义；验收：基线（dev-laptop 无本次改动）跑该文件也全绿。来源：#58 收尾时实测（基线同样失败，非本次改动引入）。",
       "status": "done",
       "branch": "feat/agent-team-faildeliver-nonrepo",
@@ -1083,9 +1152,10 @@
     },
     {
       "id": 70,
+      "globalId": 190,
       "text": "长提问视图的真机观感走查（#58 收尾时 leader 报告点出，无自动化证据项）：自绘 overlay 在极窄终端（<60 列，VIEWER_OVERLAY_OPTIONS minWidth=60）的截断/重影、以及长选项列表键盘导航选中态在真实终端下的观感，只有宿主级 headless 渲染测试（test/viewer-ask-host.test.ts 用例 7）+ 一次真机长提问跑通链路（用户选到第 6 项）作证据，缺人工逐场景走查。要求：在真实终端（含 80/60/40 列三种宽度、Windows Terminal）跑一次长提问：题面折行与段落空行、PgDn 到底部、选项窗口跟随、Enter/Esc 后屏面清理无残行；发现问题按 docs/incidents.md 记事故并修。验收：三种宽度下无残行/无重影、题面尾部可达，结论写入 docs/extensions/agent-team.md 或 incidents。",
-      "status": "aligned",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/agent-team-70-long-ask-walkthrough",
       "tags": [],
       "dependsOn": [],
       "notes": [],

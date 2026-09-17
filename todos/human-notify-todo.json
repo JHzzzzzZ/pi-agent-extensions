@@ -1,13 +1,15 @@
 {
-  "version": 1,
+  "version": 4,
   "title": "human-notify TODO",
   "entries": [
     {
       "id": 1,
+      "globalId": 231,
       "text": "pi-agent 需要人工介入时发送 Windows 通知，Linux 与 Mac 待后续支持",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "触发场景（两类都要通知）：",
         "需要人工审批/输入时通知：监听 `ui_prompt_start`（kind = confirm / select / input / editor / custom），Toast 标题如“Pi 等待你确认”，用户回到终端处理审批或输入。",
@@ -27,14 +29,17 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 2,
+      "globalId": 232,
       "text": "`plan_mode_question` 这类等人工具调用时也发 Toast",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "背景：`ui_prompt_start` 只在扩展调 `ctx.ui.*` 弹窗时触发；`plan_mode_question` 等是 harness 侧工具调用，走 `tool_execution_start`，宿主实测确认盲区。",
         "监听 `tool_execution_start`，仅当 `toolName` 在 `WAITING_TOOL_NAMES` 名单（首批：`plan_mode_question`）时触发；非名单工具不得消耗防抖窗口。",
@@ -46,14 +51,17 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 3,
+      "globalId": 233,
       "text": "不同对话发送差异化通知，不再统一用 ready for input（待验收）",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "现状：审批等待 / agent 结束 / 等人工具全部共用固定标题 + 静态模板，用户看到的都是同一句“等你处理”，分不清是哪件事。",
         "按触发类型出差异化文案：审批→待确认事项一句话摘要；结束→本轮结论一句话；等人工具→具体要问的问题。",
@@ -67,14 +75,17 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     },
     {
       "id": 4,
+      "globalId": 234,
       "text": "人类主动取消的对话不弹框",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "用户按 Esc / Ctrl+C 中断当前回合后，其后的 `agent_settled` 不得再发“任务完成”Toast（人都走了还喊人回来看，纯打扰）。",
         "信号沿用 goal 的现成模式：`turn_end` / `agent_end` 时记录 `ctx.signal?.aborted`，`agent_settled` 触发前检查该标记。",
@@ -87,7 +98,8 @@
       ],
       "createdAt": null,
       "claimedAt": null,
-      "completedAt": null
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

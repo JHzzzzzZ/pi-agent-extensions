@@ -1,9 +1,10 @@
 {
-  "version": 3,
+  "version": 4,
   "title": "pwr-todo TODO",
   "entries": [
     {
       "id": 1,
+      "globalId": 257,
       "text": "根 README 为每个插件增加效果示意图",
       "status": "done",
       "branch": null,
@@ -17,6 +18,7 @@
     },
     {
       "id": 2,
+      "globalId": 258,
       "text": "devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞",
       "status": "done",
       "branch": null,
@@ -30,6 +32,7 @@
     },
     {
       "id": 3,
+      "globalId": 259,
       "text": "pwr 接线 `session_shutdown` 钩子调用 `runtime.shutdown()`：pi 0.85.1 已提供该钩子（/new、/resume、/fork、/clone、exit 都触发，见宿主 docs/extensions.md 生命周期图），AGENTS.md 已知怪癖的前提已不成立。接线后 FIFO 队列/缓存/调度器可在会话切换与退出时清理，不残留跨会话状态。",
       "status": "done",
       "branch": null,
@@ -45,6 +48,7 @@
     },
     {
       "id": 4,
+      "globalId": 260,
       "text": "命令风格统一（跨插件）：冒号命名空间式命令面（`/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help` 及 `/workflow-delete`、`/pwr-model`）与统一基准（loop 的子命令式）不一致。跨插件需求，已在 agent-team-todo.md 同步登记。",
       "status": "done",
       "branch": null,
@@ -60,6 +64,7 @@
     },
     {
       "id": 5,
+      "globalId": 261,
       "text": "采纳 solo 审批门（跨插件，solo-mode 条目一部分）：`/solo` 开启时 workflow_validate 不弹批准卡（按 once 自动批准）、workflow_start 强制降级 once、已保存命令 approveSavedCommand 返回 once；绝不写 remembered 批准。",
       "status": "done",
       "branch": null,
@@ -75,6 +80,7 @@
     },
     {
       "id": 6,
+      "globalId": 262,
       "text": "cmd-style 合并后的 solo 互操作复核：① `pwr/test/entry.test.ts` 的“已保存命令 solo 自动批准”用例已改走统一命令面（`commands.get(\"workflow\")` + args `run solo-saved`）；② `approveSavedCommand` solo 分支仍在 `runSavedWorkflow` 调用链上；③ 冲突文件解决结果保住了 solo-mode 内容（卡片/INDEX 行/solo-gate 接线/版本）。合并后全套：pwr 416、agent-team 279、opencode-bridge 114、deep-init 37、solo-mode 11 全绿 + 三处 typecheck 零错误。",
       "status": "done",
       "branch": null,
@@ -90,6 +96,7 @@
     },
     {
       "id": 7,
+      "globalId": 263,
       "text": "pwr 的 TUI 与 pi-agent 同步，代码层级对齐（2026-09-11 进展：A1–A4 均已完成，仅剩 A5「结果页 Markdown」缓办，见下）",
       "status": "done",
       "branch": null,
@@ -109,6 +116,7 @@
     },
     {
       "id": 8,
+      "globalId": 264,
       "text": "状态条时钟统一与排序（跨插件）：footer 状态键 `pwr` → `30:pwr`（widget 键 `pwr-runs` 不变；推送式刷新不接 ticker）；契约 `docs/cross/status-bar.md`。",
       "status": "done",
       "branch": null,
@@ -124,6 +132,7 @@
     },
     {
       "id": 9,
+      "globalId": 265,
       "text": "`/workflow` 与 `/workflows` 命令归一：单数=定义面（`<任务>` 生成、`run`/`delete`/`model`），复数=运行观察控制面（`list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`）；名字只差一个 `s`，`/workflows save`（把 run 存为工作流）与 `/workflow run`（跑已保存工作流）极易混，且只有复数根有 `help`/补全。方向待定：① 全并入 `/workflow`（`/workflow list|view|pause…`）彻底消歧；② 保留两根但补 `/workflow help`、统一 help/补全/保留词约定与文案。约束：沿命令风格统一先例直接替换不留旧别名；需先划清 saved 工作流生命周期各动作归哪侧。",
       "status": "done",
       "branch": null,
@@ -139,6 +148,7 @@
     },
     {
       "id": 10,
+      "globalId": 266,
       "text": "footer 多源状态挤占优化（跨插件）：多插件同时写 footer 时，宿主按 key 排序后把各段单空格拼一行并整行右截断（宿主 `footer.js`：`sortedStatuses.join(\" \")` + `truncateToWidth`）——段间无分隔、按字符硬切、无优先级。真机截图（2026-09-11）：goal + provider-quota + pwr 同屏时本插件段被截成 `workflows: 2 activ...`（实证受害者），stream-token-speed 在场会被整段截没。涉及全部 5 个 footer 写入者：goal(`10:goal`)、provider-quota(`20:provider-quota`)、pwr(`30:pwr`)、solo-mode(`40:solo-mode`)、stream-token-speed(`50:stream-token-speed`)；本插件段 `workflows: N active (<名> <状态>), N finished`（`pwr/src/ui/renderer.ts` `runStatusText`，排序带 30）。优化方向待定：(a) 各插件文本瘦身/次要信息分时轮播（本插件 `N finished`、脚本名/状态段可缩短或省略）；(b) 段间可见分隔/短标签契约（统一前缀图标或 `│`），提升可辨性；(c) 截断改按段/按优先级而非尾部硬切（可能需宿主 `footer.js` 补丁；宿主补丁现已禁用，见 `docs/pi-widget-order-issue.md`）；(d) 低优先级状态迁往编辑器上方 widget（本插件已有 `pwr-runs` widget，footer 可只留计数）。约束：不引入跨插件通信（`docs/cross/status-bar.md` 非目标）；推送式刷新节奏不变；完成时同步该契约卡 + 涉及插件 README/测试。跨插件需求，已在 goal / provider-quota / solo-mode / stream-token-speed todo 同步登记。（2026-09-14：宿主补丁方案已作废并完全还原——「仓库外禁改，除非人工批准」规则见 AGENTS.md「仓库边界」；替代方案：新增 status-footer 插件用公开 API `ctx.ui.setFooter` 接管 footer、扩展状态逐行 + 单段超宽续行，待人工确认后实施。）",
       "status": "done",
       "branch": null,
@@ -154,6 +164,7 @@
     },
     {
       "id": 11,
+      "globalId": 267,
       "text": "命令面改冒号形式（跨插件，全量任务一部分）：`/workflow run|delete|model` → `/workflow:run|:delete|:model`；`/workflows list|view|…|help` → `/workflows:list` 等；生成入口 `/workflow <任务>` 保持不变。全量清单与待定项见 `todos/commands-colon-todo.md`。",
       "status": "done",
       "branch": null,
@@ -169,6 +180,7 @@
     },
     {
       "id": 12,
+      "globalId": 268,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件 `pwr-runs` widget 位于上方栈；footer 段顺序另受 key 排序带约束（见 `docs/cross/status-bar.md`）。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
       "status": "done",
       "branch": null,
@@ -186,6 +198,7 @@
     },
     {
       "id": 13,
+      "globalId": 269,
       "text": "footer 首段定格（跨插件）：按排序带排在最前的可见段不加 `│ ` 前导分隔符（行首定格），其余段之间仍用 `│ `；任一段出现/消失时实时重算最前段并重渲染其余段。宿主无「谁在最前」API（`ExtensionUIContext` 只写不读，`FooterDataProvider` 仅自定义 footer 可见），故新增每插件目录一份 `status-band.ts`：`Symbol.for(\"pi.status-bar.bands.v1\")` 进程共享登记表 + 出现/消失通知，不跨插件 import、保持单目录可复制安装；只认识同样使用本模块的写入者（本仓库五个 footer 写入者）。跨插件需求，五个 todo 同步登记。",
       "status": "done",
       "branch": null,

@@ -1,13 +1,15 @@
 {
-  "version": 2,
+  "version": 4,
   "title": "TODO（用户级 · skills/ 全局技能）",
   "entries": [
     {
       "id": 1,
+      "globalId": 273,
       "text": "> 非插件条目：`~/.pi/agent/skills/` 下的全局技能，不对应任何 `pi.extensions` 插件，单独建档。",
       "status": "open",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
@@ -16,10 +18,12 @@
     },
     {
       "id": 2,
+      "globalId": 274,
       "text": "新建 `todo-triage` 开工盘点 skill：开工时扫描 `todos/*-todo.md` 与 git worktree，把待办判为进行中/未领取/待决策/被阻塞/搁置，核对 worktree↔todo 映射（合并遗留、孤儿目录、无工作台的 processing），输出推荐领取优先级与下一步动作。",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ `~/.pi/agent/skills/todo-triage/`：`SKILL.md` + `scripts/survey.sh` 只读事实收集器——5 步门（收集→归类→worktree 健康度→排序报告→领取动作）+ 完成标准；实测覆盖 16 个 todo 文件/25 条 pending/全部 worktree 状态与孤儿目录，含从 worktree 内调用自动切回主工作区、非仓库根报错路径"
       ],
@@ -30,10 +34,12 @@
     },
     {
       "id": 3,
+      "globalId": 275,
       "text": "新建 `wrap-up` 开发任务收尾 skill：任务结束时触发（用户调用或 agent 自主触发），核对测试完备（单测/集成/typecheck 全绿）+ 文档同步（README/AGENTS/package.json/todos/docs），有缺口就地补齐，最后产出简短收尾报告（改动摘要 + 验收方式 + 功能用法）。",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
@@ -42,10 +48,12 @@
     },
     {
       "id": 4,
+      "globalId": 276,
       "text": "新建 `todo-add` 需求受理 skill：把一条需求路由到唯一落点——现有插件 → `todos/<插件名>-todo.md`；未实现插件 → 新建 `todos/<插件名>-todo.md`；通用领域/涉及多插件 → `todos/general-todo.md`；含查重、条目写法与路由报告，只登记不标 processing；同步 AGENTS.md 红线 2 路由与新建 general-todo.md。",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11 @ `~/.pi/agent/skills/todo-add/`：SKILL.md 四步门（整理查重→路由→写入→报告）+ 完成标准，现有插件清单以根 `package.json` `pi.extensions` 为权威；`todos/general-todo.md` 建档（非插件通用/跨插件落点）；AGENTS.md 红线 2/7 同步；`todo-triage` 已知坑同步；技能 README 索引已加"
       ],
@@ -56,10 +64,12 @@
     },
     {
       "id": 5,
+      "globalId": 277,
       "text": "新建 todo-cli skill（~/.pi/agent/skills/todo-cli/）并让 todo-add / todo-triage 的机械步骤改走仓库 CLI（用户 2026-09-11，配合 todo-cli 从 Pi 插件转 CLI）：skill 教 agent 用 node tools/todo.mjs 执行登记/领取/完成/盘点/triage/lint，含 scripts/todo.sh 包装器（自动定位仓库根）；todo-add 写入改走 add（跨文件查重）、todo-triage 领取改走 claim --branch；skills README 索引同步。验收：skill 命令面与 CLI 实际行为一致、触发词覆盖各动作。（完成 ~/.pi/agent/skills/todo-cli/（SKILL.md + scripts/todo.sh 包装器，实测 summary/lint exit 0 ；todo-add 写入改走 add（跨文件查重 、todo-triage 领取改走 claim --branch、README 索引同步；命令面与合并后 tools/todo.mjs（merge 4951d9a 逐条核对一致）",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
@@ -68,10 +78,12 @@
     },
     {
       "id": 6,
+      "globalId": 278,
       "text": "明确三个 todo skill 的边界（触发词不重叠 + 命令细节单一权威）：todo-cli 收窄为命令参考卡（让出登记/盘点意图词）；todo-add / todo-triage 加指针对齐并在描述里声明机械动作见 todo-cli；survey.sh 与 CLI triage 的事实口径在 todo-triage 中定权；skills README 索引同步。验收：三描述无意图词重叠；skill 引用的命令与实际 CLI 一致。（完成 三个 SKILL.md 边界明确：todo-cli 收窄为命令参考卡（唯一权威 、让出意图触发词；todo-add/todo-triage 描述加指针 + 事实口径定权（survey.sh 权威、CLI triage 交叉核对 ；skills README 索引同步）",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [],
       "createdAt": null,
       "claimedAt": null,
@@ -80,10 +92,12 @@
     },
     {
       "id": 7,
+      "globalId": 279,
       "text": "新建 team-run-review 复盘 skill（~/.pi/agent/skills/team-run-review/）：排查当前会话下的 agent-team run 记录（会话 run 清单 + ~/.pi/agent/teams/runs/<runId> 工件与转录），逐 run 定位失败/重试/串行/停顿/成本证据，提取可优化点并按层（团队配置/派单方式/插件缺陷/环境）归因，输出优先优化清单；随 skill 带只读事实收集器 scripts/survey-runs.mjs。（用户 2026-09-11）",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "@ `~/.pi/agent/skills/team-run-review/`：SKILL.md 五步门 [收集事实→读信号→按层归因→报告→落地，只读边界] + scripts/survey-runs.mjs 只读事实收集器 [会话 run 清单/磁盘 running/工件与转录统计/信号行/team_* 工具调用；成本按 leader+成员合计并标注 record 字段只计 leader]。实测 4 个真实会话 [09-09 count-duet 8 run、09-11 any-dev 失败 run $3.34、09-11 fast-dev 两 run、空会话] + fixture [running/缺工件路径]；skills README 索引已加"
       ],
@@ -94,10 +108,12 @@
     },
     {
       "id": 8,
+      "globalId": 280,
       "text": "同步 todo-cli 三个 skill 到 L14/L15 新命令面（list 新 flags --branch/--tag/--text/--claimed-since/--json + db status|rebuild|drop；todo-add 用 list --text 查重替代 grep；todo-triage 用 list --status processing 交叉核对）；验收：三 SKILL.md 与合并后 CLI ee896bd 行为一致（用户批准，仓库外改动）",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-11：todo-cli skill 补 list 新 flags + db 子命令 + 索引纯派生坑；todo-add 查重改 list --text；todo-triage 补交叉核对用法；备份 ~/.pi/agent/skills/.backup-20260911/，命令面与 CLI ee896bd 核对一致"
       ],
@@ -108,10 +124,12 @@
     },
     {
       "id": 9,
+      "globalId": 281,
       "text": "技能侧配套 todo-cli 目录重构（用户 2026-09-12，与 todos/todo-cli-todo.json #9 同批）：todo-cli 工具迁入 ~/.pi/agent/skills/todo-cli/todo-cli/ 后，把该目录 SKILL.md 改写为「todo-cli 怎么用」的命令参考卡（让出登记/盘点意图词给 todo-add / todo-triage，沿用本条文件 #6 边界决议），同步 scripts/todo.sh 包装器（改为定位内层工具而非仓库 tools/todo.mjs）、skills README 索引与 .zcode/.pi 两镜像。仓库外改动，实施前需用户逐次批准（AGENTS 红线 1）。验收：SKILL.md 命令面与合并后 CLI 逐条一致、触发词与另两 skill 不重叠、两镜像内容一致。",
       "status": "done",
       "branch": "feat/todo-cli-skill-placement",
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "f454160：仓库内半程完成——SKILL.md（命令参考卡，含 align/五态）+ scripts/todo.sh 随工具落在 <repo>/.agents/skills/todo-cli/；.zcode/.pi 两镜像与另机全局 skill 库不在本机、属范围外，已另立接力条目"
       ],
@@ -122,10 +140,12 @@
     },
     {
       "id": 10,
+      "globalId": 282,
       "text": "废弃 todo-add / todo-triage / wrap-up 三个 todo skill，只保留 todo-cli 命令参考卡（用户 2026-09-14 随 #11 对齐门选定）：三者机械步骤已被仓库 CLI（add/claim/align/complete/triage）覆盖，AGENTS.md 首行 wrap-up 指针与红线 1 的 skill todo-add 指针已删；仓库侧只清指针，不新建/不重建仓库外文件。",
       "status": "done",
       "branch": null,
       "tags": [],
+      "dependsOn": [],
       "notes": [
         "2026-09-14 实测：本机 ~/.pi/agent/skills/ 不存在（无文件可删、仓库外未改任何文件）；残留风险 = 其它机器/备份里的旧 skill 副本，待人工确认；仓库内指针（AGENTS.md 首行与红线 1）已清。"
       ],
@@ -136,6 +156,7 @@
     },
     {
       "id": 11,
+      "globalId": 283,
       "text": "另机全局 skill 库同步新入口（用户 2026-09-14，承接 #9 范围外部分）：本仓库 #9 已把 todo CLI 内迁为项目级 skill（入口固定 node .agents/skills/todo-cli/todo-cli/todo.mjs，仓库根 = --root > git rev-parse --show-toplevel，fail-closed）。另一台机器上的全局技能库（~/.pi/agent/skills/todo-cli/ 的 SKILL.md 与 scripts/todo.sh，以及 todo-add / todo-triage 里引用的旧入口 node tools/todo.mjs）仍是旧路径：需要在该机把命令面同步到新入口，并决定全局 skill 与仓库内 skill 的关系（复制一份 / 指向仓库内目录 / 旧路径兜底）。本机无该库且改动在仓库外，实施前需用户逐次批准（红线 8）。验收：另机三个 skill 的命令面与本仓库 SKILL.md 及 USAGE 逐条一致、在该机跑 node <新入口> summary 与 lint exit 0。",
       "status": "open",
       "branch": null,
@@ -143,6 +164,7 @@
         "skills",
         "out-of-repo"
       ],
+      "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T15:11:03.915Z",
       "claimedAt": null,

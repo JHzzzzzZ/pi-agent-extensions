@@ -1,9 +1,10 @@
 {
-  "version": 3,
+  "version": 4,
   "title": "loop-todo TODO",
   "entries": [
     {
       "id": 1,
+      "globalId": 235,
       "text": "状态条时钟统一与排序：run-timer 与 loop 各自刷新状态条（`⏰ loop 2 个任务 · 下次 12h39m` 与计时行）导致换行/重排。期望多插件共用同一时间钟 + 明确的排序约定。跨插件需求，已在 run-timer-todo.md 同步登记。",
       "status": "done",
       "branch": null,
@@ -19,6 +20,7 @@
     },
     {
       "id": 2,
+      "globalId": 236,
       "text": "后台模式（`--bg`）支持模型指定：`/loop` 与 `loop_create` 加可选模型参数（`provider/id` 格式，如 `opencode-go/deepseek-v4-flash`），透传给子 `pi` 进程的 `--model` 参数（`runner.ts` spawn args）；不传时维持现状（pi 默认模型）。前台模式注入当前会话暂不支持指定（命令层 `--model` 缺 `--bg` 显式报错，工具层前台带 model 返回类型化错误）。对应场景：定时巡检用便宜模型、重要任务用强模型。",
       "status": "done",
       "branch": null,
@@ -34,6 +36,7 @@
     },
     {
       "id": 3,
+      "globalId": 237,
       "text": "根 README 为每个插件增加效果示意图",
       "status": "done",
       "branch": null,
@@ -47,6 +50,7 @@
     },
     {
       "id": 4,
+      "globalId": 238,
       "text": "devDependencies 安全升级：@earendil-works/pi-coding-agent 等 ^0.83.0 → ^0.85.1，修复 undici/brace-expansion 高危漏洞",
       "status": "done",
       "branch": null,
@@ -60,6 +64,7 @@
     },
     {
       "id": 5,
+      "globalId": 239,
       "text": "命令风格统一（跨插件）：子命令式 `/loop list|pause|resume|delete|clear` 与 agent-team 的冒号命名空间式 `/team:run|stop|status|view|clear|doctor` 用法不一致，需统一（倾向于哪种、是否连带 provider-quota `/quota`、如何向后兼容旧写法待定）。跨插件需求，已在 agent-team-todo.md 同步登记。",
       "status": "done",
       "branch": null,
@@ -75,6 +80,7 @@
     },
     {
       "id": 6,
+      "globalId": 240,
       "text": "命令面改冒号形式（跨插件，全量任务一部分）：`/loop list|pause|resume|delete|clear` → `/loop:list|:pause|:resume|:delete|:clear`；无参 `/loop` 与循环创建参数保持不变。全量清单与待定项见 `todos/commands-colon-todo.md`。",
       "status": "done",
       "branch": null,
@@ -90,6 +96,7 @@
     },
     {
       "id": 7,
+      "globalId": 241,
       "text": "上游根修（route A）：pi 宿主 `InteractiveMode.setExtensionWidget` 保序 bug——同 key 更新先 `Map.delete` 再 `Map.set`，把 widget 挪到所在栈底部；多个周期刷新的 widget 因此逐秒换位。本插件倒计时 widget 与 run-timer 同屏换位是原始症状。需求：把最小复现 + 源码级 diff（`keepPosition`：目标栈已存在 key 时原地 `Map.set`、不清除位置；换 placement / 清除仍从对应栈删除）提交上游 `github.com/earendil-works/pi`（目标 `packages/coding-agent/src/modes/interactive/interactive-mode.ts`）；上游修复发布后撤本地补丁并回归状态条顺序契约。跨插件需求，已在 run-timer / loop / goal / pwr / provider-quota / solo-mode / stream-token-speed / agent-team 的 todo 同步登记。",
       "status": "done",
       "branch": null,
@@ -107,6 +114,7 @@
     },
     {
       "id": 8,
+      "globalId": 242,
       "text": "后台调度路径丢失任务模型（真 bug，2026-09-11 凌晨定时任务实测）：loop_create mode=background + model 与 /loop --bg --model 都会把模型存进任务、/loop:list 调度列也显示 @provider/id，但到期 startBgRun 调 runBg({taskId,prompt,cwd,signal}) 时没带 t.model，导致 runner.ts 的 --model 拼参分支永远不生效——子 pi 落回 pi 默认模型（实测设了 zai-coding-cn/glm-5.3-flash，整晚 13 轮全跑成配置默认 opencode-go/deepseek-flash）。修复：startBgRun 透传 model: t.model、index.ts 的 runBg 类型签名补 model?；TDD 补测试：① 调度路径带 model 时 runBg 收据含 model、不带时为 undefined；② runner.runBgAgent 带 model 时 spawn args 出现 --model <值>（此前该分支零测试）。（完成 完成 2026-09-11 @ merge 93259ea（分支 f3a93c2 ：startBgRun 透传 model: t.model + index.ts runBg 类型签名补 model；3 条调度路径回归测试（工具路径/命令路径带 model + 未指定时 undefined ，loop 196 绿 + typecheck 零错误；loop v1.6.1。）",
       "status": "done",
       "branch": null,
@@ -120,6 +128,7 @@
     },
     {
       "id": 9,
+      "globalId": 243,
       "text": "loop 后台模式（mode=background / /loop --bg）允许同一任务重叠运行（用户 2026-09-15 提出）：现状为硬性跳过——startBgRun 用 bgEntries.has(t.id) 守卫，同一任务上一轮后台子进程未结束时本次触发只发一条 warning「上一轮后台仍在运行，本次触发跳过」（src/extensions/loop/index.ts:220；docs/extensions/loop.md:43 已把该跳过登记为不变量）。后果：单轮耗时 > 间隔时（如 15m/30m 巡检 + 单轮 40 分钟）实际执行轮次远少于触发轮次，用户只能从 warning 察觉被丢弃。要求：后台触发不再因上一轮在跑而丢弃，允许并发轮次；并发上限/开关形态待对齐（默认全放开 / 默认 1 轮且显式 opt-in / 带上限配置三选一）。重叠期的状态呈现必须区分多条并发运行：任务 lastRun 目 前是单对象（startedAt/finishedAt/status/sessionId/sessionPath/summary，tasks.ts 序列化）、widget 每任务一行、/loop:list 展示单一 lastRun，重叠后需明确显示口径（运行中计数 + 各自会话 id/状态，或最近一轮 + 运行记录列表）；stopSession 的 interrupted 收口、7 天过期清理、bgDoneMessage 通知文案都要在并发下给出确定语义（每轮一条通知 vs 聚合）。验收（待 align 细化）：同一任务两轮后台真实重叠运行、各自独立 session id 与完成通知；widget 与 /loop:list 能看出并发轮次；会话结束时在途各轮均被终止并标记 interrupted；方案有真实子进程边界测试（非纸面单测）+ 全量测试与 typecheck 绿。",
       "status": "done",
       "branch": "feat/loop-bg-overlap",
@@ -135,6 +144,7 @@
     },
     {
       "id": 10,
+      "globalId": 244,
       "text": "后台单轮硬超时 30 分钟 → 3 小时（2026-09-15 真机证据：loop 的 BG_RUN_TIMEOUT_MS 从 spawn 起算，比 headless pi 在 agent_end 的 auto-drain 上限（同为 30 分钟，从回合结束起算）早 20~30 秒触发，于是派单类任务每轮都在子 agent 收尾前被杀——round 记 timeout、子 agent 半途夭折、stale-run 把 run 标 failed（#67 那轮工作已落地也被误标）。用户 2026-09-15 决策：单轮上限提到 3 小时，使其大于子任务自身的 drain/run 预算。范围：只改 runner.ts 常量 + 测试等值断言 + docs 卡 + 版本；不改 KILL_GRACE_MS/调度语义、不加 per-task 超时字段、不动 pi-subagents。",
       "status": "done",
       "branch": "feat/loop-bg-timeout-3h",
