@@ -9,6 +9,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ 9e2c15d / feat-solo-mode-approval-gate",
@@ -33,6 +34,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e，solo-mode 12 测试绿"
@@ -49,6 +51,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge e68095d：段文本不变，仅内部 `setStatus` 助手在定义值时拼 `│ `（`│ ⚡ solo`）；14 测试绿"
@@ -65,6 +68,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ 20dbb78，根 v2.24.9",
@@ -87,6 +91,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：solo-mode v1.2.0——裸 `/solo` 空参仍是一键切换（与习惯一致），`on`/`off`/`status` 改为独立冒号命令，旧空格词只提示改名、绝不执行（避免 `/solo on` 被误当反向切换）；`parseSoloCommand` 收敛为 toggle/usage。14 测试绿；真实 pi loader 冒烟通过"
@@ -103,6 +108,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ route A：材料已备，待提交上游",
@@ -121,11 +127,27 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 9db7983：`setStatus` 助手改走本地 `status-band.ts`——最前段 `⚡ solo` 无前缀、非最前段 `│ ⚡ solo`，低带出现/消失重渲染；15 测试绿"
       ],
       "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 8,
+      "globalId": 313,
+      "text": "危险指令审批未被 solo 模式豁免（用户 2026-09-17 实测反馈）：`/solo:on` 后执行 `rm -rf` 这类指令仍弹审批窗（无 UI 环境更是直接 block）。根因：该门不在本仓库 12 插件内，而在用户级全局扩展 `~/.pi/agent/extensions/permission-gate.ts`（34 行：`pi.on(tool_call)` + `ctx.ui.select`；模式 /\\brm\\s+(-rf?|--recursive)/i、/\\bsudo\\b/i、/\\b(chmod|chown)\\b.*777/i），它不读 solo 状态文件 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`；而 solo 契约（docs/cross/solo-approval-gate.md）当前只覆盖 pwr / opencode-bridge / deep-init 三家的审批摩擦门，tool_call 级拦截从未进入范围。要求（口径待对齐）：① 先定这类门算「审批摩擦」（solo 自动批准）还是「误触保护」（保持人工）——rm/sudo/chmod 不可逆，建议默认只在显式开关/白名单内豁免并留审计，不默认全豁免；② 落点三选一：(a) solo-mode 侧自建危险指令门（本仓库内做 tool_call 钩子 + 复用 solo 状态判据，用户随后退役全局 permission-gate）；(b) 仓库外 permission-gate 读 solo 状态文件（红线 8：仓库外改动需用户逐次批准，含备份与回滚登记）；(c) 上游方案（宿主无 solo 概念，需先提 issue/PR）；③ 语义沿用状态文件 pid 校验 + fail-closed（异 pid / 损坏 ⇒ 照常弹窗），no-UI 口径要显式定（现状：permission-gate 无 UI 时直接 block）；`protected-paths.ts` 那类无弹窗硬 block 不属本条（保持不动）。验收：solo 开启时按定稿口径不再弹窗（或仅白名单内豁免）+ solo 关闭时照常弹窗，均有测试锁定；docs/cross/solo-approval-gate.md 与 docs/extensions/solo-mode.md 同步；若动仓库外文件，文件/备份/回滚写进交付报告。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-18T00:06:28.662Z",
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
