@@ -363,7 +363,7 @@ export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选，Claud
 
 ## provider-quota
 
-查询当前 provider 的账户额度/余额并在终端状态行显示（无 provider 前缀；段前缀由 `status-band` 决定：最前段无前缀、其余段 `│ `）。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go、Kimi Coding Plan 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`，只看绝对刷新时间，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）输出 `X%/Y%/Z%(HH:mm)`（5 小时/周/月三窗口，缺失窗口跳过），后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。Kimi Coding Plan（key 即 `auth.json` 里 `kimi-coding` 条目的 `sk-kimi-` key，Kimi Code 控制台创建）输出 `7/100 5h7% m0%(HH:mm)`（5h 请求计数 + 5h/月度用量百分比，后缀重置时间跟随达限窗口、默认 5h）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 只从 `~/.pi/agent/auth.json` 读取（不读环境变量）。
+查询当前 provider 的账户额度/余额并在终端状态行显示（无 provider 前缀；段前缀由 `status-band` 决定：最前段无前缀、其余段 `│ `）。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go、Kimi Coding Plan 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`，只看绝对刷新时间，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）输出 `X%/Y%/Z%(HH:mm)`（5 小时/周/月三窗口，缺失窗口跳过），后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。Kimi Coding Plan（key 即 `auth.json` 里 `kimi-coding` 条目的 `sk-kimi-` key，Kimi Code 控制台创建）输出 `5h7% m0%(HH:mm)`（5h/月度用量百分比，后缀重置时间跟随达限窗口、默认 5h；5h 百分比缺失时由 5h 请求计数窗兜底反推，计数段与 5h% 同窗冗余不外显）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 只从 `~/.pi/agent/auth.json` 读取（不读环境变量）。
 
 效果示意（终端状态行，实测格式；单段时即最前段）：
 
@@ -373,7 +373,7 @@ $4.58 (used $5.42)      ← OpenRouter：剩余额度（已用）
 186.40                  ← ChatAnywhere：余额
 tok72% mcp40%(14:30)    ← 智谱：token/MCP 窗口占用 + 下次刷新时间
 15%/6%/3%(03:41)        ← OpenCode Go：5h/周/月窗口 + 命中限额窗口的重置时间
-7/100 5h7% m0%(19:03)   ← Kimi Coding Plan：5h 请求计数 + 5h/月度用量百分比 + 达限窗口重置时间
+5h7% m0%(19:03)        ← Kimi Coding Plan：5h/月度用量百分比 + 达限窗口重置时间
 ```
 
 ```bash
