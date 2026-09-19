@@ -8,7 +8,7 @@
 | [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 719 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
-| [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 26 个（node:test） |
+| [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 38 个（node:test） |
 | [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
 | [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令） | 213 个（node:test） |
 | [`src/extensions/goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 63 个 |
@@ -363,7 +363,7 @@ export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选，Claud
 
 ## provider-quota
 
-查询当前 provider 的账户额度/余额并在终端状态行显示（无 provider 前缀；段前缀由 `status-band` 决定：最前段无前缀、其余段 `│ `）。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`，只看绝对刷新时间，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）输出 `X%/Y%/Z%(HH:mm)`（5 小时/周/月三窗口，缺失窗口跳过），后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 从环境变量或 `~/.pi/agent/auth.json` 读取。
+查询当前 provider 的账户额度/余额并在终端状态行显示（无 provider 前缀；段前缀由 `status-band` 决定：最前段无前缀、其余段 `│ `）。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go、Kimi Coding Plan 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`，只看绝对刷新时间，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）输出 `X%/Y%/Z%(HH:mm)`（5 小时/周/月三窗口，缺失窗口跳过），后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。Kimi Coding Plan（key 即 `auth.json` 里 `kimi-coding` 条目的 `sk-kimi-` key，Kimi Code 控制台创建）输出 `7/100 5h7% m0%(HH:mm)`（5h 请求计数 + 5h/月度用量百分比，后缀重置时间跟随达限窗口、默认 5h）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 只从 `~/.pi/agent/auth.json` 读取（不读环境变量）。
 
 效果示意（终端状态行，实测格式；单段时即最前段）：
 
@@ -373,6 +373,7 @@ $4.58 (used $5.42)      ← OpenRouter：剩余额度（已用）
 186.40                  ← ChatAnywhere：余额
 tok72% mcp40%(14:30)    ← 智谱：token/MCP 窗口占用 + 下次刷新时间
 15%/6%/3%(03:41)        ← OpenCode Go：5h/周/月窗口 + 命中限额窗口的重置时间
+7/100 5h7% m0%(19:03)   ← Kimi Coding Plan：5h 请求计数 + 5h/月度用量百分比 + 达限窗口重置时间
 ```
 
 ```bash

@@ -43,6 +43,18 @@
  *                   后缀就显示哪个的 resetsAt，都未限额时依次回退
  *                   rolling/weekly/monthly；跨日显示 MM-dd HH:mm，同 zhipu 规则。
  *                鉴权 Bearer sk-…，即 auth.json 里 opencode-go 条目的 key（实测 2026-09）。
+ *  - kimi-coding GET https://api.kimi.com/coding/v1/usages
+ *                -> limits[] 5h 请求计数窗（window.duration=300 TIME_UNIT_MINUTE，
+ *                   detail.limit/used/remaining 为字符串数字，resetTime 纳秒 ISO）
+ *                   + usages{limit_5h/limit_month_total/limit_month_code:{used_ratio,reset_time}}；
+ *                   输出 `7/100 5h7% m0%(HH:mm)`（跨日 `(MM-dd HH:mm)`）：计数段 +
+ *                   5h 用量百分比（优先 limit_5h.used_ratio，缺失回退计数窗百分比）+
+ *                   月度百分比（limit_month_total，缺失回退 limit_month_code）；
+ *                   重置后缀取达限窗口（5h > 月度），都未达限默认 5h（缺失回退月度），
+ *                   早于 now-24h 不加括号。只支持实测形态（实测 2026-09-19，
+ *                   见 docs/specs/provider-quota-kimi-coding.md）。
+ *                鉴权默认 Bearer sk-kimi-…，即 auth.json 里 kimi-coding 条目的 key
+ *                （Kimi Code 控制台创建的 Coding Plan key，与开放平台 sk- key 不互通）。
  *
  * 不在内置列表的 provider（如 anthropic / openai 直连）会静默不显示状态行。
  * 要支持更多 provider，在 QUOTA_ENDPOINTS 里加一条即可。
@@ -86,11 +98,13 @@ const PROVIDER_ALIASES: Record<string, string> = {
 	opencode: "opencode-go",
 	"opencode-zen": "opencode-go",
 	zen: "opencode-go",
+	kimi: "kimi-coding",
 };
 
 // provider id 与 auth.json 条目名不一致时的 key 回退候选（按序尝试）。
 const AUTH_ID_FALLBACK: Record<string, string[]> = {
 	"opencode-go": ["opencode", "opencode-zen", "zen"],
+	"kimi-coding": ["kimi"],
 };
 
 // 智谱原始 token 仅允许发往这些 HTTPS、无显式端口的白名单主机。
@@ -298,6 +312,149 @@ export function parseZhipuQuotaLimit(body: unknown, now: Date): string | null {
 	return `${parts.join(" ")}${suffix ?? ""}`;
 }
 
+// ---- Kimi Coding Plan usages 解析（实测端点 https://api.kimi.com/coding/v1/usages，2026-09-19）----
+
+// 数字防御：实测 detail 字段是字符串（"100"），used_ratio 也可能是数字字符串。
+function toFiniteNumber(value: unknown): number | null {
+	if (typeof value === "number") return Number.isFinite(value) ? value : null;
+	if (typeof value === "string" && value.trim()) {
+		const n = Number(value);
+		return Number.isFinite(n) ? n : null;
+	}
+	return null;
+}
+
+const KIMI_RESET_FIELD_NAMES = [
+	"reset_time",
+	"resetTime",
+	"reset_at",
+	"resetAt",
+] as const;
+
+function readKimiReset(entry: Record<string, unknown>): Date | null {
+	for (const name of KIMI_RESET_FIELD_NAMES) {
+		const parsed = toZhipuRefreshDate(entry[name]);
+		if (parsed) return parsed;
+	}
+	return null;
+}
+
+interface KimiRatioEntry {
+	ratio: number | null;
+	reset: Date | null;
+}
+
+function readKimiRatioEntry(raw: unknown): KimiRatioEntry | null {
+	if (!raw || typeof raw !== "object") return null;
+	const entry = raw as Record<string, unknown>;
+	const ratio = toFiniteNumber(entry.used_ratio);
+	const reset = readKimiReset(entry);
+	if (ratio === null && !reset) return null;
+	return { ratio, reset };
+}
+
+interface KimiCountWindow {
+	used: number | null;
+	limit: number | null;
+	reset: Date | null;
+}
+
+// 5h 计数窗匹配：timeUnit 含 MINUTE 且 duration=300，或含 HOUR 且 duration=5；
+// 无匹配时 limits 仅一条则取该条（字段漂移防御），多条则放弃计数段。
+function readKimiCountWindow(rawLimits: unknown): KimiCountWindow | null {
+	if (!Array.isArray(rawLimits)) return null;
+	const entries = rawLimits.filter(
+		(i): i is Record<string, unknown> => !!i && typeof i === "object",
+	);
+	if (entries.length === 0) return null;
+	const is5h = (entry: Record<string, unknown>): boolean => {
+		const w = entry.window;
+		if (!w || typeof w !== "object") return false;
+		const win = w as Record<string, unknown>;
+		const duration = toFiniteNumber(win.duration);
+		const unit = typeof win.timeUnit === "string" ? win.timeUnit : "";
+		if (duration === null) return false;
+		if (unit.includes("MINUTE")) return duration === 300;
+		if (unit.includes("HOUR")) return duration === 5;
+		return false;
+	};
+	const target =
+		entries.find(is5h) ?? (entries.length === 1 ? entries[0] : undefined);
+	if (!target) return null;
+	const d = target.detail;
+	const detail = (
+		d && typeof d === "object" ? d : target
+	) as Record<string, unknown>;
+	const limit = toFiniteNumber(detail.limit);
+	let used = toFiniteNumber(detail.used);
+	if (used === null) {
+		const remaining = toFiniteNumber(detail.remaining);
+		if (remaining !== null && limit !== null) used = limit - remaining;
+	}
+	const reset = readKimiReset(detail);
+	if (used === null && limit === null && !reset) return null;
+	return { used, limit, reset };
+}
+
+/**
+ * 解析 Kimi Coding Plan usages 响应为 footer 状态行文本。
+ *
+ * 输出 `7/100 5h7% m0%(HH:mm)`（跨日 `(MM-dd HH:mm)`）：5h 请求计数段（limits[]）
+ * + 5h 用量百分比（优先 usages.limit_5h.used_ratio，缺失回退计数窗百分比）
+ * + 月度百分比（limit_month_total，缺失回退 limit_month_code）。
+ * 重置后缀取达限窗口（5h > 月度），都未达限默认 5h（缺失回退月度）；
+ * 百分比与时间戳都缺失时返回 null。
+ */
+export function parseKimiCodingUsage(body: unknown, now: Date): string | null {
+	if (!body || typeof body !== "object") return null;
+	const b = body as Record<string, unknown>;
+	const count = readKimiCountWindow(b.limits);
+	const usages =
+		b.usages && typeof b.usages === "object"
+			? (b.usages as Record<string, unknown>)
+			: null;
+	const five = readKimiRatioEntry(usages?.limit_5h);
+	const month =
+		readKimiRatioEntry(usages?.limit_month_total) ??
+		readKimiRatioEntry(usages?.limit_month_code);
+
+	const parts: string[] = [];
+	if (count && count.used !== null && count.limit !== null)
+		parts.push(`${Math.trunc(count.used)}/${Math.trunc(count.limit)}`);
+
+	let fivePct: number | null = null;
+	if (five && five.ratio !== null) {
+		fivePct = Math.round(five.ratio * 100);
+	} else if (count && count.used !== null && count.limit) {
+		fivePct = Math.round((count.used / count.limit) * 100);
+	}
+	if (fivePct !== null) parts.push(`5h${fivePct}%`);
+	if (month && month.ratio !== null)
+		parts.push(`m${Math.round(month.ratio * 100)}%`);
+
+	const fiveReset = five?.reset ?? count?.reset ?? null;
+	const monthReset = month?.reset ?? null;
+	const countLimited =
+		count !== null &&
+		count.used !== null &&
+		count.limit !== null &&
+		count.limit > 0 &&
+		count.used >= count.limit;
+	const fiveLimited =
+		(five !== null && five.ratio !== null && five.ratio >= 1) || countLimited;
+	const monthLimited = month !== null && month.ratio !== null && month.ratio >= 1;
+	// 达限窗口优先（5h > 月度）；都未达限默认 5h 重置（缺失回退月度）——同 opencode-go 顺位。
+	const suffixSource =
+		fiveLimited && fiveReset
+			? fiveReset
+			: monthLimited && monthReset
+				? monthReset
+				: (fiveReset ?? monthReset);
+	const suffix = formatZhipuRefreshSuffix(suffixSource, now);
+	if (!parts.length && !suffix) return null;
+	return `${parts.join(" ")}${suffix ?? ""}`;
+}
+
 export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 	openrouter: {
 		url: "https://openrouter.ai/api/v1/credits",
@@ -346,6 +503,13 @@ export const QUOTA_ENDPOINTS: Record<string, QuotaAdapter> = {
 		url: "https://opencode.ai/zen/go/v1/usage",
 		parse: (b) => {
 			const text = parseOpencodeGoUsage(b, new Date());
+			return text ? { text } : null;
+		},
+	},
+	"kimi-coding": {
+		url: "https://api.kimi.com/coding/v1/usages",
+		parse: (b) => {
+			const text = parseKimiCodingUsage(b, new Date());
 			return text ? { text } : null;
 		},
 	},
