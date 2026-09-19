@@ -466,7 +466,7 @@ function kimi5hWindow(detailOver: Record<string, unknown> = {}, windowOver: Reco
 	};
 }
 
-test("kimi-coding: 实测响应完整解析（计数段 + 5h/月度比例 + 同日重置后缀）", () => {
+test("kimi-coding: 实测响应完整解析（5h/月度比例 + 同日重置后缀，计数段不外显）", () => {
 	// 与 2026-09-19 真机响应同构（数值换成固定时钟）
 	const body = {
 		limits: [kimi5hWindow()],
@@ -476,20 +476,20 @@ test("kimi-coding: 实测响应完整解析（计数段 + 5h/月度比例 + 同�
 			limit_month_code: { used_ratio: 0.0029, reset_time: MONTH_RESET.toISOString() },
 		},
 	};
-	assert.equal(parseKimiCodingUsage(body, NOW), "7/100 5h7% m0%(14:00)");
+	assert.equal(parseKimiCodingUsage(body, NOW), "5h7% m0%(14:00)");
 });
 
 test("kimi-coding: 缺 usages 时计数窗兜底 5h 百分比与后缀，纳秒 resetTime 可解析", () => {
 	const nano = REFRESH.toISOString().replace(".000Z", ".123456789Z");
 	const body = { limits: [kimi5hWindow({ resetTime: nano })] };
-	assert.equal(parseKimiCodingUsage(body, NOW), "7/100 5h7%(14:00)");
+	assert.equal(parseKimiCodingUsage(body, NOW), "5h7%(14:00)");
 });
 
-test("kimi-coding: detail.used 缺失时由 remaining 反推", () => {
+test("kimi-coding: detail.used 缺失时由 remaining 反推（计数窗兜底不外显）", () => {
 	const body = {
 		limits: [kimi5hWindow({ used: undefined, resetTime: undefined })],
 	};
-	assert.equal(parseKimiCodingUsage(body, NOW), "7/100 5h7%");
+	assert.equal(parseKimiCodingUsage(body, NOW), "5h7%");
 });
 
 test("kimi-coding: 缺 limits 时只显示比例段", () => {
@@ -502,13 +502,13 @@ test("kimi-coding: 缺 limits 时只显示比例段", () => {
 	assert.equal(parseKimiCodingUsage(body, NOW), "5h7% m0%(14:00)");
 });
 
-test("kimi-coding: 5h 窗匹配（300 分钟 / 5 小时）；仅一条非 5h 窗仍取，多条非 5h 窗省略计数段", () => {
+test("kimi-coding: 5h 窗匹配（300 分钟 / 5 小时）只影响兜底；多条非 5h 窗无 usages 返回 null", () => {
 	const hourUnit = { limits: [kimi5hWindow({ resetTime: undefined }, { duration: 5, timeUnit: "TIME_UNIT_HOUR" })] };
-	assert.equal(parseKimiCodingUsage(hourUnit, NOW), "7/100 5h7%");
+	assert.equal(parseKimiCodingUsage(hourUnit, NOW), "5h7%");
 	const one = {
 		limits: [kimi5hWindow({ resetTime: undefined }, { duration: 60, timeUnit: "TIME_UNIT_MINUTE" })],
 	};
-	assert.equal(parseKimiCodingUsage(one, NOW), "7/100 5h7%");
+	assert.equal(parseKimiCodingUsage(one, NOW), "5h7%");
 	const two = {
 		limits: [
 			kimi5hWindow({ resetTime: undefined }, { duration: 60, timeUnit: "TIME_UNIT_MINUTE" }),
@@ -546,14 +546,14 @@ test("kimi-coding: 达限窗口的后缀优先（5h > 月度），未达限默�
 	assert.equal(parseKimiCodingUsage(mk(0.5, 1), NOW), "5h50% m100%(09-04 11:47)");
 	// 5h 也达限 → 5h 优先；超限 ratio > 1 如实显示
 	assert.equal(parseKimiCodingUsage(mk(1.05, 1), NOW), "5h105% m100%(14:00)");
-	// 计数窗打满同样算 5h 达限
+	// 计数窗打满同样算 5h 达限（计数段不外显，仅驱动后缀顺位）
 	const countLimited = {
 		limits: [kimi5hWindow({ used: "100", remaining: "0" })],
 		usages: {
 			limit_month_total: { used_ratio: 1, reset_time: MONTH_RESET.toISOString() },
 		},
 	};
-	assert.equal(parseKimiCodingUsage(countLimited, NOW), "100/100 5h100% m100%(14:00)");
+	assert.equal(parseKimiCodingUsage(countLimited, NOW), "5h100% m100%(14:00)");
 });
 
 test("kimi-coding: limit_month_total 缺失回退 limit_month_code", () => {

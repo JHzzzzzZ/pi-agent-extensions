@@ -19,17 +19,20 @@ provider-quota 插件内置 openrouter/deepseek/chatanywhere/zhipu/opencode-go �
 footer 输出（沿用插件紧凑风格，后缀规则同 zhipu/opencode-go）：
 
 ```
-7/100 5h7% m0%(19:03)
-└─┬─┘ └┬┘ └┬┘ └──┬──┘
-  │    │   │     └ 重置时间：限额窗口优先（5h>month），默认 5h；同日 HH:mm、跨日 MM-dd HH:mm、早于 now-24h 省略
-  │    │   └ 月度用量百分比：usages.limit_month_total.used_ratio（缺失回退 limit_month_code）
-  │    └ 5h 用量百分比：usages.limit_5h.used_ratio（缺失回退计数窗 used/limit 百分比）
-  └ 5h 请求计数：limits[] 中 300 分钟窗的 detail.used/detail.limit（窗缺失且 limits 仅一条时取该条；否则省略此段）
+5h7% m0%(19:03)
+└┬┘ └┬┘ └──┬──┘
+ │   │     └ 重置时间：限额窗口优先（5h>month），默认 5h；同日 HH:mm、跨日 MM-dd HH:mm、早于 now-24h 省略
+ │   └ 月度用量百分比：usages.limit_month_total.used_ratio（缺失回退 limit_month_code）
+ └ 5h 用量百分比：usages.limit_5h.used_ratio（缺失回退 limits[] 5h 计数窗 used/limit 百分比）
 ```
+
+> #8（2026-09-19，用户真机查看后提出）：计数段（`40/100`）与 5h% 同窗冗余，**不外显**；
+> limits[] 计数窗保留为内部兜底——5h% 缺失反推、`detail.resetTime` 作 5h 重置时间兜底、
+> 计数打满（used>=limit）仍判定 5h 达限（驱动后缀顺位）。
 
 ## 用户故事
 
-- 使用 kimi-coding 模型时，session 启动 / 每 5 分钟 / 切换模型 / `/quota` 后，footer 显示 `7/100 5h7% m0%(19:03)` 形态的实时用量。
+- 使用 kimi-coding 模型时，session 启动 / 每 5 分钟 / 切换模型 / `/quota` 后，footer 显示 `5h7% m0%(19:03)` 形态的实时用量。
 - 无 key / 网络错误 / 解析失败时显示 `kimi-coding: no key|net err|timeout|HTTP <code>|-`（沿用插件既有错误态）。
 
 ## 实现决策

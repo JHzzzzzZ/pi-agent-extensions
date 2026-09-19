@@ -47,9 +47,10 @@
  *                -> limits[] 5h 请求计数窗（window.duration=300 TIME_UNIT_MINUTE，
  *                   detail.limit/used/remaining 为字符串数字，resetTime 纳秒 ISO）
  *                   + usages{limit_5h/limit_month_total/limit_month_code:{used_ratio,reset_time}}；
- *                   输出 `7/100 5h7% m0%(HH:mm)`（跨日 `(MM-dd HH:mm)`）：计数段 +
- *                   5h 用量百分比（优先 limit_5h.used_ratio，缺失回退计数窗百分比）+
- *                   月度百分比（limit_month_total，缺失回退 limit_month_code）；
+ *                   输出 `5h7% m0%(HH:mm)`（跨日 `(MM-dd HH:mm)`）：5h 用量百分比
+ *                   （优先 limit_5h.used_ratio，缺失由计数窗兜底反推）+ 月度百分比
+ *                   （limit_month_total，缺失回退 limit_month_code）；计数段与 5h% 同窗
+ *                   冗余，#8 起不外显，计数窗仅作内部兜底（百分比反推/重置时间/达限判定）。
  *                   重置后缀取达限窗口（5h > 月度），都未达限默认 5h（缺失回退月度），
  *                   早于 now-24h 不加括号。只支持实测形态（实测 2026-09-19，
  *                   见 docs/specs/provider-quota-kimi-coding.md）。
@@ -399,9 +400,11 @@ function readKimiCountWindow(rawLimits: unknown): KimiCountWindow | null {
 /**
  * 解析 Kimi Coding Plan usages 响应为 footer 状态行文本。
  *
- * 输出 `7/100 5h7% m0%(HH:mm)`（跨日 `(MM-dd HH:mm)`）：5h 请求计数段（limits[]）
- * + 5h 用量百分比（优先 usages.limit_5h.used_ratio，缺失回退计数窗百分比）
+ * 输出 `5h7% m0%(HH:mm)`（跨日 `(MM-dd HH:mm)`）：5h 用量百分比
+ * （优先 usages.limit_5h.used_ratio，缺失由 limits[] 计数窗兜底反推）
  * + 月度百分比（limit_month_total，缺失回退 limit_month_code）。
+ * 计数段（如 40/100）与 5h% 同窗冗余，#8 起不外显；计数窗仍作内部兜底
+ * （5h% 反推 / 5h 重置时间 / 达限判定，打满即 5h 达限）。
  * 重置后缀取达限窗口（5h > 月度），都未达限默认 5h（缺失回退月度）；
  * 百分比与时间戳都缺失时返回 null。
  */
@@ -419,9 +422,6 @@ export function parseKimiCodingUsage(body: unknown, now: Date): string | null {
 		readKimiRatioEntry(usages?.limit_month_code);
 
 	const parts: string[] = [];
-	if (count && count.used !== null && count.limit !== null)
-		parts.push(`${Math.trunc(count.used)}/${Math.trunc(count.limit)}`);
-
 	let fivePct: number | null = null;
 	if (five && five.ratio !== null) {
 		fivePct = Math.round(five.ratio * 100);
