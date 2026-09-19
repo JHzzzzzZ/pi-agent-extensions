@@ -106,7 +106,7 @@
       "id": 7,
       "globalId": 314,
       "text": "支持 Kimi Coding Plan 限额查询：GET https://api.kimi.com/coding/v1/usages（Bearer auth.json 的 kimi-coding.key，sk-kimi- 前缀）。实测 2026-09-19 响应：limits[](window.duration=300 TIME_UNIT_MINUTE 的 5h 计数窗，detail.limit/used/remaining 为字符串数字，resetTime 纳秒 ISO) + usages{limit_5h/limit_month_total/limit_month_code:{used_ratio,reset_time}}。参考实现 Golden0Voyager/kimi-code-usage、LaneSun/kimi-code-usage、xy200303/spec-kimi-code（字段跨版本漂移，防御式解析）。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/provider-quota-kimi",
       "tags": [
         "kimi",
@@ -115,11 +115,12 @@
       "priority": 6,
       "dependsOn": [],
       "notes": [
-        "2026-09-19 会话内逐条确认：请求计数窗显示/只支持实测形态/provider 归一方案 OK"
+        "2026-09-19 会话内逐条确认：请求计数窗显示/只支持实测形态/provider 归一方案 OK",
+        "merge 1a33b6c（feat/provider-quota-kimi，TDD 26→38 用例全绿，test:all 17/17 套件 2037 用例）；真机实测 HTTP 200 → 28/100 5h28% m1%(09-20 03:03)；规格 docs/specs/provider-quota-kimi-coding.md；根 2.56.0"
       ],
       "createdAt": "2026-09-19T14:27:53.133Z",
       "claimedAt": "2026-09-19T14:27:58.469Z",
-      "completedAt": null,
+      "completedAt": "2026-09-19T14:54:48.521Z",
       "alignedAt": "2026-09-19T14:32:48.583Z"
     }
   ]
