@@ -122,6 +122,27 @@
       "claimedAt": "2026-09-19T14:27:58.469Z",
       "completedAt": "2026-09-19T14:54:48.521Z",
       "alignedAt": "2026-09-19T14:32:48.583Z"
+    },
+    {
+      "id": 8,
+      "globalId": 315,
+      "text": "移除 Kimi footer 计数段冗余显示：40/100 与 5h40% 同窗冗余（用户 2026-09-19 真机查看后提出），输出改为 5h7% m0%(HH:mm)；计数窗保留为内部兜底（5h% 缺失反推/重置时间/达限判定）",
+      "status": "done",
+      "branch": "feat/provider-quota-kimi-count",
+      "tags": [
+        "kimi",
+        "adapter"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [
+        "用户真机查看 footer 后直接指令删除计数段显示",
+        "merge ea3281a（feat/provider-quota-kimi-count a4b99c1，38 用例全绿、test:all 17/17 2037 用例）；输出 5h7% m0%(HH:mm)；根 2.57.0"
+      ],
+      "createdAt": "2026-09-19T15:09:30.793Z",
+      "claimedAt": "2026-09-19T15:09:30.949Z",
+      "completedAt": "2026-09-19T15:14:46.161Z",
+      "alignedAt": "2026-09-19T15:09:56.513Z"
     }
   ]
 }
