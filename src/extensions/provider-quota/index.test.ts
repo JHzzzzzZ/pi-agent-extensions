@@ -19,6 +19,7 @@ import {
 	STATUS_ID,
 	parseZhipuQuotaLimit,
 	parseOpencodeGoUsage,
+	parseKimiCodingUsage,
 } from "./index.ts";
 import { writeBand } from "./status-band.ts";
 
@@ -441,6 +442,163 @@ test("opencode-go adapter: parse 委托 parseOpencodeGoUsage（走 adapter 默�
 	);
 	assert.equal(QUOTA_ENDPOINTS["opencode-go"].parse(null), null);
 	assert.equal(QUOTA_ENDPOINTS["opencode-go"].url, "https://opencode.ai/zen/go/v1/usage");
+});
+
+// ---- kimi-coding：实测响应 https://api.kimi.com/coding/v1/usages（2026-09-19）----
+// 实测响应两类数据：limits[] 5h 请求计数窗（window.duration=300 TIME_UNIT_MINUTE，
+// detail.limit/used/remaining 为字符串数字，resetTime 纳秒 ISO）+ usages{
+// limit_5h/limit_month_total/limit_month_code:{used_ratio,reset_time}}。
+// 只支持该实测形态（旧形态不兼容，见 docs/specs/provider-quota-kimi-coding.md）。
+
+// 月度重置固定为本地 2026-09-04 11:47（距 NOW 30 天，跨日）
+const MONTH_RESET = new Date(2026, 8, 4, 11, 47, 0);
+
+function kimi5hWindow(detailOver: Record<string, unknown> = {}, windowOver: Record<string, unknown> = {}): unknown {
+	return {
+		window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE", ...windowOver },
+		detail: {
+			limit: "100",
+			used: "7",
+			remaining: "93",
+			resetTime: REFRESH.toISOString(),
+			...detailOver,
+		},
+	};
+}
+
+test("kimi-coding: 实测响应完整解析（计数段 + 5h/月度比例 + 同日重置后缀）", () => {
+	// 与 2026-09-19 真机响应同构（数值换成固定时钟）
+	const body = {
+		limits: [kimi5hWindow()],
+		usages: {
+			limit_5h: { used_ratio: 0.072022, reset_time: REFRESH.toISOString() },
+			limit_month_total: { used_ratio: 0.0029, reset_time: MONTH_RESET.toISOString() },
+			limit_month_code: { used_ratio: 0.0029, reset_time: MONTH_RESET.toISOString() },
+		},
+	};
+	assert.equal(parseKimiCodingUsage(body, NOW), "7/100 5h7% m0%(14:00)");
+});
+
+test("kimi-coding: 缺 usages 时计数窗兜底 5h 百分比与后缀，纳秒 resetTime 可解析", () => {
+	const nano = REFRESH.toISOString().replace(".000Z", ".123456789Z");
+	const body = { limits: [kimi5hWindow({ resetTime: nano })] };
+	assert.equal(parseKimiCodingUsage(body, NOW), "7/100 5h7%(14:00)");
+});
+
+test("kimi-coding: detail.used 缺失时由 remaining 反推", () => {
+	const body = {
+		limits: [kimi5hWindow({ used: undefined, resetTime: undefined })],
+	};
+	assert.equal(parseKimiCodingUsage(body, NOW), "7/100 5h7%");
+});
+
+test("kimi-coding: 缺 limits 时只显示比例段", () => {
+	const body = {
+		usages: {
+			limit_5h: { used_ratio: 0.072022, reset_time: REFRESH.toISOString() },
+			limit_month_total: { used_ratio: 0.0029, reset_time: MONTH_RESET.toISOString() },
+		},
+	};
+	assert.equal(parseKimiCodingUsage(body, NOW), "5h7% m0%(14:00)");
+});
+
+test("kimi-coding: 5h 窗匹配（300 分钟 / 5 小时）；仅一条非 5h 窗仍取，多条非 5h 窗省略计数段", () => {
+	const hourUnit = { limits: [kimi5hWindow({ resetTime: undefined }, { duration: 5, timeUnit: "TIME_UNIT_HOUR" })] };
+	assert.equal(parseKimiCodingUsage(hourUnit, NOW), "7/100 5h7%");
+	const one = {
+		limits: [kimi5hWindow({ resetTime: undefined }, { duration: 60, timeUnit: "TIME_UNIT_MINUTE" })],
+	};
+	assert.equal(parseKimiCodingUsage(one, NOW), "7/100 5h7%");
+	const two = {
+		limits: [
+			kimi5hWindow({ resetTime: undefined }, { duration: 60, timeUnit: "TIME_UNIT_MINUTE" }),
+			kimi5hWindow({ resetTime: undefined }, { duration: 120, timeUnit: "TIME_UNIT_MINUTE" }),
+		],
+	};
+	assert.equal(parseKimiCodingUsage(two, NOW), null);
+});
+
+test("kimi-coding: 过期重置（早于 now-24h）省略后缀", () => {
+	const stale = new Date(2026, 7, 4, 10, 0, 0); // now-25h47m
+	const body = {
+		usages: { limit_5h: { used_ratio: 0.5, reset_time: stale.toISOString() } },
+	};
+	assert.equal(parseKimiCodingUsage(body, NOW), "5h50%");
+});
+
+test("kimi-coding: 跨日重置显示 MM-dd HH:mm（同 zhipu 规则）", () => {
+	const now = new Date(2026, 7, 5, 23, 50, 0);
+	const nextDay = new Date(2026, 7, 6, 0, 10, 0);
+	const body = {
+		usages: { limit_5h: { used_ratio: 0.5, reset_time: nextDay.toISOString() } },
+	};
+	assert.equal(parseKimiCodingUsage(body, now), "5h50%(08-06 00:10)");
+});
+
+test("kimi-coding: 达限窗口的后缀优先（5h > 月度），未达限默认 5h", () => {
+	const mk = (fiveRatio: number, monthRatio: number) => ({
+		usages: {
+			limit_5h: { used_ratio: fiveRatio, reset_time: REFRESH.toISOString() },
+			limit_month_total: { used_ratio: monthRatio, reset_time: MONTH_RESET.toISOString() },
+		},
+	});
+	// 月度达限 → 后缀取月度重置
+	assert.equal(parseKimiCodingUsage(mk(0.5, 1), NOW), "5h50% m100%(09-04 11:47)");
+	// 5h 也达限 → 5h 优先；超限 ratio > 1 如实显示
+	assert.equal(parseKimiCodingUsage(mk(1.05, 1), NOW), "5h105% m100%(14:00)");
+	// 计数窗打满同样算 5h 达限
+	const countLimited = {
+		limits: [kimi5hWindow({ used: "100", remaining: "0" })],
+		usages: {
+			limit_month_total: { used_ratio: 1, reset_time: MONTH_RESET.toISOString() },
+		},
+	};
+	assert.equal(parseKimiCodingUsage(countLimited, NOW), "100/100 5h100% m100%(14:00)");
+});
+
+test("kimi-coding: limit_month_total 缺失回退 limit_month_code", () => {
+	const body = {
+		usages: {
+			limit_5h: { used_ratio: 0.5, reset_time: REFRESH.toISOString() },
+			limit_month_code: { used_ratio: 0.1, reset_time: MONTH_RESET.toISOString() },
+		},
+	};
+	assert.equal(parseKimiCodingUsage(body, NOW), "5h50% m10%(14:00)");
+});
+
+test("kimi-coding: used_ratio 为数字字符串也可解析", () => {
+	const body = {
+		usages: { limit_5h: { used_ratio: "0.072", reset_time: REFRESH.toISOString() } },
+	};
+	assert.equal(parseKimiCodingUsage(body, NOW), "5h7%(14:00)");
+});
+
+test("kimi-coding: 空 body / 全缺字段返回 null；仅重置时间时只显示后缀", () => {
+	assert.equal(parseKimiCodingUsage(null, NOW), null);
+	assert.equal(parseKimiCodingUsage(undefined, NOW), null);
+	assert.equal(parseKimiCodingUsage({}, NOW), null);
+	assert.equal(parseKimiCodingUsage({ limits: [], usages: {} }, NOW), null);
+	assert.equal(parseKimiCodingUsage({ limits: "x", usages: 1 }, NOW), null);
+	assert.equal(parseKimiCodingUsage({ usages: { limit_5h: {} } }, NOW), null);
+	assert.equal(
+		parseKimiCodingUsage(
+			{ usages: { limit_5h: { reset_time: REFRESH.toISOString() } } },
+			NOW,
+		),
+		"(14:00)",
+	);
+});
+
+test("kimi-coding adapter: parse 委托 parseKimiCodingUsage，url 固定，走默认 Bearer（无自定义 auth）", () => {
+	const adapter = QUOTA_ENDPOINTS["kimi-coding"];
+	assert.equal(adapter.url, "https://api.kimi.com/coding/v1/usages");
+	assert.equal(adapter.auth, undefined);
+	assert.equal(adapter.method, undefined);
+	assert.equal(
+		adapter.parse({ usages: { limit_5h: { used_ratio: 0.072 } } })?.text,
+		"5h7%",
+	);
+	assert.equal(adapter.parse(null), null);
 });
 
 // ---- footer 排序带键（docs/cross/status-bar.md） ----
