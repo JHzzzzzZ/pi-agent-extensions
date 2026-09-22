@@ -579,7 +579,7 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs --help                           
 ```
 
 - **边界** — 只读写仓库 `todos/` 下文件（路径穿越拒绝；对齐文档路径固定派生、无自由路径参数）、绝不自动 commit；登记（`add`）不改状态，动作显式分离（claim 两段式 / align 门 / dep 增删 / complete 收口）；依赖是一维直接约束（只报直接依赖，done 即解锁，不展开下游）；CLI 只保证迁移顺序、对齐文档结构与依赖图可判定，人工确认靠文档 `## 人工确认` 小节 + 审批留痕；条目 id 文件内 max+1 永不复用、entries append-only，合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）手工解决；写操作经每文件 O_EXCL 锁（busy 静默重试 / stale 抢占 / 中断残留自愈）+ temp+rename 原子落盘（tmp、锁与全局 id 计数器在 gitignore 的 `todos/.todo-cli/`）
-- **测试** — 仓库根 `npm run test:todo`（134 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / 全局 id 计数器 / priority（schema/query/命令闭环/migrate）/ reopen 回退与归档 / 并发/中断真子进程（失败现场接线）+ 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
+- **测试** — 仓库根 `npm run test:todo`（135 个，含进程边界 E2E + 根发现 / skill 结构 / 依赖图纯函数 / 全局 id 计数器 / priority（schema/query/命令闭环/migrate）/ reopen 回退与归档 / 并发/中断真子进程（失败现场接线）+ 迁移 roundtrip）；卡片见 [`docs/tools/todo-cli.md`](docs/tools/todo-cli.md)
 
 ---
 
@@ -610,7 +610,7 @@ npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 /
 node tools/test-all.mjs --install # 新 worktree：先并行 npm install（--prefer-offline）再跑
 npm run test:contract             # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke                # 安装冒烟工具纯逻辑
-npm run test:todo                 # todo CLI（134 个）
+npm run test:todo                 # todo CLI（135 个）
 node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi）
 ```
 

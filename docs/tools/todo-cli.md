@@ -1,6 +1,6 @@
 # todo-cli — todos/ 工作流 CLI（仓库内 skill 资产）
 
-> last verified @ 5daf197
+> last verified @ a3dc026
 
 ## 职责与边界
 
@@ -87,6 +87,7 @@ argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repo
 - **命令面契约（十子命令）**：`summary/list/add/claim/align/complete/reopen/dep/lint/triage` + `migrate from-md|to-md|global-id` + `--help`；子命令增减与参数变化都是契约变更，必须同变更同步 `USAGE`、`SKILL.md` 与本卡（`REPO_COMMANDS` 漏加会被当未知命令；`db` 子命令已删除，不重加）。
 - **JSON 是唯一真相**：不手工编辑 `todos/*.json`；损坏（非法 JSON/合并冲突标记）→ 明确报错 exit 1，绝不静默修复或猜。写出一律 v4（v1/v2/v3 读入归一、缺 `globalId` 归一为 null）；旧版文件被写一次即整体升版（不做批量回填）。
 - **退出码语义**：`--help` → 0；裸调用 → USAGE、1；未知命令/子命令 → 提示 + USAGE、1；成功 → 0；门不过/缺文档/锁超时/文件损坏 → 静态消息 + 1。`main` 不抛异常（除依赖注入的原生异常）。
+- **校验先于根发现（#17）**：六个写命令（`add`/`claim`/`align`/`complete`/`reopen`/`dep`）的必填参数与 `--file` 形态校验（`validateWriteArgs`，形态判定走纯函数 `normalizeTodoName`）在 `resolveRepoRoot` **之前**跑——否则非仓库 cwd 下缺参数会先报「找不到仓库根」，把真问题掩掉；`dep` 的子命令与 `--on` 形态校验同一位置（`runDep` 只取解析结果，不重复校验）。读命令（`summary`/`list`/`lint`/`triage`/`migrate`）与 `--help`/裸调用/未知命令保持原顺序。锁定测试：`test/root-discovery.test.ts` 用 boomGit 探针断言「缺参数时绝不触发根发现」。
 - **路径安全**：`resolveTodoPath` 拒绝穿越；输入 `x`/`x-todo`/`x-todo.md`/`x-todo.json` 都归一到 `todos/x-todo.json`（归一规则单源在 `schema.ts` 的 `normalizeTodoName`，依赖引用 `x#3` 走同一函数）；`list --file` 按同一归一（core 用 docs 里的真实归属名回填 filter），查不到 → 明确报错 exit 1，绝不倒向空结果。对齐文档路径固定派生（无 `--doc` 自由路径 ⇒ 无穿越面）。
 - **根发现唯一规则**：`--root` 显式 > git 自动发现；`--root` 只接受已存在目录（相对 cwd 解析）。删除了模块级 `REPO_ROOT` 常量与「脚本位置即仓库根」的隐式契约——工具位置与仓库根已解耦。
 - **match 唯一定位**：`claim`/`align`/`complete` 的 `--match` 是纯描述 text 的子串（notes 不参与）；缺失/多条报错，绝不猜第一条。
@@ -135,7 +136,7 @@ argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repo
 
 ## 改动清单
 
-- 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；134 个，2026-09-17 集成后实测全绿（#13/#15/#16 三单合并），含 6 个全局 id 计数器用例、7 个依赖图纯函数用例、reopen 回退/归档用例、9 个失败现场 helper 契约用例、priority（schema/query/命令闭环/migrate）用例与迁移、并发/中断真子进程用例）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
+- 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；135 个，2026-09-22 实测（#17 参数校验顺序 + 1 用例；并发用例在负载下偶发红，见 #13），含 6 个全局 id 计数器用例、7 个依赖图纯函数用例、reopen 回退/归档用例、9 个失败现场 helper 契约用例、priority（schema/query/命令闭环/migrate）用例与迁移、并发/中断真子进程用例）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
 - 改行为：同步 `test/todo-cli.test.ts`（命令面）/ `test/root-discovery.test.ts`（根发现）+ 本卡；改命令面：同步 `core.ts` 的 `USAGE` + `SKILL.md` + 本卡。
 - 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0002`/`0003`/`0005`/`0008` 同步。
 - 新增子命令/flags：先补测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变（`REPO_COMMANDS` 同步，否则新命令会被当未知命令）。
