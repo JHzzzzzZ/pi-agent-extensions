@@ -1,0 +1,23 @@
+{
+  "version": 4,
+  "title": "timeout-bg-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "globalId": 316,
+      "text": "工具/命令超时处置插件：命令或工具命中 timeout 时不再 kill，而是转入后台继续运行（输出落盘、可查询状态、可停止）；未显式设置 timeout 时施加一个默认超时值",
+      "status": "done",
+      "branch": "feat/timeout-bg-tool",
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "交付：新扩展 src/extensions/timeout-bg/（config/jobs/logs/shell-ops/text/index 六模块 + 31 测试）；经 createBashTool/createPowerShellTool 的 operations 接缝覆盖 bash/powershell：命中超时（显式或默认 300s，PI_TIMEOUT_BG_DEFAULT 可覆盖/置 0 关闭）不再 kill，转后台续跑并把 jobId/pid/日志路径写进 tool result；自然结束经 sendMessage(followUp) 通知；/bg、/bg:kill、/bg:clear 命令面；session_shutdown 清本会话任务；只覆盖 active 工具；Esc 仍 kill。分支 feat/timeout-bg-tool → merge c0f6d74，根 2.58.0。验收：31/31 测试绿 + 扩展 typecheck 0 错；全仓 17/18 套件绿（root:todo 3 例在非仓库 cwd 下先报根发现失败，主干 730fadc 同款复现，与本次无关）；install-smoke 13/13；真机 pi 进程内 bash timeout:2 跑 sleep 6 → 转后台、日志续写、结束收到 followUp（含 DONE-BG）。"
+      ],
+      "createdAt": "2026-09-22T04:14:47.038Z",
+      "claimedAt": "2026-09-22T04:16:43.648Z",
+      "completedAt": "2026-09-22T04:45:49.892Z",
+      "alignedAt": "2026-09-22T04:17:43.082Z"
+    }
+  ]
+}
