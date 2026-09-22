@@ -27,7 +27,7 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs <子命令> [参数]
 2. `git rev-parse --show-toplevel`（以当前 cwd 起）—— 仓库任意子目录都能用
 3. 都拿不到 → 静态报错 + exit 1（**fail-closed**，绝不静默改用 cwd）
 
-`--help`、裸调用、未知命令不需要仓库根。注意：**cwd 决定仓库**——在 `.worktrees/<名>` 里调用作用于该 worktree 的 `todos/`，不是主工作区。
+`--help`、裸调用、未知命令不需要仓库根；六个写命令（`add`/`claim`/`align`/`complete`/`reopen`/`dep`）的必填参数与 `--file` 形态校验也先于根发现——缺 `--file`/`--match`/`--on` 时在任何 cwd 下都只报参数错，不报「找不到仓库根」（#17）。注意：**cwd 决定仓库**——在 `.worktrees/<名>` 里调用作用于该 worktree 的 `todos/`，不是主工作区。
 
 ## 命令面
 
