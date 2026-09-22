@@ -1,0 +1,27 @@
+{
+  "version": 4,
+  "title": "typesafe-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "globalId": 321,
+      "text": "新增 typesafe 扩展：/login typesafe 遮罩录入 API key（存 ~/.pi/agent/auth.json）+ 调用 Jev 的通道（agent 永不读到明文 key）",
+      "status": "processing",
+      "branch": "feat/typesafe-login",
+      "tags": [
+        "typesafe",
+        "auth",
+        "extension"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "对齐文档 todos/align/typesafe-todo#1.md：Q1 界面落点 A（pi 原生 /login）、Q2 通道 C（工具+CLI 共用 core）、Q3 范围限定、Q4 用户追加硬约束（agent 不得读明文 key）"
+      ],
+      "createdAt": "2026-09-22T13:16:57.353Z",
+      "claimedAt": "2026-09-22T13:17:00.214Z",
+      "completedAt": null,
+      "alignedAt": "2026-09-22T13:19:10.607Z"
+    }
+  ]
+}
