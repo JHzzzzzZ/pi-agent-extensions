@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十二个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十三个独立扩展（多 agent 团队、模型提供商、TypeSafe 结构化判断接入、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -8,6 +8,7 @@
 | [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 719 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
+| [`src/extensions/typesafe/`](#typesafe) | TypeSafe/Jev（System One 结构化判断）接入：`/login typesafe` 遮罩录入 API key（落 `~/.pi/agent/auth.json`）+ `typesafe_ask` 工具与 `cli.ts` 共用同一调用 core；明文 key 不进 agent 上下文、不进任何输出 | 33 个（node:test） |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 38 个（node:test） |
 | [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
 | [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令） | 213 个（node:test） |
@@ -26,7 +27,7 @@
 
 ### 方式一：pi install（推荐）
 
-> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（13 个扩展）。不带 ref 的安装会装到 master 旧包。
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（14 个扩展）。不带 ref 的安装会装到 master 旧包。
 
 ```bash
 # 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
@@ -66,7 +67,7 @@ pi install ./pi-agent-extensions
 
 ### 只装其中几个扩展（按需安装）
 
-默认安装会把根 `package.json` `pi.extensions` 里的 13 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
+默认安装会把根 `package.json` `pi.extensions` 里的 14 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
 
 ```bash
 pi config        # 全局作用域（~/.pi/agent/settings.json）
@@ -99,10 +100,10 @@ pi config -l     # 项目作用域（.pi/settings.json），也可在里面按 T
 
 ### 安装自检（可选）
 
-不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 13 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 14 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
 
 ```bash
-node tools/install-smoke.mjs        # ✓ = 13/13 扩展在干净目录下加载成功；✗ 时打印问题清单
+node tools/install-smoke.mjs        # ✓ = 14/14 扩展在干净目录下加载成功；✗ 时打印问题清单
 node tools/install-smoke.mjs --task # 加跑一条真实模型任务：让模型调用全新安装的 loop_list 工具
 node tools/install-smoke.mjs --install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
                                     # 真跑一遍上面「方式一」的 pi install（联网）：核对装到的包版本/扩展清单/全部命令
@@ -362,6 +363,42 @@ export CHATANYWHERE_API_KEY=sk-xxx            # 方式一：环境变量
 export CHATANYWHERE_BASE_URL=https://api.chatanywhere.tech/v1   # 可选，Claude 端点自动去 /v1
 ```
 
+## typesafe
+
+接入 [TypeSafe](https://docs.typesafe.ai) 的 **Jev（System One）模型**：它不是聊天模型——不吃会话上下文、不生成文本，只接受一段 `state` 加一组类型化问题，返回带概率的结构化答案（`choice` 选一个 / `score` 按档位打分 / `noul` 命题为真的概率）。所以它不能替换 Pi 的会话模型，而是给 agent 与脚本一个「代码里的类型化判断」。
+
+**登录**（唯一入口，也是唯一会碰到明文 key 的地方）：
+
+```text
+/login typesafe        # 从菜单选中 TypeSafe → 遮罩输入框粘贴 key → 写入 ~/.pi/agent/auth.json 的 typesafe 条目
+```
+
+登录后的 key 与其它 provider 同格式（`{"type":"api_key","key":"…"}`），重启会话仍在；`/logout typesafe` 可清除。也可用环境变量 `TYPESAFE_API_KEY` 代替（优先于 auth.json）。
+
+**调用通道一：`typesafe_ask` 工具**（会话里直接让 agent 用）
+
+```text
+用 typesafe_ask 判断这条工单该派给 billing 还是 technical，顺便给紧迫度打分
+```
+
+**调用通道二：CLI**（bash / 子 agent / 团队 run；与工具共用同一个 core，请求体字节级一致）
+
+```bash
+cd src/extensions/typesafe
+node cli.ts --state "客户说 Stripe 连了三天都失败" --questions '{"department":{"type":"choice","instructions":"哪个团队处理","criteria":{"billing":"付款问题","technical":"集成问题"}}}'
+node cli.ts --state-file ticket.txt --questions-file questions.json --model jev-latest   # stdout 只输出 answers JSON
+```
+
+**安全不变量**：明文 key 只在扩展内部拼 `Authorization` 头时短暂存在，**不进入 agent 上下文、不进工具结果、不进 CLI 输出、不进日志与错误消息**（错误消息是静态模板 + HTTP 状态码，不回显响应体）。扩展不提供任何读取/打印凭据的参数或工具；测试用哨兵 key 对成功与各失败路径做全链路扫描。
+
+端点覆盖：`TYPESAFE_BASE_URL`（默认 `https://api.typesafe.ai`，自建网关/测试用）。
+
+```bash
+cd src/extensions/typesafe && npm install
+npm test          # 33 个测试（含真实 HTTP server + 真实 cli.ts 子进程的 parity/sentinel 用例）
+npm run typecheck # tsc -p tsconfig.json --noEmit
+```
+
 ## provider-quota
 
 查询当前 provider 的账户额度/余额并在终端状态行显示（无 provider 前缀；段前缀由 `status-band` 决定：最前段无前缀、其余段 `│ `）。内置 OpenRouter、DeepSeek、ChatAnywhere、智谱 GLM、OpenCode Go、Kimi Coding Plan 适配器；智谱原始 token 仅允许发往 HTTPS 白名单主机。智谱状态行输出 `tokX% mcpY%(HH:mm)`（跨日 `(MM-dd HH:mm)`，只看绝对刷新时间，字段以实测 `nextResetTime` 为准）。OpenCode Go（订阅制，key 即 `auth.json` 里 `opencode-go` 条目）输出 `X%/Y%/Z%(HH:mm)`（5 小时/周/月三窗口，缺失窗口跳过），后缀重置时间跟随命中的限额窗口（达到限额显示该窗口重置时间，都未限额默认显示 5h 窗口）。Kimi Coding Plan（key 即 `auth.json` 里 `kimi-coding` 条目的 `sk-kimi-` key，Kimi Code 控制台创建）输出 `5h7% m0%(HH:mm)`（5h/月度用量百分比，后缀重置时间跟随达限窗口、默认 5h；5h 百分比缺失时由 5h 请求计数窗兜底反推，计数段与 5h% 同窗冗余不外显）。每 5 分钟自动刷新（10s 超时 + 3 次重试退避），切换模型时立即刷新；手动刷新 `/quota`。API Key 只从 `~/.pi/agent/auth.json` 读取（不读环境变量）。
@@ -591,7 +628,7 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs --help                           
 - **能力（会话）** — 列出 / 检索（用户+助手文本与会话名，大小写不敏感）/ 预览；重命名 = 向会话文件末尾追加宿主语义的 `session_info`（不改文件名/header）；删除 = 移入工具回收站（可恢复）。重命名/删除/恢复都是**两段式**：先 dry-run 返回计划，页面确认后带 `confirm:true` 执行。
 - **能力（Agents）** — 以 `pi --mode json -p` 启动子进程（新建 / `--session` 接续 / `--fork` 分支），实时查看状态、pid、最后输出与逐行输出（列表 2s / 详情 1s 轮询，页面隐藏时暂停）；停止按钮二次确认后杀**整个进程树**（win32 `taskkill /T /F`，posix 进程组）。
 - **设置** — 改 sessionDir / piPath / port 并持久化（`<home>/.pi/agent/agent-manager/config.json`）；优先级 CLI flag > 环境变量 > 配置文件 > 默认值。`--pi` 推荐指向 `cli.js`：Node 直启，绕开 Windows 上 `.cmd` 必须经 `cmd.exe` 包装的引号问题。
-- **边界** — 仅监听 `127.0.0.1`（页面无鉴权，**勿做端口转发/反向代理**）；不做外部终端 pi 进程发现（只管理本工具启动的 agent）；不给运行中 agent 发消息（接续 = 停止后在会话页用 `pi --session <id>` 或本工具「接续」启动）；install-smoke 只覆盖 `pi.extensions` 的 13 个扩展，本工具不在其中。
+- **边界** — 仅监听 `127.0.0.1`（页面无鉴权，**勿做端口转发/反向代理**）；不做外部终端 pi 进程发现（只管理本工具启动的 agent）；不给运行中 agent 发消息（接续 = 停止后在会话页用 `pi --session <id>` 或本工具「接续」启动）；install-smoke 只覆盖 `pi.extensions` 的 14 个扩展，本工具不在其中。
 
 ```bash
 cd agent-manager && npm install && npm test   # 37 个测试（14 core + 10 runner + 13 server）
@@ -603,7 +640,7 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 
 ## 开发约定
 
-全仓测试一条命令（17 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
+全仓测试一条命令（19 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
 
 ```bash
 npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 / --jobs 4 更高并发）

@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 5daf197
+> last verified @ 48d4392
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -11,7 +11,7 @@
 | 问题类型 | 读这个 |
 | --- | --- |
 | `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径、JSON schema 与锁 | `tools/todo-cli.md` |
-| 全仓测试怎么跑（17 套件清单 / serial 口径 / 并发与依赖安装加速 / 实测对照） | `tools/test-all.md` |
+| 全仓测试怎么跑（19 套件清单 / serial 口径 / 并发与依赖安装加速 / 实测对照） | `tools/test-all.md` |
 | todo 对齐门状态机（open → aligning → aligned → processing → done）、对齐文档契约与 reopen 回退通道 | `tools/todo-cli.md` + `adr/0003-todo-align-gate.md` + `adr/0007-todo-reopen.md` |
 | todos 依赖门（dependsOn 引用 / 阻塞条目 / 环与悬空校验）与开工门的关系 | `tools/todo-cli.md` + `adr/0005-todo-depends-on.md` |
 | todos 优先级（priority 1-10 软字段 / add --priority / list `[pN]` 与 --sort priority / 不占版本位） | `tools/todo-cli.md` + `adr/0009-todo-priority-soft-field.md` + `specs/todo-cli-priority.md` |
@@ -40,6 +40,7 @@
 | [pwr](extensions/pwr.md) | 工作流运行时：受约束脚本 → 校验/批准 → 子 pi 并行执行；单一 `/workflow:*` 冒号命令面（裸 `/workflow` 生成/帮助 + 15 条子命令） |
 | [agent-team](extensions/agent-team.md) | 多 agent 团队：leader 子进程调度成员子进程，同一会话多 run 并发（上限 3），报告 followUp 送达；team_stop 按 runId 中止；viewer 内 m 发消息直接对话（派单语义）；run 落盘/reconcile、budget 预算块、model 预检；裸 /team + 冒号子命令 `/team:list|:run|:status|:stop|:view|:clear|:doctor`（派单统一 `/team:run <名> <任务>`）；TUI 对照 pi-subagents 矩阵同步（docs/tui-sync.md）；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（v1.26.0，真机验收：codex/claude 各多成员派单 + 停止路径） |
 | chatanywhere-provider | 双 provider 运行时自动发现：探测 /models 按家族线归并注册，探测失败 fail-closed |
+| [typesafe](extensions/typesafe.md) | TypeSafe/Jev（System One 结构化判断）接入：`/login typesafe` 遮罩录入 API key（落 `auth.json`）+ `typesafe_ask` 工具与 `cli.ts` 共用同一调用 core；明文 key 不进 agent 上下文与任何输出 |
 | deep-init | `/deep-init` 提示词驱动四阶段深度初始化 |
 | goal | `/goal` 会话目标循环：agent 跨回合自动推进至评估器判定达成；清除非阻塞项走 `/goal:clear|:stop|:off|:reset|:none|:cancel`，恢复 `/goal:resume` |
 | human-notify | Windows Toast 人工介入通知（审批/等人工具/结束，正文带差异化摘要） |
@@ -59,7 +60,7 @@
 | --- | --- |
 | [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI（仓库内项目级 skill 资产，入口与实现同居在 `.agents/skills/todo-cli/todo-cli/`）：十子命令（含 reopen 回退与 dep 依赖增删）+ list 结构化查询 flags + migrate 双向迁移子命令；仓库根解析 = `--root` > `git rev-parse --show-toplevel`（fail-closed）；存储 = `todos/<名>.json` 唯一权威（schema v4 五态对齐门 open→aligning→aligned→processing→done、全局 id `globalId` 统一主键 + 写门禁 `GLOBAL_ID_PENDING`、对齐文档 `todos/align/<名>#<id>.md`、reopen 归档 `.reopened-<UTC 紧凑>.md`）+ 每文件 O_EXCL 锁（取号另经 `locks/id.lock` 计数器）+ 原子写，triage 只读扫描 worktree↔条目；只读写 `todos/`、CLI-only 无 pi 依赖 |
 | [agent-manager](tools/agent-manager.md) | 独立 agent 管理工具（零依赖、非 Pi 扩展）：会话浏览/检索/重命名/可恢复删除 + pi 子进程启动/停止 + 浏览器前端；`node agent-manager/server.ts` |
-| [test-all](tools/test-all.md) | 仓库全量测试入口（`node tools/test-all.mjs` / `npm run test:all`，零依赖）：17 套件逐条计时 + 失败聚合退出码；`--jobs N` 并发（serial 三条负载敏感套件独占）、`--install` 新 worktree 依赖预装（`--prefer-offline`）；测试命令的唯一权威清单 |
+| [test-all](tools/test-all.md) | 仓库全量测试入口（`node tools/test-all.mjs` / `npm run test:all`，零依赖）：19 套件逐条计时 + 失败聚合退出码；`--jobs N` 并发（serial 三条负载敏感套件独占）、`--install` 新 worktree 依赖预装（`--prefer-offline`）；测试命令的唯一权威清单 |
 
 ## 收录与淘汰
 
