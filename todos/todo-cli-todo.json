@@ -217,7 +217,7 @@
       "id": 13,
       "globalId": 308,
       "text": "test:todo 偶发失败（2026-09-14 实测）：并发负载下（同仓另有会话在跑 todo CLI 写操作）首跑 42/44、fail 2（疑为 concurrency.test.ts 真子进程用例），独立复跑两次均 44/44 全绿。要求：捕获失败时的用例名与 stderr 后再判定是锁等待/超时预算问题还是测试自身竞态；若确认负载敏感则放宽等待预算或标注串行，保持真子进程语义不退化。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/todo-cli-13",
       "tags": [
         "tests",
@@ -225,10 +225,12 @@
       ],
       "priority": 5,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "第一步「先可观测」交付并合并（merge d3bb84a，分支 feat/todo-cli-13）。改动：test/failure-scene.ts（300 行 helper）+ failure-scene.test.ts（9 契约用例）+ concurrency/interrupt 最小接线 + README 92→101 + docs/tools/todo-cli.md。验证：worktree 与合并后主仓 test:todo 101/101；全库 npm run test:all 17/17 套件 1984 用例全绿；pwr/loop/opencode-bridge/deep-init/agent-manager typecheck 零错误；todo lint 通过。定性：Phase1 八写者×10 轮未自然复现；同链路在写者侧捕获真实 EPERM（大台账+写压失败率 2%–23%，errno -4048/syscall rename ⇒ 争用而非锁失效，fail-closed 无数据损坏）——未达 incidents 门槛，定量结论入 doc 卡「维持观察」。第二步三选一倾向「修竞态」（atomicWriteFile rename 加有界 EPERM 重试），建议另单登记。现场诊断产物：%TEMP%\\todo-cli-failure-scenes\\(不自动清理)。"
+      ],
       "createdAt": "2026-09-14T14:31:09.083Z",
       "claimedAt": "2026-09-16T14:51:29.732Z",
-      "completedAt": null,
+      "completedAt": "2026-09-18T00:03:38.400Z",
       "alignedAt": "2026-09-16T15:03:24.309Z"
     },
     {
