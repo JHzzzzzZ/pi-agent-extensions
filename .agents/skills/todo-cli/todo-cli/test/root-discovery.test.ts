@@ -119,6 +119,41 @@ test("main：--help / 裸调用 / 未知命令都不要求仓库根（cwd 为陌
   }
 });
 
+test("main：写命令缺参数 / --file 形态非法时先报参数错，绝不触发仓库根发现", () => {
+  const cwd = makeTempDir("todo-cli-root-args-");
+  const boomGit = () => {
+    throw new Error("参数校验未通过时不得触发仓库根发现");
+  };
+  const cases: Array<{ args: string[]; expect: RegExp }> = [
+    { args: ["add", "新需求"], expect: /缺少 --file <name>/ },
+    { args: ["claim", "--match", "x"], expect: /缺少 --file <name>/ },
+    { args: ["align", "--match", "x"], expect: /缺少 --file <name>/ },
+    { args: ["complete", "--match", "x"], expect: /缺少 --file <name>/ },
+    { args: ["reopen", "--match", "x"], expect: /缺少 --file <name>/ },
+    { args: ["dep", "add", "--match", "x", "--on", "a#1"], expect: /缺少 --file <name>/ },
+    { args: ["claim", "--file", "general"], expect: /缺少 --match "子串"/ },
+    { args: ["align", "--file", "general"], expect: /缺少 --match "子串"/ },
+    { args: ["complete", "--file", "general"], expect: /缺少 --match "子串"/ },
+    { args: ["reopen", "--file", "general"], expect: /缺少 --match "子串"/ },
+    { args: ["dep", "remove", "--file", "general", "--on", "a#1"], expect: /缺少 --match "子串"/ },
+    { args: ["dep", "add", "--file", "general", "--match", "x"], expect: /缺少 --on/ },
+    { args: ["dep", "frobnicate", "--file", "general", "--match", "x", "--on", "a#1"], expect: /未知 dep 子命令/ },
+    { args: ["add", "--file", "../evil", "x"], expect: /--file 只能是 todos\/ 下的文件名/ },
+    { args: ["claim", "--file", "../evil", "--match", "x"], expect: /--file 只能是 todos\/ 下的文件名/ },
+  ];
+  try {
+    for (const c of cases) {
+      const out: string[] = [];
+      const code = main(c.args, { cwd, execGit: boomGit, log: (l) => out.push(l) });
+      const label = c.args.join(" ");
+      assert.equal(code, 1, label);
+      assert.match(out.join("\n"), c.expect, label);
+    }
+  } finally {
+    removeDir(cwd);
+  }
+});
+
 test("main：仓库根解析失败 → exit 1 + 静态消息，不写任何文件", () => {
   const cwd = makeTempDir("todo-cli-root-fail-");
   const out: string[] = [];

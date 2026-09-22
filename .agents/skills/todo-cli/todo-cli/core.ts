@@ -801,16 +801,8 @@ function runReopen(deps: WriteDeps): number {
 function runDep(deps: WriteDeps): number {
   const { repoRoot, opts, log } = deps;
   const sub = String((opts._ as string[])[1] ?? "");
-  if (sub !== "add" && sub !== "remove") {
-    log(`未知 dep 子命令：${sub}（可用：add --file <名> --match "子串" --on a#1,b#2 | remove ...）`);
-    return 1;
-  }
-  const on = opts.on;
-  if (on === undefined || on === "") {
-    log("缺少 --on <文件#id>（逗号分隔多个）");
-    return 1;
-  }
-  const parsed = parseDepRefsOption(on, "--on");
+  // 子命令 / --on 的形态校验已在 validateWriteArgs（根发现之前）完成，这里只取解析结果。
+  const parsed = parseDepRefsOption(opts.on, "--on");
   if (!parsed.ok) {
     log(parsed.message);
     return 1;
@@ -1024,6 +1016,47 @@ const USAGE = `用法：
 /** 需要仓库根的子命令（help / 裸调用 / 未知命令都不要求 cwd 在 git 仓库内）。 */
 const REPO_COMMANDS = new Set(["summary", "list", "add", "claim", "align", "complete", "reopen", "dep", "lint", "triage", "migrate"]);
 
+/** 写命令（需要 --file；除 add 外还需要 --match）。 */
+const WRITE_COMMANDS = new Set(["add", "claim", "align", "complete", "reopen", "dep"]);
+
+/**
+ * 写命令的必填参数与 --file 形态校验：**不依赖仓库根**，因此必须在根发现之前跑——
+ * 否则非仓库 cwd 下缺参数会先报「找不到仓库根」，把真正的问题掩掉。
+ * 形态判定用 `normalizeTodoName`（与 `resolveTodoPath` 同一口径，纯函数）。
+ * 返回退出码；null = 校验通过。
+ */
+function validateWriteArgs(command: string, opts: Record<string, unknown>, log: (line: string) => void): number | null {
+  if (!opts.file) {
+    log("缺少 --file <name>");
+    return 1;
+  }
+  if (normalizeTodoName(String(opts.file)) === null) {
+    log("--file 只能是 todos/ 下的文件名");
+    return 1;
+  }
+  if (command !== "add" && !opts.match) {
+    log('缺少 --match "子串"');
+    return 1;
+  }
+  if (command === "dep") {
+    const sub = String((opts._ as string[])[1] ?? "");
+    if (sub !== "add" && sub !== "remove") {
+      log(`未知 dep 子命令：${sub}（可用：add --file <名> --match "子串" --on a#1,b#2 | remove ...）`);
+      return 1;
+    }
+    if (opts.on === undefined || opts.on === "") {
+      log("缺少 --on <文件#id>（逗号分隔多个）");
+      return 1;
+    }
+    const parsed = parseDepRefsOption(opts.on, "--on");
+    if (!parsed.ok) {
+      log(parsed.message);
+      return 1;
+    }
+  }
+  return null;
+}
+
 /**
  * 执行一次 CLI 调用，返回退出码（测试在临时仓库上闭环）。
  * repoRoot / log / now / execGit 可注入；文件读写始终走真实 fs（锁 + 原子写是
@@ -1044,6 +1077,12 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
   if (!REPO_COMMANDS.has(command)) {
     log(`未知命令：${command}\n${USAGE}`);
     return 1;
+  }
+
+  // 写命令参数校验先于仓库根发现：缺参数/--file 形态错在任意 cwd 下都给出同一个真问题。
+  if (WRITE_COMMANDS.has(command)) {
+    const failure = validateWriteArgs(command, opts, log);
+    if (failure !== null) return failure;
   }
 
   // 仓库根：deps.repoRoot（测试注入）> --root <dir> > git 自动发现；都拿不到就 fail-closed。
@@ -1096,21 +1135,8 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
     return 1;
   }
 
-  if (command === "add" || command === "claim" || command === "align" || command === "complete" || command === "reopen" || command === "dep") {
-    if (!opts.file) {
-      log("缺少 --file <name>");
-      return 1;
-    }
-    const file = resolveTodoPath(String(opts.file), repoRoot);
-    if (!file) {
-      log("--file 只能是 todos/ 下的文件名");
-      return 1;
-    }
+  if (WRITE_COMMANDS.has(command)) {
     if (command === "add") return runAdd({ repoRoot, opts, now, log });
-    if (!opts.match) {
-      log('缺少 --match "子串"');
-      return 1;
-    }
     if (command === "dep") return runDep({ repoRoot, opts, log });
     if (command === "claim") return runClaim({ repoRoot, opts, now, log });
     if (command === "align") return runAlign({ repoRoot, opts, now, log });
