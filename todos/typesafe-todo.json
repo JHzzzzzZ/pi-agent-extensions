@@ -6,7 +6,7 @@
       "id": 1,
       "globalId": 321,
       "text": "新增 typesafe 扩展：/login typesafe 遮罩录入 API key（存 ~/.pi/agent/auth.json）+ 调用 Jev 的通道（agent 永不读到明文 key）",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/typesafe-login",
       "tags": [
         "typesafe",
@@ -16,11 +16,12 @@
       "priority": 5,
       "dependsOn": [],
       "notes": [
-        "对齐文档 todos/align/typesafe-todo#1.md：Q1 界面落点 A（pi 原生 /login）、Q2 通道 C（工具+CLI 共用 core）、Q3 范围限定、Q4 用户追加硬约束（agent 不得读明文 key）"
+        "对齐文档 todos/align/typesafe-todo#1.md：Q1 界面落点 A（pi 原生 /login）、Q2 通道 C（工具+CLI 共用 core）、Q3 范围限定、Q4 用户追加硬约束（agent 不得读明文 key）",
+        "真机验收通过（2026-09-22）：① /login typesafe 已录入且落盘生效——环境变量 TYPESAFE_API_KEY/TYPESAFE_BASE_URL 均未设置，而工具与 CLI 两条通道都拿到真实 Jev 答案（jev-1.13.0），证明 key 来自 auth.json 的 typesafe 条目（即登录流程写盘成功）；② 端到端调用 agent 全程未接触明文 key。残留：install-smoke 在本机因全局 skills 目录未隔离而红（主干同款既有问题），已另登记 general-todo；该冒烟的 14 扩展加载为间接证据（pi 退出码 0 + stderr 空 + 各扩展期望项全中）"
       ],
       "createdAt": "2026-09-22T13:16:57.353Z",
       "claimedAt": "2026-09-22T13:17:00.214Z",
-      "completedAt": null,
+      "completedAt": "2026-09-22T13:59:25.947Z",
       "alignedAt": "2026-09-22T13:19:10.607Z"
     }
   ]
