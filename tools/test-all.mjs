@@ -120,6 +120,7 @@ export const DEFAULT_SUITES = [
     cwd: ".",
     cmd: ["node", "--experimental-strip-types", "--test", "src/extensions/solo-mode/index.test.ts"],
   },
+  { ...strip, name: "timeout-bg", cwd: "src/extensions/timeout-bg", install: true, cmd: ["node", "--test", "test/*.test.ts"] },
   {
     ...strip,
     name: "agent-manager",

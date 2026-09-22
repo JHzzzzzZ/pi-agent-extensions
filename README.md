@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十一个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十二个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@
 | [`src/extensions/opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`src/extensions/human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`src/extensions/solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
+| [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭） | 31 个（node:test） |
 
 ## 安装
 
@@ -25,7 +26,7 @@
 
 ### 方式一：pi install（推荐）
 
-> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（12 个扩展）。不带 ref 的安装会装到 master 旧包。
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（13 个扩展）。不带 ref 的安装会装到 master 旧包。
 
 ```bash
 # 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
@@ -65,7 +66,7 @@ pi install ./pi-agent-extensions
 
 ### 只装其中几个扩展（按需安装）
 
-默认安装会把根 `package.json` `pi.extensions` 里的 12 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
+默认安装会把根 `package.json` `pi.extensions` 里的 13 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
 
 ```bash
 pi config        # 全局作用域（~/.pi/agent/settings.json）
@@ -98,10 +99,10 @@ pi config -l     # 项目作用域（.pi/settings.json），也可在里面按 T
 
 ### 安装自检（可选）
 
-不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 12 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 13 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
 
 ```bash
-node tools/install-smoke.mjs        # ✓ = 12/12 扩展在干净目录下加载成功；✗ 时打印问题清单
+node tools/install-smoke.mjs        # ✓ = 13/13 扩展在干净目录下加载成功；✗ 时打印问题清单
 node tools/install-smoke.mjs --task # 加跑一条真实模型任务：让模型调用全新安装的 loop_list 工具
 node tools/install-smoke.mjs --install git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop
                                     # 真跑一遍上面「方式一」的 pi install（联网）：核对装到的包版本/扩展清单/全部命令
@@ -538,6 +539,23 @@ node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts   
 
 ---
 
+## timeout-bg
+
+shell 工具（`bash` / `powershell`）的**超时语义改写**：命中 `timeout` 不再整树 kill，而是把进程转入后台继续跑——不丢已完成的工作，也不卡住会话；未显式传 `timeout` 时施加默认超时（缺省 300s）。
+
+- **超时转后台** — 超时那一刻本次 tool call 立刻结束，结果里给 `job: bg-N`、pid 与日志路径；进程继续跑、输出继续写进日志，agent 用 `read` / `bash tail` 就能看中间结果。**不要重跑超时的命令**
+- **默认超时** — 未传 `timeout` 时用 300s；`PI_TIMEOUT_BG_DEFAULT=<秒>` 覆盖（`0` = 关闭默认超时，回到宿主「不设超时」行为；非法值回退 300s 并在会话里提示一次）
+- **完成通知** — 后台任务自然结束时注入一条 followUp（jobId / 退出码 / 耗时 / 末尾输出），agent 无需轮询
+- **命令面** — `/bg`（列表：状态 / pid / 命令首行 / 日志路径）、`/bg:kill <jobId>`（杀整棵进程树）、`/bg:clear`（清已结束记录）
+- **边界** — 只覆盖**当前启用**的 shell 工具（active 里没有的不注册，不凭空加工具）；用户手敲的 `!` 命令与其它带 `timeoutMs` 的工具（agent-team / pwr / subagent 等，属调度语义）不受影响；**Esc 主动取消仍然 kill**（超时 ≠ 取消）；后台任务**只活在本会话**，`session_shutdown` 时全部杀掉
+- **日志** — `<PI_TIMEOUT_BG_DIR 或 ~/.pi/agent/bg-jobs>/<pi pid>/<jobId>.log`，保留最近 50 个 / 7 天（启动时清理）
+
+```bash
+cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 31 个测试
+```
+
+---
+
 ## todo-cli
 
 `todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 撤销 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/优先级/依赖/时间戳都是原生字段；schema v4）。**统一全局 id**（`globalId` 全台账唯一、永不回收的机器主键，计数器 `todos/.todo-cli/next-id` 在 `locks/id.lock` 内发号；`文件#id` 展示/引用/对齐文档命名双轨不变；存量旧台账先 `migrate global-id`，迁移前六个写命令报 `GLOBAL_ID_PENDING`；见 [`docs/adr/0008-todo-global-id.md`](docs/adr/0008-todo-global-id.md)）——让跨文件重号与合并仲裁有唯一机器身份。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。**回退通道 `reopen`**（见 [`docs/adr/0007-todo-reopen.md`](docs/adr/0007-todo-reopen.md)）：在途条目（aligning/aligned/processing）退回 `open` 池（清 branch/claimedAt/alignedAt，注记留痕，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`），从对齐阶段撤销必带 `--note`、done 拒绝、已是 open 幂等——修的是「状态说在途、事实从未开工」的虚空 processing。**依赖门**（`dependsOn` 规范引用 `文件#id`，见 [`docs/adr/0005-todo-depends-on.md`](docs/adr/0005-todo-depends-on.md)）：依赖未 done（含悬空）时第二次 `claim` fail-closed（`DEP_BLOCKED`），`list` 行尾标阻塞、`triage` 列明细；写路径拒绝悬空/自引用/环，`lint` 另做全量图扫描兑合并产物。**优先级 `priority`**（1-10，10 最高，见 [`docs/adr/0009-todo-priority-soft-field.md`](docs/adr/0009-todo-priority-soft-field.md)）：`add --priority` 写入（缺省 5、非法 fail-closed），`list` 行内 `[pN]` 标记、`--sort priority` 降序排、`--json` 带字段；全版本可选软字段、不占版本位（版本位 v3→v4 归 globalId 姊妹单）、不进状态机/依赖门。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|depends|lock|query|migrate|globalid|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
@@ -573,7 +591,7 @@ node .agents/skills/todo-cli/todo-cli/todo.mjs --help                           
 - **能力（会话）** — 列出 / 检索（用户+助手文本与会话名，大小写不敏感）/ 预览；重命名 = 向会话文件末尾追加宿主语义的 `session_info`（不改文件名/header）；删除 = 移入工具回收站（可恢复）。重命名/删除/恢复都是**两段式**：先 dry-run 返回计划，页面确认后带 `confirm:true` 执行。
 - **能力（Agents）** — 以 `pi --mode json -p` 启动子进程（新建 / `--session` 接续 / `--fork` 分支），实时查看状态、pid、最后输出与逐行输出（列表 2s / 详情 1s 轮询，页面隐藏时暂停）；停止按钮二次确认后杀**整个进程树**（win32 `taskkill /T /F`，posix 进程组）。
 - **设置** — 改 sessionDir / piPath / port 并持久化（`<home>/.pi/agent/agent-manager/config.json`）；优先级 CLI flag > 环境变量 > 配置文件 > 默认值。`--pi` 推荐指向 `cli.js`：Node 直启，绕开 Windows 上 `.cmd` 必须经 `cmd.exe` 包装的引号问题。
-- **边界** — 仅监听 `127.0.0.1`（页面无鉴权，**勿做端口转发/反向代理**）；不做外部终端 pi 进程发现（只管理本工具启动的 agent）；不给运行中 agent 发消息（接续 = 停止后在会话页用 `pi --session <id>` 或本工具「接续」启动）；install-smoke 只覆盖 `pi.extensions` 的 12 个扩展，本工具不在其中。
+- **边界** — 仅监听 `127.0.0.1`（页面无鉴权，**勿做端口转发/反向代理**）；不做外部终端 pi 进程发现（只管理本工具启动的 agent）；不给运行中 agent 发消息（接续 = 停止后在会话页用 `pi --session <id>` 或本工具「接续」启动）；install-smoke 只覆盖 `pi.extensions` 的 13 个扩展，本工具不在其中。
 
 ```bash
 cd agent-manager && npm install && npm test   # 37 个测试（14 core + 10 runner + 13 server）

@@ -1,0 +1,24 @@
+{
+  "name": "pi-extension-timeout-bg",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "timeout-bg — shell 工具超时转后台 + 默认超时：命中 timeout 不再 kill，进程转入后台继续运行（输出落盘、完成后 followUp 通知、/bg 命令面管理）；未显式传 timeout 时施加默认 300s（PI_TIMEOUT_BG_DEFAULT 可覆盖，0 = 关闭）",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}

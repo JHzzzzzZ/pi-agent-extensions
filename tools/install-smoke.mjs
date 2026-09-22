@@ -113,6 +113,7 @@ export const EXTENSION_EXPECTATIONS = {
   "deep-init": { commands: ["deep-init"], uiKeys: [] },
   "provider-quota": { commands: ["quota"], uiKeys: ["20:provider-quota"] },
   "solo-mode": { commands: ["solo", "solo:off", "solo:on", "solo:status"], uiKeys: ["40:solo-mode"] },
+  "timeout-bg": { commands: ["bg", "bg:clear", "bg:kill"], uiKeys: [] },
   // 无命令扩展：只能以启动期 TUI 写入或"加载不抛错"证明。
   "run-timer": { commands: [], uiKeys: ["widget-band"] },
   "stream-token-speed": { commands: [], uiKeys: ["50:stream-token-speed"] },
