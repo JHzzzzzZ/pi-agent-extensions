@@ -1235,6 +1235,44 @@
       "claimedAt": "2026-09-16T14:51:29.912Z",
       "completedAt": "2026-09-18T00:08:32.632Z",
       "alignedAt": "2026-09-16T15:03:24.474Z"
+    },
+    {
+      "id": 71,
+      "globalId": 324,
+      "text": "派单前置路由：leader 先用 Jev choice 在代码提供的成员 id 候选集里选（而非 LLM 读完整花名册再决定），只对选中成员派发",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "typesafe",
+        "jev",
+        "dispatch"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-22T14:12:59.861Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 72,
+      "globalId": 325,
+      "text": "报告质量门：run 收尾用 Jev noul 检查报告是否覆盖任务列出的每条验收标准，不达标打回而非直接交付",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "typesafe",
+        "jev",
+        "acceptance"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-22T14:13:00.082Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

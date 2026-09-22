@@ -1,0 +1,26 @@
+{
+  "version": 4,
+  "title": "jev-safe-gate-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "globalId": 326,
+      "text": "jev-safe-gate 新扩展：tool_call 前置的 Jev 风险判断，只能加摩擦（可疑→弹确认），绝不因判定安全而跳过确定性审批门；solo 模式下仍可抬高摩擦",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "typesafe",
+        "jev",
+        "safety",
+        "extension"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-22T14:13:08.684Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    }
+  ]
+}

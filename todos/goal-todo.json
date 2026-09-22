@@ -9,6 +9,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -23,6 +24,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -37,6 +39,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e，goal 60 测试绿"
@@ -53,6 +56,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge e68095d，goal v1.3.0 + footer 瘦身：状态行改 `│ ◎ <目标≤20 显示列> · N轮 · 时长>`（暂停 `⏸ … 已暂停`，目标按显示列截断、CJK 双宽），`updateStatus` 唯一写入边界拼 `STATUS_SEPARATOR`（前缀计入指纹）；62 测试绿"
@@ -69,6 +73,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：goal v1.3.0——`parseGoalArgs` 收敛为 status/set（`/goal status` 仍是目标文本），`/goal:status` 副本 + `/goal:clear|:stop|:off|:reset|:none|:cancel`（共享 handler）+ `/goal:resume` 共 8 条冒号命令；旧管理词经裸入口只提示改名、绝不设置目标。61 测试绿；真实 pi loader 冒烟通过"
@@ -85,6 +90,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ route A：材料已备，待提交上游",
@@ -103,11 +109,31 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 9db7983：footer 首段定格——goal v1.3.0 段前缀改由本地 `status-band.ts`（`Symbol.for(\"pi.status-bar.bands.v1\")` 进程登记表）统一决定：最前段无前缀（行首定格）、非最前段 `│ `，低带出现/消失立即重渲染；`updateStatus` 不再自己拼前缀（前缀计入指纹），idle/shutdown 经 `writeBand(…, undefined, …)` 清登记；63 测试绿"
       ],
       "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 8,
+      "globalId": 323,
+      "text": "goal 评估器换 Jev：达成判定用 typesafe_ask 的 noul（校准概率 + 可调阈值）替代 agent 自评，保留现有评估器作回退路径",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "typesafe",
+        "jev",
+        "evaluator"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-22T14:12:59.655Z",
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
