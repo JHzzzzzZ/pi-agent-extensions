@@ -19,6 +19,7 @@
 | todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0002-todos-json-storage.md` |
 | 已实现需求的规格（问题陈述 / 方案 / 实现与测试决策 / 范围外） | `specs/<名>.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |
+| shell 工具超时语义（超时转后台 / 默认超时 / 后台任务注册表与日志） | `extensions/timeout-bg.md` |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |
@@ -47,6 +48,7 @@
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
 | run-timer | 会话/任务/回合计时 widget |
 | solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启 |
+| timeout-bg | shell 工具超时转后台 + 默认超时：`bash`/`powershell` 命中 timeout 不再 kill，进程转后台继续跑（日志落盘 + 完成 followUp + `/bg` 命令面）；未传 timeout 时默认 300s |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 
 ## 工具卡（非插件）

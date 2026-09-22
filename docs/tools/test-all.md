@@ -10,11 +10,11 @@
 
 ## 套件清单与口径
 
-`DEFAULT_SUITES`（`tools/test-all.mjs` 顶部常量）逐条镜像各插件 README / `package.json` 的测试命令：12 个扩展 + agent-manager + 根三套自检（contract / smoke / todo）+ test-all 自身 = **17 套件**（用例 2025 = 2026-09-17 在 dev-laptop `5daf197` 实测；其中 `root:todo` 134 用例）。
+`DEFAULT_SUITES`（`tools/test-all.mjs` 顶部常量）逐条镜像各插件 README / `package.json` 的测试命令：13 个扩展 + agent-manager + 根三套自检（contract / smoke / todo）+ test-all 自身 = **18 套件**（用例 2068 = 2026-09-22 在 feat/timeout-bg-tool 实测；其中 `root:todo` 134 用例——3 例在非仓库 cwd 下先报「找不到仓库根」而失败，主干 `730fadc` 同款复现，与本次改动无关）。
 
 - **serial 三条**（负载敏感，运行期独占、断言绝不放宽）：`pwr`（含 `test/perf.test.ts` 300ms 门）、`agent-manager`（core 性能门）、`root:todo`（真子进程并发/中断用例）。serial 语义 = 启动前等其它套件排空、运行中不启动任何新套件。
 - 覆盖只增不减由 `test/test-all.test.ts` 锁定：形状/名字唯一/serial 集合/「`pi.extensions` 全部扩展 + 根三套自检」都有登记。
-- `install: true`：pwr / agent-team / loop / opencode-bridge / deep-init / agent-manager（有自己的 `node_modules`）；其余无 `package.json`，从仓库根跑。
+- `install: true`：pwr / agent-team / loop / opencode-bridge / deep-init / timeout-bg / agent-manager（有自己的 `node_modules`）；其余无 `package.json`，从仓库根跑。
 
 ## 用法
 
