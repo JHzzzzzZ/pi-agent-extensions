@@ -303,6 +303,25 @@
       "claimedAt": "2026-09-22T07:22:44.469Z",
       "completedAt": "2026-09-22T07:27:50.994Z",
       "alignedAt": "2026-09-22T07:22:59.512Z"
+    },
+    {
+      "id": 18,
+      "globalId": 319,
+      "text": "globalId 计数器跨检出撞号（2026-09-22 实测）：计数器 todos/.todo-cli/next-id 被 gitignore、按检出各存一份，自愈只按本地台账算 maxExistingId+1；兄弟 worktree 按旧快照自愈到 316 并取走 316/317（已提交 a3dc026/5f10d2f），主仓计数器停在 316 不知情，后续 add 重复取到 316（实测 skills#12 与 timeout-bg#1 撞号）。纯 CLI 无解：globalId 永不回收、无 renumber 子命令、migrate global-id 遇重复即中止，只能手工仲裁 JSON（违反红线 1）。修法候选：取号下界改 max(counter, maxExistingId+1)、或计数器入库不再 gitignore",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "globalId",
+        "bug",
+        "storage"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-09-22T13:12:22.776Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

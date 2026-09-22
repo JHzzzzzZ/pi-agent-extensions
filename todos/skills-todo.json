@@ -9,6 +9,7 @@
       "status": "open",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -23,6 +24,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ `~/.pi/agent/skills/todo-triage/`：`SKILL.md` + `scripts/survey.sh` 只读事实收集器——5 步门（收集→归类→worktree 健康度→排序报告→领取动作）+ 完成标准；实测覆盖 16 个 todo 文件/25 条 pending/全部 worktree 状态与孤儿目录，含从 worktree 内调用自动切回主工作区、非仓库根报错路径"
@@ -39,6 +41,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -53,6 +56,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ `~/.pi/agent/skills/todo-add/`：SKILL.md 四步门（整理查重→路由→写入→报告）+ 完成标准，现有插件清单以根 `package.json` `pi.extensions` 为权威；`todos/general-todo.md` 建档（非插件通用/跨插件落点）；AGENTS.md 红线 2/7 同步；`todo-triage` 已知坑同步；技能 README 索引已加"
@@ -69,6 +73,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -83,6 +88,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -97,6 +103,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "@ `~/.pi/agent/skills/team-run-review/`：SKILL.md 五步门 [收集事实→读信号→按层归因→报告→落地，只读边界] + scripts/survey-runs.mjs 只读事实收集器 [会话 run 清单/磁盘 running/工件与转录统计/信号行/team_* 工具调用；成本按 leader+成员合计并标注 record 字段只计 leader]。实测 4 个真实会话 [09-09 count-duet 8 run、09-11 any-dev 失败 run $3.34、09-11 fast-dev 两 run、空会话] + fixture [running/缺工件路径]；skills README 索引已加"
@@ -113,6 +120,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11：todo-cli skill 补 list 新 flags + db 子命令 + 索引纯派生坑；todo-add 查重改 list --text；todo-triage 补交叉核对用法；备份 ~/.pi/agent/skills/.backup-20260911/，命令面与 CLI ee896bd 核对一致"
@@ -129,6 +137,7 @@
       "status": "done",
       "branch": "feat/todo-cli-skill-placement",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "f454160：仓库内半程完成——SKILL.md（命令参考卡，含 align/五态）+ scripts/todo.sh 随工具落在 <repo>/.agents/skills/todo-cli/；.zcode/.pi 两镜像与另机全局 skill 库不在本机、属范围外，已另立接力条目"
@@ -145,6 +154,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-14 实测：本机 ~/.pi/agent/skills/ 不存在（无文件可删、仓库外未改任何文件）；残留风险 = 其它机器/备份里的旧 skill 副本，待人工确认；仓库内指针（AGENTS.md 首行与红线 1）已清。"
@@ -164,12 +174,56 @@
         "skills",
         "out-of-repo"
       ],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-09-14T15:11:03.915Z",
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 12,
+      "globalId": 320,
+      "text": "安装 TypeSafe 官方 agent skill（typesafe-ai）到项目级 .agents/skills/：来源 github.com/typesafe-ai/skills（v0.5.7 / MIT），供 Pi 会话按需加载，解决「Jev 接入点设计时反复现查文档」的摩擦",
+      "status": "done",
+      "branch": null,
+      "tags": [
+        "skill",
+        "assets"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "对齐确认：Q1 全局 ~/.agents/skills/（用户指定）、Q2 原样保真+SOURCE.md 溯源、Q3 不在仓库留副本",
+        "撤销 2026-09-22：从 processing 回到未领取；globalId 316 与 timeout-bg-todo#1 撞号（计数器 gitignore 自愈缺陷，2026-09-22 实测）；按路径 A 重登记，落点由项目级改全局 ~/.agents/skills/",
+        "作废重登记：globalId 316 与 timeout-bg-todo#1 撞号（计数器 gitignore 自愈缺陷），本条不再作为交付载体；同一工作在 skills-todo 新条目下重走对齐门（落点改全局 ~/.agents/skills/）"
+      ],
+      "createdAt": "2026-09-22T13:02:04.615Z",
+      "claimedAt": null,
+      "completedAt": "2026-09-22T13:11:01.538Z",
+      "alignedAt": null
+    },
+    {
+      "id": 13,
+      "globalId": 318,
+      "text": "安装 TypeSafe 官方 agent skill（typesafe-ai）到全局 ~/.agents/skills/：来源 github.com/typesafe-ai/skills（v0.5.7 / MIT），供 Pi 会话按需加载，解决「Jev 接入点设计时反复现查文档」的摩擦",
+      "status": "done",
+      "branch": "n/a-out-of-repo",
+      "tags": [
+        "skill",
+        "assets"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "对齐确认：Q1 全局 ~/.agents/skills/、Q2 原样保真+SOURCE.md、Q3 不留仓库副本、Q4 路径 A 修复撞号",
+        "安装完成：~/.agents/skills/typesafe-ai/ 三文件（SKILL.md 10189B sha256 0ab58b75…203d 与上游逐字节一致；LICENSE 1089B 一致；SOURCE.md 溯源卡）。上游 github.com/typesafe-ai/skills v0.5.7 commit 65a39f39，取用 2026-09-22。回滚 rm -rf ~/.agents/skills/typesafe-ai。globalId 318（计数器推进到 319）。残留1：skills#12 与 timeout-bg#1 的 globalId 316 重复，纯 CLI 无法清除（globalId 永不回收、无 renumber 子命令、migrate global-id 遇重复即中止），需手工仲裁。残留2：底层缺陷（计数器 gitignore、自愈按本地台账、跨检出撞号）待登记 todo-cli-todo。"
+      ],
+      "createdAt": "2026-09-22T13:11:09.206Z",
+      "claimedAt": "2026-09-22T13:11:59.616Z",
+      "completedAt": "2026-09-22T13:12:12.468Z",
+      "alignedAt": "2026-09-22T13:11:59.849Z"
     }
   ]
 }
