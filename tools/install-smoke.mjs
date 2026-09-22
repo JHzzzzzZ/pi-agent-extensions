@@ -119,6 +119,8 @@ export const EXTENSION_EXPECTATIONS = {
   "stream-token-speed": { commands: [], uiKeys: ["50:stream-token-speed"] },
   "human-notify": { commands: [], uiKeys: [] },
   "chatanywhere-provider": { commands: [], uiKeys: [] },
+  // 零命令、零 UI 键：注册的是 provider（/login 菜单项）与 typesafe_ask 工具。
+  typesafe: { commands: [], uiKeys: [] },
 };
 
 /** 读取根 package.json 的 pi.extensions 清单（加载冒烟的复制清单）。 */
