@@ -284,6 +284,23 @@
       "claimedAt": "2026-09-16T15:00:22.460Z",
       "completedAt": "2026-09-17T01:17:18.183Z",
       "alignedAt": "2026-09-16T15:03:12.979Z"
+    },
+    {
+      "id": 17,
+      "globalId": 317,
+      "text": "参数校验早于仓库根发现（2026-09-22 实测，主干 730fadc 复现）：写命令（add/claim/align/complete/reopen/dep）在非仓库 cwd 下缺 --file/--match 时先报「找不到仓库根」，而 test/todo-cli.test.ts 三条 E2E 期望先报「缺少 --file <name>」/「缺少 --match \"子串\"」——校验发生在 resolveRepoRoot 之后。要求：写命令的必填参数与 --file 形态校验提前到仓库根发现之前（校验不依赖 root，用 normalizeTodoName 判形态），错误信息与退出码不变（exit 1、stderr 恒空）；补一条以 boomGit 断言的单测锁定「缺参数时绝不触发仓库根发现」。验收：npm run test:todo 全绿（134）；读命令（summary/list/lint/triage/migrate）缺 root 仍报根错误。",
+      "status": "done",
+      "branch": "fix/todo-cli-arg-order",
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "交付：core.ts 新增 validateWriteArgs（--file 形态判定走纯函数 normalizeTodoName），写命令参数校验移到 resolveRepoRoot 之前；dep 的子命令与 --on 形态校验同位置前移，runDep 只取解析结果；分派处重复校验块删除（单一入口）。test/root-discovery.test.ts 新增 boomGit 探针用例（13 组缺参数/形态非法 + 断言零根发现调用）。分支 fix/todo-cli-arg-order → merge f6235fd。验收：test:todo 135/135 绿（含此前 3 条红 E2E）；非仓库 cwd 下 align --match x → 缺少 --file <name>（exit 1），summary 仍报仓库根错误；根三自检 44/44；concurrency.test.ts 偶发红为主干同款（#13）。文档：docs/tools/todo-cli.md 不变量 + SKILL.md 根发现节。"
+      ],
+      "createdAt": "2026-09-22T07:22:44.163Z",
+      "claimedAt": "2026-09-22T07:22:44.469Z",
+      "completedAt": "2026-09-22T07:27:50.994Z",
+      "alignedAt": "2026-09-22T07:22:59.512Z"
     }
   ]
 }
