@@ -69,6 +69,8 @@ export const DEFAULT_SUITES = [
     ],
   },
   { ...strip, name: "agent-team", cwd: "src/extensions/agent-team", install: true, cmd: ["node", "--test", "test/*.test.ts"] },
+  // typesafe：parity/sentinel 用例会起真实 HTTP server 与真实 cli.ts 子进程，但都自带超时，不属负载敏感套件。
+  { ...strip, name: "typesafe", cwd: "src/extensions/typesafe", install: true, cmd: ["node", "--test", "test/*.test.ts"] },
   {
     ...strip,
     name: "stream-token-speed",
