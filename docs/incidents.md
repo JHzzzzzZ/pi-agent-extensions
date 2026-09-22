@@ -1,6 +1,6 @@
 # 事故与教训（纯增量，防重复踩坑）
 
-> last verified @ 441ac0a
+> last verified @ afc182d
 >
 > 记录格式：症状 → 根因 → 教训。新事故追加在表后；修完必须留档。
 
@@ -177,3 +177,10 @@
 - 根因：一次派发内多轮 assistant 消息被聚合成一个 outcome，`runner.ts` 对 `errorMessage` 是**粘性赋值**（`if (msg.errorMessage) outcome.errorMessage = msg.errorMessage`），`dispatch.ts` 的失败判定又把四个信号**或**起来（`aborted || exitCode !== 0 || stopReason === "error" || !!outcome.errorMessage`）——宿主自带 auto-retry（`auto_retry_start/end`，agent-team 不解析该事件）时，**前轮失败、后轮重试成功**的成员被永久记为失败。真机 run 记录当时已被 7 天 retention 清掉，无法回放「到底哪个信号触发」，所以修复必须让结果自证（诊断字段），不依赖复现。
 - 处置（v1.31.0，ADR-0006）：终态改「**末轮说了算**」——只看最后一次 assistant `message_end` 的 stopReason/errorMessage；三态不变，末轮干净而退出码非 0 判 `done` + warning「收尾异常：exit N」；`diagnostics`（exitCode/信号/末轮 stopReason/前轮错误前 3 条与计数）三处可见（成员转录 system 行、leader 报告分节、失败通知）；pi 成员与外部 CLI 成员共用 `outcome.ts` 判定函数（外部 CLI 的 `turn.failed`/`is_error` 折算成同一信号，后续成功轮清除早轮失败态）。
 - 教训：① 多轮聚合里的「只要出现过就记住」字段（错误/警告）会把重试成功反噬成失败——聚合字段必须显式定清**末次覆盖 vs 累计**的语义；② 把诊断信号（退出码、早轮错误）用「或」抬成终态真值，等于让噪声一票否决；终态需要单一真值来源，其余只作诊断与呈现；③ 判定错误的定价不对称：「成功当失败」会丢产出并引发重复派发，比漏报更贵——下结论前多问一句「产出是否已拿到」。
+
+## globalId 计数器跨检出撞号：唯一修复通道是绕过 CLI 手工仲裁（todo-cli，2026-09-22，#18）
+
+- 症状：登记一条新需求（`skills#12`）后 `lint` 报 `globalId 重复：316（skills-todo#12 与 timeout-bg-todo#1）`。该重复**不是本次引入**——316 与 317 均已在 HEAD 提交（`a3dc026` / `5f10d2f`），而本仓 gitignore 的 `todos/.todo-cli/next-id` 在本次 `add` 前停在 316，计数器**早就落后于台账 max**。
+- 根因：计数器 `todos/.todo-cli/next-id` 被 gitignore（按检出各存一份），但 `globalId` 的唯一性必须**跨检出**成立。自愈分支 `maxExistingId(docs) + 1` 只读**本地台账**——兄弟 worktree（`.worktrees/agent-team-70-real`）没有计数器文件，按旧快照自愈到 316 并取走 316/317 后合并回主干，主仓计数器对此毫不知情，于是两个检出「下一个待发号」都是 316。更根本的是：**唯一性的保证只有取号那把 `locks/id.lock`，它护不住另一份检出里的同名文件**。
+- 处置（临时，2026-09-22）：删计数器走文档载明的自愈通道（实测取号 318，计数器推进到 319）→ `reopen` + `complete` 作废撞号条目 → 重登记取 318。**但已落盘的重复清不掉**——`globalId` 永不回收、CLI 无 renumber 子命令、`migrate global-id` 遇重复即中止，只能按工具报错提示「手工仲裁」定点改 JSON（`skills#12` 316→320 + 计数器 320→321），即**绕过 CLI 写存储**。底层修法候选见 `todos/todo-cli-todo.json#18`。
+- 教训：① **gitignore 的机器本地状态不能承载跨检出唯一性**——只要状态按检出分片、而约束必须全局成立，撞车只是时间问题；自愈下界必须把「台账 max」与「计数器现值」取大（`max(counter, maxExistingId+1)`），而不是仅在文件缺失时才读台账。② **一个门禁只能报错、不能修复时，它的存在会逼人绕开存储层**——`lint` 查得出重复却没有任何命令能消除重复，结果是运维动作必然落到手工改 JSON，恰好踩碎「JSON 唯一真相、CLI 唯一入口」的契约；发现「只能手工修」的缺口时，修缺口优先于修数据。③ 撞号排查先问「计数器 mtime vs 台账 max」，两者不一致就是本条，不必怀疑取号锁。
