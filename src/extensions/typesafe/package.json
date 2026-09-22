@@ -1,0 +1,21 @@
+{
+  "name": "pi-extension-typesafe",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "typesafe — TypeSafe/Jev（System One 结构化判断）接入：/login typesafe 遮罩录入 API key（落 ~/.pi/agent/auth.json），typesafe_ask 工具 + cli.ts 共用同一调用 core；明文 key 永不进入 agent 上下文",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^22.0.0",
+    "typebox": "^1.3.10",
+    "typescript": "^5.8.0"
+  }
+}
