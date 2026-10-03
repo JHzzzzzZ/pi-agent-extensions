@@ -290,6 +290,21 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 18,
+      "globalId": 328,
+      "text": "install-smoke 在 pi 1.0.0 下误报内置扩展：命令 /llama 与 /mcp 的来源 builtin:llama.cpp / builtin:mcp 被判定「不在本次安装目录内」→ 冒烟恒红（与 general-todo#17 的全局 skills 同症状不同源）；来源校验需放行 builtin: 前缀（2026-10-04 typesafe#2 交付时实测：主干与改动后逐字一致）",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T16:42:09.681Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

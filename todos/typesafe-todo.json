@@ -28,15 +28,17 @@
       "id": 2,
       "globalId": 327,
       "text": "退休 typesafe 扩展：provider 注册遮蔽内置 typesafe 目录（1.0.0 实测），改为内置 typesafe/jev-latest + ctx.modelRegistry.classify()，删除扩展目录",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/typesafe-retire",
       "tags": [],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，feat/typesafe-retire → de04a8b）：删除 src/extensions/typesafe/（13 文件）+ 根 pi.extensions 注销（14→13，根版本 2.60.0）+ 冒烟期望/套件表/INDEX/README/AGENTS/test-all 同步 + 卡片与规格删除。验收：全量 18/18 套件 2069 用例 pass（2102−33=typesafe 用例数）；根自检 contract 4 / smoke 21 / todo 135 全绿；todo lint 通过（13 扩展一一对应）；6 个扩展 typecheck 绿；install-smoke 报的 3 条（builtin:llama.cpp / builtin:mcp / 全局 skill typesafe-ai）与主干基线逐字一致，属既有问题（general#17 + 新增 1 条待登记），13 扩展零新增问题；全仓 typesafe 残留仅 todos/ 历史。4 条 Jev 待办（goal#8 / agent-team#71 / #72 / jev-safe-gate#1）按对齐结论全留，调用方式改 ctx.modelRegistry.classify()、noul ≡ bool（pi 源码证实）。残留：① 用户 settings.json 的包过滤器待交付后清理（需先 push + pi update）；② 发现 pwr 等 4 个 package-lock.json 存在既有版本漂移（lock 记 2.9.3 / package.json 2.10.0），与本次无关，未随本次提交"
+      ],
       "createdAt": "2026-10-03T16:27:01.375Z",
       "claimedAt": "2026-10-03T16:27:01.539Z",
-      "completedAt": null,
+      "completedAt": "2026-10-03T16:42:02.802Z",
       "alignedAt": "2026-10-03T16:35:00.094Z"
     }
   ]
