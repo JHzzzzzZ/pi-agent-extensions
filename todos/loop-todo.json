@@ -9,6 +9,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e：loop 的 1s 调度 ticker 改走 `aligned-ticker.ts`（对齐墙钟秒边界、自校正），widget 倒计时文本指纹未变时跳过 `setWidget`；契约 `docs/cross/status-bar.md`；loop 192 测试 + typecheck 绿"
@@ -25,6 +26,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/loop-bg-model：语法 `/loop --bg --model <provider/id> <创建形态>`；`/loop list` 调度列以 `@provider/id` 标注；未知模型由子 pi 报错、任务标记 failed，loop 不做预检；13 个新测试，全量 182 绿 + typecheck 绿"
@@ -41,6 +43,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -55,6 +58,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -69,6 +73,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ merge a03e525：子命令式为全仓统一基准，范围=全部命令面，直接替换不留别名。loop 已是子命令式，本插件代码不动仅文档口径同步；loop 182 测试回归绿"
@@ -85,6 +90,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：loop v1.6.0——裸 `/loop` 只管创建/用法（parseLoopCommand 收敛为 usage/create），五个管理命令独立静态注册、各自校验 id；旧管理词只提示改名；getArgumentCompletions 删除管理词。193 测试 + typecheck 绿；真实 pi loader 冒烟通过"
@@ -101,6 +107,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ route A：材料已备，待提交上游",
@@ -119,6 +126,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -133,6 +141,7 @@
       "status": "done",
       "branch": "feat/loop-bg-overlap",
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "完成 2026-09-15 @ merge 2af48cd（feat 689354a / 版本 4015a26 loop 1.8.0+根 2.50.0 / docs c081b04 卡 last verified @ 689354a；loop 205 测试绿 + typecheck 0，根 test:all 16/17（唯一红为既有环境问题 agent-team#69，基线同红））。实现：删除 startBgRun 的在途守卫（丢弃路径消失，不设并发上限）；bgEntries 改按 runId 跟踪、每轮独立 AbortController；轮次记录 LoopTask.runs[] 取代单对象 lastRun，白名单序列化让快照只装运行中轮次（activeRuns），终态逐条写 append-only 条目 loop-run-v1（避免全量快照×全量轮次的 O(n²) 会话文件膨胀）；session_start 回放条目重建全量历史并补写快照恢复出的轮次（旧 lastRun 迁移 + 宿主中断的在途轮次转 interrupted）；session_shutdown 逐轮 abort + 逐轮 interrupted 条目；通知口径=启动仅 0→1、在途首次≥3 一条 info 提示、完成每轮一条带轮次时刻；widget 改「N 轮（M 个任务）」；/loop:list 运行中全部 + 最近 10 条 + 折叠计数；runner 新增 onSessionId（运行中即可 resume）与 --name 轮次标签、piEntry 覆盖（node 下直调不再递归——实测撞过一次进程风暴，已清理）。真机：opt-in 冒烟 test/bg-overlap-smoke.mjs 两轮真实 pi 子进程并发通过（峰值 2、两个独立 session id 与会话文件、6s）。偏差记录见 todos/align/loop-todo#9.md。"
@@ -152,6 +161,7 @@
         "timeout",
         "bg"
       ],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "对齐文档 todos/align/loop-todo#10.md 落盘（四小节齐全）；用户会话指令确认 3 小时",
@@ -161,6 +171,21 @@
       "claimedAt": "2026-09-15T05:58:33.232Z",
       "completedAt": "2026-09-15T06:00:54.101Z",
       "alignedAt": "2026-09-15T05:58:33.411Z"
+    },
+    {
+      "id": 11,
+      "globalId": 331,
+      "text": "工具面升级到 pi 1.0 契约：loop_create/delete 编排型 → exposure model-only + loop_list 加 outputSchema/structuredContent（脚本现只拿到文本）",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T16:56:56.756Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

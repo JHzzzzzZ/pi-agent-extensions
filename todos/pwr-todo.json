@@ -9,6 +9,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -23,6 +24,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -37,6 +39,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10：TDD 新增生命周期接线测试；发现并修复配套缺口——runtime 是模块级单例，shutdown 后无复位路径，新增 `revive()` 在 session_start 复位 SESSION_SHUTDOWN 闩锁，否则 /new 一次后 start() 永久抛错；`RuntimeAdapter` 增加可选 `shutdown?()/revive?()` 契约。406 测试 + typecheck 绿；agent-team/loop/goal/provider-quota/run-timer 均已接此钩子，pwr 补齐为最后一个"
@@ -53,6 +56,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ merge a03e525：pwr v2.6.0——13 个 `/workflows:*` 合并为单 `/workflows` + 子命令；`/workflow run|delete|model` 子命令；动态 `/workflow:<name>` 注册退役，saved 调用运行时读盘。416 测试 + typecheck 绿"
@@ -69,6 +73,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ 9e2c15d：`pwr/src/solo-gate.ts` + index.ts 三处接线 + entry.test 集成用例，410 测试全绿"
@@ -85,6 +90,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-11 @ a03e525"
@@ -101,6 +107,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "pwr 自带无宿主 TUI 层（`src/ui/`：`MemoryRunStore` / `views.ts` / 批准卡 / entry 渲染器 / widget-status），只有 `renderer.ts` 直接碰宿主 `pi-tui`（`Box`/`Text`）；宿主侧一改渲染或主题契约，pwr 的显示就可能悄悄跑偏。对照宿主 pi-agent/pi-tui 的实现逐项对齐，差异只留 PWR 特有语义。",
@@ -121,6 +128,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ feat/status-clock b9d397e，pwr 417 测试 + typecheck 绿"
@@ -137,6 +145,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 21dee7c：pwr v2.9.0——方向 ①，`/workflows` 根与 12 条子命令全部并入单一 `/workflow:*`（硬切不注册、无墓碑）；裸 `/workflow` 空参/`help|--help|-h`=四组完整帮助、14 个旧子命令词只提示改名、其余文本=生成；`:list` 非法状态 warning 不再静默列空表；saved 生命周期动作在帮助中单列一组。439 测试 + typecheck 绿；真实 pi RPC 冒烟：get_commands 恰 16 条 /workflow* 且零 /workflows*，`/workflow:help`、`/workflow:list bogus` 行为正确"
@@ -153,6 +162,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge e68095d，pwr v2.9.1：`runStatusText` 改计数式 `pwr <active>▶[ <finished>✓]`（无活跃 run 仍清状态），`refreshUiStatus` 唯一写入边界拼 `│ `；439 测试 + typecheck 绿"
@@ -169,6 +179,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-14 @ merge 134a3d6：pwr v2.8.0——`/workflow:run|:delete|:model` 与 `/workflows:list|:view|:open|:pause|:resume|:stop|:restart|:save|:saved|:script|:approve|:help` 独立静态注册（共 17 条命令）；裸 `/workflows` 保留无参=列表/`<runId>`=详情/`--filter`/`help`，裸 `/workflow` 空参=用法、其余文本=生成；旧空格子命令只提示改名（防止 `run <名>` 误生成）。`parseWorkflowCommandRoute`/`parseWorkflowsCommand` 退役；438 测试 + typecheck 绿；真实 pi loader 冒烟通过"
@@ -185,6 +196,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-10 @ route A：材料已备，待提交上游",
@@ -203,11 +215,27 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "2026-09-15 @ merge 9db7983，pwr v2.9.2：新增 `src/ui/status-band.ts` 进程共享登记表，`refreshUiStatus` 改走 `writeBand(\"30:pwr\", …)`——最前段无前缀、其余段 `│ `，低带出现/消失重渲染本段；439 测试 + typecheck 绿"
       ],
       "createdAt": null,
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 14,
+      "globalId": 329,
+      "text": "工具面升级到 pi 1.0 契约：workflow_validate/start/save/control 的 exposure 分级（编排型 → model-only，防 codemode 脚本起子 pi 进程/弹批准卡）+ outputSchema/structuredContent（脚本现只拿到文本，details 对脚本不可见）",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T16:56:56.427Z",
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null

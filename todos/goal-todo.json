@@ -137,6 +137,38 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 9,
+      "globalId": 334,
+      "text": "评估器手写 provider 调用路径重估：现为 getProvider + getApiKeyAndHeaders + provider.stream 直调（为绕过宿主 streamFn 请求头合并，index.ts:328-349）；pi 0.86 起有 ctx.modelRegistry.streamSimple()（带已解析鉴权），评估能否替换、是否解决 opencode 系强制请求头问题",
+      "status": "done",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "作废重登记：补入虚拟模型失效场景（api=pi-virtual 直调绕过路由层 → 评估器拿不到输出 → 目标循环静默卡住），同一工作在新条目下重走对齐门（先例 skills#12）"
+      ],
+      "createdAt": "2026-10-03T16:57:02.934Z",
+      "claimedAt": null,
+      "completedAt": "2026-10-03T17:03:42.955Z",
+      "alignedAt": null
+    },
+    {
+      "id": 10,
+      "globalId": 336,
+      "text": "评估器改用 ctx.modelRegistry.streamSimple() 替换手写直调（getProvider + getApiKeyAndHeaders + provider.stream，index.ts:328-349）：① 修虚拟模型失效——虚拟模型 api 为 pi-virtual，直调绕过路由层，请求必失败、评估器拿不到输出后目标循环静默卡住（承接 goal#9 作废重登记）；② 同时评估能否保住 opencode 系强制请求头（原直调动机正是绕过宿主 streamFn 的请求头合并）；③ 保留现有评估器作回退路径",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T17:03:50.322Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

@@ -305,6 +305,66 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 19,
+      "globalId": 332,
+      "text": "fullscreen 默认下的 TUI 复核（pi 1.0 把默认从 regular 切到 fullscreen）：agent-team viewer/askview、pwr viewer、widget-band 三段合并顺序、status-band 首段定格——既有 tui-sync 矩阵与真机走查都在旧默认下做的，现默认环境已变",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T16:57:02.593Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 20,
+      "globalId": 335,
+      "text": "namespace 分组 + instructions（codemode 共享 inlineBudget=3000 token）：16 个工具声明共享同一预算，溢出即静默、只能靠 searchTools() 发现；给 pwr/agent-team/loop 工具加 namespace{name,description,instructions}，说明改为按需 describeNamespace() 读",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 4,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T16:57:03.108Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 21,
+      "globalId": 337,
+      "text": "给 16 个工具标 ToolAnnotations（readOnlyHint/destructiveHint/idempotentHint/openWorldHint），作为权限门的前置：pwr workflow_validate=readOnly，workflow_start/save/control=destructive（start 另加 openWorld）；agent-team team_status/list/transcript/models=readOnly，team_stop/create=destructive，team_run/resume/dispatch=destructive+openWorld；loop loop_list=readOnly，loop_create=destructive+openWorld，loop_delete=destructive。已知缺口：annotations 无阻塞语义，team_ask 这类等人工具只能靠 exposure=model-only 兜。验收：pi.getAllTools() 逐条可读出标注 + 测试锁定（2026-10-04 pi 1.0 特性调研）",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T17:03:50.493Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 22,
+      "globalId": 338,
+      "text": "虚拟模型路由（pi 1.0 pi.registerVirtualModel）：ModelRouteRequest{model,thinkingLevel,reason=user|continuation|retry|direct,previous?,failed?,state?,messages,signal} → ModelRoute{model,thinkingLevel,state?}，state 经 pi.virtual-model-state 条目随会话分支持久化；检测虚拟模型只能靠 model.api === pi-virtual（isVirtualModel 与 VIRTUAL_MODEL_API 未从包根导出，属上游导出缺口）；应注册在用户已有凭据的 provider 下——agent-team preflight 的 hasConfiguredAuth 实际查 model.provider（runtime.hasConfiguredAuth(model.provider)），注册到无凭据的新 provider 会吃 warning。可借鉴 pi 自带 examples/extensions/jev-router.ts（Jev 分类器路由），与 goal#8、agent-team#71/#72 同族",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T17:03:50.661Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
