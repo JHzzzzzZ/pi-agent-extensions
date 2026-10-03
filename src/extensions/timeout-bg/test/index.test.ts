@@ -1,5 +1,6 @@
 /**
  * index.ts 接线测试：工具覆盖 + 命令面 + 会话生命周期（timeout-bg-todo#1）
+ * 另含 codemode 视角的结构化结果锁定（timeout-bg-todo#2：脚本调 tools.bash 的返回值）。
  *
  * 边界说明：被测逻辑是"扩展如何接线到宿主"，因此 fake 的只有 pi API 表面
  * （事件/命令注册、sendMessage 记录）与进程边界（spawn），工具本体是宿主真实的
@@ -33,9 +34,22 @@ interface SentMessage {
   options?: { deliverAs?: string; triggerTurn?: boolean };
 }
 
+/** 脚本视角能看到的工具结果面（宿主 createBashTool 的返回值 + 结构化字段）。 */
+interface ToolResult {
+  content?: Array<{ type: string; text?: string }>;
+  details?: { truncation?: { truncated?: boolean }; fullOutputPath?: string };
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}
+
+interface RegisteredTool {
+  outputSchema?: { properties?: Record<string, unknown> };
+  execute: (...args: unknown[]) => Promise<unknown>;
+}
+
 function makeFakePi(activeTools: string[]) {
   const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
-  const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+  const tools = new Map<string, RegisteredTool>();
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const sent: SentMessage[] = [];
   const notices: string[] = [];
@@ -47,7 +61,7 @@ function makeFakePi(activeTools: string[]) {
       list.push(handler);
       handlers.set(event, list);
     },
-    registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+    registerTool: (tool: RegisteredTool & { name: string }) => {
       tools.set(tool.name, tool);
     },
     registerCommand: (name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
@@ -176,4 +190,79 @@ test("非法 PI_TIMEOUT_BG_DEFAULT：启动时提示一次，回退默认值", a
   await ext.fire("session_start");
   assert.equal(ext.notices.length, 1);
   assert.match(ext.notices[0]!, /PI_TIMEOUT_BG_DEFAULT/);
+});
+
+/**
+ * codemode 视角（timeout-bg-todo#2）：脚本调 `tools.bash` 拿到的是**本扩展注册的工具**，
+ * 结构化字段由宿主 `createBashTool` 层生成（扩展只 spread 它并覆盖 description/parameters/
+ * promptGuidelines）—— 这两条测试锁定该契约不被后续重构悄悄改掉。
+ */
+test("codemode 视角：结构化字段形状（空输出为空串，未截断时无 full_output_path）", async () => {
+  const empty = makeExtension(["bash"]);
+  await empty.fire("session_start");
+  const emptyTool = empty.tools.get("bash")!;
+  assert.ok(emptyTool.outputSchema, "覆盖工具必须保留宿主声明的 outputSchema");
+  assert.deepEqual(
+    Object.keys(emptyTool.outputSchema.properties ?? {}).sort(),
+    ["exit_code", "full_output_path", "output", "truncated", "wall_time_seconds"],
+    "字段名与宿主 structuredContent 契约逐字一致",
+  );
+
+  const pending = emptyTool.execute("call-1", { command: "true" }, undefined, undefined, toolCtx(empty.dir));
+  empty.child.exit(0);
+  const result = (await pending) as ToolResult;
+  const structured = result.structuredContent!;
+  assert.equal(structured.output, "", "空输出是空串，不是模型侧的 '(no output)' 占位");
+  assert.equal(structured.truncated, false);
+  assert.equal(structured.exit_code, 0);
+  assert.equal(typeof structured.wall_time_seconds, "number");
+  assert.equal("full_output_path" in structured, false, "未截断时不带 full_output_path");
+  assert.equal(result.isError, undefined, "退出码 0 不是错误结果");
+
+  const small = makeExtension(["bash"]);
+  await small.fire("session_start");
+  const smallPending = small.tools
+    .get("bash")!
+    .execute("call-1", { command: "echo hi" }, undefined, undefined, toolCtx(small.dir));
+  small.child.emitData("hi\n");
+  small.child.exit(0);
+  const smallStructured = ((await smallPending) as ToolResult).structuredContent!;
+  assert.equal(smallStructured.output, "hi\n");
+  assert.equal(smallStructured.truncated, false);
+  assert.equal(smallStructured.exit_code, 0);
+  assert.equal("full_output_path" in smallStructured, false);
+});
+
+test("codemode 视角：>1MiB 输出保首尾两半 + truncated/full_output_path（模型侧仍是 2000 行 / 50KB 口径）", async () => {
+  const ext = makeExtension(["bash"]);
+  await ext.fire("session_start");
+  const raw = Array.from({ length: 4000 }, (_, i) => `line-${i + 1} ${"x".repeat(360)}`).join("\n") + "\n";
+  assert.ok(raw.length > 1024 * 1024, "样本必须超过 1MiB 上限");
+
+  const pending = ext.tools
+    .get("bash")!
+    .execute("call-1", { command: "many-lines" }, undefined, undefined, toolCtx(ext.dir));
+  ext.child.emitData(raw);
+  ext.child.exit(0);
+  const result = (await pending) as ToolResult;
+  const structured = result.structuredContent!;
+
+  assert.equal(structured.truncated, true);
+  assert.equal(structured.exit_code, 0);
+  const fullOutputPath = structured.full_output_path as string;
+  assert.equal(typeof fullOutputPath, "string", "截断时必须给出落盘路径");
+  assert.equal(fs.statSync(fullOutputPath).size, Buffer.byteLength(raw, "utf8"), "落盘的是完整输出");
+  assert.equal(result.details?.fullOutputPath, fullOutputPath, "details 与结构化字段同一路径");
+  assert.equal(result.details?.truncation?.truncated, true);
+
+  const output = structured.output as string;
+  assert.ok(output.length >= 1024 * 1024, "脚本侧 output 按 1MiB 上限保留");
+  assert.ok(output.startsWith("line-1 "), "保留首部（模型侧看不到）");
+  assert.ok(output.trimEnd().endsWith("x".repeat(360)), "保留尾部");
+  assert.match(output, /\[\.\.\. \d+ bytes omitted \.\.\.\]/, "中间以省略标记收口");
+
+  const modelText = result.content?.[0]?.text ?? "";
+  assert.ok(modelText.length < 60 * 1024, `模型侧仍是 50KB 口径，实际 ${modelText.length} 字节`);
+  assert.match(modelText, /\[Showing lines \d+-\d+ of 4000/);
+  assert.ok(!modelText.includes("line-1 "), "模型侧只看到尾部");
 });
