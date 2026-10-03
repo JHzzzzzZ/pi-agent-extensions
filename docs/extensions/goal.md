@@ -1,6 +1,6 @@
 # goal — 会话目标自动循环推进
 
-> last verified @ 775638d
+> last verified @ 7809973
 
 ## 职责与边界
 
@@ -12,7 +12,7 @@
 - 常量区（index.ts 顶部）— 全部上限值：`MAX_GOAL_LENGTH=4000`、`MAX_EVIDENCE_CHARS=12000`、`MAX_REASON_CHARS=500`、`MAX_EVALUATOR_TOKENS=512`、`MAX_EVALUATOR_FAILURES=3`。**改上限只动这里。**
 - `index.ts` 纯函数段 — parseGoalArgs / buildEvaluatorPrompt / parseVerdict / extractJsonObject / extractAssistantText / buildStatusLine，可独立单测。
 - `aligned-ticker.ts` / `status-band.ts` — 对齐秒边界节拍器与 footer 段前缀登记（均为每插件一份拷贝）；仅 active/paused 期间节拍存活，idle/无 UI/shutdown 停止。
-- `createModelEvaluator` — 真实评估器：`ctx.modelRegistry` 取 provider + auth → pi-ai `provider.stream` 单条消息调用。
+- `createModelEvaluator` — 真实评估器：`ctx.modelRegistry.streamSimple()`（宿主路由 + 鉴权 + 会话头）单条消息调用。
 - `GoalDeps` — 注入口：`evaluate`（评估器）+ `nowMs`（时钟），测试从这里替换边界。
 
 ## 核心数据流
@@ -31,6 +31,7 @@
 - 评估器瞬时失败按未达成继续（不杀循环）；连续 `MAX_EVALUATOR_FAILURES=3` 次才 paused。`evaluatorFailures` 仅在成功判定后清零。
 - 检测到手动中断（`ctx.signal.aborted`，turn_end/agent_end 记 `userInterrupted`）→ 转 paused 而非续跑，只能 `/goal:resume`。
 - 水合恢复目标但轮数与计时归零（对齐 `/goal:resume` 语义）；已清除（null）不恢复。
+- 评估器必须经 `ctx.modelRegistry.streamSimple()` 调用（pi ≥ 0.86），不得直调 `provider.stream`：虚拟模型（api=`pi-virtual`）要先由宿主路由换物理模型才能发请求，直调必然失败。
 - 命令面（v1.3.0）：裸 `/goal` 空参=状态、其余=目标文本（`/goal status` 也是目标文本，不是子命令）；`/goal:status` 状态副本；`/goal:clear|:stop|:off|:reset|:none|:cancel` 共享同一清除动作；`/goal:resume` 恢复。旧空格管理词经裸入口只提示改名、绝不执行。
 - 所有 notify/setStatus/appendEntry 调用均 try/catch——持久化或 UI 失败绝不破坏会话、绝不中断循环链。
 - 状态条目幂等可重放：恢复只信最后一条 `goal-state-v1`，结果条目 `goal-result-v1` 仅记录、不参与水合。
@@ -43,7 +44,8 @@
 - `parseVerdict` 只截第一个括号平衡的 JSON 对象（容忍 code fence/前后废话）；模型若输出多个 JSON 对象且第一个不是判定，会 `bad-verdict`（message 仅前 200 字符，排查时看这个）。
 - 中断后 elapsed/turns 不跨会话保留：水合把 startedAtMs 重置为 now、turns=0，/goal 显示的时长与轮数在 reload/resume 后不连续，属预期而非 bug。
 - 目录无 package.json，测试用 `node --experimental-strip-types --test` 直跑；缩进 2 空格（同多数扩展，与 pwr 的 tab 不同）。
-- 评估器直调 `provider.stream(...)`，绕过宿主 streamFn 的请求头合并（`mergeProviderAttributionHeaders`）：opencode 系模型（provider `opencode`/`opencode-go` 或 baseUrl host `opencode.ai`）必须自注入 `x-opencode-session`/`x-opencode-client` 会话头（Console Go 缺失返回 400 `MissingSessionID`，评估器连败 3 次后 goal 被暂停）。`isOpencodeModel`/`buildOpencodeSessionHeaders` 已复刻宿主判定；仅注入会话头，不注入归因遥测头（HTTP-Referer 等）。若宿主 provider-attribution 判定逻辑变更，需同步这两处。
+- 评估器只传 `sessionId`（`getSessionIdSafe`），**不自己拼请求头**：opencode 系必需的 `x-opencode-session` 由宿主 provider 层（pi-ai `withOpenCodeSessionHeader`）从 `options.sessionId` 注入；虚拟模型路由后 `sessionId` 随路由透传，所以跨 provider 也安全。2026-10-04 真机对照（pi 1.0.1 / opencode-go `deepseek-v4.1-flash`，探针 `ModelRegistry.streamSimple`）：带 sessionId → 出文本；不带 → 400 `MissingSessionID`；旧直调 + 自拼会话头 → 出文本。旧代码的 `isOpencodeModel`/`buildOpencodeSessionHeaders` 已删——`x-opencode-client: pi` 服务端不校验，无需补。
+- 虚拟模型下 `maxTokens` 会被宿主夹到路由目标模型的上限（`Math.min(options.maxTokens, limit)`），评估器的 512 在任何目标上都只降不升，无需特殊处理。
 - 仅一个 commit（c5e167e）无历史坑可挖；后续踩坑在此追加。
 
 ## 改动清单
