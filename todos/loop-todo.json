@@ -176,16 +176,16 @@
       "id": 11,
       "globalId": 331,
       "text": "工具面升级到 pi 1.0 契约：loop_create/delete 编排型 → exposure model-only + loop_list 加 outputSchema/structuredContent（脚本现只拿到文本）",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "priority": 6,
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-10-03T16:56:56.756Z",
-      "claimedAt": null,
+      "claimedAt": "2026-10-03T17:06:45.483Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-10-03T17:15:28.158Z"
     }
   ]
 }

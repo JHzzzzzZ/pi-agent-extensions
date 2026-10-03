@@ -1278,16 +1278,16 @@
       "id": 73,
       "globalId": 330,
       "text": "工具面升级到 pi 1.0 契约：team_run/resume/stop/ask 编排与等人型 → exposure model-only（防脚本调 team_ask 挂死、无人监管派单），team_status/list/transcript/create/models/dispatch 分级 + outputSchema/structuredContent（脚本现只拿到文本）",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [],
       "priority": 6,
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-10-03T16:56:56.589Z",
-      "claimedAt": null,
+      "claimedAt": "2026-10-03T17:06:45.323Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-10-03T17:15:28.001Z"
     }
   ]
 }
