@@ -1,3 +1,20 @@
+# DELIVERY — PWR 合并交付包 v2.11.0（pi 1.0 工具面契约：model-only + 查询口径 structuredContent）
+
+> 4 个 `workflow_*` 工具全部声明 `exposure: "model-only"`（编排型：弹批准卡 / 起子 pi 进程 / 写盘 —— codemode 脚本永不触达）、归入 `namespace: { name: "pwr", description: "Pi Workflow Runtime 工作流编排" }`、带 MCP 风格 `annotations`（validate=`readOnlyHint`；start=`destructiveHint`+`openWorldHint`；control/save=`destructiveHint`）。查询口径新增稳定契约：`workflow_control` 加 `list`/`status` 两个动作（`list` → `{ runs: [{ runId, status, stage, startedAt, finishedAt? }] }`；`status` 与 `pause`/`resume`/`stop`/`restart_agent` → `{ runId, ok, status }`），4 个工具的成功结果均带 `outputSchema` + `structuredContent`；`details` 保持内部结构（渲染 / 状态重建）不变。DSL / `engine/spec.ts` / `SCRIPT_VERSION` / 命令面 / 审批门语义零改动；devDependencies 的 `@earendil-works/*` 从 `^0.85.1` 升到 `^1.0.0`（0.85.x 类型定义里没有 exposure / outputSchema / annotations / namespace 四个字段，不升过不了 typecheck）。
+
+## 本版变更（v2.11.0）
+
+| 模块 | 变更 | 位置 |
+| --- | --- | --- |
+| 工具定义 | 4 个工具加 `exposure: "model-only"` + `namespace` + `annotations` + `outputSchema`，成功结果补 `structuredContent`（validate：runId/digest/scriptName/stages/estimatedAgents/writeRisk/warnLargeRun；start：runId/status；control：`list`→runs、其余动作→runId/ok/status；save：commandName/scope） | `src/tools.ts` |
+| 查询口径 | `RunRegistry.list()`；新增 `queryWorkflowRuns` / `queryWorkflowRun`：以 runtime `view`（读时快照）覆盖会滞后的注册表状态，`stage` = 最近进入的阶段 label（未进入阶段为空串），`finishedAt` = `endedAt`（未结束则省略）；runtime 未接线或 run 不在运行态时退回注册表元数据 | `src/flow.ts` |
+| 契约值 | `RUN_STATUS_VALUES` 提为值导出（`RunStatus` 由它派生），输出 schema 与状态机共用同一闭合集合 | `src/types.ts` |
+| 测试（451） | 新 `tests/tool-contract.test.ts`（8 个）：exposure / annotations / namespace 逐条断言，`workflow_control` 的 `list`/`status`/`pause`/`resume`/`stop`/`restart_agent` 与 validate/start/save 的 `structuredContent` 用 TypeBox `Value.Check` 对 outputSchema 校验，runtime view 优先于注册表、runtime 缺席退路、失败结果不产出 structuredContent | `tests/tool-contract.test.ts`（新） |
+
+**已知缺口**：4 个工具 model-only ⇒ **脚本读不到 pwr 运行态**（codemode 脚本只能调 `direct`/`codemode` exposure 的工具）。本版先把查询契约立对（`structuredContent` 面向程序化调用方），只读查询工具另行登记，不在本版范围。
+
+---
+
 # DELIVERY — PWR 合并交付包 v2.9.2（footer 首段定格：status-band 段前缀登记）
 
 > footer 段前缀改为由每插件一份的 `src/ui/status-band.ts` 统一决定：**按 key 排序后最靠前的可见段不加 `│ `**（行首定格），其余段以 `│ ` 连接；任一段出现/消失时，进程共享登记表（`Symbol.for("pi.status-bar.bands.v1")`）通知其余段重算前缀并重渲染。`refreshUiStatus` 不再自己拼前缀，改走 `writeBand("30:pwr", runStatusText(store), writer)`；`runStatusText` 格式与推送式刷新不变。安全不变量与 439 测试不变。

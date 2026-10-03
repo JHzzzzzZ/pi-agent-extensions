@@ -2,7 +2,7 @@
 
 PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P0，Stage 3）：**PiAgentRunner 适配层**（PRD §5.4、§9 子任务 3），并内含全部既有模块。
 
-> 版本：**v2.9.3**（2026-09-12：随仓库布局整理迁入 `src/extensions/pwr/`——纯移动，模块结构与行为不变。2026-09-15：footer 首段定格——新增 `src/ui/status-band.ts` 进程共享登记表统一决定段前缀（最前段无前缀、行首定格；其余段 `│ `；低带出现/消失重渲染本段），`refreshUiStatus` 改走 `writeBand`；跨插件契约 `<仓库根>/docs/cross/status-bar.md`。v2.9.1：footer 段瘦身——`runStatusText` 改计数式 `pwr <active>▶[ <finished>✓]`。v2.9.0：命令面归一——`/workflows` 根与 12 条子命令全部并入单一 `/workflow:*`，旧前缀硬切不注册；命令面 = 裸 `/workflow`（`<任务>` 生成 / 空参·`help`=完整分组帮助 / 14 个旧词只提示改名）+ 15 条 `/workflow:*` 独立子命令。v2.8.0：命令面冒号化——`/workflow:run|:delete|:model` 与 `/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help` 各自独立静态注册；裸 `/workflows` 保留列表/详情/`--filter`/`help`，裸 `/workflow` 保留生成；旧空格子命令只提示改名、绝不执行。v2.7.0：`/workflows:view` 分栏化——fleet/agent-team 同款 roster + detail 外壳，键位/几何/750ms 指纹门控全面对齐，`D` 两步停止；删自写 `text.ts` 改用宿主文本工具。v2.6.0：命令面曾收拢为空格子命令（v2.8.0 改回冒号）。v2.5.0：solo 审批门——`/solo` 开启时批准卡按 once 自动批准；v2.4.2 会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
+> 版本：**v2.11.0**（2026-10-04：pi 1.0 工具面——4 个 `workflow_*` 工具全部 `exposure: "model-only"`（编排型，codemode 脚本永不触达）+ `pwr` namespace + MCP 风格 annotations；`workflow_control` 增 `list`/`status` 查询动作，查询口径结果带 `outputSchema` + `structuredContent`，`details` 仍为内部结构；devDependencies 的 `@earendil-works/*` 升 `^1.0.0`。v2.9.3（2026-09-12：随仓库布局整理迁入 `src/extensions/pwr/`——纯移动，模块结构与行为不变。2026-09-15：footer 首段定格——新增 `src/ui/status-band.ts` 进程共享登记表统一决定段前缀（最前段无前缀、行首定格；其余段 `│ `；低带出现/消失重渲染本段），`refreshUiStatus` 改走 `writeBand`；跨插件契约 `<仓库根>/docs/cross/status-bar.md`。v2.9.1：footer 段瘦身——`runStatusText` 改计数式 `pwr <active>▶[ <finished>✓]`。v2.9.0：命令面归一——`/workflows` 根与 12 条子命令全部并入单一 `/workflow:*`，旧前缀硬切不注册；命令面 = 裸 `/workflow`（`<任务>` 生成 / 空参·`help`=完整分组帮助 / 14 个旧词只提示改名）+ 15 条 `/workflow:*` 独立子命令。v2.8.0：命令面冒号化——`/workflow:run|:delete|:model` 与 `/workflows:list|view|open|pause|resume|stop|restart|save|saved|script|approve|help` 各自独立静态注册；裸 `/workflows` 保留列表/详情/`--filter`/`help`，裸 `/workflow` 保留生成；旧空格子命令只提示改名、绝不执行。v2.7.0：`/workflows:view` 分栏化——fleet/agent-team 同款 roster + detail 外壳，键位/几何/750ms 指纹门控全面对齐，`D` 两步停止；删自写 `text.ts` 改用宿主文本工具。v2.6.0：命令面曾收拢为空格子命令（v2.8.0 改回冒号）。v2.5.0：solo 审批门——`/solo` 开启时批准卡按 once 自动批准；v2.4.2 会话生命周期接线——session_shutdown 中止在途 run + session_start 复活单例；v2.4.1 安全升级；v2.4.0 为运行实时 trace、saved workflow 列表、key=value 参数输入；v2.3.0 为 JHL-18 全屏查看器、v2.2.0 修复默认模型/删除命令/批准卡）
 >
 > 依赖说明：本包是 JHL-16 交付（`src/` 触发/批准层）的延续，内置 JHL-12 引擎 v1.1.2（`engine/` + `vendor/`，单次快照安全边界已收敛）。Runtime 未注入 runner 时，保存/加载/参数校验/批准全部可用，仅实际启动返回 `AGENT_RUNNER_UNAVAILABLE`（不隐式回退）。JHL-14 起入口在 session_start 自动构造 PiAgentRunner 注入 runtime。
 
@@ -49,6 +49,14 @@ PWR 是 Pi 的本地工作流编排扩展。本目录对应 JHL-14 子任务（P
 - 成功：回传最终 `return` 摘要（8KB 截断）；失败：回传错误码 + 错误信息（错误信息已限 8KB，不截断）
 - 用户主动取消（`cancelled`）**不唤起**主 agent（避免噪音，UI 已 notify）
 - 投递严格按 runId 隔离：一次 settle 一次投递，restart 后的新 settle 是合法的新投递
+
+### 工具面（pi 1.0 契约，v2.11.0）
+- **4 个工具全部 `exposure: "model-only"`**（`workflow_validate` / `workflow_start` / `workflow_control` / `workflow_save`）：它们是编排型（弹批准卡 / 起子 pi 进程 / 写盘），`model-only` 的语义是「声明给模型、永不从其它工具可调」——codemode 脚本够不到它们
+- **namespace**：`{ name: "pwr", description: "Pi Workflow Runtime 工作流编排" }`（codemode 按 namespace 分组、`describeNamespace("pwr")` 可读）
+- **annotations**（MCP 口径，给权限门读）：validate = `readOnlyHint`；start = `destructiveHint` + `openWorldHint`（派出去的 agent 会碰世界）；control / save = `destructiveHint`
+- **查询口径稳定契约**（`outputSchema` + `structuredContent`，面向程序化调用方）：`workflow_control { action: "list" }` → `{ runs: [{ runId, status, stage, startedAt, finishedAt? }] }`（`stage` = 最近进入的阶段 label，未进入为空串；查询优先取 runtime 读时快照，注册表状态会滞后）；`{ action: "status" }` 与 `pause`/`resume`/`stop`/`restart_agent` → `{ runId, ok, status }`；validate/start/save 各自返回稳定子集；失败的调用仍然是 `isError` + `details`
+- `details` 保持内部结构（渲染 / 状态重建用），不随结构化契约漂移
+- **已知缺口**：model-only ⇒ **codemode 脚本读不到 pwr 运行态**；只读查询工具另行登记，不在 v2.11.0 范围
 
 ## 命令
 
@@ -102,12 +110,12 @@ src/extensions/pwr/
 │   ├── digest.ts          # SHA-256 digest（CRLF 归一化）
 │   ├── engine.ts          # JHL-12 引擎适配器（validateScript + 位置/astVersion 映射；保留 argsSchema）
 │   ├── errors.ts          # 错误码 + PwrError + { code, message, ... } 契约（新增 ARGS_INVALID/ARGS_SCHEMA_VIOLATION/WORKFLOW_NOT_FOUND）
-│   ├── flow.ts            # workflow_validate/start/control/save 纯逻辑 + RunRegistry（create 支持 args）
+│   ├── flow.ts            # workflow_validate/start/control/save 纯逻辑 + RunRegistry + 查询口径（queryWorkflowRuns/queryWorkflowRun，runtime view 优先）
 │   ├── intent.ts          # /workflow 与 workflow: 前缀解析
 │   ├── notify.ts          # 按 runId 隔离的结果回传（RunNotifier；成功/失败 settle 后 followUp 唤起主 agent）
 │   ├── plan.ts            # AST 调用节点阶段聚合/预算/写入风险 + 结构树（JHL-18）
 │   ├── save.ts            # JHL-17：保存/加载/现读盘调用编排（saveWorkflowCommand/loadSavedWorkflow/invokeSavedWorkflow）
-│   ├── tools.ts           # Pi 工具定义（workflow_save 增加 overwrite 参数）
+│   ├── tools.ts           # Pi 工具定义（pi 1.0：exposure/annotations/namespace + outputSchema/structuredContent）
 │   ├── types.ts           # 共享契约类型与常量（WorkflowMeta.argsSchema）
 │   └── ui/                # JHL-15/JHL-18 宿主无关 UI 层
 │       ├── index.ts       # 注册 15 条 /workflow:* 子命令 + 快捷键/widget/entry renderer 接线（含 /workflow:view）；裸 /workflow 生成/帮助入口在 index.ts
@@ -117,7 +125,7 @@ src/extensions/pwr/
 │       ├── viewer.ts      # /workflow:view 分栏查看器（fleet 几何/键位 + 指纹门控 + D 两步停止）
 │       └── types.ts       # 共享视图模型与常量（VIEWER_TICK_MS 等）
 ├── test/                  # 引擎/入口契约单测（105 个）+ helpers/perf 门禁
-└── tests/                 # 流程/引擎/UI 套件单测（233 个用例，含真实宿主 viewer-host 测试）
+└── tests/                 # 流程/引擎/UI 套件单测（241 个用例，含真实宿主 viewer-host 测试与工具面契约 tool-contract）
 ```
 
 ## 运行单测（Windows PowerShell）
@@ -125,7 +133,7 @@ src/extensions/pwr/
 ```powershell
 cd src/extensions/pwr
 npm install        # 仅开发依赖（typescript、@types/node、typebox、pi 宿主类型）
-npm test           # 443 个单测（test/ 105 + tests/ 237 + runtime/test/ 56 + runner/test/ 45）
+npm test           # 451 个单测（test/ 105 + tests/ 245 + runtime/test/ 56 + runner/test/ 45）
 npm run typecheck  # tsc --noEmit（strict）
 ```
 
