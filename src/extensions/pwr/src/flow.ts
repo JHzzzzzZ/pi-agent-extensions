@@ -17,6 +17,7 @@ import {
 	type ApprovalRecord,
 	type BudgetEstimate,
 	type PwrErrorResult,
+	type RunStatus,
 	type RuntimeAdapter,
 	type ScriptEngine,
 	type WorkflowMeta,
@@ -68,6 +69,11 @@ export class RunRegistry {
 
 	getRun(runId: string): WorkflowRun | undefined {
 		return this.runs.get(runId);
+	}
+
+	/** 本会话创建的全部 run，按创建顺序（查询口径的数据源）。 */
+	list(): WorkflowRun[] {
+		return [...this.runs.values()];
 	}
 
 	getScript(runId: string): WorkflowScript | undefined {
@@ -273,6 +279,91 @@ export async function controlWorkflow(
 	} catch {
 		return new PwrError(ErrorCode.RUN_NOT_CONTROLLABLE, { runId }).toResult();
 	}
+}
+
+/**
+ * 查询口径的 run 行（workflow_control 的 list/status 结构化契约，不镜像
+ * `details`）。type 别名而非 interface：匿名对象类型才能满足 structuredContent
+ * 的 JsonValue 约束。
+ */
+export type RunQueryRow = {
+	runId: string;
+	status: RunStatus;
+	/** 最近进入的阶段 label；run 尚未进入任何阶段时为空串。 */
+	stage: string;
+	/** ISO 开始时间；尚未开始时为空串。 */
+	startedAt: string;
+	/** ISO 结束时间；未结束时省略该字段。 */
+	finishedAt?: string;
+};
+
+export type RunListResult = { runs: RunQueryRow[] };
+export type RunStatusResult = { runId: string; ok: true; status: RunStatus };
+
+/** runtime 侧的单 run 读时快照（只取查询需要的字段）。 */
+type RunViewSnapshot = {
+	status: RunStatus;
+	startedAt?: string;
+	endedAt?: string;
+	stages: Array<{ label: string; status: string }>;
+};
+
+/**
+ * JHL-13 查询接缝：runtime 实例暴露 `view(runId)`。缺席（runtime 未接线）或
+ * 该 run 不在运行态里（重启后）时，查询退回注册表元数据。
+ */
+type RunViewLookup = { view(runId: string): RunViewSnapshot };
+
+function runViewLookup(runtime: RuntimeAdapter | null | undefined): RunViewLookup | null {
+	const candidate = runtime as (Partial<RunViewLookup> | null | undefined);
+	return typeof candidate?.view === "function" ? (candidate as RunViewLookup) : null;
+}
+
+/** view() 对未知 run 抛错——视为没有运行态，而不是让查询失败。 */
+function tryRunView(lookup: RunViewLookup | null, runId: string): RunViewSnapshot | undefined {
+	if (!lookup) return undefined;
+	try {
+		return lookup.view(runId);
+	} catch {
+		return undefined;
+	}
+}
+
+/** 最近进入的阶段 = 最后一个非 queued 阶段；全部 queued（或尚未开始）时为空串。 */
+function stageLabel(stages: Array<{ label: string; status: string }>): string {
+	let label = "";
+	for (const stage of stages) {
+		if (stage.status !== "queued") label = stage.label;
+	}
+	return label;
+}
+
+function toRunQueryRow(run: WorkflowRun, lookup: RunViewLookup | null): RunQueryRow {
+	const view = tryRunView(lookup, run.runId);
+	const row: RunQueryRow = {
+		runId: run.runId,
+		status: view?.status ?? run.status,
+		stage: view ? stageLabel(view.stages) : "",
+		startedAt: view?.startedAt ?? run.startedAt ?? "",
+	};
+	const finishedAt = view?.endedAt ?? run.endedAt;
+	if (finishedAt) row.finishedAt = finishedAt;
+	return row;
+}
+
+/** 查询本单位：本会话创建的 run（注册表口径，创建顺序）+ 运行态快照。 */
+export function queryWorkflowRuns(deps: FlowDeps): RunListResult {
+	const lookup = runViewLookup(deps.runtime);
+	return { runs: deps.registry.list().map((run) => toRunQueryRow(run, lookup)) };
+}
+
+/** 单个 run 的当前状态（查询口径；与 pause/stop 的控制门限无关）。 */
+export function queryWorkflowRun(deps: FlowDeps, input: { runId: string }): RunStatusResult | PwrErrorResult {
+	const runId = input?.runId;
+	if (!runId) return new PwrError(ErrorCode.RUN_NOT_FOUND).toResult();
+	const run = deps.registry.getRun(runId);
+	if (!run) return new PwrError(ErrorCode.RUN_NOT_FOUND, { runId }).toResult();
+	return { runId, ok: true, status: toRunQueryRow(run, runViewLookup(deps.runtime)).status };
 }
 
 export interface SaveAdapter {
