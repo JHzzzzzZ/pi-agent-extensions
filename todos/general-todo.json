@@ -365,6 +365,21 @@
       "claimedAt": "2026-10-03T17:06:46.427Z",
       "completedAt": null,
       "alignedAt": "2026-10-03T17:15:29.100Z"
+    },
+    {
+      "id": 23,
+      "globalId": 340,
+      "text": "统一 devDependencies 的宿主版本口径：deep-init 与 opencode-bridge 仍锁 @earendil-works/* ^0.85.1，而 pwr / agent-team / loop / timeout-bg 在 pi 1.0 工具面升级中已升到 ^1.0.0（0.85.1 类型定义里没有 exposure/outputSchema/annotations/namespace，不升过不了 typecheck）——口径不一致会让后来的扩展作者不知道该跟哪个。要求：剩余两个升到 ^1.0.0 + 重生成 lock + typecheck 绿。来源：2026-10-04 pwr#14 与 timeout-bg#2 交付时的一致口径决策",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T17:25:52.499Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

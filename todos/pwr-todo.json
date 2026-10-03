@@ -239,6 +239,21 @@
       "claimedAt": "2026-10-03T17:06:45.170Z",
       "completedAt": null,
       "alignedAt": "2026-10-03T17:15:27.847Z"
+    },
+    {
+      "id": 15,
+      "globalId": 339,
+      "text": "pwr 只读查询工具缺口（承接 pwr#14）：4 个 workflow_* 改 model-only 后，codemode 脚本与任何程序化调用方都读不到 pwr 运行态——workflow_control 的 list/status 动作虽已结构化，但 model-only 使其脚本不可达，outputSchema 因此没有程序化消费者。需要一个 direct + readOnlyHint 的只读查询工具（如 workflow_status）承载运行态查询。来源：pwr#14 交付时 worker 发现对齐文档自相矛盾（2026-10-04），当时按 A 方案把它排除在本次范围外",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-03T17:25:12.259Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
