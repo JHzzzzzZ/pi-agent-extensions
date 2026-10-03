@@ -282,6 +282,8 @@ members:
   - `team_list`：`{ teams: [{ name, source, members, leader? }] }`（`members` = 成员名，`leader` = leader 模型 `provider/id`，缺省即 pi 默认模型）
   - `team_transcript`：`{ actor, lines }`（行 = 文本结果按行拆开，同一截断口径）
   - `team_models`：`{ models: [{ provider, id, name }] }`
+
+> 缺口登记（按实写）：`model-only` 的 6 个工具对 codemode 脚本与任何程序化调用方**不可达**（安全边界：起/杀子进程、写盘、阻塞等人，`ToolAnnotations` 无阻塞字段）；`outputSchema`/`structuredContent` 目前的消费者**只有 codemode 脚本**（模型路径仍读文本结果，`details` 仍只服务 viewer/widget/`/team:status`/doctor）。
 - 命令：裸 `/team`（无参=列团队；带参=用法）+ 独立冒号命令 `/team:list`/`:run`/`:resume`/`:status [runId]`/`:stop [runId]`/`:view`（内含 `m` 发消息直接对话，多 run 时 `[`/`]` 切 run）/`:clear`/`:doctor`；派单统一 `/team:run <团队名> <任务>`，续跑统一 `/team:resume <runId> [补充指示]`（团队名可与子命令同名，v1.12.0 保留词概念退役）
 - Widget：输入栏下方可选中亮块（数据驱动：有活跃 run 才挂帧、落定自动卸载；默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员` 树，末行恒为成员行）——`main` 行 `enter` 只收起选中，leader/成员行 `enter` 直达查看器对应 actor；多 run 并行时折叠行 `agent-team · <N> run 并行 · ↓/← 查看详情`、展开为单 `main` 根 + 每 run 一棵 leader 子树（`enter` 打开该行 run 的查看器；仅 TUI 模式，详见 §4）
 - `/team:view`：全屏分栏会话记录查看器——左栏成员 roster、右栏成员对话/工具调用/错误实时可读（仅交互式 TUI）

@@ -81,6 +81,11 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 
 ## 已知坑
 
+- **工具面缺口（v1.34.0，#73，按实登记）**：
+  - `model-only` 的 6 个工具（`team_run`/`team_resume`/`team_stop`/`team_create`/`team_dispatch`/`team_ask`）**对 codemode 脚本与任何程序化调用方不可达**——这是刻意的安全边界（起/杀子进程、写盘、阻塞等人），不是遗漏；将来要脚本化派单必须是一次显式决策，且 `team_ask` 的阻塞语义不能进脚本（`ToolAnnotations` 无阻塞字段，`model-only` 是唯一护栏，缺口登记 general-todo#21）。
+  - `outputSchema` 的**消费者现状：只有 codemode**（宿主 `executeCodemode` 的 `toScriptValue` 按声明把 structuredContent 交给脚本）。模型路径仍只读文本 `content`（structuredContent 不进 LLM 消息），`details` 仍只服务 viewer/widget/`/team:status`/doctor——目前没有第二个消费方，改契约时别假设有人在读。
+  - 查询型四个的 structuredContent 是**新契约、不是 `details` 的镜像**：两者独立演进（改一个不必改另一个；但改 `details` 会碰 viewer/widget 的展示契约）。
+
 - **TUI 渲染问题纯函数测试抓不住**：/team:view 顶部堆叠修了三轮（f430112 → edaac69 → cc3aa17），全是"纸面正确"。真机问题必须接真实宿主测——`test/viewer-host.test.ts`（真实 TuiMainScreen headless 渲染 + VT 仿真）与 `test/viewer-mutex.test.ts`（打开互斥）就是为此存在；堆叠 bug 只在真实合成/diff 路径里，此文件破例实例化真实 pi-tui。
 - 组件工厂式逐帧重绘在某 bundle 宿主上产生逐秒追加残影行——亮块渲染回退为每秒 string[] setWidget（c87bd3f）；`PI_AGENT_TEAM_WIDGET=0` 整体关闭用于 A/B 诊断。
 - CJK/ANSI 行必须感知宽度截断补齐（`fitLine`）：曾因超宽行触发宿主 `doRender` 断言崩溃（d797975）。
