@@ -10,7 +10,7 @@
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 38 个（node:test） |
 | [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
-| [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令） | 213 个（node:test） |
+| [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令；工具面遵循 pi 1.0 契约：`loop_list` 结构化结果） | 222 个（node:test） |
 | [`src/extensions/goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 63 个 |
 | [`src/extensions/deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
 | [`src/extensions/opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
@@ -432,12 +432,12 @@ daily/window 调度与固定间隔共用同一套语义：错过的时间点不�
 
 **并发与轮次记录**（v1.8.0）：同一任务到期就拉起、不看上一轮是否在跑（旧「跳过并告警」行为已删）。本会话全部轮次挂在任务内存态；任务**快照只持久化运行中的轮次**，已结束轮次逐条写 append-only 会话条目 `loop-run-v1`（自定义条目不进 LLM 上下文），`session_start` 回放重建历史——否则「全量快照 × 全量轮次」会让会话文件随轮次平方级膨胀。通知口径：启动只在当轮为该任务第一轮时发，同任务在途轮次首次 ≥3 发一条 info 提示，完成每轮一条（带轮次起始时刻与各自会话 id）。删除 / 暂停 / 7 天过期不干预在途轮次（跑完只通知），只有会话关闭杀全部在途。模型经 `--model` 透传（`/loop:list` 的调度列以 `@provider/id` 标注），未知模型由子 pi 报错、轮次标记 failed。前台模式行为完全不变。
 
-**agent 工具**（v1.1.0，v1.2.0 起支持新调度语法，v1.3.0 起支持 `mode: "foreground" | "background"`，v1.4.0 起 `loop_create` 支持可选 `model` 参数——仅 `mode="background"` 生效，前台带 model 返回类型化错误）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"、"后台每小时用便宜模型帮我检查一次部署"这类自然语言请求由 agent 自行建任务。
+**agent 工具**（v1.1.0，v1.2.0 起支持新调度语法，v1.3.0 起支持 `mode: "foreground" | "background"`，v1.4.0 起 `loop_create` 支持可选 `model` 参数——仅 `mode="background"` 生效，前台带 model 返回类型化错误；v1.10.0 起工具面遵循 pi 1.0 契约）：模型可直接调用 `loop_create`（`task` + `schedule` 调度描述，语法同命令）、`loop_list`、`loop_delete` 管理定时任务——"每 30 分钟检查一次 X"、"每天早上 9 点做 X"、"每天 0 点到 9 点每小时巡检"、"后台每小时用便宜模型帮我检查一次部署"这类自然语言请求由 agent 自行建任务。工具面对 codemode 分级：`loop_create` / `loop_delete` 标 `exposure: "model-only"`（脚本不可调——脚本能给自己排期/删任务属风险路径），`loop_list` 保持 `direct` 并声明 `outputSchema` + `structuredContent`（稳定契约：`tasks[]` 带 id / kind / schedule / task / nextAt / background / running / recentRuns，字段取自任务结构与 `/loop:list` 口径），三个工具同属 `namespace: loop` 且带 `annotations`（读/写/开放世界）供权限门消费。
 
 ```bash
 cd src/extensions/loop
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
-npm test           # 213 个测试（node:test）
+npm test           # 222 个测试（node:test）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 

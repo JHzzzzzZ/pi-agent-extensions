@@ -1,6 +1,6 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ a81ba32
+> last verified @ 6c93a70
 
 ## 职责与边界
 
@@ -11,7 +11,7 @@
 - `parse.ts` — 命令解析 + 调度推进纯函数（`nextDailyOccurrence`/`nextWindowOccurrence`），nowMs 注入。改语法或跨天语义必看这里。
 - `tasks.ts` — 任务状态机与全部上限常量（`MAX_TASKS`/`MAX_TASK_LEN`/`RECURRING_TTL_MS`/`MAX_BG_SUMMARY_LEN`/`BG_HISTORY_DISPLAY`）、白名单快照序列化（`loop-tasks-v1`，只装运行中轮次）。改调度语义或快照格式必看。
 - `runner.ts` — 后台子 `pi --mode json -p` 契约与超时/强杀策略；`getPiInvocation` 解析 pi 可执行入口（`piEntry` 覆盖供真机冒烟在 node 下直接调用）。
-- `tools.ts` — 三个 agent 工具，经 `LoopToolDeps` 操作 index.ts 注入的任务状态（persist / refreshWidget 回调）。
+- `tools.ts` — 三个 agent 工具，经 `LoopToolDeps` 操作 index.ts 注入的任务状态（persist / refreshWidget 回调）。**pi 1.0 工具面契约（v1.10）**：`loop_create` / `loop_delete` 标 `exposure: "model-only"`（脚本不可调，codemode 里只能由模型发起的建/删任务不落到脚本手里）；`loop_list` 保持缺省 `direct` 并声明 `outputSchema` + `structuredContent`（稳定契约 `LoopTaskView`：`tasks[]` 的 id / kind / schedule / task / nextAt / background / running / recentRuns，字段取自 `LoopTask` 与 widget 口径，**不镜像内部 `details`**）；三工具同属 `namespace: loop`，`annotations` 按 general-todo#21 映射表。
 - `index.ts` — 对齐秒节拍刷新（`aligned-ticker.ts`）、followUp 送达、widget 渲染、生命周期（session_start / shutdown / 模块级 dispose）。
 - `aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，跨插件契约见 `docs/cross/status-bar.md`）。
 - `widget-band.ts` — widget 排序带（每插件一份，跨插件契约同上卡）：只登记 band key `30:loop` 的逻辑行，由 band key 最小的可见段当 owner 一次写宿主单键 `widget-band`（宿主每次 setWidget 都 delete+set，各写各键会逐秒换位）。`test/widget-band.test.ts` 锁本拷贝的语义（合并顺序 / owner 移交 / 卸载 / 文本指纹 / 异常隔离）。
@@ -39,6 +39,8 @@
 - 自包含：只依赖 pi SDK，不引其它扩展目录；快照格式对旧快照向后兼容（schedule 字段缺省即固定间隔模式，tasks.ts）。
 - 命令面为冒号式（v1.6.0）：裸 `/loop` 只管创建与用法（无子命令）；管理走独立静态命令 `/loop:list|:pause|:resume|:delete|:clear`，旧空格管理词只提示改名（parse.ts 只解析 create/usage，看不得命令词）。2026-09 曾以「空格子命令式为全仓基准」同步过文档口径，v1.12.0 全仓改回冒号后本条恢复本插件自身的冒号面。
 - 调度不依赖 UI：session_start 无论 `hasUI` 都启动计时器；widget 走 `hasUI` 守卫且传纯无样式字符串（`ExtensionUIContext` 无 theme 字段），写入经 `widget-band.ts`（本插件不写自己的宿主键）。
+- **工具面契约（v1.10）与内部结构分离**：`loop_list` 的 `structuredContent` 是给脚本的稳定契约（codemode 脚本拿到它而不是文本），`details`（现为 `{ count }`）继续只作内部/测试口径——两者同源但**不得互相镜像**；快照序列化（`loop-tasks-v1`）与 widget 渲染一律用任务内部结构，不读 `structuredContent`，所以快照格式不因契约字段变化而变。
+- 契约里的 `kind` 与 `schedule` 两种口径同源：`kind` 取 `recurring`/`LoopTask.schedule.kind`（`once`/`interval`/`daily`/`window`），`schedule` 用 `describeRecurrence` 的文本（与 `/loop:list` 一致）；暂停任务不给 `nextAt`（widget 的 — 口径）；轮次上限不新造：运行中全部 + 最近 `BG_HISTORY_DISPLAY`（10）条已完成，截断常量仍在 tasks.ts。
 - 时钟一律注入 `nowMs`，代码里禁止直接 `Date.now()`（仓库时钟约定，见 docs/cross/deps-ports.md）。
 
 ## 已知坑
@@ -52,8 +54,9 @@
 
 ## 改动清单
 
-- 必跑：`cd src/extensions/loop && npm install && npm test`（213 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.7.0 → 根 2.49.0 模式）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
+- 必跑：`cd src/extensions/loop && npm install && npm test`（222 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.10.0 → 根 2.49.0 模式）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
+- 工具面契约测试在 `test/index.test.ts` 的两组：「工具面契约」断言 exposure / annotations / namespace，「loop_list 结构化结果」断言字段并让 typebox `Value.Check` 按 `outputSchema` 校验（空会话也要过）；测试文件 import `typebox/value` ⇒ `npm test` 需先 `npm install`（同 pwr 套件）。改契约字段时 `tools.ts` 的 `LoopTaskView` / outputSchema / 本卡契约段三处同改。
 - opt-in 真机冒烟（需鉴权 + 网络，不进 npm test）：`node src/extensions/loop/test/bg-overlap-smoke.mjs`——真实 pi 子进程两轮并发，校对各自 session id/会话文件与并发峰值。
-- 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台并发重叠/阈值提示/interrupted；widget 断言按宿主键 `widget-band`）、test/widget-band.test.ts（排序带语义）、test/tasks.test.ts（调度推进、7 天过期边界与轮次快照/回放）、test/runner.test.ts（子进程契约 + label/onSessionId/piEntry）、test/parse.test.ts（语法与闭区间窗口）。
+- 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台并发重叠/阈值提示/interrupted + 工具面契约；widget 断言按宿主键 `widget-band`）、test/widget-band.test.ts（排序带语义）、test/tasks.test.ts（调度推进、7 天过期边界与轮次快照/回放）、test/runner.test.ts（子进程契约 + label/onSessionId/piEntry）、test/parse.test.ts（语法与闭区间窗口）。
 - fake 模式：进程边界手写 fake child + fake spawn（runner.test.ts，参照 deps-ports.md fake 选型规则 1）；时钟经 nowMs 注入手动推进，不引 mock 库。
 - 改调度语义：parse.ts 与 tasks.ts 的推进逻辑两端同看，并补 parse.test.ts 边界用例（午夜 / 窗口端点 / 已过时刻排明天）。
