@@ -447,6 +447,7 @@ npm run typecheck  # tsc --noEmit（strict，0 错误）
 
 - `/goal` 查看状态（目标/已评估轮数/时长/评估器最近判定）；`/goal:clear|:stop|:off|:reset|:none|:cancel` 停止（共享同一动作）；`/goal:resume` 在手动中断或评估器连续失败暂停后恢复；`/goal:status` 为状态副本
 - 每会话一个活跃目标，条件最长 4000 字符；恢复会话时目标保留但轮数/计时重置；不改变任何工具权限语义
+- 评估器经宿主机路由与鉴权（`ctx.modelRegistry.streamSimple()`，需 pi ≥ 0.86）：会话模型是虚拟模型时先路由到物理模型再请求，opencode 系必需的 `x-opencode-session` 由宿主 provider 层按会话 id 注入
 - 状态行「已运行」时长在目标活动/暂停期间每秒刷新（对齐秒节拍，与计时/循环状态条同帧）
 - 手动中断（Esc）自动暂停；评估器连续 3 次失败暂停（瞬时失败不杀循环）
 
