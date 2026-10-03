@@ -37,6 +37,16 @@ import { resolveModelCaliber } from "./model-caliber.ts";
 import { TeamRunCoordinator, failedRunRecord, formatStatusSnapshot, type ResumeContext, type RunStatusSnapshot, type UiPort } from "./cockpit.ts";
 import { modelLookupFrom, preflightTeamModels } from "./preflight.ts";
 import {
+  DISPATCH_ANNOTATIONS,
+  READ_ONLY_ANNOTATIONS,
+  TEAM_TOOL_NAMESPACE,
+  TEAM_STATUS_OUTPUT,
+  TEAM_TRANSCRIPT_OUTPUT,
+  WRITE_ANNOTATIONS,
+  statusStructured,
+  transcriptStructured,
+} from "./tool-contract.ts";
+import {
   buildResumePrompt,
   findRunStatus,
   parseMemberModelEnv,
@@ -391,6 +401,10 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string, opts: AgentTeamE
     label: "Team Dispatch",
     description:
       "把子任务派发给团队成员（并行执行，结果按成员分节返回）。一次最多 8 个子任务；有依赖的子任务分多次调用。环境级失败重试无效；有派发预算上限。",
+    // 派单起成员子进程：脚本不可达（exposure 见 tool-contract.ts）。
+    exposure: "model-only",
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: DISPATCH_ANNOTATIONS,
     parameters: Type.Object({
       tasks: Type.Array(
         Type.Object({
@@ -485,6 +499,9 @@ function registerLeaderMode(pi: ExtensionAPI, teamFile: string, opts: AgentTeamE
     label: "Team Ask",
     description:
       "向用户（主会话）提问并阻塞等待回答：需求有歧义、需要人类拍板、或影响结果的假设无法自行判断时使用。不传 options 为自由文本输入，传 options（2~10 项）为选项选择。超时/被取消/主会话无 UI 时返回“未获回答”，据此继续任务并在报告中说明假设。",
+    // 阻塞等人：ToolAnnotations 没有阻塞语义，model-only 是唯一护栏（general-todo#21 缺口）。
+    exposure: "model-only",
+    namespace: TEAM_TOOL_NAMESPACE,
     parameters: Type.Object({
       question: Type.String({ description: "要问用户的问题：写清上下文、影响与期望（用户看不到你与成员的对话，必须自包含）" }),
       options: Type.Optional(
@@ -1332,6 +1349,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     label: "Run Agent Team",
     description:
       "把一个任务派给指定的 agent team：leader 会拆解任务并通过 team_dispatch 调度成员协同完成。同一会话最多 3 个 run 并行。默认后台运行、立即返回，最终报告完成后自动送达本会话（followUp），等待期间用户可继续对话；wait=true 时同步等待整个 run 结束并内联返回报告（阻塞主会话，不推荐）。同一团队可反复派单复用。",
+    // 起 leader 子进程：脚本不可达（exposure 见 tool-contract.ts）。
+    exposure: "model-only",
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: DISPATCH_ANNOTATIONS,
     promptGuidelines: [
       "派单前先用 team_list 确认团队存在且成员配置合适；不确定时先问用户。",
       "task 要自包含：目标、范围、验收标准。成员和 leader 都看不到这段对话。",
@@ -1434,6 +1455,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     name: "team_status",
     label: "Agent Team Status",
     description: "查看指定 run / 全部活跃 run / 最近一次 agent team run 的状态：各成员在做什么、轮次、费用、worktree。",
+    // 查询型：脚本可调（direct），结构化输出见 tool-contract.ts。
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: READ_ONLY_ANNOTATIONS,
+    outputSchema: TEAM_STATUS_OUTPUT,
     promptGuidelines: [
       "用户问团队进度时调用本工具并转述结果；后台 run 进行中也可以随时调用。",
       "多个 run 并行时省略 runId 返回全部活跃 run 的分节状态；传 runId 只看那一个。",
@@ -1445,8 +1470,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       const runId = typeof params?.runId === "string" ? params.runId.trim() : "";
+      const snapshot = runId ? state.coordinator.getStatus(runId) : state.coordinator.getStatus();
       return {
         content: [{ type: "text" as const, text: statusText(ctx, runId || undefined) }],
+        structuredContent: statusStructured(snapshot, Date.now(), runId || undefined),
         details: {},
       };
     },
@@ -1459,6 +1486,9 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     label: "Team Member Transcript",
     description:
       "查看当前/最近一次 agent team run 中 leader 或指定成员的会话记录（对话、工具调用、错误）。用户想深入了解某个成员具体做了什么时调用。",
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: READ_ONLY_ANNOTATIONS,
+    outputSchema: TEAM_TRANSCRIPT_OUTPUT,
     promptGuidelines: [
       "member 传成员名；传 \"leader\" 查看 leader 的调度过程。可用成员名先看 team_status。",
       "记录可能很长：转述要点而不是全文粘贴。",
@@ -1469,18 +1499,24 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx: ExtensionContext) {
+      const actor = params.member && params.member !== "leader" ? sanitizeActorName(params.member) : LEADER_ACTOR;
       const data = buildViewerData();
       if (!data.runId) {
-        return { content: [{ type: "text" as const, text: "当前没有 team run 记录。" }], details: {} };
+        return {
+          content: [{ type: "text" as const, text: "当前没有 team run 记录。" }],
+          structuredContent: transcriptStructured(actor, ""),
+          details: {},
+        };
       }
-      const actor = params.member && params.member !== "leader" ? sanitizeActorName(params.member) : LEADER_ACTOR;
       const text = formatTranscriptText(data, actor);
       const body =
         text.startsWith("没有 ") && data.actors.length > 0
           ? `${text}\n可用的记录：${data.actors.map((a) => a.label).join("、")}`
           : text;
+      const visible = truncateUtf8(body, MAX_RESULT_BYTES);
       return {
-        content: [{ type: "text" as const, text: truncateUtf8(body, MAX_RESULT_BYTES) }],
+        content: [{ type: "text" as const, text: visible }],
+        structuredContent: transcriptStructured(actor, visible),
         details: {
           actors: data.actors.map((a) => ({
             actor: a.actor,
@@ -1503,6 +1539,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     label: "Stop Agent Team Run",
     description:
       "按 runId 停止正在运行的 agent team run（leader 与所有成员子进程）。同一会话可并行 3 个 run；省略 runId 时恰 1 个活跃则停它、≥2 个活跃必须显式指定。停止后该 run 的报告 followUp 不再送达。",
+    // 杀子进程：脚本不可达（exposure 见 tool-contract.ts）。
+    exposure: "model-only",
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: WRITE_ANNOTATIONS,
     promptGuidelines: [
       "派单变卦/超预算/跑偏需要停止时：先 team_status 确认活动 run 与其 runId，再调本工具。",
       "runId 可选：恰 1 个活跃可省略；≥2 个并行时省略返回 RUN_ID_REQUIRED 并列出活跃 runId；未知返回 RUN_NOT_FOUND；已结束返回 RUN_ALREADY_FINISHED（都不抛异常）。",
@@ -1607,6 +1647,10 @@ function registerCockpitMode(pi: ExtensionAPI, opts: AgentTeamExtensionOptions =
     label: "Resume Agent Team Run",
     description:
       "续跑一个 failed/aborted 的 agent team run：新 leader 打开父 run 的 leader 会话原地继续（完整对话上下文，无交接摘要），并复用父 run 的 worktree（含未提交改动）。可为本次续跑单独覆盖 leader/成员模型（不改团队文件，含 provider/id:level 后缀）。同一会话最多 3 个 run 并行。默认后台运行、报告自动送达；wait=true 同步等待。仅 failed/aborted 可续跑；completed 请用 team_run。",
+    // 起 leader 子进程：脚本不可达（exposure 见 tool-contract.ts）。
+    exposure: "model-only",
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: DISPATCH_ANNOTATIONS,
     promptGuidelines: [
       "用户说「接着跑/续跑/换模型继续」时：先 team_status 拿 failed/aborted 的 runId，再调本工具。",
       "模型额度耗尽的典型用法：leaderModel 换成有额度的 provider/id（成员同理传 memberModels），本次续跑 run 生效，团队文件不动。",

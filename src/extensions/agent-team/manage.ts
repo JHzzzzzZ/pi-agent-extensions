@@ -13,6 +13,15 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { buildTeamFromToolInput, createTeamFile, discoverTeams, globalTeamsDir } from "./config.ts";
+import {
+  READ_ONLY_ANNOTATIONS,
+  TEAM_LIST_OUTPUT,
+  TEAM_MODELS_OUTPUT,
+  TEAM_TOOL_NAMESPACE,
+  WRITE_ANNOTATIONS,
+  modelsStructured,
+  teamListStructured,
+} from "./tool-contract.ts";
 import { MAX_RESULT_BYTES, truncateUtf8, type TeamConfig } from "./types.ts";
 
 export interface ManageDeps {
@@ -90,8 +99,14 @@ export function formatModelCatalog(
   return lines.join("\n");
 }
 
+/** team_models 的文本目录 + structuredContent 数据源（同一遍历，两个口径不各算一遍）。 */
+export interface ModelCatalog {
+  text: string;
+  models: Array<{ provider: string; id: string; name: string }>;
+}
+
 /** Builds the team_models tool listing from the host registry. */
-export async function buildModelCatalog(registry: ModelRegistryPort): Promise<string> {
+export async function buildModelCatalog(registry: ModelRegistryPort): Promise<ModelCatalog> {
   try {
     await registry.refresh?.();
   } catch {
@@ -114,7 +129,10 @@ export async function buildModelCatalog(registry: ModelRegistryPort): Promise<st
       return provider;
     }
   };
-  return formatModelCatalog(available, Array.from(unconfigured).sort(), displayName);
+  return {
+    text: formatModelCatalog(available, Array.from(unconfigured).sort(), displayName),
+    models: available.map((model) => ({ provider: model.provider, id: model.id, name: model.name })),
+  };
 }
 
 export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): void {
@@ -122,6 +140,10 @@ export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): vo
     name: "team_models",
     label: "List Available Models",
     description: "列出当前 pi 已配置鉴权的所有供应商与模型（team_create 时的模型 id 必须从这里选）。",
+    // 查询型：脚本可调（direct），结构化输出见 tool-contract.ts。
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: READ_ONLY_ANNOTATIONS,
+    outputSchema: TEAM_MODELS_OUTPUT,
     promptGuidelines: ["在 team_create 之前调用本工具，把真实存在的 provider/id 写进团队配置，避免派单时模型 404。"],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
@@ -129,12 +151,17 @@ export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): vo
       if (!registry) {
         return {
           content: [{ type: "text" as const, text: "当前环境没有 model registry（非交互模式？）。" }],
+          structuredContent: modelsStructured([]),
           details: { code: "NO_REGISTRY" },
           isError: true,
         };
       }
-      const text = await buildModelCatalog(registry);
-      return { content: [{ type: "text" as const, text: truncateUtf8(text, MAX_RESULT_BYTES) }], details: {} };
+      const catalog = await buildModelCatalog(registry);
+      return {
+        content: [{ type: "text" as const, text: truncateUtf8(catalog.text, MAX_RESULT_BYTES) }],
+        structuredContent: modelsStructured(catalog.models),
+        details: {},
+      };
     },
   });
 
@@ -143,6 +170,10 @@ export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): vo
     label: "Create Agent Team",
     description:
       "创建一个可复用的 agent team（写入团队定义文件）。创建后即可用 /team:run <name> <任务> 或 team_run 工具反复派单。",
+    // 写团队定义文件：脚本不可达（exposure 见 tool-contract.ts）。
+    exposure: "model-only",
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: WRITE_ANNOTATIONS,
     promptGuidelines: [
       "创建团队前必须先调用 team_models 确认可用的 provider/id，再把真实存在的模型写进配置。",
       "创建团队前先与用户确认：团队用途、leader 的模型与策略 prompt 要点、每个成员的职责/后端模型/prompt。",
@@ -205,6 +236,9 @@ export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): vo
     name: "team_list",
     label: "List Agent Teams",
     description: "列出所有已定义的 agent team（含成员与模型），用于判断复用已有团队还是新建。",
+    namespace: TEAM_TOOL_NAMESPACE,
+    annotations: READ_ONLY_ANNOTATIONS,
+    outputSchema: TEAM_LIST_OUTPUT,
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       const cwd = deps.cwd ?? ctx.cwd;
@@ -220,7 +254,11 @@ export function registerManageTools(pi: ExtensionAPI, deps: ManageDeps = {}): vo
       for (const bad of invalid) {
         lines.push(`⚠ 无效的团队文件（未加载）: ${bad.file} — ${bad.message}`);
       }
-      return { content: [{ type: "text" as const, text: truncateUtf8(lines.join("\n"), MAX_RESULT_BYTES) }], details: { count: teams.length } };
+      return {
+        content: [{ type: "text" as const, text: truncateUtf8(lines.join("\n"), MAX_RESULT_BYTES) }],
+        structuredContent: teamListStructured(teams),
+        details: { count: teams.length },
+      };
     },
   });
 }
