@@ -359,15 +359,17 @@
       "id": 22,
       "globalId": 338,
       "text": "虚拟模型路由（pi 1.0 pi.registerVirtualModel）：ModelRouteRequest{model,thinkingLevel,reason=user|continuation|retry|direct,previous?,failed?,state?,messages,signal} → ModelRoute{model,thinkingLevel,state?}，state 经 pi.virtual-model-state 条目随会话分支持久化；检测虚拟模型只能靠 model.api === pi-virtual（isVirtualModel 与 VIRTUAL_MODEL_API 未从包根导出，属上游导出缺口）；应注册在用户已有凭据的 provider 下——agent-team preflight 的 hasConfiguredAuth 实际查 model.provider（runtime.hasConfiguredAuth(model.provider)），注册到无凭据的新 provider 会吃 warning。可借鉴 pi 自带 examples/extensions/jev-router.ts（Jev 分类器路由），与 goal#8、agent-team#71/#72 同族",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/virtual-model-router",
       "tags": [],
       "priority": 5,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "合并 150155c（agent-team 之外的新扩展 virtual-model-router，14 扩展 / 19 套件）：registerVirtualModel 按 reason 纯规则路由（user→强档 / continuation→快档 / retry→溢出换长上下文档否则升档 / direct→固定档），策略集中在 config.ts 单一表，fail-closed（UNKNOWN_REASON / MODEL_NOT_IN_CATALOG 不静默回落）；TDD 20 例（含真实 ModelRegistry/ModelRuntime 接缝）；卡 + 规格 docs/specs/virtual-model-router.md + 真机清单 docs/virtual-model-router-checklist.md；全量门 19/19 套件 2118 用例绿 + typecheck 0；跨厂商评审 2 轮无新意见（kimi-coding/k3-256k：第 1 轮 2 采纳 1 归位、第 2 轮 OK）；真机验收（/model 可见、两类物理模型实测、retry 证据、/resume 与 /tree 分支 state、agent-team 无鉴权 warning）待用户跑清单"
+      ],
       "createdAt": "2026-10-03T17:03:50.661Z",
       "claimedAt": "2026-10-03T17:06:46.427Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T15:21:06.719Z",
       "alignedAt": "2026-10-03T17:15:29.100Z"
     },
     {
