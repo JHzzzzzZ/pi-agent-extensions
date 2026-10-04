@@ -15,6 +15,10 @@
  *   /goal:clear|:stop|:off|:reset|:none|:cancel   清除目标(别名共享同一动作)
  *   /goal:resume            手动中断/评估器连续失败暂停后恢复
  *
+ * 评估器调用路径(goal-todo#10):经 `ctx.modelRegistry.streamSimple()` 走宿主路由与鉴权,
+ * 不再直调 provider——虚拟模型(api=pi-virtual)由此先路由再请求,opencode 系必需的
+ * x-opencode-session 由 provider 层从 options.sessionId 注入。需 pi ≥ 0.86（streamSimple 引入版本）。
+ *
  * 安装:复制本目录到 ~/.pi/agent/extensions/goal/ 或 <项目>/.pi/extensions/goal/,
  *       在 Pi 中执行 /reload。卸载即删除目录。
  * 测试:node --experimental-strip-types --test goal/index.test.ts
@@ -79,14 +83,12 @@ export const RETIRED_GOAL_SUBCOMMANDS: Record<string, { command: string; usage: 
   cancel: { command: GOAL_SUBCOMMANDS.cancel, usage: "/goal:cancel" },
   resume: { command: GOAL_SUBCOMMANDS.resume, usage: "/goal:resume" },
 };
-/** opencode 系模型( provider id 或 baseUrl host )需注入 x-opencode-session 会话头(对齐宿主 provider-attribution) */
-const OPENCODE_HOST = "opencode.ai";
 
 // ===== 类型 =====
 
 export type EvaluatorResult =
   | { ok: true; met: boolean; reason: string }
-  | { ok: false; code: "no-model" | "no-provider" | "auth" | "evaluator-error" | "bad-verdict"; message?: string };
+  | { ok: false; code: "no-model" | "evaluator-error" | "bad-verdict"; message?: string };
 
 export interface GoalEvaluatorInput {
   goal: string;
@@ -290,25 +292,9 @@ export function extractAssistantText(messages: unknown[]): string {
   return joined.length > MAX_EVIDENCE_CHARS ? joined.slice(-MAX_EVIDENCE_CHARS) : joined;
 }
 
-// ===== 纯函数:opencode 会话头(对齐宿主 pi-coding-agent/core/provider-attribution 的 getSessionHeaders) =====
+// ===== 真实评估器:当前会话模型的一次小调用 =====
 
-/** 判定模型是否属于 opencode 系:provider id 为 opencode/opencode-go,或 baseUrl host 为 opencode.ai */
-export function isOpencodeModel(model: { provider?: unknown; baseUrl?: unknown }): boolean {
-  if (model.provider === "opencode" || model.provider === "opencode-go") return true;
-  try {
-    return new URL(String(model.baseUrl)).hostname === OPENCODE_HOST;
-  } catch {
-    return false;
-  }
-}
-
-/** 有 sessionId 才返回会话头;无则 undefined(与宿主 if (!sessionId) return undefined 一致) */
-export function buildOpencodeSessionHeaders(sessionId?: string): Record<string, string> | undefined {
-  if (!sessionId) return undefined;
-  return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
-}
-
-/** 防御式取会话 id:sessionManager 缺失/getSessionId 不存在或抛异常均视为无 sessionId */
+/** 防御式取会话 id:sessionManager 缺失/getSessionId 不存在或抛异常均视为无 sessionId（provider 会话头随之省略） */
 function getSessionIdSafe(ctx: ExtensionContext): string | undefined {
   try {
     const id = (ctx.sessionManager as { getSessionId?: unknown } | undefined)?.getSessionId;
@@ -318,39 +304,23 @@ function getSessionIdSafe(ctx: ExtensionContext): string | undefined {
   }
 }
 
-// ===== 真实评估器:当前会话模型的一次小调用 =====
-
 export function createModelEvaluator(options: { nowMs?: () => number } = {}): GoalEvaluator {
   const nowMs = options.nowMs ?? (() => Date.now());
   return async (input, ctx) => {
     const model = ctx.model;
     if (!model) return { ok: false, code: "no-model" };
-    let provider: ReturnType<typeof ctx.modelRegistry.getProvider>;
-    try {
-      provider = ctx.modelRegistry.getProvider(model.provider);
-    } catch (error) {
-      return { ok: false, code: "evaluator-error", message: error instanceof Error ? error.message : String(error) };
-    }
-    if (!provider) return { ok: false, code: "no-provider", message: model.provider };
-    let auth: Awaited<ReturnType<typeof ctx.modelRegistry.getApiKeyAndHeaders>>;
-    try {
-      auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-    } catch (error) {
-      return { ok: false, code: "auth", message: error instanceof Error ? error.message : String(error) };
-    }
-    if (!auth.ok) return { ok: false, code: "auth", message: auth.error };
-    // 评估器直调 provider.stream,绕过宿主 streamFn 的请求头合并;opencode 系模型(Console Go)强制要求
-    // x-opencode-session,缺失返回 400 MissingSessionID——此处自行注入与宿主等价的会话头,
-    // auth.headers 在后保持宿主合并顺序(请求头覆盖会话头)。
-    const sessionHeaders = isOpencodeModel(model) ? buildOpencodeSessionHeaders(getSessionIdSafe(ctx)) : undefined;
+    // 走宿主 modelRegistry.streamSimple 而不是直调 provider（pi 1.0 起）:
+    // ① 虚拟模型（api=pi-virtual）由宿主先路由再请求——直调会跳过路由而必然失败;
+    // ② 凭据/请求头由宿主解析;opencode 系必需的 x-opencode-session 由 provider 层
+    //    从 options.sessionId 注入,故这里只需如实传会话 id;
+    // ③ 未知 provider / 未配置凭据变成流内 error 事件(lazyStream 契约),按同样失败语义处理。
     const message: UserMessage = { role: "user", content: buildEvaluatorPrompt(input), timestamp: nowMs() };
     let finalMessage: AssistantMessage | undefined;
     try {
-      const stream = provider.stream(model, { messages: [message] }, {
-        apiKey: auth.apiKey,
-        headers: { ...sessionHeaders, ...auth.headers },
+      const stream = ctx.modelRegistry.streamSimple(model, { messages: [message] }, {
         maxTokens: MAX_EVALUATOR_TOKENS,
         signal: ctx.signal,
+        sessionId: getSessionIdSafe(ctx),
       });
       for await (const event of stream) {
         if (event.type === "done") finalMessage = event.message;

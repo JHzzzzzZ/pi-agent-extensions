@@ -10,6 +10,7 @@ import {
   GOAL_CONTINUE_MESSAGE,
   GOAL_RESULT_ENTRY,
   GOAL_STATE_ENTRY,
+  MAX_EVALUATOR_TOKENS,
   MAX_GOAL_LENGTH,
   STATUS_KEY,
   STATUS_SEPARATOR,
@@ -577,8 +578,11 @@ test("session_shutdown:清理状态与运行态,此后 settle 无动作", async 
 
 // ===== 真实评估器(结构化 fake,无网络) =====
 
-function makeEvaluatorCtx(model: unknown, registry: unknown): ExtensionContext {
-  return { model, modelRegistry: registry, signal: undefined } as unknown as ExtensionContext;
+/** 标记信号：只有真透传 ctx.signal 的调用才会传出这同一个实例（默认 undefined 的断言是同义反复,锁不住取消链路）。 */
+const markerSignal = AbortSignal.abort("goal-evaluator-test-marker");
+
+function makeEvaluatorCtx(model: unknown, registry: unknown, sessionManager?: unknown): ExtensionContext {
+  return { model, modelRegistry: registry, signal: markerSignal, sessionManager } as unknown as ExtensionContext;
 }
 
 function assertErrCode(result: EvaluatorResult, code: string): void {
@@ -586,22 +590,101 @@ function assertErrCode(result: EvaluatorResult, code: string): void {
   assert.equal(result.code, code);
 }
 
-test("createModelEvaluator:正常解析 done 事件 JSON,过滤 thinking", async () => {
+/** fake registry：评估器只走 streamSimple（路由 + 鉴权 + 会话头注入都在宿主 ModelRegistry 里）。 */
+function makeFakeRegistry(
+  streamSimple: (model: unknown, context: unknown, options: Record<string, unknown>) => AsyncIterable<unknown>,
+): unknown {
+  return { streamSimple, getProvider: () => { throw new Error("评估器不应再直调 provider"); } };
+}
+
+function doneStream(text: string): AsyncIterable<unknown> {
+  return (async function* () {
+    yield { type: "done", message: { content: [{ type: "thinking", thinking: "内部思考" }, { type: "text", text }] } };
+  })();
+}
+
+test("createModelEvaluator:经 modelRegistry.streamSimple 调用,过滤 thinking 后解析 JSON", async () => {
   const evaluate = createModelEvaluator({ nowMs: () => 0 });
-  const provider = {
-    stream: async function* () {
-      yield {
-        type: "done",
-        message: { content: [{ type: "thinking", thinking: "内部思考" }, { type: "text", text: '{"met": true, "reason": "完成"}' }] },
-      };
-    },
-  };
-  const registry = {
-    getProvider: (id: string) => (id === "p1" ? provider : undefined),
-    getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }),
-  };
+  const registry = makeFakeRegistry(() => doneStream('{"met": true, "reason": "完成"}'));
   const result = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx({ provider: "p1" }, registry));
   assert.deepEqual(result, { ok: true, met: true, reason: "完成" });
+});
+
+test("createModelEvaluator:maxTokens 与 sessionId 交给 streamSimple(宿主据此注入 provider 会话头)", async () => {
+  const evaluate = createModelEvaluator({ nowMs: () => 0 });
+  const calls: Array<{ model: unknown; context: any; options: any }> = [];
+  const registry = makeFakeRegistry((model, context, options) => {
+    calls.push({ model, context, options });
+    return doneStream('{"met": false, "reason": "还没完"}');
+  });
+  const ctx = makeEvaluatorCtx(
+    { provider: "opencode-go", id: "deepseek-v4.1-flash", api: "openai-completions" },
+    registry,
+    { getSessionId: () => "s-123" },
+  );
+  const result = await evaluate({ goal: "目标", evidence: "证据" }, ctx);
+  assert.deepEqual(result, { ok: true, met: false, reason: "还没完" });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.model, { provider: "opencode-go", id: "deepseek-v4.1-flash", api: "openai-completions" });
+  assert.equal(calls[0]?.options.maxTokens, MAX_EVALUATOR_TOKENS);
+  assert.equal(calls[0]?.options.sessionId, "s-123");
+  assert.equal(calls[0]?.options.signal, markerSignal, "透传 ctx.signal 的同一引用(取消链路)");
+  assert.equal(calls[0]?.options.headers, undefined, "不再自拼 x-opencode-* 头,交由宿主 provider 层按 sessionId 注入");
+  assert.equal(calls[0]?.context.messages[0]?.role, "user");
+  assert.match(String(calls[0]?.context.messages[0]?.content), /目标/);
+});
+
+test("createModelEvaluator:虚拟模型会话(api=pi-virtual)经宿主路由后仍产出判定", async () => {
+  const evaluate = createModelEvaluator({ nowMs: () => 0 });
+  const physical = { provider: "opencode-go", id: "deepseek-v4.1-flash", api: "openai-completions" };
+  const virtual = { provider: "opencode-go", id: "router", api: "pi-virtual" };
+  const calls: Array<{ model: any; options: any }> = [];
+  const registry: any = {
+    // 复刻宿主 ModelRuntime.streamSimple 的虚拟模型分支:路由到物理模型后递归,
+    // 非凭据项(含 sessionId)随路由透传;物理模型分支才真正出流。
+    streamSimple: (model: any, context: unknown, options: any) => {
+      calls.push({ model, options });
+      return model.api === "pi-virtual" ? registry.streamSimple(physical, context, options) : doneStream('{"met": true, "reason": "路由后判定成功"}');
+    },
+  };
+  const ctx = makeEvaluatorCtx(virtual, registry, { getSessionId: () => "s-1" });
+  const result = await evaluate({ goal: "g", evidence: "e" }, ctx);
+  assert.deepEqual(result, { ok: true, met: true, reason: "路由后判定成功" });
+  assert.equal(calls.length, 2, "虚拟模型一次入路由,物理模型一次出流");
+  assert.equal(calls[0]?.model, virtual);
+  assert.equal(calls[1]?.model, physical);
+  assert.equal(calls[1]?.options.sessionId, "s-1", "路由后 sessionId 仍透传(opencode 会话头据此注入)");
+});
+
+test("createModelEvaluator:虚拟模型未注册时返回 evaluator-error(修复前的直调失效路径)", async () => {
+  const evaluate = createModelEvaluator({ nowMs: () => 0 });
+  const registry = makeFakeRegistry(() => {
+    throw new Error("Virtual model opencode-go/router is not registered.");
+  });
+  const result = await evaluate(
+    { goal: "g", evidence: "e" },
+    makeEvaluatorCtx({ provider: "opencode-go", id: "router", api: "pi-virtual" }, registry),
+  );
+  assertErrCode(result, "evaluator-error");
+  assert.equal(result.ok === false ? result.message : undefined, "Virtual model opencode-go/router is not registered.");
+});
+
+test("createModelEvaluator:无 sessionId(缺失/抛异常)时仍可评估且不崩溃", async () => {
+  const evaluate = createModelEvaluator({ nowMs: () => 0 });
+  const calls: Array<Record<string, unknown>> = [];
+  const registry = makeFakeRegistry((_model, _context, options) => {
+    calls.push(options);
+    return doneStream('{"met": true, "reason": "完成"}');
+  });
+  const noManager = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx({ provider: "opencode-go" }, registry));
+  assert.ok(noManager.ok);
+  assert.equal(calls[0]?.sessionId, undefined);
+  const throwing = await evaluate(
+    { goal: "g", evidence: "e" },
+    makeEvaluatorCtx({ provider: "opencode-go" }, registry, { getSessionId: () => { throw new Error("boom"); } }),
+  );
+  assert.ok(throwing.ok);
+  assert.equal(calls[1]?.sessionId, undefined);
 });
 
 test("createModelEvaluator:各失败路径返回结构化错误码", async () => {
@@ -609,161 +692,49 @@ test("createModelEvaluator:各失败路径返回结构化错误码", async () =>
   const noModel = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx(undefined, {}));
   assertErrCode(noModel, "no-model");
 
-  const noProvider = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx(
-    { provider: "p" },
-    { getProvider: () => undefined, getApiKeyAndHeaders: async () => ({ ok: true }) },
-  ));
-  assertErrCode(noProvider, "no-provider");
-
-  const authFail = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx(
-    { provider: "p" },
-    { getProvider: () => ({}), getApiKeyAndHeaders: async () => ({ ok: false, error: "未配置 API key" }) },
-  ));
-  assertErrCode(authFail, "auth");
-
+  // 鉴权/未知 provider 由宿主在路由层判失败:以流内 error 事件呈现(lazyStream 契约)
   const streamError = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx(
     { provider: "p" },
-    {
-      getProvider: () => ({ stream: async function* () { yield { type: "error", error: { errorMessage: "boom" } }; } }),
-      getApiKeyAndHeaders: async () => ({ ok: true }),
-    },
+    makeFakeRegistry(() => (async function* () { yield { type: "error", error: { errorMessage: "Provider is not configured: p" } }; })()),
   ));
   assertErrCode(streamError, "evaluator-error");
+  assert.equal(streamError.ok === false ? streamError.message : undefined, "Provider is not configured: p");
 
   const syncThrow = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx(
     { provider: "p" },
-    {
-      getProvider: () => {
-        throw new Error("sync boom");
-      },
-      getApiKeyAndHeaders: async () => ({ ok: true }),
-    },
+    makeFakeRegistry(() => {
+      throw new Error("sync boom");
+    }),
   ));
   assertErrCode(syncThrow, "evaluator-error");
 
   const junk = await evaluate({ goal: "g", evidence: "e" }, makeEvaluatorCtx(
     { provider: "p" },
-    {
-      getProvider: () => ({ stream: async function* () { yield { type: "done", message: { content: [{ type: "text", text: "不是 JSON" }] } }; } }),
-      getApiKeyAndHeaders: async () => ({ ok: true }),
-    },
+    makeFakeRegistry(() => doneStream("不是 JSON")),
   ));
   assertErrCode(junk, "bad-verdict");
 });
 
-// ===== 真实评估器:opencode 会话头注入 =====
+// ===== 真实评估器:opencode 系会话头回归（真机结论见 docs/extensions/goal.md） =====
 
-interface CapturedStreamOptions {
-  headers?: Record<string, string>;
-}
-
-function makeCaptureProvider(): { provider: unknown; captured: CapturedStreamOptions[] } {
-  const captured: CapturedStreamOptions[] = [];
-  const provider = {
-    stream: async function* (_model: unknown, _options: unknown, streamOptions: CapturedStreamOptions) {
-      captured.push(streamOptions);
-      yield { type: "done", message: { content: [{ type: "text", text: '{"met": true, "reason": "完成"}' }] } };
-    },
-  };
-  return { provider, captured };
-}
-
-test("createModelEvaluator:opencode-go 模型注入 x-opencode-session/x-opencode-client 会话头", async () => {
+test("createModelEvaluator:opencode-go 会话把 sessionId 交给宿主,不再自拼 x-opencode-* 头", async () => {
   const evaluate = createModelEvaluator({ nowMs: () => 0 });
-  const { provider, captured } = makeCaptureProvider();
-  const registry = {
-    getProvider: (id: string) => (id === "opencode-go" ? provider : undefined),
-    getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: { Authorization: "Bearer k" } }),
-  };
-  const model = { provider: "opencode-go" };
-  const ctx = { model, modelRegistry: registry, signal: undefined, sessionManager: { getSessionId: () => "s-123" } } as unknown as ExtensionContext;
+  const captured: Array<Record<string, unknown>> = [];
+  const registry = makeFakeRegistry((_model, _context, options) => {
+    captured.push(options);
+    return doneStream('{"met": true, "reason": "完成"}');
+  });
+  const ctx = makeEvaluatorCtx(
+    { provider: "opencode-go", id: "deepseek-v4.1-flash", api: "openai-completions" },
+    registry,
+    { getSessionId: () => "s-123" },
+  );
   const result = await evaluate({ goal: "g", evidence: "e" }, ctx);
   assert.deepEqual(result, { ok: true, met: true, reason: "完成" });
-  const headers = captured[0]?.headers ?? {};
-  assert.equal(headers["x-opencode-session"], "s-123");
-  assert.equal(headers["x-opencode-client"], "pi");
-  // auth.headers 在后,保持宿主合并顺序(请求头覆盖会话头)
-  assert.equal(headers.Authorization, "Bearer k");
-});
-
-test("createModelEvaluator:opencode 模型同样注入会话头", async () => {
-  const evaluate = createModelEvaluator({ nowMs: () => 0 });
-  const { provider, captured } = makeCaptureProvider();
-  const registry = {
-    getProvider: (id: string) => (id === "opencode" ? provider : undefined),
-    getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }),
-  };
-  const ctx = {
-    model: { provider: "opencode" },
-    modelRegistry: registry,
-    signal: undefined,
-    sessionManager: { getSessionId: () => "s-abc" },
-  } as unknown as ExtensionContext;
-  const result = await evaluate({ goal: "g", evidence: "e" }, ctx);
-  assert.ok(result.ok);
-  assert.equal(captured[0]?.headers?.["x-opencode-session"], "s-abc");
-  assert.equal(captured[0]?.headers?.["x-opencode-client"], "pi");
-});
-
-test("createModelEvaluator:baseUrl host 为 opencode.ai 时也注入会话头", async () => {
-  const evaluate = createModelEvaluator({ nowMs: () => 0 });
-  const { provider, captured } = makeCaptureProvider();
-  const registry = {
-    getProvider: (id: string) => (id === "p1" ? provider : undefined),
-    getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }),
-  };
-  const ctx = {
-    model: { provider: "p1", baseUrl: "https://opencode.ai/v1/chat" },
-    modelRegistry: registry,
-    signal: undefined,
-    sessionManager: { getSessionId: () => "s-host" },
-  } as unknown as ExtensionContext;
-  const result = await evaluate({ goal: "g", evidence: "e" }, ctx);
-  assert.ok(result.ok);
-  assert.equal(captured[0]?.headers?.["x-opencode-session"], "s-host");
-});
-
-test("createModelEvaluator:非 opencode 模型不注入任何 x-opencode-* 头", async () => {
-  const evaluate = createModelEvaluator({ nowMs: () => 0 });
-  const { provider, captured } = makeCaptureProvider();
-  const registry = {
-    getProvider: (id: string) => (id === "p1" ? provider : undefined),
-    getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }),
-  };
-  const ctx = {
-    model: { provider: "p1" },
-    modelRegistry: registry,
-    signal: undefined,
-    sessionManager: { getSessionId: () => "s-123" },
-  } as unknown as ExtensionContext;
-  const result = await evaluate({ goal: "g", evidence: "e" }, ctx);
-  assert.ok(result.ok);
-  const keys = Object.keys(captured[0]?.headers ?? {});
-  assert.ok(!keys.some((k) => k.startsWith("x-opencode-")), `不应含 x-opencode-* 头,实际:${keys}`);
-});
-
-test("createModelEvaluator:无 sessionId(缺失/抛异常)时不注入会话头且不崩溃", async () => {
-  const evaluate = createModelEvaluator({ nowMs: () => 0 });
-  const { provider, captured } = makeCaptureProvider();
-  const registry = {
-    getProvider: (id: string) => (id === "opencode-go" ? provider : undefined),
-    getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }),
-  };
-  // sessionManager 缺失
-  const noManager = { model: { provider: "opencode-go" }, modelRegistry: registry, signal: undefined } as unknown as ExtensionContext;
-  const r1 = await evaluate({ goal: "g", evidence: "e" }, noManager);
-  assert.ok(r1.ok);
-  assert.equal(captured[0]?.headers?.["x-opencode-session"], undefined);
-  // getSessionId 抛异常
-  const throwing = {
-    model: { provider: "opencode-go" },
-    modelRegistry: registry,
-    signal: undefined,
-    sessionManager: { getSessionId: () => { throw new Error("boom"); } },
-  } as unknown as ExtensionContext;
-  const r2 = await evaluate({ goal: "g", evidence: "e" }, throwing);
-  assert.ok(r2.ok);
-  assert.equal(captured[1]?.headers?.["x-opencode-session"], undefined);
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0]?.sessionId, "s-123", "sessionId 是 provider 层注入 x-opencode-session 的唯一输入");
+  assert.equal(captured[0]?.headers, undefined, "注入职责在 provider 层,评估器不再干预请求头");
+  assert.equal(captured[0]?.apiKey, undefined, "鉴权由宿主解析");
 });
 
 // ===== 状态条对齐节拍（docs/cross/status-bar.md） =====
