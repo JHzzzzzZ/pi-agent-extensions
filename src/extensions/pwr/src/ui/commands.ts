@@ -32,8 +32,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { controlWorkflow, startWorkflow, type FlowDeps } from "../flow.ts";
 import { isPwrError } from "../save.ts";
 import { confirmApprovalCard, formatPlanText } from "../tools.ts";
-import { RUN_STATUS_VALUES, type RunStatus } from "../types.ts";
-import type { PwrErrorResult } from "../types.ts";
+import { RUN_STATUS_VALUES, type PwrErrorResult, type RunStatus } from "../types.ts";
 import type { MemoryRunStore } from "./run-store.ts";
 import { PWR_SHORTCUTS } from "./keybindings.ts";
 
