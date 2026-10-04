@@ -1,0 +1,24 @@
+{
+  "name": "pi-extension-virtual-model-router",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "virtual-model-router — 虚拟模型路由：注册一个可选中的虚拟模型，每次请求按 reason 路由到不同物理模型（user → 强档 / continuation → 便宜快档 / retry → 升档或按溢出信号换长上下文档 / direct → 固定档）；零额外 LLM 调用、零额外延迟，档位到物理模型的映射集中在 config.ts 单一表",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}
