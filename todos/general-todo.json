@@ -310,16 +310,18 @@
       "id": 19,
       "globalId": 332,
       "text": "fullscreen 默认下的 TUI 复核（pi 1.0 把默认从 regular 切到 fullscreen）：agent-team viewer/askview、pwr viewer、widget-band 三段合并顺序、status-band 首段定格——既有 tui-sync 矩阵与真机走查都在旧默认下做的，现默认环境已变",
-      "status": "processing",
-      "branch": "feat/tui-fullscreen-review",
+      "status": "open",
+      "branch": null,
       "tags": [],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "撤销 2026-10-04：从 processing 回到未领取；headless 部分已交付并合并（16c8101：5 host 测试 29 例 + SVG 无变化 + docs/tui-fullscreen-checklist.md + 两处 tui-sync 复核环境），真机走查用户 2026-10-04 决定延后、本轮不验证；剩余工作 = 用户跑清单并回传，然后补两处 tui-sync 结论栏、收口"
+      ],
       "createdAt": "2026-10-03T16:57:02.593Z",
-      "claimedAt": "2026-10-03T17:06:45.641Z",
+      "claimedAt": null,
       "completedAt": null,
-      "alignedAt": "2026-10-03T17:15:28.319Z"
+      "alignedAt": null
     },
     {
       "id": 20,
@@ -417,6 +419,51 @@
       "createdAt": "2026-10-04T14:19:29.163Z",
       "claimedAt": null,
       "completedAt": "2026-10-04T14:21:55.353Z",
+      "alignedAt": null
+    },
+    {
+      "id": 26,
+      "globalId": 344,
+      "text": ".pi/ 既未入库也未 gitignore（仓库卫生，用户 2026-10-04 提出）：.pi/agents/todo-implementer.md（项目级 subagent 定义）与 .pi/teams/repo-dev.md（团队定义）都是未跟踪状态，导致 git status 常驻 `?? .pi/` —— 每次交付核对工作区干净与否都要手动排除，也容易被误当作残留产物。要求：二选一定下来，别继续悬着——① 写进 .gitignore（视为本地私有配置）；② 入库存档（视为项目资产，随仓库分发，则内容需与仓库红线口径一致）。验收：git status 无 .pi/ 噪音；若选 ② 则两份定义的模型口径需可用（见 repo-dev 团队模型失效条目）。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 4,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T15:41:36.927Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 27,
+      "globalId": 345,
+      "text": "repo-dev 团队定义的模型口径已失效（2026-10-04 核对 provider 列表时发现）：.pi/teams/repo-dev.md 里 reviewer 与 qa 的 model 写的是 opencode-go/omen-alpha:max，而当前已配置鉴权的模型列表里没有这个模型（opencode-go 下可用的是 deepseek-* / glm-5.* / qwen3.* / kimi-k2.7-code|k3 / minimax-* / mimo-* / longcat-* / grok-* / gpt-*-luna / muse-spark-* 等），真派单必然 404、团队不可用；同时该文件整体落后于 AGENTS.md：reviewer 未体现红线 11（评审者必须与开发者不同厂商、默认 kimi-coding/k3-256k），团队流程里也只有红线 10（方案先 team_ask 审批）没有红线 11（评审→逐条处理→复评至无新意见才合并）。要求：① reviewer/qa 换成可用模型且与 writer（opencode-go/deepseek-v4.1-flash，DeepSeek 系）不同厂商；② 流程补红线 11 环节与 40-review 落盘要求；③ 验收：team_list 显示可解析、一次真实派单不因模型 404 中断、评审结论按红线 11 落盘。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T15:41:37.073Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 28,
+      "globalId": 346,
+      "text": "本机并发布局下的两次工具异常（2026-10-04 实测，未定位）：① pi-subagents 的两个 async 子进程在正常工作中途被杀（14:58 与 15:11，均报「Async runner process <pid> exited or disappeared before writing a result」，被 stale-run reconciliation 判 failed）——前者已提交 4 个 commit 但没留下报告、后者 resume 续跑后才完成；② npm run test:all 同一天结果不一致（首次工具调用输出丢失、第二次 root:todo 135 例中 2 fail、第三与第四次 19/19 全绿 2118 例），疑似与上一条同源（多 node 进程并发 + 32 逻辑核满载）。要求：下次复现时先取证（被杀前后的系统事件、内存与句柄压力、同时在跑的 lane 数与 node 进程数），再判断是本机资源问题还是 harness 缺陷；不复发即关闭。相关既有条目：agent-manager#3（性能看门用例负载敏感）、general#24（package-lock 版本漂移——本次 npm install 已自愈 opencode-bridge 一例 1.7.0→1.7.1，但该改动未纳入本轮交付、已还原，扫尾时一并处理）",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 4,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T15:41:45.198Z",
+      "claimedAt": null,
+      "completedAt": null,
       "alignedAt": null
     }
   ]

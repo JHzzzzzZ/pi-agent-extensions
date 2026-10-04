@@ -18,6 +18,21 @@
       "claimedAt": null,
       "completedAt": "2026-10-04T15:21:06.897Z",
       "alignedAt": null
+    },
+    {
+      "id": 2,
+      "globalId": 343,
+      "text": "virtual-model-router 真机验收未跑（general#22 交付时明确列为范围外；用户 2026-10-04 决定延后、现在不验证）：按 docs/virtual-model-router-checklist.md 逐条执行——① /model 列表里可见 opencode-go/router；② 一次会话里观察到至少两类物理模型被实际使用（/session 按物理模型分列成本）；③ 构造一次失败重试，确认 route 收到 reason=retry 且 failed.message 可用（这条最容易写错，必须有真机证据）；④ /resume 后虚拟选择从 model_change 恢复、/tree 切分支后 state 各自独立；⑤ agent-team 用该虚拟模型派单时 preflight 不产生「无鉴权」warning。前置：把 dev-laptop push 上去（pi 加载的是包缓存 clone，只认远端）+ pi update + 重开会话（--reload 不够）。验收：五项逐条给出证据（截图或命令输出），全部通过后把结论补进 docs/extensions/virtual-model-router.md 卡与 docs/virtual-model-router-checklist.md 的结论栏；发现问题逐条另立条目。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T15:41:36.762Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
