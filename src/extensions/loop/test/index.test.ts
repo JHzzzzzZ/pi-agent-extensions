@@ -1,8 +1,10 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import type { TSchema } from "typebox";
+import { Value } from "typebox/value";
 import loopFactory from "../index.ts";
 import type { BgRunOutcome } from "../runner.ts";
-import { formatRoundLabel } from "../tasks.ts";
+import { BG_HISTORY_DISPLAY, formatRoundLabel } from "../tasks.ts";
 import type { BgRunEntry, LoopTask, PersistedTask } from "../tasks.ts";
 
 /** 宿主 widget 键：loop 不再独占自己的键，改由 widget 排序带合并（docs/cross/status-bar.md）。 */
@@ -108,6 +110,16 @@ function rawTask(opts: {
   return out;
 }
 
+/** fake 捕获的工具定义：pi 1.0 契约字段（exposure / outputSchema / annotations / namespace）+ execute */
+type ToolDefinitionShape = {
+  name: string;
+  exposure?: string;
+  outputSchema?: unknown;
+  annotations?: Record<string, boolean>;
+  namespace?: { name: string; description?: string; instructions?: string };
+  execute: (toolCallId: string, params: Record<string, unknown>, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => Promise<unknown>;
+};
+
 function createFakePi() {
   const handlers = new Map<string, (e: unknown, ctx: unknown) => void | Promise<void>>();
   const commands = new Map<string, {
@@ -115,10 +127,7 @@ function createFakePi() {
     getArgumentCompletions?: (prefix: string) => unknown;
     handler: (args: string, ctx: unknown) => Promise<void> | void;
   }>();
-  const tools = new Map<string, {
-    name: string;
-    execute: (toolCallId: string, params: Record<string, unknown>, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => Promise<unknown>;
-  }>();
+  const tools = new Map<string, ToolDefinitionShape>();
   const widgets = new Map<string, { id: string; content?: string[] }>();
   let widgetWrites = 0;
   const sent: Array<{ message: Record<string, unknown>; options: Record<string, unknown> }> = [];
@@ -176,7 +185,7 @@ function createFakePi() {
     registerCommand: (name: string, opts: { description?: string; getArgumentCompletions?: (prefix: string) => unknown; handler: (args: string, ctx: unknown) => Promise<void> | void }) => {
       commands.set(name, opts);
     },
-    registerTool: (tool: { name: string; execute: (toolCallId: string, params: Record<string, unknown>, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => Promise<unknown> }) => {
+    registerTool: (tool: ToolDefinitionShape) => {
       tools.set(tool.name, tool);
     },
     appendEntry: (type: string, data?: unknown) => {
@@ -219,6 +228,7 @@ function createFakePi() {
 interface ToolResult {
   content: Array<{ type: string; text: string }>;
   details?: Record<string, unknown>;
+  structuredContent?: unknown;
   isError?: boolean;
 }
 
@@ -865,6 +875,183 @@ describe("loop_list / loop_delete 工具", () => {
     const missing = await fake.runTool("loop_delete", { id: "zzzz" });
     assert.equal(missing.isError, true);
     assert.match(toolText(missing), /未找到/);
+  });
+});
+
+// ---------- 工具面契约（v1.10：pi 1.0 exposure / annotations / namespace / outputSchema） ----------
+
+const TOOL_NAMES = ["loop_create", "loop_list", "loop_delete"];
+
+/** fake 捕获的完整 registerTool 入参（宿主解析缺省 exposure 为 direct，测试里按 `?? "direct"` 读） */
+function toolDef(fake: FakePi, name: string): ToolDefinitionShape {
+  const tool = fake._tools.get(name);
+  assert.ok(tool, `missing tool ${name}`);
+  return tool;
+}
+
+/** loop_list 的 structuredContent（契约形态 { tasks: [...] }） */
+function listedTasks(result: ToolResult): Array<Record<string, unknown>> {
+  const structured = result.structuredContent as { tasks?: Array<Record<string, unknown>> } | undefined;
+  assert.ok(structured, "loop_list 必须返回 structuredContent");
+  assert.ok(Array.isArray(structured.tasks), "structuredContent.tasks 必须是数组");
+  return structured.tasks;
+}
+
+describe("工具面契约（pi 1.0：exposure / annotations / namespace）", () => {
+  it("loop_create / loop_delete 为 model-only（脚本不可调）；loop_list 保持 direct", () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    assert.equal(toolDef(fake, "loop_create").exposure, "model-only");
+    assert.equal(toolDef(fake, "loop_delete").exposure, "model-only");
+    assert.equal(toolDef(fake, "loop_list").exposure ?? "direct", "direct", "loop_list 必须留给脚本（direct）");
+  });
+
+  it("annotations：list 只读 / create 破坏性 + 开放世界 / delete 破坏性", () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    assert.deepEqual(toolDef(fake, "loop_list").annotations, { readOnlyHint: true });
+    assert.deepEqual(toolDef(fake, "loop_create").annotations, { destructiveHint: true, openWorldHint: true });
+    assert.deepEqual(toolDef(fake, "loop_delete").annotations, { destructiveHint: true });
+  });
+
+  it("三个工具同属 namespace loop（会话内定时任务）", () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    for (const name of TOOL_NAMES) {
+      assert.deepEqual(toolDef(fake, name).namespace, { name: "loop", description: "会话内定时任务" }, name);
+    }
+  });
+});
+
+describe("loop_list 结构化结果（outputSchema + structuredContent）", () => {
+  it("空会话也返回结构化结果——声明 outputSchema 的工具不能只给文本", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    const result = await fake.runTool("loop_list", {});
+    assert.deepEqual(result.structuredContent, { tasks: [] });
+  });
+
+  it("视图字段取自任务结构与 widget 口径：id / kind / schedule / task / nextAt / background", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    await fake.runTool("loop_create", { task: "巡检服务", schedule: "every 5m" });
+    await fake.runTool("loop_create", { task: "取快递", schedule: "in 30m" });
+    await fake.runTool("loop_create", { task: "晨会提醒", schedule: "daily at 09:00" });
+    await fake.runTool("loop_create", { task: "后台巡检", schedule: "10m", mode: "background" });
+
+    const tasks = listedTasks(await fake.runTool("loop_list", {}));
+    assert.equal(tasks.length, 4);
+
+    const interval = tasks.find((t) => t.task === "巡检服务")!;
+    assert.equal(interval.kind, "interval");
+    assert.equal(interval.schedule, "每 5m");
+    assert.equal(interval.nextAt, BASE + 300_000);
+    assert.equal(interval.background, false);
+    assert.equal(typeof interval.id, "string");
+
+    const once = tasks.find((t) => t.kind === "once")!;
+    assert.equal(once.schedule, "一次性");
+    assert.equal(once.nextAt, BASE + 1_800_000);
+
+    const daily = tasks.find((t) => t.kind === "daily")!;
+    assert.equal(daily.schedule, "每天 09:00");
+    assert.equal(typeof daily.nextAt, "number");
+
+    const background = tasks.find((t) => t.background === true)!;
+    assert.equal(background.task, "后台巡检");
+    assert.equal(background.kind, "interval");
+    for (const t of tasks) {
+      assert.equal(t.running, undefined, "无轮次时省略 running");
+      assert.equal(t.recentRuns, undefined, "无轮次时省略 recentRuns");
+    }
+
+    // 排序口径与 widget 的 formatTaskLines 一致：按触发先后
+    const nextAts = tasks.map((t) => t.nextAt as number);
+    assert.deepEqual(nextAts, [...nextAts].sort((a, b) => a - b));
+  });
+
+  it("暂停任务省略 nextAt（widget 显示 — 的口径）", async () => {
+    const fake = createFakePi();
+    seedSnapshot(fake, [rawTask({ id: "paused01", recurring: true, paused: true, nextDueAt: BASE + 60_000 })]);
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    const tasks = listedTasks(await fake.runTool("loop_list", {}));
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0]!.kind, "interval");
+    assert.equal(tasks[0]!.nextAt, undefined);
+  });
+
+  it("后台任务：运行中全部列出（带会话 id）", async () => {
+    const fake = createFakePi();
+    const bg = makeBgHarness();
+    loopFactory(fake as never, { runBg: bg.runBg });
+    await fake.fire("session_start");
+    await fake.runCommand("--bg 1m 后台巡检");
+    fakeNow = BASE + 61_000;
+    fireTick();
+    bg.calls[0]!.onSessionId!({ sessionId: "sess-live" });
+    await flush();
+
+    const view = listedTasks(await fake.runTool("loop_list", {}))[0]!;
+    assert.equal(view.background, true);
+    const running = view.running as Array<Record<string, unknown>>;
+    assert.equal(running.length, 1);
+    assert.equal(running[0]!.status, "running");
+    assert.equal(running[0]!.sessionId, "sess-live");
+    assert.equal(typeof running[0]!.startedAt, "number");
+    assert.equal(view.recentRuns, undefined, "尚未结束的轮次不进 recentRuns");
+  });
+
+  it("recentRuns 上限沿用 BG_HISTORY_DISPLAY：12 条历史只列最近 10 条", async () => {
+    const fake = createFakePi();
+    seedSnapshot(fake, [rawTask({ id: "bgseed01", recurring: true, nextDueAt: BASE + 60_000, background: true })]);
+    for (let i = 0; i < 12; i += 1) {
+      fake._sessionEntries.push({
+        type: "custom",
+        customType: LOOP_RUN_ENTRY,
+        data: {
+          taskId: "bgseed01",
+          runId: `h${i}`,
+          startedAt: BASE - 120_000 + i * 1_000,
+          finishedAt: BASE - 119_000 + i * 1_000,
+          status: "done",
+          sessionId: `sess-${i}`,
+          summary: `第 ${i} 轮`,
+        },
+      });
+    }
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+
+    const view = listedTasks(await fake.runTool("loop_list", {}))[0]!;
+    const recent = view.recentRuns as Array<Record<string, unknown>>;
+    assert.equal(recent.length, BG_HISTORY_DISPLAY);
+    assert.equal(recent[0]!.runId, "h2");
+    assert.equal(recent.at(-1)!.runId, "h11");
+    assert.equal(recent.at(-1)!.summary, "第 11 轮");
+    assert.equal(view.running, undefined);
+  });
+
+  it("structuredContent 通过 outputSchema 校验（Value.Check）", async () => {
+    const fake = createFakePi();
+    loopFactory(fake as never);
+    await fake.fire("session_start");
+    await fake.runTool("loop_create", { task: "巡检服务", schedule: "every 5m" });
+    await fake.runTool("loop_create", { task: "后台巡检", schedule: "10m", mode: "background" });
+
+    const schema = toolDef(fake, "loop_list").outputSchema;
+    assert.ok(schema, "loop_list 必须声明 outputSchema");
+    const nonEmpty = await fake.runTool("loop_list", {});
+
+    const emptyFake = createFakePi();
+    loopFactory(emptyFake as never);
+    await emptyFake.fire("session_start");
+    const empty = await emptyFake.runTool("loop_list", {});
+
+    assert.ok(Value.Check(schema as TSchema, nonEmpty.structuredContent), "非空结果必须满足 outputSchema");
+    assert.ok(Value.Check(schema as TSchema, empty.structuredContent), "空结果必须满足 outputSchema");
   });
 });
 
