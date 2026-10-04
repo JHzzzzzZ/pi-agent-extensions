@@ -69,7 +69,7 @@ export const RETRY_ESCALATION: Partial<Record<Tier, Tier>> = {
  * 上下文溢出的错误措辞（粗判，`errorMessage` 是小写不敏感匹配）。
  *
  * 宿主有完整的 `isContextOverflow`（30+ provider 模式，`@earendil-works/pi-ai/compat`），
- * 但**未从包根导出**，也不该把那张表抄一遍——这里只留三类主流措辞：命中就换长上下文档，
+ * 但**未从包根导出**，也不该把那张表抄一遍——这里只留四类主流措辞：命中就换长上下文档，
  * 漏判只是留在强档（不会更糟），误判只是多花一次长上下文模型的便宜价。
  */
 export const CONTEXT_OVERFLOW_PATTERNS: readonly RegExp[] = [
