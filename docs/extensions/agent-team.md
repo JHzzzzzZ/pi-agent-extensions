@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 8e440c2
+> last verified @ 44fb2ba
 ## 职责与边界
 
 Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单（同一会话最多 3 个 run 并行，v1.25.0；registry 按 runId 隔离进度/预算/停止/steer/提问）：拉起独立 leader 子进程（`--mode rpc`），leader 经 `team_dispatch` 调度成员子进程并行干活，遇需求歧义时用 `team_ask` 向主会话（用户）提问并阻塞等待答案，报告以 followUp 送回；派单变卦/超预算/跑偏时主 agent 用 `team_stop <runId>` 中止（runId 由 team_run 返回与 team_status 展示）；viewer 内 `m` 发消息与成员/leader 直接对话——**leader 运行中走 RPC steer 插话（当前回合边界送达、不打断任务），成员/已落定走派单语义**（见数据流 ⑧）。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
