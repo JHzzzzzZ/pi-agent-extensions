@@ -46,10 +46,10 @@ const MODE_HINT =
   '执行方式："foreground"（默认）到期把任务注入当前会话由主 agent 执行；"background"（v1.3，v1.8 起同一任务多轮可重叠运行）到期拉起独立后台 pi 进程执行，会话落盘，可用 pi --session <id> 恢复对话记录';
 
 /** 机器可判别的调度类型（widget 文案由 describeRecurrence 给，两种口径同源：parse.ts 的 RecurringSchedule） */
-export type LoopTaskKind = "interval" | "daily" | "window" | "once";
+type LoopTaskKind = "interval" | "daily" | "window" | "once";
 
 /** 后台轮次视图：字段取自 BgRunRecord，不新造字段与上限 */
-export type LoopRunView = {
+type LoopRunView = {
   runId: string;
   status: BgRunStatus;
   startedAt: number;
@@ -59,7 +59,7 @@ export type LoopRunView = {
 };
 
 /** loop_list 的结构化契约（脚本读它做聚合：按预算重排定时任务这类） */
-export type LoopTaskView = {
+type LoopTaskView = {
   id: string;
   kind: LoopTaskKind;
   schedule: string;

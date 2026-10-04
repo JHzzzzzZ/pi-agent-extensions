@@ -54,7 +54,7 @@
 
 ## 改动清单
 
-- 必跑：`cd src/extensions/loop && npm install && npm test`（222 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（loop v1.10.0 → 根 2.49.0 模式）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
+- 必跑：`cd src/extensions/loop && npm install && npm test`（222 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（插件与根版本成对 bump，沿用历史配对模式，不在此写死数字）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
 - 工具面契约测试在 `test/index.test.ts` 的两组：「工具面契约」断言 exposure / annotations / namespace，「loop_list 结构化结果」断言字段并让 typebox `Value.Check` 按 `outputSchema` 校验（空会话也要过）；测试文件 import `typebox/value` ⇒ `npm test` 需先 `npm install`（同 pwr 套件）。改契约字段时 `tools.ts` 的 `LoopTaskView` / outputSchema / 本卡契约段三处同改。
 - opt-in 真机冒烟（需鉴权 + 网络，不进 npm test）：`node src/extensions/loop/test/bg-overlap-smoke.mjs`——真实 pi 子进程两轮并发，校对各自 session id/会话文件与并发峰值。
 - 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台并发重叠/阈值提示/interrupted + 工具面契约；widget 断言按宿主键 `widget-band`）、test/widget-band.test.ts（排序带语义）、test/tasks.test.ts（调度推进、7 天过期边界与轮次快照/回放）、test/runner.test.ts（子进程契约 + label/onSessionId/piEntry）、test/parse.test.ts（语法与闭区间窗口）。
