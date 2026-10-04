@@ -159,15 +159,17 @@
       "id": 10,
       "globalId": 336,
       "text": "评估器改用 ctx.modelRegistry.streamSimple() 替换手写直调（getProvider + getApiKeyAndHeaders + provider.stream，index.ts:328-349）：① 修虚拟模型失效——虚拟模型 api 为 pi-virtual，直调绕过路由层，请求必失败、评估器拿不到输出后目标循环静默卡住（承接 goal#9 作废重登记）；② 同时评估能否保住 opencode 系强制请求头（原直调动机正是绕过宿主 streamFn 的请求头合并）；③ 保留现有评估器作回退路径",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/goal-evaluator-streamsimple",
       "tags": [],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，merge 6b3f919，根 2.61.0）：评估器改走 ctx.modelRegistry.streamSimple(model, {messages}, {maxTokens, signal, sessionId})——路由/鉴权/请求头全交宿主；删掉旧的 isOpencodeModel + buildOpencodeSessionHeaders 自拼头逻辑。**真机证实了立项时的预测**：虚拟模型会话下 dev-laptop 基线报「评估器连续 3 次失败:Virtual model … must be routed before streaming」→ 目标循环静默卡住；本分支三组对照（虚拟/物理/基线）前两组第 1 轮达成。streamSimple 下 opencode-go 请求头未退化（带 sessionId 出文本、不带 400 MissingSessionID），故无需保留直调分叉。验收：goal 63 用例 pass；全仓 18/18 套件 2098 用例 pass；真机证据与可复现做法已留档进对齐文档人工确认节（含探针源码/RPC 驱动命令/PI_CODING_AGENT_DIR 绝对路径坑）。评审：kimi 三轮，终判 Merge verdict: OK"
+      ],
       "createdAt": "2026-10-03T17:03:50.322Z",
       "claimedAt": "2026-10-03T17:06:45.953Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T01:02:47.142Z",
       "alignedAt": "2026-10-03T17:15:28.630Z"
     }
   ]

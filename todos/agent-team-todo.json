@@ -1278,15 +1278,17 @@
       "id": 73,
       "globalId": 330,
       "text": "工具面升级到 pi 1.0 契约：team_run/resume/stop/ask 编排与等人型 → exposure model-only（防脚本调 team_ask 挂死、无人监管派单），team_status/list/transcript/create/models/dispatch 分级 + outputSchema/structuredContent（脚本现只拿到文本）",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/agent-team-tool-contract",
       "tags": [],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，merge b814708，agent-team v1.34.0 / 根 2.61.0）：6 个编排/阻塞型工具 exposure=model-only（含 team_ask——ToolAnnotations 无阻塞语义，model-only 是唯一护栏）、4 个查询型保持 direct + outputSchema/structuredContent；annotations 与 namespace 同源声明；10 个注册点全覆盖。验收：729 用例 pass（719→729）+ typecheck 0；真机 codemode 实测 4 个查询型可调且 team_status 返回结构化值、6 个 model-only 零泄漏；测试驱动宿主真实 executeCodemode + QuickJS 沙箱。评审：kimi 三轮，终判 Merge verdict: OK（新问题：无）。合并时 README 表格相邻行冲突已就地解"
+      ],
       "createdAt": "2026-10-03T16:56:56.589Z",
       "claimedAt": "2026-10-03T17:06:45.323Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T01:02:38.950Z",
       "alignedAt": "2026-10-03T17:15:28.001Z"
     }
   ]

@@ -325,30 +325,34 @@
       "id": 20,
       "globalId": 335,
       "text": "namespace 分组 + instructions（codemode 共享 inlineBudget=3000 token）：16 个工具声明共享同一预算，溢出即静默、只能靠 searchTools() 发现；给 pwr/agent-team/loop 工具加 namespace{name,description,instructions}，说明改为按需 describeNamespace() 读",
-      "status": "processing",
+      "status": "done",
       "branch": null,
       "tags": [],
       "priority": 4,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，随三条工具面 lane 一并落地）：16 个工具全部带 namespace——pwr（4）/ agent-team（9）/ loop（3），name 与 description 按口径（pwr、agent-team、loop；不加仓库前缀）。真机 codemode 实测：describeNamespace 可解析、namespace 名与口径一致。本条不在独立 worktree 实现（与 exposure/outputSchema/annotations 改同一批 registerTool 调用，并行分做必冲突——这是 Q5 并行 worktree 的必要前提），只做验证与收口。合并 commit：5af1feb / b814708 / 542dcba"
+      ],
       "createdAt": "2026-10-03T16:57:03.108Z",
       "claimedAt": "2026-10-03T17:06:46.107Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T01:02:47.315Z",
       "alignedAt": "2026-10-03T17:15:28.787Z"
     },
     {
       "id": 21,
       "globalId": 337,
       "text": "给 16 个工具标 ToolAnnotations（readOnlyHint/destructiveHint/idempotentHint/openWorldHint），作为权限门的前置：pwr workflow_validate=readOnly，workflow_start/save/control=destructive（start 另加 openWorld）；agent-team team_status/list/transcript/models=readOnly，team_stop/create=destructive，team_run/resume/dispatch=destructive+openWorld；loop loop_list=readOnly，loop_create=destructive+openWorld，loop_delete=destructive。已知缺口：annotations 无阻塞语义，team_ask 这类等人工具只能靠 exposure=model-only 兜。验收：pi.getAllTools() 逐条可读出标注 + 测试锁定（2026-10-04 pi 1.0 特性调研）",
-      "status": "processing",
+      "status": "done",
       "branch": null,
       "tags": [],
       "priority": 5,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，随三条工具面 lane 一并落地）：16 个工具按映射表逐条标注——查询型 readOnlyHint；team_stop/team_create/workflow_control/workflow_save/loop_delete destructiveHint；team_run/resume/dispatch/workflow_start/loop_create destructive+openWorld；workflow_validate readOnlyHint；team_ask 无标注（已知缺口：ToolAnnotations 无阻塞语义，只能靠 exposure=model-only 兜，已写进相关卡）。**真机验证**：12 个 model-only 工具在 codemode 的 ALL_TOOLS 中零出现（脚本不可调）、5 个查询型全部可调——安全边界实测成立。评审：kimi 三轮逐条核对通过。合并 commit：5af1feb / b814708 / 542dcba"
+      ],
       "createdAt": "2026-10-03T17:03:50.493Z",
       "claimedAt": "2026-10-03T17:06:46.267Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T01:02:47.485Z",
       "alignedAt": "2026-10-03T17:15:28.937Z"
     },
     {
@@ -377,6 +381,21 @@
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-10-03T17:25:52.499Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 24,
+      "globalId": 341,
+      "text": "package-lock.json 的 version 字段与 package.json 漂移（既有问题，本次反复撞到）：实测 pwr（lock 2.9.3 / pkg 2.10.0）、opencode-bridge（lock 1.7.0 / pkg 1.7.1）等至少 4 个扩展的 lock 顶层与 packages.\"\".version 落后于 package.json——后果是任何人跑 npm install（含 tools/test-all.mjs --install）都会顺手改这些 lock，把无关改动混进 diff，交付时只能逐个 git checkout 回滚。要求：各扩展重生成 lock 使 version 与 package.json 一致 + 加一条检查（或写进 test-all 的 --install 后校验）防再漂移",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 4,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T01:02:10.620Z",
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null

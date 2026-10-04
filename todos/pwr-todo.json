@@ -229,15 +229,17 @@
       "id": 14,
       "globalId": 329,
       "text": "工具面升级到 pi 1.0 契约：workflow_validate/start/save/control 的 exposure 分级（编排型 → model-only，防 codemode 脚本起子 pi 进程/弹批准卡）+ outputSchema/structuredContent（脚本现只拿到文本，details 对脚本不可见）",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/pwr-tool-contract",
       "tags": [],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，merge 5af1feb，pwr 2.11.0 / 根 2.61.0）：4 个 workflow_* 工具全 exposure=model-only + pwr namespace + annotations；workflow_control 新增 list/status 查询动作 + 查询口径 outputSchema/structuredContent（details 保持内部结构）；状态闭集收口为单一来源（RUN_STATUS_VALUES，runtime/ui/tools 三处派生）。验收：pwr 451 用例 pass（443→451）+ typecheck 0；全仓 18/18 套件 2098 用例 pass；真机 codemode 实测——4 工具被模型看到（声明成立）但 ALL_TOOLS 中零出现（脚本不可调，安全边界成立）。评审：kimi-coding/k3-256k 三轮，终判 Merge verdict: OK。已知缺口另条 pwr#15（只读查询工具，让 outputSchema 有程序化消费者）"
+      ],
       "createdAt": "2026-10-03T16:56:56.427Z",
       "claimedAt": "2026-10-03T17:06:45.170Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T01:02:38.780Z",
       "alignedAt": "2026-10-03T17:15:27.847Z"
     },
     {

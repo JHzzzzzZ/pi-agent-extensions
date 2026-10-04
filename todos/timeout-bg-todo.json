@@ -23,15 +23,17 @@
       "id": 2,
       "globalId": 333,
       "text": "包装 bash 跟上游结构化结果契约：pi 0.99 起内置 bash/powershell 的结构化结果含 truncated/full_output_path、output 上限 1 MiB（超长保首尾各 512KiB）——本扩展替换了内置 bash，codemode 脚本调 bash 拿到的是本扩展返回值，不跟上则脚本侧能力退化",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/timeout-bg-bash-structured",
       "tags": [],
       "priority": 7,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，merge 2c1d5c0，timeout-bg 1.0.1 / 根 2.61.0）：只读排查结论为**已对齐、无需改适配层**——差异表为空（真机 pi 1.0.1 codemode 实测：小输出/空输出为空串/非零退出有结构值/1.6MB 触发 truncated+full_output_path 且首尾各 512KiB，逐字段与上游声明一致）。根因留档：扩展 spread 宿主自己的 createBashTool(...)，outputSchema/structuredContent 由宿主层生成，扩展只覆盖 description/parameters/promptGuidelines——这是「动哪里会破」的关键知识，已写进卡。补 2 条锁定测试（31→33）+ devDependency ^1.0.0（0.85.x 无 codemode/outputSchema，锁不住）。验收：33 用例 pass + typecheck 0。评审：kimi 两轮，Merge verdict: OK with notes（仅剩 AGENTS.md 表述，已在本轮跨切中更新）"
+      ],
       "createdAt": "2026-10-03T16:57:02.759Z",
       "claimedAt": "2026-10-03T17:06:45.794Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T01:02:39.288Z",
       "alignedAt": "2026-10-03T17:15:28.472Z"
     }
   ]

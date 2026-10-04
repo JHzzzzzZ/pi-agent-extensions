@@ -176,15 +176,17 @@
       "id": 11,
       "globalId": 331,
       "text": "工具面升级到 pi 1.0 契约：loop_create/delete 编排型 → exposure model-only + loop_list 加 outputSchema/structuredContent（脚本现只拿到文本）",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/loop-tool-contract",
       "tags": [],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（2026-10-04，merge 542dcba，loop 1.10.0 / 根 2.61.0）：loop_create/loop_delete exposure=model-only、loop_list 保持 direct + outputSchema/structuredContent；annotations/namespace 同源；顺带修 version 悬空（1.9.0→1.10.0，文档此前已声称 v1.10.0）与三处过度导出。硬约束：loop-tasks-v1 快照字节级证明未变、parse.ts 调度语义零改动。验收：222 用例 pass（213→222）+ typecheck 0；真机 codemode 实测 loop_list 可调且返回 { tasks: [...] } 结构化值。评审：kimi 三轮，无新增问题"
+      ],
       "createdAt": "2026-10-03T16:56:56.756Z",
       "claimedAt": "2026-10-03T17:06:45.483Z",
-      "completedAt": null,
+      "completedAt": "2026-10-04T01:02:39.116Z",
       "alignedAt": "2026-10-03T17:15:28.158Z"
     }
   ]
