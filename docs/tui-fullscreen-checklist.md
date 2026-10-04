@@ -42,7 +42,7 @@
 | A1 | `/team:view` | 分栏 overlay 完整：顶边框 + 标题行 `agent-team viewer` **恰好 1 行** + 左 roster + 右 5 行头（`Run:`/`State:`/`成员:`/`模型:`/`活动:`）+ 图例 + 底边框；多 run 时图例含 ` · [/] 切 run` | 标题行/顶边框出现 ≥2 次（堆叠）、左右边框断裂或错列、CJK 半字撕裂、overlay 外出现孤立竖线/残行 | 截图 1 张；把顶边框那行整行复制出来（选择见 F1） |
 | A2 | 保持 viewer 打开，等长提问到达（第一个 run 的 `team_ask`） | viewer **自动收起** → 提问视图（长题=自绘 overlay；短题=宿主对话框）独占屏幕、按键有响应；作答/取消后 viewer **自动重开**且仍在原成员页 | 提问被 viewer 盖住 / 按键被抢（旧 bug #153）、作答后不重开、重开后帧残缺或双标题 | 截图 2 张（提问弹出时、重开后） |
 | A3 | 依次按 `[` `]` | `Run:` 行随当前 run 变化，roster 与正文整体重建、帧高不变、无残行；回到原 run 内容一致 | 新旧 run 内容重叠（重影）、帧变高/变矮后残留半截边框、切 run 后 actor 页丢失（新 run 无该成员应回 leader 首位） | 截图（切换前后各 1 张） |
-| A4 | 按 `D`，再按 `N`（取消）；再按 `D`，再按 `Enter`（确认） | 首次进确认态：右栏头下方横幅 `确认停止 run <runId>？`，`N`/`Esc` 取消且**不关** viewer；确认后横幅转停止中 → `run 已停止（aborted · Xs）；该 run 的报告不再送达`；另一个 run 不受影响 | `D` 一次就停（无二次确认）、取消后 viewer 被关闭、确认后 overlay 卡住或横幅不消失、两个 run 一起被停 | 截图 3 张（确认态、停止中、结果态） |
+| A4 | 按 `D`，再按 `N`（取消）；再按 `D`，再按 `Enter`（确认） | 首次进确认态：右栏头下方横幅 `确认停止 run <完整 runId>？`，`N`/`Esc` 取消且**不关** viewer；确认后横幅转停止中 → `run 已停止（aborted · Xs）；该 run 的报告不再送达`；另一个 run 不受影响 | `D` 一次就停（无二次确认）、取消后 viewer 被关闭、确认后 overlay 卡住或横幅不消失、两个 run 一起被停 | 截图 3 张（确认态、停止中、结果态） |
 | A5 | `Esc`（也可试 `q` / `ctrl+c`） | viewer 关闭；主屏回到正常对话且原 overlay 区域**干净**（无 `╭`/`│`/`╰` 残行、无半行、无重影）；光标回到编辑器可正常输入 | 任何边框残迹、主屏重复渲染上一次内容、输入框错位 | 关闭后截图 1 张 |
 
 ## 3. B 组 · agent-team askview 三档宽度（80 / 60 / 40）
@@ -66,7 +66,7 @@
 |---|---|---|---|---|
 | C1 | 先 `/workflow:run dev-team <只读任务>`，再 `/workflow:view` | 分栏 overlay：左 roster = 结构 / 每个 stage / 结果 / 脚本（选中 `›` + 状态图标 + 右对齐状态），右 = 三行头 `Run:`/`State:`/`条目 i/n` + 可滚动正文；不传 runId 默认最近活跃 run | 分栏串位（roster 行落进右栏）、帧重复、边框断裂 | 截图 1 张 |
 | C2 | `↑↓`/`k j` 选条目 → `Shift+K/J` 滚正文 → `PgUp/PgDn` → `Home/End` → `x`/`X`/`ctrl+o` trace 开关 → `r`/`R` 强刷 | 选中行移动、正文随之切换；滚动无错行，滚到底自动恢复跟随；翻页 = 视口高度；trace 开关立即生效且帧高不变；`r` 绕过 750ms 门控立即重载 | 滚动后帧顶重复标题、正文错行/串行、trace 开关把帧撑高、`r` 无反应 | 截图 2 张（滚动中、trace 关闭） |
-| C3 | 按 `D` → `Esc`（取消）；再 `D` → `Enter`（确认） | 与 A4 同口径：确认态横幅 `确认停止 run <runId>？`；`Enter`/`Y` 确认（`Esc`/`ctrl+c`/`N`/`backspace` 取消）；确认后 run 终止，`/workflow:list` 状态变 aborted/stopped | 无二次确认、取消后 viewer 被关、停止后状态未变 | 截图 2 张 |
+| C3 | 按 `D` → `Esc`（取消）；再 `D` → `Enter`（确认） | 与 A4 同口径，但**横幅里的 runId 只显示前 8 位**（`确认停止 run <runId 前 8 位>？`，pwr 侧实现如此截断，不是异常）；`Enter`/`Y` 确认（`Esc`/`ctrl+c`/`N`/`backspace` 取消）；确认后 run 终止，`/workflow:list` 状态变 aborted/stopped | 无二次确认、取消后 viewer 被关、停止后状态未变 | 截图 2 张 |
 | C4 | `q` / `Esc` 关闭 | 主屏干净（同 A5） | 残行 / 重影 | 截图 1 张 |
 
 ## 5. D 组 · widget 排序带（pwr / run-timer / loop）
