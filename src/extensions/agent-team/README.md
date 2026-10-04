@@ -269,6 +269,21 @@ members:
 
 - 主会话工具：`team_models`（列出可用供应商/模型——建团前必看）、`team_create`（建团）、`team_list`（查团队）、`team_run`（派单，含 model 预检）、`team_resume`（续跑 failed/aborted 的 run + 换模型）、`team_status`（查指定/全部活跃 run 状态，含 runId 与预算）、`team_stop`（按 runId 中止；恰 1 活跃可省略）、`team_transcript`（读成员/leader 会话记录）
 - leader 进程内工具：`team_dispatch`（派发子任务给成员，带预算保护）、`team_ask`（向用户提问并等待回答；超时/取消/无 UI 自动降级）
+
+### 工具面契约（pi 1.0，v1.34.0，agent-team-todo#73）
+
+全部工具（cockpit 8 + leader 2）按 pi 1.0 的工具契约声明，单源在 `tool-contract.ts`：
+
+- **exposure**：编排型/阻塞型 `model-only`（脚本不可达）——`team_run`/`team_resume`/`team_stop`/`team_create`/`team_dispatch`（起/杀子进程、写盘）与 `team_ask`（阻塞等人；`ToolAnnotations` 没有阻塞语义，`model-only` 是唯一护栏，缺口登记 `general-todo#21`）；查询型四个（`team_status`/`team_list`/`team_transcript`/`team_models`）保持 `direct`，codemode 脚本可调。
+- **annotations**：查询型 `readOnlyHint`；`team_stop`/`team_create` `destructiveHint`；`team_run`/`team_resume`/`team_dispatch` `destructiveHint` + `openWorldHint`（派出去的 agent 会碰世界）；`team_ask` 不标。
+- **namespace**：全部工具同属 `agent-team`（脚本侧 `searchTools`/`describeNamespace` 按组发现）。
+- **outputSchema + structuredContent**：查询型四个给脚本**稳定契约**（不镜像内部 `details`——viewer/widget/`/team:status`/doctor 照旧消费 `details`）：
+  - `team_status`：带 runId → `{ runId, team, status, startedAt, elapsedMs?, parentRunId?, members: [{ name, status, warning? }], budget? }`；省略 runId → `{ active: [...], recent: [...] }`（未知 runId 与空态同形，原因只在文本结果里）
+  - `team_list`：`{ teams: [{ name, source, members, leader? }] }`（`members` = 成员名，`leader` = leader 模型 `provider/id`，缺省即 pi 默认模型）
+  - `team_transcript`：`{ actor, lines }`（行 = 文本结果按行拆开，同一截断口径）
+  - `team_models`：`{ models: [{ provider, id, name }] }`
+
+> 缺口登记（按实写）：`model-only` 的 6 个工具对 codemode 脚本与任何程序化调用方**不可达**（安全边界：起/杀子进程、写盘、阻塞等人，`ToolAnnotations` 无阻塞字段）；`outputSchema`/`structuredContent` 目前的消费者**只有 codemode 脚本**（模型路径仍读文本结果，`details` 仍只服务 viewer/widget/`/team:status`/doctor）。
 - 命令：裸 `/team`（无参=列团队；带参=用法）+ 独立冒号命令 `/team:list`/`:run`/`:resume`/`:status [runId]`/`:stop [runId]`/`:view`（内含 `m` 发消息直接对话，多 run 时 `[`/`]` 切 run）/`:clear`/`:doctor`；派单统一 `/team:run <团队名> <任务>`，续跑统一 `/team:resume <runId> [补充指示]`（团队名可与子命令同名，v1.12.0 保留词概念退役）
 - Widget：输入栏下方可选中亮块（数据驱动：有活跃 run 才挂帧、落定自动卸载；默认折叠单行，`↓`/`←`（空编辑器+编辑器焦点）或 `alt+↓` 展开为 `main → leader（含任务摘要）→ 成员` 树，末行恒为成员行）——`main` 行 `enter` 只收起选中，leader/成员行 `enter` 直达查看器对应 actor；多 run 并行时折叠行 `agent-team · <N> run 并行 · ↓/← 查看详情`、展开为单 `main` 根 + 每 run 一棵 leader 子树（`enter` 打开该行 run 的查看器；仅 TUI 模式，详见 §4）
 - `/team:view`：全屏分栏会话记录查看器——左栏成员 roster、右栏成员对话/工具调用/错误实时可读（仅交互式 TUI）
@@ -278,7 +293,7 @@ members:
 ```bash
 cd src/extensions/agent-team
 npm install
-npm test          # node --test test/*.test.ts（719 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
+npm test          # node --test test/*.test.ts（729 个测试，含真实 git worktree、真实 pi 子进程 E2E 与外部 CLI 适配/派发）
 node test/resume-host-smoke.mjs  # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck # tsc -p tsconfig.json --noEmit
 ```

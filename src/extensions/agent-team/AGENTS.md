@@ -22,6 +22,7 @@
 | 成员终态判定 | `outcome.ts` `decideMemberTerminal`（**末轮说了算**，v1.31.0，#47，ADR-0006）：只看最后一次 assistant `message_end` 的 stopReason/errorMessage；pi 成员（`dispatch.ts`）与外部 CLI 成员（`external.ts` `finalize`）共用；`diagnostics`（exitCode/signal/末轮/前轮错误）三处呈现（转录 system 行 / leader 报告分节 / 失败通知） |
 | 外部成员思考档位 | `model: <id>:<level>` 的 `:level`（`config.ts` `splitModelThinking`，宿主级别集）由 `external.ts` `externalThinkingArgs` 按 `EXTERNAL_THINKING_LEVELS` 映射（codex `-c model_reasoning_effort=` / claude `--effort`）；预检（`preflight.ts`）与启动（`buildExternalArgs` 返回 `Result`）**共用同一函数**，不支持档位两端同码 fail-closed（`EXTERNAL_THINKING_UNSUPPORTED`，静态消息不插值档位）——改映射必改两处共同的支持集与 README §7 的表 |
 | 错误码 | `types.ts` `TeamErrorCodes` |
+| 工具面契约（pi 1.0） | `tool-contract.ts` 单源（v1.34.0，#73）：namespace / annotations 常量 + 查询型四个的 outputSchema 与 structuredContent 构造；注册点只引用常量——exposure：编排型/阻塞型 `model-only`（`team_run`/`team_resume`/`team_stop`/`team_create`/`team_dispatch`/`team_ask`），查询型四个 `direct`；structuredContent 不镜像 `details`（后者仍是 viewer/widget/`/team:status`/doctor 的口径） |
 
 ## CONVENTIONS
 - 团队文件每次使用重扫，无缓存 —— 加缓存则项目覆盖用户优先级失效。
@@ -41,6 +42,7 @@
 - leader 提问必须 fail-closed：任何等待都有界（工具侧超时 30s~30min，默认 10 分钟；cockpit 侧 backstop = 超时 + 5s），超时/取消/主会话无 UI/run abort 一律回 `extension_ui_response {cancelled}`，leader 按工具结果自行决策 —— 无界等待会把 run 挂死（对齐 v1.15.0 教训）。
 - RPC dialog 不能从 `session_start` 触发：pi 在 session-start 处理器 pending 期间不消费 RPC stdin，请求永远收不到 response（真机 E2E 实证，fixture 改用 `/ask-e2e` 命令触发）。
 - 真机 E2E 起 pi 子进程用包的真实 bin 入口 `dist/bundle/cli.js`（unbundled `dist/cli.js` 在本工作区不启动），并以 `PI_CODING_AGENT_DIR` 隔离用户全局扩展/配置。
+- 工具面契约单源在 `tool-contract.ts`（v1.34.0，#73）：exposure / annotations / namespace / outputSchema / structuredContent 一律改这里，注册点不写字面量；structuredContent 只给稳定契约，**不镜像 `details`**（后者是 viewer/widget/`/team:status`/doctor 的内部口径）；宿主升级后跑 `test/tool-contract-codemode.test.ts`（真实 `executeCodemode` + QuickJS）验脚本侧仍按 outputSchema 解析出 structuredContent。
 
 ## ANTI-PATTERNS
 - 从 pwr import 复用 —— 实证：自包含声明，`runner.ts` 另写一份子 pi 适配，不引 `pwr/runner`。
@@ -50,7 +52,7 @@
 
 ## COMMANDS
 ```bash
-cd src/extensions/agent-team && npm install && npm test   # 711 测试（node --test test/*.test.ts）
+cd src/extensions/agent-team && npm install && npm test   # 729 测试（node --test test/*.test.ts）
 node test/resume-host-smoke.mjs            # opt-in：真实 pi 验证 --session 原地续写（不调模型）
 npm run typecheck
 ```

@@ -31,11 +31,38 @@ const { createExtensionRuntime, loadExtensions } = await import(u(`${piRoot}/dis
 const { ExtensionRunner } = await import(u(`${piRoot}/dist/core/extensions/runner.js`));
 const { createEventBus } = await import(u(`${piRoot}/dist/core/event-bus.js`));
 
-const EXPECTED_TOOLS = ["team_create", "team_list", "team_models", "team_run", "team_status", "team_transcript", "team_stop"];
+const EXPECTED_TOOLS = ["team_create", "team_list", "team_models", "team_run", "team_resume", "team_status", "team_transcript", "team_stop"];
 const EXPECTED_COMMANDS = ["team", "team:list", "team:run", "team:status", "team:stop", "team:view", "team:clear", "team:doctor"];
+
+/** pi 1.0 工具面契约（agent-team-todo#73）：注册面必须可读出分级/标注/分组。 */
+const MODEL_ONLY_TOOLS = ["team_create", "team_resume", "team_run", "team_stop"];
+const READ_ONLY_TOOLS = ["team_list", "team_models", "team_status", "team_transcript"];
+const OPEN_WORLD_TOOLS = ["team_resume", "team_run"];
+const NAMESPACE = { name: "agent-team", description: "多 agent 团队派单与查询" };
 
 const toolNames = (exts) => exts.flatMap((e) => [...e.tools.values()].map((t) => t.definition.name));
 const commandNames = (exts) => exts.flatMap((e) => [...e.commands.keys()]);
+const definitions = (exts) => exts.flatMap((e) => [...e.tools.values()].map((t) => t.definition));
+const definitionOf = (exts, name) => definitions(exts).find((d) => d.name === name);
+
+/** 宿主真实注册面（ExtensionRunner 与 ctx.getAllTools 同源）逐条读契约。 */
+function assertToolContract(exts, stage) {
+  for (const name of EXPECTED_TOOLS) {
+    const def = definitionOf(exts, name);
+    assert.ok(def, `${stage}：缺少工具 ${name}`);
+    const expectedExposure = MODEL_ONLY_TOOLS.includes(name) ? "model-only" : "direct";
+    assert.equal(def.exposure ?? "direct", expectedExposure, `${stage}：${name} exposure`);
+    assert.deepEqual(def.namespace, NAMESPACE, `${stage}：${name} namespace`);
+    const expectedAnnotations = READ_ONLY_TOOLS.includes(name)
+      ? { readOnlyHint: true }
+      : OPEN_WORLD_TOOLS.includes(name)
+        ? { destructiveHint: true, openWorldHint: true }
+        : { destructiveHint: true };
+    assert.deepEqual(def.annotations, expectedAnnotations, `${stage}：${name} annotations`);
+    if (READ_ONLY_TOOLS.includes(name)) assert.ok(def.outputSchema, `${stage}：${name} 应有 outputSchema`);
+    else assert.equal(def.outputSchema, undefined, `${stage}：${name} 不应声明 outputSchema`);
+  }
+}
 
 // -- 1. 首次装载 -------------------------------------------------------------
 const runtime1 = createExtensionRuntime();
@@ -44,7 +71,8 @@ const exts1 = loaded1.extensions ?? loaded1;
 const runner1 = new ExtensionRunner(exts1, runtime1, cwd, {}, {});
 assert.ok(runner1.hasHandlers("session_shutdown"), "扩展注册了 session_shutdown 处理器（复位时机）");
 for (const name of EXPECTED_TOOLS) assert.ok(toolNames(exts1).includes(name), `首次装载缺少工具 ${name}`);
-console.log(`step1 首次装载：工具 ${toolNames(exts1).length} 个、命令 ${commandNames(exts1).length} 个 ✓`);
+assertToolContract(exts1, "step1");
+console.log(`step1 首次装载：工具 ${toolNames(exts1).length} 个、命令 ${commandNames(exts1).length} 个 ✓（契约：exposure/annotations/namespace/outputSchema 逐条可读）`);
 
 // -- 2. 宿主 reload 语义：先 emit session_shutdown ---------------------------
 await runner1.emit({ type: "session_shutdown", reason: "reload" });
@@ -57,6 +85,7 @@ const exts2 = loaded2.extensions ?? loaded2;
 const runner2 = new ExtensionRunner(exts2, runtime2, cwd, {}, {});
 for (const name of EXPECTED_TOOLS) assert.ok(toolNames(exts2).includes(name), `reload 后缺少工具 ${name}`);
 for (const name of EXPECTED_COMMANDS) assert.ok(commandNames(exts2).includes(name), `reload 后缺少命令 ${name}`);
+assertToolContract(exts2, "step3");
 console.log(`step3 reload 后重绑：工具 ${toolNames(exts2).length} 个、命令 ${commandNames(exts2).length} 个 ✓（全部重新注册）`);
 
 // -- 4. 反向对照：真双加载（无 shutdown 间隔）仍被抑制 --------------------------
