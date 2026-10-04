@@ -16,7 +16,7 @@
 | [`src/extensions/opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`src/extensions/human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`src/extensions/solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
-| [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭） | 31 个（node:test） |
+| [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭） | 33 个（node:test） |
 
 ## 安装
 
@@ -549,10 +549,11 @@ shell 工具（`bash` / `powershell`）的**超时语义改写**：命中 `timeo
 - **完成通知** — 后台任务自然结束时注入一条 followUp（jobId / 退出码 / 耗时 / 末尾输出），agent 无需轮询
 - **命令面** — `/bg`（列表：状态 / pid / 命令首行 / 日志路径）、`/bg:kill <jobId>`（杀整棵进程树）、`/bg:clear`（清已结束记录）
 - **边界** — 只覆盖**当前启用**的 shell 工具（active 里没有的不注册，不凭空加工具）；用户手敲的 `!` 命令与其它带 `timeoutMs` 的工具（agent-team / pwr / subagent 等，属调度语义）不受影响；**Esc 主动取消仍然 kill**（超时 ≠ 取消）；后台任务**只活在本会话**，`session_shutdown` 时全部杀掉
+- **codemode 脚本视角** — 脚本调 `tools.bash` 拿到的就是本扩展注册的工具，结构化结果（`output` 1 MiB 上限 / `truncated` / `full_output_path` / `exit_code` / `wall_time_seconds`）与内置一致（原样透传宿主 `outputSchema`，只改写 description 与 timeout 参数说明）；超时那次 call 仍以错误结束（结果文本带 jobId / 日志路径）
 - **日志** — `<PI_TIMEOUT_BG_DIR 或 ~/.pi/agent/bg-jobs>/<pi pid>/<jobId>.log`，保留最近 50 个 / 7 天（启动时清理）
 
 ```bash
-cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 31 个测试
+cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 33 个测试
 ```
 
 ---
