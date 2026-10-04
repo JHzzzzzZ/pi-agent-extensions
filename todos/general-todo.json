@@ -399,6 +399,21 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 25,
+      "globalId": 342,
+      "text": "跨厂商独立 code review 闭环（用户 2026-10-04 提出）：开发完成后必须由 sub agent 做 code review，且 reviewer 与开发者**不同厂商**（默认 kimi-coding/k3-256k，262K 上下文、套餐内计费 $0）；reviewer 提出的意见逐条处理后**重新评审**，直到某一轮不再产生新意见才收口。落点待对齐时定（可三选一或叠加）：① AGENTS.md 红线（主 agent 与团队都要遵循的流程约束）；② 仓库内/全局 skill（如 code-review-loop，串起派单与循环）；③ agent-team 固定流程（reviewer 成员声明 model: kimi-coding/k3-256k，leader 循环派发直到无新意见）。实现要点：厂商隔离判定按模型串 provider 前缀比较（developer=deepseek/opencode-go 等 ⇒ reviewer=kimi-coding；同 provider 不同模型不算跨厂商）；「新意见」判定要明确且同一条意见重复出现不得再触发一轮循环；必须有最大轮数上限与预算上限（防死循环烧钱）；每轮评审结论落盘（沿用 history/team-runs/<runId>/40-review.md 惯例或等价位置）以便复查；可复用既有资产——code-review skill（Standards/Spec 双轴并行评审）、pi-subagents 的 review workflow、agent-team 的 worktree 隔离（reviewer 需能读到 diff 与分支）；大 diff 需分片审（262K 窗口）。验收：真实闭环至少跑通一次（开发 → 跨厂商 review → 逐条修复 → 二轮无新意见 → 结论落盘）；厂商不同与轮数上限若做成工具/skill 须有测试锁定；AGENTS.md / README / docs 卡与流程文档四处同步。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T14:19:29.163Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

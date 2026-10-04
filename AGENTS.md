@@ -20,13 +20,14 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 4. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记（自测、合并与清理在第 7 步）。
 5. **TDD 测试先行**——新能力、bug 修复与重构一律测试先行：先写能复现问题或锁定新行为的失败测试（红），再实现到绿；没有保护网不动被测代码。
 6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
-7. **交付四处同步 + 收尾**——自测达标（全量测试绿 + `npm run typecheck` 零错误）才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`，并确认对齐门已过（对齐文档 + 人工确认）后 `complete --note` 收口 `todos/` 条目。任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node .agents/skills/todo-cli/todo-cli/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
+7. **交付四处同步 + 收尾**——自测达标（全量测试绿 + `npm run typecheck` 零错误）+ 跨厂商评审终轮无新意见（红线 11）才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`，并确认对齐门已过（对齐文档 + 人工确认）后 `complete --note` 收口 `todos/` 条目。任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node .agents/skills/todo-cli/todo-cli/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
 
 ### 全程硬约束（任何阶段都适用）
 
 8. **仓库边界**——默认只改本仓库内文件。宿主 npm 全局安装（`@earendil-works/pi-coding-agent` / `pi-tui` 的 `dist/`、`bundle/chunks/` 等）、其它全局包、用户配置（`~/.pi/agent/`）、系统文件一律不动。宿主/依赖行为不满足需求只有两条路：① 插件侧用公开扩展 API 解决；② 向上游提 issue/PR（或请用户人工处理）。确需动仓库外文件：先说明「改哪个文件、为什么、风险、回滚方式」，取得用户对具体改动的逐次明确同意，改完在交付报告中登记（文件、备份、回滚）；仓库内文档/待办不得把「已应用宿主补丁」当作插件行为的前提或契约；违反本规则的历史改动一律还原并在 `todos/` 记录真实状态。
 9. **命令必须显式超时**——每次执行命令都传 bash 工具的 `timeout` 参数：快速 shell 操作（ls/grep/git）30–60 秒，`npm test`/`npm run typecheck` 120–300 秒；不允许不带超时的命令，长工作拆成多个有界小步骤。
 10. **团队方案先审批**——agent team 出具方案后、实施改动之前，必须用 `team_ask` 把方案交用户审批并取得明确同意；未获同意（含超时/取消/无法提问）不得开始写代码或改文件，只停下如实报告；只读排查与评审不受限，审批结论随 run 记录留存。
+11. **交付前跨厂商独立评审**——每次改动在回主干 merge 前，必须派 **sub agent 做代码评审，且 reviewer 与开发者不是同一个开发商**（自评会漏问题，同厂会共享盲区）：默认 reviewer = `kimi-coding/k3-256k`（262K 上下文、套餐内计费）。评审提出的意见**逐条处理**（改掉，或明确驳回并写明理由），处理完**重新评审**，直到某一轮不再产生**新意见**才可 merge——同一条意见重复出现不算新意见、不触发新一轮。护栏：循环必须设**最大轮数（默认 3 轮）与预算上限**，到顶即停下如实报告，无上限烧钱不允许；每轮评审结论落盘可复查（agent-team run 落 `history/team-runs/<runId>/40-review.md`，其余改动落提交说明或 `docs/`）。厂商判据按**模型家族**（DeepSeek / Kimi / Qwen / GLM / MiniMax / Gemini / GPT / Claude…）而非 provider 前缀：`opencode-go/kimi-k3` 与 `kimi-coding/k3-256k` 属同厂商，不可互为 reviewer。只读排查不适用（无改动可评）。
 
 ## 关键目录
 
