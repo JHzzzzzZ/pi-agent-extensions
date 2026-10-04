@@ -16,6 +16,8 @@
 
 **基线版本：pi-subagents v0.66.0**（本地 `~/.pi/agent/npm/node_modules/pi-subagents`，`package.json` 版本字段）。本矩阵记录的是 v0.66.0 的快照；pi-subagents 每升版一次，agent-team 跟进一次并在此登记新版本号（见 §5）。
 
+**复核环境（general-todo#19，2026-10-04 @ pi 1.0.1）**：本矩阵全部期望值建立于 `tuiMode: "regular"` 时期（pi 1.0 前的默认）；pi 1.0 起默认改为 **`fullscreen`**（回退 `--tui-mode regular` 或 `/settings` → `TUI mode`）。headless 复核（`test/viewer-host.test.ts` 12 例、`test/viewer-ask-host.test.ts` 7 例、`test/widget-focus-host.test.ts` 3 例，本机 `@earendil-works/pi-*` 1.0.1 全绿）覆盖的是两模式**共享**的 overlay 合成器（`TuiBase.compositeOverlays`、`TuiBase.showOverlay`）与 **`regular` 路径**的写屏器（`TuiMainScreen`）；`fullscreen` 的写屏/视口/滚动/选择/滚动条（`TuiAltScreen`）headless 触达不到，只能真机走查——清单见 `docs/tui-fullscreen-checklist.md`。**两模式是否行为一致：待清单回传后在此补写结论；取证前不得宣称一致。**
+
 ## 2. 对齐维度表
 
 | 维度 | pi-subagents v0.66.0 字面量 | agent-team 现状 | 处置 |
