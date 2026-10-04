@@ -1,0 +1,21 @@
+{
+  "version": 4,
+  "title": "virtual-model-router-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "globalId": 343,
+      "text": "虚拟模型路由扩展：注册一个可选中的虚拟模型（opencode-go/router），按宿主 reason 把每次请求路由到不同物理模型——user 强档 / continuation 便宜快档 / retry 升档（溢出信号换长上下文档）/ direct 固定档；零额外 LLM 调用，档位→物理模型映射与注册身份集中在单一配置表",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T14:51:01.875Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    }
+  ]
+}
