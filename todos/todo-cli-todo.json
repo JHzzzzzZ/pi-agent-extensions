@@ -322,6 +322,21 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 19,
+      "globalId": 349,
+      "text": "tag 子命令：给**已存在**的条目补/改标签（用户 2026-10-04 提出；登记时 todo CLI 没有任何 tag 写入口）：现状 tags 只能在 add --tag 时写入一次，之后无法变更——本次登记两条「等用户做的」条目（general-todo#19、virtual-model-router-todo#3）本想打 user 标签让 `list --tag user` 成为用户待办总表，发现没有补 tag 的通道，只能靠关键词猜；且全台账现无任何带标签条目（0 条），疑似正因为「打了就改不掉」而没人用。要求（命令面对齐既有 dep 形态）：`tag add|remove --file <名> --match \"子串\" --tag 词1,词2`，纯写命令走文件锁 + 原子写，一次只改匹配到的唯一条目的 tags。语义约束：① 归一化口径照抄 add --tag（拆分/去空/去重），不新造；② tag add 幂等——标签已存在时不写盘、文件字节不变；③ tag remove 对不存在的标签同样幂等，删光后 tags 保持 [] （不省略字段）；④ 只动 tags，不碰状态机 / dependsOn / 依赖门 / priority / globalId / id / notes；⑤ 无匹配与多匹配与其余写命令同口径（静态消息 + 退出码，不猜）；⑥ --help 补用法。验收：命令闭环测试（add/remove/幂等字节不变/多标签/跨文件匹配选择/与 complete 与 reopen 共存——reopen 已承诺保留 tags）；.agents/skills/todo-cli/SKILL.md 命令参考卡与 docs/tools/todo-cli.md 工具卡同步（命令面 + 测试数，测试数唯一来源是根 README）；命令面/规格按需补 ADR 或 docs/specs/；node .agents/skills/todo-cli/todo-cli/todo.mjs lint 与 npm run test:todo 全绿。相关：todo-cli#5（元数据化筛选查询，已 done）是本条的消费侧，本条只补写入口。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-04T15:54:38.060Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
