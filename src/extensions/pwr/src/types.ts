@@ -53,8 +53,9 @@ export interface WorkflowScript {
 }
 
 /**
- * Run status vocabulary (order = lifecycle). Exported as a value so tool
- * output schemas can declare the same closed set the state machine accepts.
+ * Run status vocabulary (order = lifecycle). Single source of the closed
+ * set: the runtime state machine (runtime/types.ts RUN_STATUSES) and tool
+ * output schemas both derive from this list.
  */
 export const RUN_STATUS_VALUES = [
 	"draft",

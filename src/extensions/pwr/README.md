@@ -101,7 +101,7 @@ src/extensions/pwr/
 │   ├── pi.ts              # child pi 进程封装（JSON 事件流、usage 聚合、abort SIGTERM→SIGKILL、临时 system prompt）
 │   ├── errors.ts          # RunnerError + 错误码（UNKNOWN_AGENT/AGENT_RUNNER_UNAVAILABLE/AGENT_EXECUTION_ERROR/AGENT_ABORTED）
 │   ├── types.ts           # AgentDefinition/RunnerUsage/AgentEvent/工具白名单
-│   └── test/              # JHL-14 单测（37 个：mock spawn，无真实进程）
+│   └── test/              # JHL-14 单测（45 个：mock spawn，无真实进程）
 ├── runtime/               # JHL-13 Runtime（state/scheduler/cache/persist/index；setRunner 注入点）
 ├── src/
 │   ├── approval.ts        # 批准存储（记住/同一项目 canonical path+digest/APPROVAL_STALE）
@@ -125,7 +125,7 @@ src/extensions/pwr/
 │       ├── viewer.ts      # /workflow:view 分栏查看器（fleet 几何/键位 + 指纹门控 + D 两步停止）
 │       └── types.ts       # 共享视图模型与常量（VIEWER_TICK_MS 等）
 ├── test/                  # 引擎/入口契约单测（105 个）+ helpers/perf 门禁
-└── tests/                 # 流程/引擎/UI 套件单测（241 个用例，含真实宿主 viewer-host 测试与工具面契约 tool-contract）
+└── tests/                 # 流程/引擎/UI 套件单测（245 个用例，含真实宿主 viewer-host 测试与工具面契约 tool-contract）
 ```
 
 ## 运行单测（Windows PowerShell）

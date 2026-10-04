@@ -7,6 +7,8 @@
  * module is runtime-internal.
  */
 
+import { RUN_STATUS_VALUES, type RunStatus } from "../src/types.ts";
+
 /** Session entry version persisted for every run (PRD 6.1). */
 export const PWR_RUN_ENTRY_VERSION = "pi-workflow-run-v1";
 
@@ -25,30 +27,14 @@ export const MAX_FINAL_SUMMARY_SIZE = 8 * 1024;
 /** Maximum task/run error message size persisted and surfaced to the UI (bytes). */
 export const MAX_TASK_ERROR_SIZE = 8 * 1024;
 
-export type RunStatus =
-	| "draft"
-	| "awaiting_approval"
-	| "queued"
-	| "running"
-	| "paused"
-	| "completed"
-	| "failed"
-	| "cancelled";
+export type { RunStatus };
 
 export type AgentTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export type StageStatus = "queued" | "running" | "paused" | "completed" | "failed";
 
-export const RUN_STATUSES: readonly RunStatus[] = [
-	"draft",
-	"awaiting_approval",
-	"queued",
-	"running",
-	"paused",
-	"completed",
-	"failed",
-	"cancelled",
-];
+/** Closed run-status set; single source: RUN_STATUS_VALUES in ../src/types.ts. */
+export const RUN_STATUSES: readonly RunStatus[] = RUN_STATUS_VALUES;
 
 export interface WorkflowMeta {
 	name: string;
