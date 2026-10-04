@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 48d4392
+> last verified @ ce77ea0
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -25,6 +25,7 @@
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |
 | solo 免审批模式的跨扩展契约（状态文件 / 采纳方 / fail-closed） | `cross/solo-approval-gate.md` |
 | 状态条刷新节拍 / footer 排序带 / 段分隔与首段定格 / widget 排序带契约 | `cross/status-bar.md` |
+| fullscreen 默认（pi 1.0）下的 TUI 真机走查清单（viewer / askview / pwr viewer / widget 带 / status 带 / 鼠标选择与滚轮） | `tui-fullscreen-checklist.md` |
 | widget 刷新重排问题与上游 issue 稿（本地不打补丁） | `pi-widget-order-issue.md` |
 | 宿主 httpProxy 不注入 `NO_PROXY` → 本地回环被代理劫持（405）的问题与上游 issue 稿（本地不打补丁） | `pi-http-proxy-loopback-issue.md` |
 | 历史事故与教训（渲染堆叠、误杀进程、编码坑） | `incidents.md` |

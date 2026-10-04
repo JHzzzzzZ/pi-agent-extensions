@@ -10,7 +10,9 @@
 > `InteractiveMode.setExtensionWidget`/`renderWidgetContainer`，专测宿主 widget 栈保序）。
 > 惯例：宿主每升版一次，复核本矩阵一次并在头部登记新版本（同 agent-team/docs/tui-sync.md §5）。
 
-**基线版本：pi-tui 0.85.1 / pi-coding-agent 0.85.1**（`pwr/package.json` devDependencies `^0.85.1`，与本机安装一致；核查日 2026-09-11 @ 31446bc）。
+**基线版本：pi-tui 0.85.1 / pi-coding-agent 0.85.1**（矩阵逐行核对的基线；核查日 2026-09-11 @ 31446bc）。当前 `pwr/package.json` devDependencies 已随 v2.11.0 升到 `^1.0.0`（本机实际安装 1.0.1）——**向 1.0.1 的逐行矩阵重核尚未做**（本轮只重跑了 host 级测试，见下）。
+
+**复核环境（general-todo#19，2026-10-04 @ pi-tui / pi-coding-agent 1.0.1）**：本矩阵期望值建立于 `tuiMode: "regular"` 时期；pi 1.0 起宿主默认改为 **`fullscreen`**（回退 `--tui-mode regular` 或 `/settings` → `TUI mode`；host 渲染器由 `TuiMainScreen` 换成 `TuiAltScreen`）。headless 复核（`tests/ui-viewer-host.test.ts` 3 例、`tests/ui-widget-band-host.test.ts` 4 例，本机 `pwr/node_modules` 的 `@earendil-works/pi-*` 1.0.1 全绿）覆盖共享 overlay 合成器（`TuiBase.compositeOverlays`）+ `regular` 写屏路径 + 真实 `InteractiveMode.setExtensionWidget` widget 栈；`fullscreen` 专属路径（alt-screen 写屏、视口滚动、选择、滚动条）headless 触达不到，只能真机走查——清单见 `docs/tui-fullscreen-checklist.md`。**两模式是否行为一致：待清单回传后在此补写结论；取证前不得宣称一致。**
 
 ## 1. 文件映射表
 
