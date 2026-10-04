@@ -578,8 +578,11 @@ test("session_shutdown:清理状态与运行态,此后 settle 无动作", async 
 
 // ===== 真实评估器(结构化 fake,无网络) =====
 
+/** 标记信号：只有真透传 ctx.signal 的调用才会传出这同一个实例（默认 undefined 的断言是同义反复,锁不住取消链路）。 */
+const markerSignal = AbortSignal.abort("goal-evaluator-test-marker");
+
 function makeEvaluatorCtx(model: unknown, registry: unknown, sessionManager?: unknown): ExtensionContext {
-  return { model, modelRegistry: registry, signal: undefined, sessionManager } as unknown as ExtensionContext;
+  return { model, modelRegistry: registry, signal: markerSignal, sessionManager } as unknown as ExtensionContext;
 }
 
 function assertErrCode(result: EvaluatorResult, code: string): void {
@@ -625,7 +628,7 @@ test("createModelEvaluator:maxTokens 与 sessionId 交给 streamSimple(宿主据
   assert.deepEqual(calls[0]?.model, { provider: "opencode-go", id: "deepseek-v4.1-flash", api: "openai-completions" });
   assert.equal(calls[0]?.options.maxTokens, MAX_EVALUATOR_TOKENS);
   assert.equal(calls[0]?.options.sessionId, "s-123");
-  assert.equal(calls[0]?.options.signal, undefined, "透传 ctx.signal(取消链路)");
+  assert.equal(calls[0]?.options.signal, markerSignal, "透传 ctx.signal 的同一引用(取消链路)");
   assert.equal(calls[0]?.options.headers, undefined, "不再自拼 x-opencode-* 头,交由宿主 provider 层按 sessionId 注入");
   assert.equal(calls[0]?.context.messages[0]?.role, "user");
   assert.match(String(calls[0]?.context.messages[0]?.content), /目标/);
