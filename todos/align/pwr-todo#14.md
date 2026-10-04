@@ -51,3 +51,7 @@ codemode 打开后，pwr 的 4 个 `workflow_*` 工具**全部变成脚本可调
 - **Q2 exposure 清单** → 通过（`workflow_validate`/`start`/`control`/`save` → `model-only`）。
 - **Q5 并行与合并** → 并行开 worktree；`general-todo#21`（annotations）与 `general-todo#20`（namespace）**并入本条一起改**（同一批 `registerTool` 调用，分两次做会重复碰同一文件）。这两条 general 条目在三个扩展 worktree 全部合并后统一收口。
 - 背景事实：pi 1.0.0 typings 已核实 `exposure` / `outputSchema` / `annotations` / `namespace` 四个字段均存在于工具定义。
+- **Q6（2026-10-04 评审 P2-2 改判）验收 #2 / #3 的实测口径** → 原文两条在「范围第 1 条：4 个工具全部 `model-only`」前提下不可执行，按主会话决定调整，验收请按调整后的口径对：
+  - 验收 #3 原要求「脚本路径实测 `tools.workflow_control({action:"list"})` 返回结构化数组」，与范围第 1 条自相矛盾——`model-only` 的语义就是「声明给模型、永不从其它工具可调」，codemode 脚本根本调不到这 4 个工具，这条脚本路径不存在。改为**单元级实测**：直接调工具的 `execute`（`workflow_control` 的 `list`/`status`/控制动作 + `workflow_validate`/`start`/`save`），断言 `structuredContent` 与 `outputSchema` 一致（TypeBox `Value.Check`）。
+  - 验收 #2 原要求「测试断言 `pi.getAllTools()` 里读得到」同理在单测里无法发生（没有运行的宿主会话）；改为断言**捕获到的 `registerTool` 注册定义**——宿主 `getAllTools()` 报告的正是这份定义字段（`agent-session` 透传），两者等价；同时用该断言覆盖「4 个工具 `exposure === "model-only"`」。
+  - 原因：原验收步骤在 model-only 前提下不可执行，不补记会导致验收时对不上；「脚本读不到 pwr 运行态」这一缺口已如实记录在 `docs/extensions/pwr.md` 卡与 `DELIVERY.md`。

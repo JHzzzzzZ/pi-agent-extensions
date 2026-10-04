@@ -1,6 +1,6 @@
 # pwr — Pi Workflow Runtime
 
-> last verified @ a81ba32
+> last verified @ ecd5bb7
 
 ## 职责与边界
 
@@ -31,6 +31,8 @@
 ## 不变量
 
 - fail-closed：缺 engine / runner ⇒ 类型化错误（`ENGINE_UNAVAILABLE` / `AGENT_RUNNER_UNAVAILABLE`），绝不隐式回退主 agent。
+- **pi 1.0 工具面（v2.11.0）**：4 个 `workflow_*` 工具全部 `exposure: "model-only"`——它们是编排型（弹批准卡 / 起子 pi 进程 / 写盘），`model-only` 的语义是「声明给模型、永不从其它工具可调」，正好挡住 codemode 脚本；同名 `namespace`（`pwr`）+ MCP 风格 `annotations`。查询口径带稳定 `outputSchema` + `structuredContent`（`workflow_control` 的 `list` → `{ runs: [{ runId, status, stage, startedAt, finishedAt? }] }`，`status`/`pause`/`resume`/`stop`/`restart_agent` → `{ runId, ok, status }`；validate/start/save 各自的稳定子集），`details` 仍是内部结构（渲染 / 状态重建）。`stage` = 最近进入的阶段 label（未进入为空串），查询优先取 runtime `view` 快照（注册表状态会滞后）。
+- **已知缺口**：4 个工具 model-only ⇒ **codemode 脚本读不到 pwr 运行态**（只能调 `direct`/`codemode` exposure 的工具）。规矩是把查询契约先立对；只读查询工具另行登记，不在 v2.11.0 范围。
 - 错误消息静态模板，绝不插值用户输入；脚本源码 / args 永不写盘；结果 ≤50KB（`RESULT_TOO_LARGE`）、summary ≤8KB。
 - 命令面为单一 `/workflow:*` 命名空间（v2.9.0）：裸 `/workflow` 只做生成入口（`<任务>`；空参或 `help|--help|-h`=完整分组帮助；14 个旧子命令词只提示改名、绝不生成）；15 条独立冒号子命令 `/workflow:run|delete|model|list|view|open|pause|resume|stop|restart|save|saved|script|approve|help`。旧 `/workflows` 根与 `/workflows:*` 硬切不注册（无墓碑）；saved 名由 `/workflow:run` 调用时现读盘，与保存/删除无命令同步问题。`:list` 非法状态 warning + 有效状态集合（不静默列空表）。
 - trace 文本（v2.4.0）单行 + 尾部截断，绝不透传原始工具输出。
@@ -51,7 +53,8 @@
 
 ## 改动清单
 
-- 必跑：`cd src/extensions/pwr && npm test`（443 个）+ `npm run typecheck`；性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。viewer 改动跑 `tests/ui-viewer.test.ts`（纯函数）+ `tests/ui-viewer-host.test.ts`（真实宿主，防 overlay 堆叠）；widget/排序带改动跑 `tests/ui-widget-band-host.test.ts`；外观变更后再跑 `node src/extensions/agent-team/tools/capture-screens.mjs` 重生成 `docs/assets/pwr-viewer.svg`（工作区级无头截图管线的 pwr 场景，锚点自检失败即报错）。仓库级：`npm run test:all`（本套件已登记且标 serial——含性能门，独占运行；见 docs/tools/test-all.md）。
+- 必跑：`cd src/extensions/pwr && npm test`（451 个）+ `npm run typecheck`；工具面/契约改动跑 `tests/tool-contract.test.ts`（exposure/annotations/namespace + structuredContent 对 outputSchema 校验）。性能门：`test/perf.test.ts`（1500-agent 脚本校验 ≤300ms）。viewer 改动跑 `tests/ui-viewer.test.ts`（纯函数）+ `tests/ui-viewer-host.test.ts`（真实宿主，防 overlay 堆叠）；widget/排序带改动跑 `tests/ui-widget-band-host.test.ts`；外观变更后再跑 `node src/extensions/agent-team/tools/capture-screens.mjs` 重生成 `docs/assets/pwr-viewer.svg`（工作区级无头截图管线的 pwr 场景，锚点自检失败即报错）。仓库级：`npm run test:all`（本套件已登记且标 serial——含性能门，独占运行；见 docs/tools/test-all.md）。
+- 工具面改动前先核 pi 版本：exposure / outputSchema / annotations / namespace 四个字段是 pi 1.0 契约，devDependencies 必须 `@earendil-works/* ^1.0.0`（0.85.x 类型定义里没有这四个字段，不升过不了 typecheck）。
 - DSL 语义变更 ⇒ 同步 `engine/spec.ts` + `SCRIPT_VERSION` + `src/extensions/pwr/DELIVERY.md` 版本历史。
 - 测试 fake：`test/helpers.ts` 的 `makeFakeRunner`（fake AgentRunner）、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn`（fake 子进程）。集成模式见 `runner/test/integration.test.ts`。
 - 完整架构 / 安全文档 / 版本历史 → `src/extensions/pwr/DELIVERY.md`（权威，勿在别处重复）。

@@ -5,15 +5,33 @@
  * workflow_save against the Pi tool API. All failures surface as
  * { code, message, runId?, stageId?, taskId? } in `details` and never leak
  * source content or secrets.
+ *
+ * pi 1.0 tool face (pwr-todo#14): all four tools are `exposure: "model-only"`
+ * — they orchestrate subprocesses, write files or raise the approval card, so
+ * a codemode script must never reach them — grouped under the `pwr` namespace
+ * and carrying MCP-style annotations. Query-shaped results carry
+ * `outputSchema` + `structuredContent` (the stable contract for programmatic
+ * callers); `details` stays internal to rendering and state rebuilding.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { controlWorkflow, saveWorkflow, startWorkflow, validateWorkflow, type FlowDeps } from "./flow.ts";
+import {
+	controlWorkflow,
+	queryWorkflowRun,
+	queryWorkflowRuns,
+	saveWorkflow,
+	startWorkflow,
+	validateWorkflow,
+	type FlowDeps,
+	type RunListResult,
+	type RunQueryRow,
+	type RunStatusResult,
+} from "./flow.ts";
 import type { SaveAdapter } from "./flow.ts";
 import { extractPlan } from "./plan.ts";
-import type { PwrErrorResult } from "./types.ts";
+import { RUN_STATUS_VALUES, type PwrErrorResult } from "./types.ts";
 
 export interface ToolDeps extends FlowDeps {
 	saveAdapter?: SaveAdapter;
@@ -33,6 +51,61 @@ function errorText(result: PwrErrorResult): string {
 	return parts.join(" ");
 }
 
+/** pi 1.0 namespace：4 个工具同组（codemode 分组 + describeNamespace）。 */
+const PWR_NAMESPACE = { name: "pwr", description: "Pi Workflow Runtime 工作流编排" };
+
+/**
+ * 查询口径的稳定契约（pwr-todo#14）。字段集刻意小于 `details`：`details` 继续
+ * 承担渲染/状态重建，结构化结果只给程序化调用方一个不随内部形状漂移的接口。
+ */
+const RUN_STATUS_FIELD = StringEnum(RUN_STATUS_VALUES, { description: "Run status" });
+
+const VALIDATE_OUTPUT = Type.Object({
+	runId: Type.String(),
+	digest: Type.String(),
+	scriptName: Type.String(),
+	stages: Type.Array(
+		Type.Object({
+			label: Type.String(),
+			agentCount: Type.Number(),
+			dynamic: Type.Boolean({ description: "Fan-out size is computed at runtime" }),
+		}),
+	),
+	estimatedAgents: Type.Number(),
+	writeRisk: Type.Boolean(),
+	warnLargeRun: Type.Boolean(),
+});
+
+const START_OUTPUT = Type.Object({ runId: Type.String(), status: RUN_STATUS_FIELD });
+
+const CONTROL_RUN_ROW = Type.Object({
+	runId: Type.String(),
+	status: RUN_STATUS_FIELD,
+	stage: Type.String({ description: "Most recently entered stage label; empty when the run entered none yet" }),
+	startedAt: Type.String({ description: "ISO start time; empty when the run has not started" }),
+	finishedAt: Type.Optional(Type.String({ description: "ISO end time; omitted while the run is not finished" })),
+});
+
+const CONTROL_OUTPUT = Type.Union([
+	Type.Object({ runs: Type.Array(CONTROL_RUN_ROW) }),
+	Type.Object({ runId: Type.String(), ok: Type.Boolean(), status: RUN_STATUS_FIELD }),
+]);
+
+const SAVE_OUTPUT = Type.Object({ commandName: Type.String(), scope: StringEnum(["user", "project"] as const) });
+
+/** list 动作的模型可读文本：保留完整 runId，后续 status/控制动作都要用它。 */
+function runListText(runs: RunQueryRow[]): string {
+	if (runs.length === 0) return "No workflow runs in this session.";
+	const lines = [`Workflow runs (${runs.length}):`];
+	for (const run of runs) {
+		const stage = run.stage ? ` stage ${run.stage}` : "";
+		const started = run.startedAt ? ` started ${run.startedAt}` : "";
+		const finished = run.finishedAt ? ` finished ${run.finishedAt}` : "";
+		lines.push(`- ${run.runId}  ${run.status}${stage}${started}${finished}`);
+	}
+	return lines.join("\n");
+}
+
 export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 	pi.registerTool({
 		name: "workflow_validate",
@@ -41,10 +114,14 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 			"Validate a PWR workflow script, extract its stage plan and budget, and create a draft run.",
 			"Call this with the complete script source after generating a workflow. Returns the plan, budget estimate, script digest and runId.",
 		].join(" "),
+		exposure: "model-only",
+		namespace: PWR_NAMESPACE,
+		annotations: { readOnlyHint: true },
 		parameters: Type.Object({
 			source: Type.String({ description: "Complete PWR JavaScript script source" }),
 			argsSchema: Type.Optional(Type.Any({ description: "Optional JSON schema describing workflow arguments" })),
 		}),
+		outputSchema: VALIDATE_OUTPUT,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const result = await validateWorkflow(deps, { source: params.source, argsSchema: params.argsSchema });
 			if (isErrorResult(result)) {
@@ -60,6 +137,15 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 					},
 				],
 				details: result,
+				structuredContent: {
+					runId: result.runId,
+					digest: result.script.digest,
+					scriptName: result.script.meta.name,
+					stages: result.plan.stages.map((s) => ({ label: s.label, agentCount: s.agentCount, dynamic: s.dynamic === true })),
+					estimatedAgents: result.budgetEstimate.estimatedAgents,
+					writeRisk: result.budgetEstimate.writeRisk,
+					warnLargeRun: result.budgetEstimate.warnLargeRun,
+				},
 			};
 		},
 	});
@@ -72,6 +158,9 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 			"approval: 'once' starts only this run; 'remember' approves this script for the current project and digest (future identical scripts skip approval).",
 			"A changed script digest invalidates remembered approval (APPROVAL_STALE).",
 		].join(" "),
+		exposure: "model-only",
+		namespace: PWR_NAMESPACE,
+		annotations: { destructiveHint: true, openWorldHint: true },
 		parameters: Type.Object({
 			runId: Type.String({ description: "Run id returned by workflow_validate" }),
 			approval: StringEnum(["once", "remember"] as const, {
@@ -79,6 +168,7 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 				default: "once",
 			}),
 		}),
+		outputSchema: START_OUTPUT,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const result = await startWorkflow(deps, { runId: params.runId, approval: params.approval });
 			if (isErrorResult(result)) {
@@ -87,6 +177,7 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 			return {
 				content: [{ type: "text", text: `Workflow started (run ${result.runId.slice(0, 8)})` }],
 				details: result,
+				structuredContent: { runId: result.runId, status: result.status },
 			};
 		},
 	});
@@ -94,20 +185,48 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 	pi.registerTool({
 		name: "workflow_control",
 		label: "Workflow Control",
-		description: "Pause, resume, stop a workflow run or restart a single agent task.",
+		description: [
+			"Query or control PWR workflow runs.",
+			"'list' returns this session's runs (runId/status/stage/startedAt/finishedAt); 'status' returns one run's current status.",
+			"'pause'/'resume'/'stop' act on a run; 'restart_agent' re-runs a single agent task (agentId required).",
+		].join(" "),
+		exposure: "model-only",
+		namespace: PWR_NAMESPACE,
+		annotations: { destructiveHint: true },
 		parameters: Type.Object({
-			runId: Type.String({ description: "Run id" }),
-			action: StringEnum(["pause", "resume", "stop", "restart_agent"] as const),
+			action: StringEnum(["list", "status", "pause", "resume", "stop", "restart_agent"] as const, {
+				description: "'list' = this session's runs; 'status' = one run's status; other actions control a run",
+			}),
+			runId: Type.Optional(Type.String({ description: "Run id (required for every action except 'list')" })),
 			agentId: Type.Optional(Type.String({ description: "Agent task id (required for restart_agent)" })),
 		}),
+		outputSchema: CONTROL_OUTPUT,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			const result = await controlWorkflow(deps, { runId: params.runId, action: params.action, agentId: params.agentId });
+			if (params.action === "list") {
+				const payload: RunListResult = { runs: queryWorkflowRuns(deps).runs };
+				return { content: [{ type: "text", text: runListText(payload.runs) }], details: payload, structuredContent: payload };
+			}
+			if (params.action === "status") {
+				const result = queryWorkflowRun(deps, { runId: params.runId ?? "" });
+				if (isErrorResult(result)) {
+					return { content: [{ type: "text", text: errorText(result) }], details: result, isError: true };
+				}
+				const payload: RunStatusResult = { runId: result.runId, ok: true, status: result.status };
+				return {
+					content: [{ type: "text", text: `Run ${result.runId.slice(0, 8)} status: ${result.status}` }],
+					details: payload,
+					structuredContent: payload,
+				};
+			}
+			const result = await controlWorkflow(deps, { runId: params.runId ?? "", action: params.action, agentId: params.agentId });
 			if (isErrorResult(result)) {
 				return { content: [{ type: "text", text: errorText(result) }], details: result, isError: true };
 			}
+			const payload: RunStatusResult = { runId: result.runId, ok: true, status: result.run.status };
 			return {
-				content: [{ type: "text", text: `${params.action} ok (run ${params.runId.slice(0, 8)})` }],
+				content: [{ type: "text", text: `${params.action} ok (run ${result.runId.slice(0, 8)})` }],
 				details: result,
+				structuredContent: payload,
 			};
 		},
 	});
@@ -120,12 +239,16 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 			"Auto-fills meta.name/description/version, validates, writes the script and registers the /workflow:run <name> entry.",
 			"An existing same-name workflow returns NAME_CONFLICT; confirm with overwrite: true to replace it.",
 		].join(" "),
+		exposure: "model-only",
+		namespace: PWR_NAMESPACE,
+		annotations: { destructiveHint: true },
 		parameters: Type.Object({
 			runId: Type.String({ description: "Run id returned by workflow_validate" }),
 			scope: StringEnum(["user", "project"] as const, { description: "'user' = all projects; 'project' = trusted project only" }),
 			name: Type.String({ description: "Command name, e.g. 'audit-routes' (run it later via /workflow:run <name>)" }),
 			overwrite: Type.Optional(Type.Boolean({ description: "Confirm replacing an existing workflow with the same name (NAME_CONFLICT resolution)" })),
 		}),
+		outputSchema: SAVE_OUTPUT,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const result = await saveWorkflow(deps, { runId: params.runId, scope: params.scope, name: params.name, overwrite: params.overwrite });
 			if (isErrorResult(result)) {
@@ -134,6 +257,7 @@ export function registerPwrTools(pi: ExtensionAPI, deps: ToolDeps): void {
 			return {
 				content: [{ type: "text", text: `Saved as /workflow:run ${result.commandName} (${result.pathScope})` }],
 				details: result,
+				structuredContent: { commandName: result.commandName, scope: result.pathScope },
 			};
 		},
 	});

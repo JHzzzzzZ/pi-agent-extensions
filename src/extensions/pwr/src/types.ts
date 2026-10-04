@@ -52,15 +52,23 @@ export interface WorkflowScript {
 	astVersion: string;
 }
 
-export type RunStatus =
-	| "draft"
-	| "awaiting_approval"
-	| "queued"
-	| "running"
-	| "paused"
-	| "completed"
-	| "failed"
-	| "cancelled";
+/**
+ * Run status vocabulary (order = lifecycle). Single source of the closed
+ * set: the runtime state machine (runtime/types.ts RUN_STATUSES) and tool
+ * output schemas both derive from this list.
+ */
+export const RUN_STATUS_VALUES = [
+	"draft",
+	"awaiting_approval",
+	"queued",
+	"running",
+	"paused",
+	"completed",
+	"failed",
+	"cancelled",
+] as const;
+
+export type RunStatus = (typeof RUN_STATUS_VALUES)[number];
 
 export interface WorkflowRun {
 	runId: string;

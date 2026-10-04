@@ -4,7 +4,7 @@
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
-| [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令） | 443 个（node:test） |
+| [`src/extensions/pwr/`](#pwr--pi-workflow-runtime) | 工作流编排：脚本引擎 + 子进程 runner + 批准/保存/UI（solo 开启时批准卡按 once 自动批准；`/workflow:view` fleet 式分栏查看器；单一 `/workflow:*` 冒号命令面：裸 `/workflow` 生成/帮助 + 15 条子命令；pi 1.0 工具面：4 个 `workflow_*` 工具全部 `model-only` + `pwr` namespace + MCP annotations，查询口径 `outputSchema`/`structuredContent`） | 451 个（node:test） |
 | [`src/extensions/agent-team/`](#agent-team--多-agent-团队协作) | 可复用多 agent 团队：leader 调度成员协同完成任务（同一会话最多 3 个 run 并行，超限 `RUN_IN_PROGRESS`；各 run 进度/预算/停止/插话独立；viewer `[`/`]` 切 run），需求不明时 `team_ask` 向用户提问等待澄清（短题宿主对话框 / 长题自绘可滚动全文视图，题面 4KB 上限 + 显式省略标注；超时/取消/无 UI fail-closed 降级）（含全屏分栏会话记录查看器，支持查看器内停止 run、m 发消息直接对话（原文落转录 + 独立高亮成块，`team_transcript` 带 `[user]` 标记）；输入栏下方可选中亮块，展开为 main→leader→成员树，多 run 时为单 main + 每 run 子树、大团队自动窗口化；failed/aborted run 可续跑（原会话原地续写 + 复用 worktree + 换模型）；冒号命令面 `/team:list|:run|:resume|:status [runId]|:stop [runId]|:view|:clear|:doctor`；run 落终态自动把工作记录归档到主工作区 `history/team-runs/`；成员可声明 `backend: codex|claude` 由外部 CLI 非交互执行（结果/usage 折回同一 run 链路，v1.26.0）；团队文件值含 `": "` 的裸标量容忍（读时加引号重试一次，v1.29.0）；子进程 env 出口统一合成回环代理豁免 `NO_PROXY`/`no_proxy`（v1.30.0，#67）；成员终态按末轮判定（早轮失败不再误判已交付的成员，收尾异常以 warning 承载，v1.31.0，#47）） | 719 个 |
 | [`src/extensions/stream-token-speed/`](#stream-token-speed) | 流式回复 TTFT / tokens/s 实时计量 | 45 个 |
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
@@ -240,6 +240,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 - **批准记忆** — 批准键 = 项目 canonical path + 脚本 SHA-256 digest；脚本被编辑后必须重新批准
 - **保存/复用**（`workflow_save` + `/workflow:run <name> [参数]`）— 自动补齐 meta、落盘前强制重新校验、参数 JSON-schema 校验（`meta.argsSchema`）；args 支持 **`key=value` 语法**（按 schema 自动转类型，重复键/逗号成数组，`{` 开头仍按 JSON 解析，v2.4.0）；保存位置：用户范围 `~/.pi/agent/workflows/<name>.js`、项目范围 `.pi/workflows/<name>.js`（仅可信项目）
 - **观察与控制**（`/workflow:*`）— 运行列表/详情/批准卡 UI，暂停/恢复/停止/重启，快捷键 `ctrl+alt+z/x/r`；`/workflow:saved` 列出已保存工作流（scope/描述/参数提示），`/workflow:delete` 不带名称时同样先列出（v2.4.0）
+- **工具面（pi 1.0 契约，v2.11.0）**— 4 个 `workflow_*` 工具全部 `exposure: "model-only"`（编排型：弹卡 / 起进程 / 写盘，codemode 脚本永不触达）+ `pwr` namespace + MCP 风格 annotations；查询口径稳定契约：`workflow_control` 增 `list`/`status` 动作（`list` → runs 数组；`status`/控制动作 → `{ runId, ok, status }`），成功结果带 `outputSchema` + `structuredContent`，`details` 仍为内部结构。已知缺口：model-only ⇒ 脚本读不到运行态（只读查询工具另行登记）
 
 ### 命令
 
@@ -264,7 +265,7 @@ Choices: Run once / Remember for this script / View raw script / Reject
 ```bash
 cd src/extensions/pwr
 npm install        # 仅 devDependencies（typescript、pi-* 类型、typebox）
-npm test           # 443 个单测（test/ + tests/ + runtime/test/ + runner/test/）
+npm test           # 451 个单测（test/ + tests/ + runtime/test/ + runner/test/）
 npm run typecheck  # tsc --noEmit（strict + erasableSyntaxOnly，0 错误）
 npm run demo       # 模拟 /workflow UI（无宿主）
 ```
