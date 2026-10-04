@@ -32,21 +32,12 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { controlWorkflow, startWorkflow, type FlowDeps } from "../flow.ts";
 import { isPwrError } from "../save.ts";
 import { confirmApprovalCard, formatPlanText } from "../tools.ts";
-import type { RunStatus } from "../types.ts";
+import { RUN_STATUS_VALUES, type RunStatus } from "../types.ts";
 import type { PwrErrorResult } from "../types.ts";
 import type { MemoryRunStore } from "./run-store.ts";
 import { PWR_SHORTCUTS } from "./keybindings.ts";
 
-const VALID_RUN_STATUSES = new Set<RunStatus>([
-	"draft",
-	"awaiting_approval",
-	"queued",
-	"running",
-	"paused",
-	"completed",
-	"failed",
-	"cancelled",
-]);
+const VALID_RUN_STATUSES = new Set<RunStatus>(RUN_STATUS_VALUES);
 
 /** `:list` 状态校验：仅接受 8 个 run 状态；非法值由调用方 warning 后终止。 */
 export function isRunStatus(value: string): value is RunStatus {
