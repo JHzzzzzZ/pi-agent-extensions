@@ -13,7 +13,7 @@
 - **只加摩擦**：判定「安全」只意味着「本扩展不弹框」，**不授予任何权限**——handler 返回 `undefined`，宿主 `emitToolCall` 继续把事件交给其它 `tool_call` 处理器（既有审批门照常 block）。反过来，本扩展也**绝不修改命令文本**（`event.input` 只读，同意 = 原样执行）。这是本扩展的存在理由，写在 `index.ts` 头部。
 - **判定读不懂 ≠ 安全**：`stopReason: "stop"` 但答案不是 choice（或该问题无答案）⇒ 弹确认（交给人）。只有「分类器不可用」这一类才 fail-open。
 - **fail-open 必须可观测**（用户口径，不可协商）：`classify` 抛错 / 超时 / `getModelOfType` 返回 undefined / 无 UI / 弹框崩溃 / handler 自身异常，六种情形一律放行，但每次经 `observability.ts` 记一次：footer 段 `⚠ jev 放行N（原因）`（带序键 `60:jev-safe-gate`，只在有放行时出现）+ 本会话首次 notify + 一行日志（**无 UI 时日志是唯一通道**，走 `deps.log`，默认 stderr）。
-- **顺序即成本**（`judgeToolCall`）：非 bash → solo → 无 UI → 候选筛 → classify → 弹框。**无 UI 时连 classify 都不调**（问不了人就没有判断的意义）。
+- **顺序即成本**（`judgeToolCall`）：非 bash → solo → 候选筛 → 无 UI → classify → 弹框。**无 UI 时连 classify 都不调**（问不了人就没有判断的意义）；但无 UI 判定排在候选筛**之后**——headless 里非候选命令不计放行、不写日志，否则「放行 N」会被日常命令稀释（headless 恰恰只有日志这一个通道）。
 - **超时计时器不能 unref**：它是「到点放行」的唯一推动力；unref 后进程若没有别的待办（headless 收尾）会先退出，`await classify` 永不返回，工具调用直接挂住。
 - **classify 契约是「不抛错」**：失败走 `stopReason: "error" | "aborted"` + `errorMessage`；实现按 `stopReason` 分流（`classifyCommand`），另加 try/catch 兜住违约实现。超时只能用 `signal`（`ModelsClassifierOptions` 没有 timeoutMs）。
 - **solo 豁免是「完全不介入」**：solo 开启时不筛候选、不调 classify、不弹框（solo 的语义就是本会话不要摩擦）；状态只经契约读（同构 `solo-gate.ts`，`pid === process.pid`，其余 fail-closed 为未开启 ⇒ 门照常工作）。与其它采纳方**方向相反**：别人是「solo ⇒ 自动批准」，这里是「solo ⇒ 本门不存在」。

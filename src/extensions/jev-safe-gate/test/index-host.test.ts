@@ -259,6 +259,13 @@ test("fail-open：headless（无 UI）→ 放行、零 classify，且 stderr 留
   assert.equal(h.classifier.calls.classify, 0, "没有 UI 就问不了人 → 不花这次钱");
   assert.equal(logs.length, 1, "无 UI 时唯一通道是 stderr（默认 deps），必须真的写");
   assert.match(logs[0], /no-ui/);
+
+  // 评审第 1 轮：无 UI 判定排在候选筛之后——headless 下非候选命令不计放行、不写日志，
+  // 否则「放行 N」会被日常命令稀释（headless 恰恰只有日志这一个通道）。
+  const nonCandidate = await h.runner.emitToolCall(bashEvent("ls -la"));
+  assert.equal(nonCandidate, undefined);
+  assert.equal(h.classifier.calls.classify, 0);
+  assert.equal(logs.length, 1, "非候选命令在 headless 下不该再写一行日志");
 });
 
 test("solo 开启：候选命令零 classify、零弹框；关掉 solo 同一条命令恢复拦截", async (t) => {

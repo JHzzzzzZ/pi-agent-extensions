@@ -132,6 +132,8 @@ export function readJudgement(answer: ClassifierAnswer | undefined): Judgement {
   const probability = answer.probabilities?.[QUESTION_DESTRUCTIVE] ?? (answer.choice === QUESTION_DESTRUCTIVE ? 1 : 0);
   if (answer.choice === QUESTION_DESTRUCTIVE) return { kind: "suspicious", why: `choice=${QUESTION_DESTRUCTIVE}` };
   if (probability >= SUSPICIOUS_PROBABILITY) return { kind: "suspicious", why: `p=${probability}` };
+  // 契约要求 choice 答案必带 confidence；实现违约时「读不懂」不等于「安全」（本扩展的自家哲学）。
+  if (typeof answer.confidence !== "number") return { kind: "unreadable" };
   if (answer.confidence < MIN_CONFIDENCE) return { kind: "low-confidence", why: `confidence=${answer.confidence}` };
   return { kind: "safe" };
 }
@@ -167,14 +169,17 @@ function confirmBody(call: GateCall, judgement: Exclude<Judgement, { kind: "safe
   ].join("\n");
 }
 
-/** 真判断入口：顺序即成本顺序（非 bash → solo → 无 UI → 非候选 → 分类 → 弹框）。 */
+/** 真判断入口：顺序即成本顺序（非 bash → solo → 候选筛 → 无 UI → 分类 → 弹框）。 */
 export async function judgeToolCall(call: GateCall, ports: GatePorts): Promise<GateOutcome> {
   if (call.toolName !== GATED_TOOL) return { kind: "skip", why: "not-bash" };
   if (ports.isSoloActive()) return { kind: "skip", why: "solo" };
-  if (!ports.hasUI()) return releaseOpen(ports, FailOpenReasons.noUI);
 
   const candidates = ports.screen(call.command);
   if (candidates.length === 0) return { kind: "skip", why: "not-candidate" };
+
+  // 无 UI 判定排在候选筛**之后**：headless 里非候选命令不该被记成「放行」——否则放行计数会被日常命令
+  // 稀释，而 headless 恰恰只有日志这一个通道。问不了人时仍然连 classify 都不调（下面这一行不变）。
+  if (!ports.hasUI()) return releaseOpen(ports, FailOpenReasons.noUI);
 
   let verdict: ClassifierVerdict;
   try {
