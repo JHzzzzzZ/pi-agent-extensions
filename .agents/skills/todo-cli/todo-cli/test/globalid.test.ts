@@ -2,7 +2,7 @@
  * todo-cli/globalid.test.ts — 全局 id 计数器与全台账健康判定单测（todo-cli-todo:16）。
  *
  * 边界：本文件在 mkdtemp 临时仓库上覆盖真实文件系统的计数器读改写（原子写 + id 锁、
- * 自愈初始化、损坏 fail-closed）与三个纯函数（findGlobalIdProblems /
+ * 自愈初始化、发号前对齐台账、损坏 fail-closed）与三个纯函数（findGlobalIdProblems /
  * verifyGlobalIdMigration）；跨进程并发取号与 SIGKILL 残留的进程边界行为在
  * concurrency.test.ts / interrupt.test.ts 用真实子进程覆盖。
  *
@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { allocateGlobalId, findGlobalIdProblems, verifyGlobalIdMigration } from "../globalid.ts";
+import { allocateGlobalId, findGlobalIdProblems, peekNextGlobalId, verifyGlobalIdMigration } from "../globalid.ts";
 import { serializeTodo } from "../schema.ts";
 import type { TodoEntry, TodoFileData } from "../schema.ts";
 
@@ -105,6 +105,25 @@ test("allocateGlobalId 自愈（fresh clone）：存量 globalId 71..265 无计�
 
   assert.deepEqual(allocateGlobalId(root), { ok: true, value: 266 }, "计数器不入库（gitignore），新 clone 必须按 globalId 存量继续");
   assert.equal(readCounter(root), "267\n");
+});
+
+test("allocateGlobalId 发号前对齐台账：计数器落后于台账 max（跨 clone 合并产物）时按台账 max+1 发号，计数器更高时不倒退", (t) => {
+  const root = makeRoot();
+  t.after(() => removeRoot(root));
+  writeV4(root, "a-todo", [v4Entry(1, 100), v4Entry(2, 265)]);
+  fs.mkdirSync(path.dirname(counterPath(root)), { recursive: true });
+
+  fs.writeFileSync(counterPath(root), "200\n");
+  assert.deepEqual(allocateGlobalId(root), { ok: true, value: 266 }, "计数器 200 < 台账 max 265：取 max(计数器, 台账 max+1)");
+  assert.equal(readCounter(root), "267\n");
+
+  fs.writeFileSync(counterPath(root), "500\n");
+  assert.deepEqual(allocateGlobalId(root), { ok: true, value: 500 }, "计数器高于台账：按计数器前进（不倒退、不回收）");
+
+  fs.rmSync(counterPath(root));
+  const docs = [{ name: "a-todo", data: { version: 4 as const, title: "t", entries: [v4Entry(1, 100), v4Entry(2, 265)] } }];
+  assert.deepEqual(peekNextGlobalId(root, docs), { ok: true, value: 266 }, "只读预看与取号同口径（零写盘）");
+  assert.equal(fs.existsSync(counterPath(root)), false, "预看不写盘");
 });
 
 test("allocateGlobalId：计数器损坏（非纯数字 / 非正整数）→ ID_COUNTER_CORRUPT，不覆盖损坏文件", (t) => {

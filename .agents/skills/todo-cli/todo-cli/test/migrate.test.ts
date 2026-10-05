@@ -480,3 +480,97 @@ test("migrateFromMd 产 v4 完备（逐条 globalId + 计数器就位）；to-md
   assert.equal(md, ["# 通用 TODO", "", "- [ ] 甲", "- [x] 乙", "  - 收尾", ""].join("\n"), "globalId 不进 md（逃生舱只装人类契约）");
 
 });
+
+// ---------------------------------------------------------------------------
+// migrate global-id --repair（todo-cli-todo:18）：已发生撞号的受支持修复通道
+// ---------------------------------------------------------------------------
+
+/** repair 用例的 lint 前置：注册表为空 ⇒ lint 只做依赖图 + globalId 健康扫描。 */
+function writeEmptyManifest(root: string): void {
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ pi: { extensions: [] } }));
+}
+
+test("migrate global-id --repair：重复号仲裁保留规范序首见、其余重发号，逐字段等价自检后 lint 转绿", (t) => {
+  const root = makeRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
+  writeEmptyManifest(root);
+  writeLegacyJson(root, "a-todo", [legacy(1, "甲", { globalId: 7 }), legacy(2, "乙", { globalId: 5 })]);
+  writeLegacyJson(root, "b-todo", [legacy(1, "丙", { globalId: 7 }), legacy(2, "丁", { globalId: 3 })]);
+  const parse = (name: string) => parseTodoJson(fs.readFileSync(path.join(root, "todos", `${name}.json`), "utf8"), name);
+  const beforeA = parse("a-todo");
+  const beforeB = parse("b-todo");
+
+  const out: string[] = [];
+  const deps = { repoRoot: root, log: (l) => out.push(l) };
+  assert.equal(main(["migrate", "global-id", "--repair"], deps), 0);
+  assert.match(out.join("\n"), /b-todo#1：旧号 7 → 新号 8/, "输出旧号→新号清单");
+  assert.match(out.join("\n"), /已修复 globalId 重复：1 个文件 · 1 条条目重发号（等价自检通过）/);
+
+  const afterA = readJson(root, "a-todo");
+  const afterB = readJson(root, "b-todo");
+  assert.deepEqual(afterA.entries.map((e) => e.globalId), [7, 5], "重复号的首见条目（a-todo#1，规范序最前）保留原号");
+  assert.deepEqual(afterB.entries.map((e) => e.globalId), [8, 3], "其余重发新号（台账 max 7 → 8）");
+  if (beforeA.ok) assert.equal(stripGlobalId(afterA), stripGlobalId(beforeA.data), "a-todo 除 globalId 外逐字段零漂移");
+  if (beforeB.ok) assert.equal(stripGlobalId(afterB), stripGlobalId(beforeB.data), "b-todo 除 globalId 外逐字段零漂移");
+  assert.equal(fs.readFileSync(counterPath(root), "utf8"), "9\n", "计数器推进到 max+1");
+
+  out.length = 0;
+  assert.equal(main(["lint"], deps), 0, "repair 后 lint 必须转绿");
+  assert.match(out.join("\n"), /lint 通过/);
+});
+
+test("migrate global-id --repair：同号三处只留首见、--dry-run 零写盘零取号、无撞号幂等零动作", (t) => {
+  const root = makeRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
+  writeEmptyManifest(root);
+  writeLegacyJson(root, "c-todo", [legacy(1, "戊", { globalId: 9 }), legacy(2, "己", { globalId: 9 })]);
+  writeLegacyJson(root, "d-todo", [legacy(1, "庚", { globalId: 9 })]);
+  const bytes = () => ["c-todo", "d-todo"].map((name) => fs.readFileSync(path.join(root, "todos", `${name}.json`), "utf8"));
+  const snapshot = bytes();
+  const out: string[] = [];
+  const deps = { repoRoot: root, log: (l: string) => out.push(l) };
+
+  assert.equal(main(["migrate", "global-id", "--repair", "--dry-run"], deps), 0);
+  assert.match(out.join("\n"), /演练：c-todo#2 旧号 9 → 将重发新号/);
+  assert.match(out.join("\n"), /演练：d-todo#1 旧号 9 → 将重发新号/);
+  assert.match(out.join("\n"), /演练：将重发 2 条条目的 globalId（保留每个重复号的首见条目，起始号 10）/);
+  assert.deepEqual(bytes(), snapshot, "dry-run 零写盘");
+  assert.equal(fs.existsSync(counterPath(root)), false, "dry-run 零取号");
+
+  out.length = 0;
+  assert.equal(main(["migrate", "global-id", "--repair"], deps), 0);
+  assert.deepEqual(readJson(root, "c-todo").entries.map((e) => e.globalId), [9, 10], "同号三处：首见保留，其余按规范序重发");
+  assert.deepEqual(readJson(root, "d-todo").entries.map((e) => e.globalId), [11]);
+  assert.equal(fs.readFileSync(counterPath(root), "utf8"), "12\n");
+
+  const repaired = bytes();
+  out.length = 0;
+  assert.equal(main(["migrate", "global-id", "--repair"], deps), 0, "无撞号：幂等零动作");
+  assert.match(out.join("\n"), /没有需要修复的 globalId（无重复号）/);
+  assert.deepEqual(bytes(), repaired, "幂等：零写盘");
+  assert.equal(fs.readFileSync(counterPath(root), "utf8"), "12\n", "幂等：计数器不动");
+  out.length = 0;
+  assert.equal(main(["lint"], deps), 0);
+});
+
+test("migrate global-id --repair：复检仍有未迁移缺号 → 报出 + exit 1；补跑 migrate global-id 后 lint 转绿", (t) => {
+  const root = makeRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
+  writeEmptyManifest(root);
+  writeLegacyJson(root, "a-todo", [legacy(1, "甲", { globalId: 7 })]);
+  writeLegacyJson(root, "b-todo", [legacy(1, "乙", { globalId: 7 })]);
+  writeLegacyJson(root, "c-todo", [legacy(1, "丙")]);
+  const out: string[] = [];
+  const deps = { repoRoot: root, log: (l: string) => out.push(l) };
+
+  assert.equal(main(["migrate", "global-id", "--repair"], deps), 1, "重复号已修但台账未清空：fail-closed 报出");
+  assert.match(out.join("\n"), /b-todo#1：旧号 7 → 新号 8/, "重复号仍被修复（已写文件保留）");
+  assert.match(out.join("\n"), /globalId 缺失：c-todo#1（未迁移）/);
+  assert.match(out.join("\n"), /缺号先运行 migrate global-id 补齐/);
+
+  out.length = 0;
+  assert.equal(main(["migrate", "global-id"], deps), 0);
+  assert.deepEqual(readJson(root, "c-todo").entries.map((e) => e.globalId), [9], "缺号接续取号（号已烧不回收）");
+  out.length = 0;
+  assert.equal(main(["lint"], deps), 0, "两步走完后全台账健康");
+});

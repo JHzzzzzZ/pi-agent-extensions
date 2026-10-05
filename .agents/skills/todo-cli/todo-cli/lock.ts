@@ -16,7 +16,9 @@
  * gitignore，崩溃残留不脏工作区），写前清理 10 分钟过期的崩溃残留。
  *
  * 边界：本模块不解析 todo 内容、不关心业务；now/alive/sleep/deadlineMs/staleMs 可注入
- * 供测试确定性。锁目录固定 `todos/.todo-cli/locks/`（该目录整体 gitignore）。
+ * 供测试确定性。锁目录默认 `todos/.todo-cli/locks/`（该目录整体 gitignore），可经
+ * deps.lockDir 覆盖——全局 id 计数器据此把 id 锁放进 git 公共目录（与计数器同源，
+ * 主工作区与所有 worktree 共享同一把锁；todo-cli-todo:18）。
  */
 
 import * as fs from "node:fs";
@@ -41,6 +43,8 @@ export interface LockDeps {
   staleMs?: number;
   /** busy 等待上限覆盖。 */
   deadlineMs?: number;
+  /** 锁目录覆盖（默认 `todos/.todo-cli/locks/`）：全局 id 计数器把 id 锁挪进共享目录，锁跟着计数器走。 */
+  lockDir?: string;
 }
 
 export type LockFailure = { ok: false; code: "LOCK_TIMEOUT"; message: string };
@@ -52,9 +56,9 @@ export function runtimeDir(repoRoot: string): string {
   return path.join(repoRoot, "todos", ".todo-cli");
 }
 
-/** 锁文件路径：`todos/.todo-cli/locks/<名>.lock`。 */
-export function lockFileFor(repoRoot: string, name: string): string {
-  return path.join(runtimeDir(repoRoot), "locks", `${name}.lock`);
+/** 锁文件路径：默认 `todos/.todo-cli/locks/<名>.lock`；`lockDir` 覆盖供共享目录的 id 锁使用。 */
+export function lockFileFor(repoRoot: string, name: string, lockDir?: string): string {
+  return path.join(lockDir ?? path.join(runtimeDir(repoRoot), "locks"), `${name}.lock`);
 }
 
 /** tmp 目录：`todos/.todo-cli/tmp/`。 */
@@ -151,7 +155,7 @@ export function acquireTodoLock(repoRoot: string, name: string, deps: LockDeps =
   const sleep = deps.sleep ?? sleepSync;
   const staleMs = deps.staleMs ?? LOCK_STALE_MS;
   const deadlineMs = deps.deadlineMs ?? LOCK_DEADLINE_MS;
-  const lockPath = lockFileFor(repoRoot, name);
+  const lockPath = lockFileFor(repoRoot, name, deps.lockDir);
   if (heldLocks.has(lockPath)) return { ok: true, release: () => {} }; // 重入：同进程单线程，无竞争
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
