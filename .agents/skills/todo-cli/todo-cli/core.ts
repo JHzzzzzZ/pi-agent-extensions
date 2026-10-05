@@ -24,10 +24,13 @@
  *   - 优先级（todo-cli-todo:15）：条目可选软字段 priority（1-10，10 最高，缺省 5；
  *     `add --priority` 写入，非法值 BAD_PRIORITY 不写盘）。只影响 list 展示标记
  *     `[pN]` / `--sort priority` / JSON 输出，不进状态机、依赖门与查重。
- *   - 统一全局 id（todo-cli-todo:16）：条目 globalId 由 `todos/.todo-cli/next-id` 计数器
- *     在 id 锁内发号（全台账唯一、永不回收；计数器不入库，缺失时按台账存量自愈）。
- *     存量按 `migrate global-id` 一次性迁移；六个写命令在缺号台账上 fail-closed
- *     （GLOBAL_ID_PENDING），读命令容忍 null 瞬态；只有 `list --json` 输出 globalId。
+ *   - 统一全局 id（todo-cli-todo:16，todo-cli-todo:18 修订）：条目 globalId 由共享计数器
+ *     `<git-common-dir>/todo-cli/next-id` 在**同目录**的 id 锁内发号（全台账唯一、永不回收；
+ *     非 git 根 fail-soft 回退 `todos/.todo-cli/next-id`）。发号下界取 max(计数器, 旧布局
+ *     计数器, 全台账 max(条目 id, globalId)+1)——worktree/克隆/合并进来的号都兜住。
+ *     存量按 `migrate global-id` 一次性迁移、已发生的重复号用 `migrate global-id --repair`
+ *     仲裁重发；六个写命令在缺号台账上 fail-closed（GLOBAL_ID_PENDING），读命令容忍 null
+ *     瞬态；只有 `list --json` 输出 globalId。
  *   - 全部写操作经 `todos/.todo-cli/locks/<名>.lock` 跨进程互斥 + temp+rename 原子落盘
  *     （lock.ts；sqlite 索引层已删除，`--claimed-since` 等时间维度成为一等公民）；
  *   - 只读写仓库 `todos/` 目录内的文件，路径穿越直接拒绝；不自动 commit；
@@ -47,7 +50,7 @@
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs dep add|remove --file general --match "需求描述" --on 文件#id,...
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
  *   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]           # 只读：worktree 事实 × 条目关联
- *   node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]
+ *   node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run] [--repair]
  * 任意子命令前置 `--root <dir>` 可显式指定仓库根（跳过 git 发现；对非 git 目录也适用）。
  *
  * 纯函数（findDuplicateHits / resolveTodoPath / parseWorktrees / parseMergedBranches /
@@ -862,7 +865,7 @@ function parseArgs(argv: string[]) {
     const arg = argv[i];
     if (arg.startsWith("--")) {
       const key = arg.slice(2);
-      if (key === "json" || key === "force" || key === "help" || key === "dry-run") opts[key] = true;
+      if (key === "json" || key === "force" || key === "help" || key === "dry-run" || key === "repair") opts[key] = true;
       else {
         // 值标志：下一个 token 作为值；缺失或以 -- 开头则记空串（让下游报「缺少」而非静默 undefined）。
         const value = argv[i + 1];
@@ -1009,7 +1012,7 @@ const USAGE = `用法：
   node .agents/skills/todo-cli/todo-cli/todo.mjs lint
   node .agents/skills/todo-cli/todo-cli/todo.mjs triage [--json]
   node .agents/skills/todo-cli/todo-cli/todo.mjs list [--branch <ref>] [--tag <词>] [--text <关键词>] [--claimed-since <YYYY-MM-DD>] [--sort priority] [--json]
-  node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]
+  node .agents/skills/todo-cli/todo-cli/todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run] [--repair]
 
 仓库根默认由 git 自动发现（cwd 起）；也可在任意子命令前追加 --root <dir> 显式指定。`;
 
@@ -1130,8 +1133,8 @@ export function main(argv: string[], deps: Record<string, unknown> = {}): number
       return migrateFromMd(repoRoot, { now, log, dryRun: opts["dry-run"] === true, force: opts.force === true });
     }
     if (sub === "to-md") return migrateToMd(repoRoot, { now, log });
-    if (sub === "global-id") return migrateGlobalId(repoRoot, { log, dryRun: opts["dry-run"] === true });
-    log(`未知 migrate 子命令：${sub ?? ""}（可用：from-md [--dry-run] [--force] | to-md | global-id [--dry-run]）`);
+    if (sub === "global-id") return migrateGlobalId(repoRoot, { log, dryRun: opts["dry-run"] === true, repair: opts.repair === true });
+    log(`未知 migrate 子命令：${sub ?? ""}（可用：from-md [--dry-run] [--force] | to-md | global-id [--dry-run] [--repair]）`);
     return 1;
   }
 

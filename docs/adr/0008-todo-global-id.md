@@ -26,3 +26,12 @@ Status: accepted（2026-09-16，todo-cli-todo:16；用户批准方案全文，�
 - 合并冲突仲裁身份归 `globalId`：手工按并集解决后由 `lint` 兜「同号两次出现」；`migrate global-id` 预检重复号直接中止零写盘。`文件#id` 展示 / `dependsOn` / 对齐文档命名不变。
 - `migrate from-md` 一步到位产 v4 完备台账（逐条取号）；`migrate to-md` 豁免门禁、照常忽略 `globalId`（md 无此语法）。
 - 主仓库根 `todos/` 的实际迁移由主会话在验收后与 merge 同一 push 收口（避免主干长期 v3/v4 混布）。
+
+## 修订（2026-10-04，todo-cli-todo:18）：共享计数器 + 发号前对齐台账 + `--repair` 修复通道
+
+Status: accepted（用户 2026-10-04 本会话两问两答确认：修法范围 = 共享计数器 + 发号前对齐台账，否掉「只修 worktree」与「跨 clone 强一致」；撞号后通道 = 新增受支持的修复命令，否掉「只报、人工手改」）
+
+- **共享计数器**：`next-id` 与它的 id 锁一起挪到 **git 公共目录** `<git-common-dir>/todo-cli/`（`git rev-parse --git-common-dir`；`.git` 目录/缺失走零子进程快路径，链接工作区走 git 并核对 `--show-toplevel` 就是 repoRoot）——主工作区与所有 worktree 共享同一份号源与同一把互斥锁；**锁跟着计数器走**（只挪计数器会让并发取号失去互斥；锁序不变量「文件锁 → id 锁」不变，每文件锁仍按检出各自持有）。repoRoot 不是仓库根或非 git 目录 fail-soft 回退检出内旧布局 `todos/.todo-cli/next-id`；升级前已存在的旧文件按 max 语义折叠进新位置（取值后删除，删除失败下次再折）。
+- **发号前对齐台账**：`allocateGlobalId` 的发号下界改为 `max(计数器现值, 旧布局计数器现值, 全台账 max(条目 id, globalId) + 1)`——共享目录治不了跨 clone，与另一 clone/分支合并进来的号靠这一步兜住；计数器缺失时同一式子即自愈。台账不可解析 fail-closed（`ID_LEDGER_UNREADABLE`，不猜号）。
+- **`migrate global-id --repair`**：已发生撞号的受支持修复通道。仲裁规则 = 规范序（文件名升序 → 数组序）下每个重复号的**首见条目保留原号**、其余重发新号（沿用 2026-09-22 手工仲裁先例：`virtual-model-router-todo#1` 保留 343、`#2` 重发 348）；复用 `verifyGlobalIdMigration`（新增 `reissued` 参数）做逐字段等价自检 → 收尾全台账复检 → 输出「旧号 → 新号」清单；`--dry-run` 只列计划（零写盘零取号），无重复号幂等零动作；复检仍有问题（重复未清或存在未迁移缺号）报出 + exit 1。默认 `migrate global-id` 的重复号预检提示改为指向 `--repair`。
+- 不做跨 clone 的强一致（用户明确未选）：跨 clone 仍靠「发号前对齐台账」+ lint 兜，不引入远端/版本库内的计数器。

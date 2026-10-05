@@ -58,3 +58,12 @@
 - 不做写前自动迁移/定时迁移（一次性显式命令）；不做合并冲突的自动仲裁（`globalId` 只是判同身份，手工并集 + lint 兜底不变）。
 - `migrate to-md` 不表达 `globalId`（md 无此语法，逃生舱保持降级语义）。
 - 不改 `lock.ts`/`depends.ts`/`align.ts`/`todo.mjs` 契约；不改仓库外文件；不做主仓库根 `todos/` 的实际迁移（由主会话验收后与 merge 同一 push 执行）。
+
+## 修订（2026-10-04，todo-cli-todo:18）：计数器跨检出共享 + 发号前对齐台账 + `--repair`
+
+本文档上文「取号」段的计数器位置（`todos/.todo-cli/next-id`）已被 #18 取代，其余口径（双轨、写门禁、迁移编排、旧版兼容）不变。修订点：
+
+- 计数器与它的 id 锁一起挪到 **git 公共目录** `<git-common-dir>/todo-cli/`（`git rev-parse --git-common-dir`；主工作区与所有 worktree 共享号源与互斥锁）；repoRoot 不是仓库根或非 git 目录 fail-soft 回退旧位置；升级前的旧 `todos/.todo-cli/next-id` 按 max 语义折叠进新位置（随后删除）。
+- 发号下界 = `max(共享计数器, 旧布局计数器, 全台账 max(条目 id, globalId) + 1)`：台账对齐兜住与另一 clone/分支合并进来的号；计数器缺失时同一式子即自愈；台账不可解析 fail-closed（`ID_LEDGER_UNREADABLE`）。
+- `migrate global-id --repair`：已发生重复号的受支持修复通道（仲裁 = 规范序首见条目保留原号、其余重发新号；逐字段等价自检 + 收尾复检 + 「旧号 → 新号」清单；`--dry-run` 零写盘；无重复号幂等零动作）。默认 `migrate global-id` 的重复号预检改为提示 `--repair`。
+- 验收与证据：`test/globalid-shared.test.ts`（真 git worktree 交替取号 E2E）、`test/globalid.test.ts`（发号前对齐台账）、`test/migrate.test.ts`（repair 仲裁/dry-run/复检）；`npm run test:todo` 142 个；ADR-0008 修订节。

@@ -36,7 +36,7 @@ import { normalizeText, parseTodoJson, serializeTodo } from "./schema.ts";
 import type { TodoEntry, TodoFileData } from "./schema.ts";
 import { acquireTodoLock, atomicWriteFile, runtimeDir, tmpDirFor, withTodoLock } from "./lock.ts";
 import { allocateGlobalId, findGlobalIdProblems, peekNextGlobalId, verifyGlobalIdMigration } from "./globalid.ts";
-import type { GlobalIdDoc } from "./globalid.ts";
+import type { GlobalIdDoc, GlobalIdProblem } from "./globalid.ts";
 
 // ---------------------------------------------------------------------------
 // 旧 markdown 解析（纯函数）
@@ -441,13 +441,22 @@ function readAllTodoDocs(repoRoot: string): { ok: true; docs: GlobalIdDoc[] } | 
   return { ok: true, docs };
 }
 
+/** globalId 问题行（迁移/修复复检共用；与 lint 的问题行同模板族）。 */
+function globalIdProblemLine(problem: GlobalIdProblem): string {
+  return problem.code === "GLOBAL_ID_MISSING" ? `globalId 缺失：${problem.detail}（未迁移）` : `globalId 重复：${problem.detail}`;
+}
+
 /**
- * `migrate global-id [--dry-run]`：给存量未迁移条目一次性发全局 id。
+ * `migrate global-id [--dry-run] [--repair]`：存量一次性取号（默认）/ 已发生撞号的修复（--repair）。
  * 稳定顺序 = 文件名 sort（readdirSync）→ 文件内数组序（单次运行下确定可复现；并发运行时
  * 唯一性仍由计数器保证，仅全局顺序不再确定）。逐文件临界区内新鲜重读（JSON 自身是权威），
  * 等价自检不过则该文件零写、整体中止（已写文件保留 + 号已烧不回收——幂等重跑接续）。
  */
-export function migrateGlobalId(repoRoot: string, deps: { log: (line: string) => void; dryRun: boolean }): number {
+export function migrateGlobalId(
+  repoRoot: string,
+  deps: { log: (line: string) => void; dryRun: boolean; repair?: boolean },
+): number {
+  if (deps.repair === true) return repairGlobalIds(repoRoot, deps);
   const loaded = readAllTodoDocs(repoRoot);
   if (!loaded.ok) {
     deps.log(loaded.message);
@@ -455,8 +464,8 @@ export function migrateGlobalId(repoRoot: string, deps: { log: (line: string) =>
   }
   const duplicated = findGlobalIdProblems(loaded.docs).filter((problem) => problem.code === "GLOBAL_ID_DUP");
   if (duplicated.length > 0) {
-    for (const problem of duplicated) deps.log(`globalId 重复：${problem.detail}`);
-    deps.log("先手工仲裁重复的 globalId（合并冲突按 globalId 判同条目），再重跑 migrate global-id");
+    for (const problem of duplicated) deps.log(globalIdProblemLine(problem));
+    deps.log("重复号用 `migrate global-id --repair` 仲裁（保留每个重复号的首见条目），或先手工仲裁后再重跑 migrate global-id");
     return 1;
   }
   const pending = loaded.docs
@@ -529,11 +538,120 @@ export function migrateGlobalId(repoRoot: string, deps: { log: (line: string) =>
   }
   const remaining = findGlobalIdProblems(recheck.docs);
   if (remaining.length > 0) {
-    for (const problem of remaining) {
-      deps.log(problem.code === "GLOBAL_ID_MISSING" ? `globalId 缺失：${problem.detail}（未迁移）` : `globalId 重复：${problem.detail}`);
-    }
+    for (const problem of remaining) deps.log(globalIdProblemLine(problem));
     return 1;
   }
   deps.log(`已迁移全局 id：${files} 个文件 · ${allocatedCount} 条条目取号 ${firstId}..${lastId}（等价自检通过）`);
+  return 0;
+}
+
+/**
+ * `migrate global-id --repair`：已发生撞号的受支持修复通道（todo-cli-todo:18）。
+ * 预检重复号 → 仲裁（规范序 = 文件名升序 → 数组序：每个重复号的**首见条目保留原号**，
+ * 其余重发新号）→ 逐文件锁内新鲜重读 + 逐字段等价自检（reissued 条目只有 globalId 变）
+ * → 收尾全台账复检 → 输出「旧号 → 新号」清单。无重复号时幂等零动作；复检仍有问题
+ * （重复未清或存在未迁移缺号）报出 + exit 1（缺号先跑 `migrate global-id`）。
+ */
+function repairGlobalIds(repoRoot: string, deps: { log: (line: string) => void; dryRun: boolean }): number {
+  const loaded = readAllTodoDocs(repoRoot);
+  if (!loaded.ok) {
+    deps.log(loaded.message);
+    return 1;
+  }
+  const duplicated = findGlobalIdProblems(loaded.docs).filter((problem) => problem.code === "GLOBAL_ID_DUP");
+  if (duplicated.length === 0) {
+    deps.log("没有需要修复的 globalId（无重复号）");
+    return 0;
+  }
+
+  // 仲裁计划：规范序（文件名升序 → 数组序）首见者保留原号，其余按条目 id 记入重发名单。
+  const plan = new Map<string, Map<number, number>>();
+  const seen = new Set<number>();
+  let plannedCount = 0;
+  for (const doc of loaded.docs) {
+    for (const entry of doc.data.entries) {
+      if (entry.globalId === null) continue;
+      if (!seen.has(entry.globalId)) {
+        seen.add(entry.globalId);
+        continue;
+      }
+      const perFile = plan.get(doc.name) ?? new Map<number, number>();
+      perFile.set(entry.id, entry.globalId);
+      plan.set(doc.name, perFile);
+      plannedCount += 1;
+    }
+  }
+
+  const peek = peekNextGlobalId(repoRoot, loaded.docs);
+  if (!peek.ok) {
+    deps.log(peek.message);
+    return 1;
+  }
+  if (deps.dryRun) {
+    for (const [name, entries] of plan) {
+      for (const [id, oldGlobalId] of entries) deps.log(`演练：${name}#${id} 旧号 ${oldGlobalId} → 将重发新号`);
+    }
+    deps.log(`演练：将重发 ${plannedCount} 条条目的 globalId（保留每个重复号的首见条目，起始号 ${peek.value}）`);
+    return 0;
+  }
+
+  let files = 0;
+  let reissuedCount = 0;
+  for (const [name, planned] of plan) {
+    const file = path.join(repoRoot, "todos", `${name}.json`);
+    const locked = withTodoLock(
+      repoRoot,
+      name,
+      (): { ok: true; lines: string[] } | { ok: false; message: string } => {
+        const parsed = parseTodoJson(fs.readFileSync(file, "utf8"), `todos/${name}.json`);
+        if (!parsed.ok) return { ok: false, message: parsed.message };
+        const before = structuredClone(parsed.data);
+        const reissued = new Set<number>();
+        const lines: string[] = [];
+        for (const entry of parsed.data.entries) {
+          const oldGlobalId = planned.get(entry.id);
+          // 锁内新鲜重读：文件已变（该条目不再带计划里的旧号）就跳过，收尾复检兜底。
+          if (oldGlobalId === undefined || entry.globalId !== oldGlobalId) continue;
+          const next = allocateGlobalId(repoRoot);
+          if (!next.ok) return { ok: false, message: next.message };
+          entry.globalId = next.value;
+          reissued.add(entry.id);
+          lines.push(`${name}#${entry.id}：旧号 ${oldGlobalId} → 新号 ${next.value}`);
+        }
+        if (reissued.size === 0) return { ok: true, lines: [] };
+        const problem = verifyGlobalIdMigration(before, parsed.data, reissued);
+        if (problem !== null) return { ok: false, message: `等价校验失败：todos/${name}.json（${problem}，中止修复）` };
+        atomicWriteFile(file, serializeTodo(parsed.data), { tmpDir: tmpDirFor(repoRoot) });
+        return { ok: true, lines };
+      },
+    );
+    if (!locked.ok) {
+      deps.log(locked.message);
+      return 1;
+    }
+    if (!locked.value.ok) {
+      deps.log(locked.value.message);
+      return 1;
+    }
+    for (const line of locked.value.lines) deps.log(line);
+    if (locked.value.lines.length > 0) {
+      files += 1;
+      reissuedCount += locked.value.lines.length;
+    }
+  }
+
+  // 收尾全台账复检：修复后必须一条重复号都不剩（缺号是 migrate global-id 的活，同样报出）。
+  const recheck = readAllTodoDocs(repoRoot);
+  if (!recheck.ok) {
+    deps.log(recheck.message);
+    return 1;
+  }
+  const remaining = findGlobalIdProblems(recheck.docs);
+  if (remaining.length > 0) {
+    for (const problem of remaining) deps.log(globalIdProblemLine(problem));
+    deps.log("修复未清空全台账问题：缺号先运行 migrate global-id 补齐，重复号重跑 migrate global-id --repair");
+    return 1;
+  }
+  deps.log(`已修复 globalId 重复：${files} 个文件 · ${reissuedCount} 条条目重发号（等价自检通过）`);
   return 0;
 }

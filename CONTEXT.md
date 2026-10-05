@@ -67,7 +67,7 @@ _Avoid_: 备注、comment
 _Avoid_: 行号、序号
 
 **全局 id（globalId）**:
-schema v4 条目字段：**全台账唯一、永不回收**的统一主键，由 `todos/.todo-cli/next-id` 计数器在 `locks/id.lock` 内发号（计数器不入库、缺失时自愈为 `max(全台账条目 id, globalId) + 1`）。与文件内 `id` 正交双轨：`文件#id` 继续承担展示 / `dependsOn` 引用 / 对齐文档命名（人类契约不变），`globalId` 只进 `list --json` 与机器判定——`lint` 查重、跨分支合并冲突按其判同条目取并集；存量旧台账需 `migrate global-id` 一次性迁移（迁移前 v1-v3 读入归一 null，六个写命令被 `GLOBAL_ID_PENDING` 挡下）。决策见 ADR-0008。
+schema v4 条目字段：**全台账唯一、永不回收**的统一主键，由共享计数器 `<git-common-dir>/todo-cli/next-id` 在与它同目录的 `locks/id.lock` 内发号（主工作区与所有 worktree 共享同一份号源与同一把锁；非 git 根 fail-soft 回退检出内 `todos/.todo-cli/next-id` 旧布局，升级前的旧文件按 max 折叠进来）。发号下界 = `max(计数器现值, 旧布局计数器现值, 全台账 max(条目 id, globalId) + 1)`——台账对齐兜住与另一 clone/分支合并进来的号，计数器缺失时同一式子即自愈。与文件内 `id` 正交双轨：`文件#id` 继续承担展示 / `dependsOn` 引用 / 对齐文档命名（人类契约不变），`globalId` 只进 `list --json` 与机器判定——`lint` 查重、跨分支合并冲突按其判同条目取并集；存量旧台账需 `migrate global-id` 一次性迁移、已发生的重复号用 `migrate global-id --repair` 仲裁重发（迁移前 v1-v3 读入归一 null，六个写命令被 `GLOBAL_ID_PENDING` 挡下）。决策见 ADR-0008。
 _Avoid_: 全局序号、统一编号（口语可，文档统一用 globalId）
 
 **依赖（dependsOn）**:

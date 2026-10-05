@@ -43,7 +43,7 @@ todo.mjs complete --file <名> --match "子串" [--note "说明"]    # 完成：
 todo.mjs reopen --file <名> --match "子串" [--note "原因"]      # 撤销：在途条目 → open（对齐文档归档；done 拒绝）
 todo.mjs lint                                                 # 单向：pi.extensions 扩展 ↔ todos/<名>-todo.json + 依赖图扫描
 todo.mjs triage [--json]                                      # 只读：worktree 事实 × 条目 branch 关联
-todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run]   # md→JSON / JSON→md 逃生回滚 / 存量一次性取全局 id
+todo.mjs migrate from-md [--dry-run] [--force] | to-md | global-id [--dry-run] [--repair]   # md→JSON / JSON→md 逃生回滚 / 存量一次性取全局 id / 重复号仲裁修复
 todo.mjs --help
 ```
 
@@ -70,7 +70,7 @@ todo.mjs --help
 
 ### 全局 id（globalId）
 
-条目新增 `globalId` 字段（schema v4）：**全台账唯一、永不回收**的统一主键，由 `todos/.todo-cli/next-id` 计数器在 `locks/id.lock` 内发号（`add` 与迁移落盘时自动取号，失败/中止烧掉的号留缺口不回收）。**双轨**：`文件#id` 继续承担展示 / `dependsOn` 引用 / 对齐文档命名（人类契约不变），`globalId` 只进 `list --json` 与机器判定——`lint` 查重、跨分支合并冲突按其判同条目取并集。计数器被 gitignore（fresh clone 可能缺失），缺失时自愈为 `max(全台账条目 id, globalId) + 1`；损坏报 `ID_COUNTER_CORRUPT`（删该文件重跑即自愈）。旧 v1/v2/v3 文件读入时 `globalId` 归一为 null：读命令（`list`/`summary`/`triage`/`lint`）照常可读（`lint` 报 `globalId 缺失` 引导），六个写命令（`add`/`claim`/`align`/`complete`/`reopen`/`dep`）fail-closed 报 `GLOBAL_ID_PENDING`——**先跑 `migrate global-id`**（`--dry-run` 只预演：预检重号中止 / 无缺口幂等零动作 / 迁移中断后重跑接续，已写文件保留）。
+条目新增 `globalId` 字段（schema v4）：**全台账唯一、永不回收**的统一主键。计数器 `next-id` 与它的 id 锁一起住在 **git 公共目录**下 `<git-common-dir>/todo-cli/`（`add` 与迁移落盘时自动取号，失败/中止烧掉的号留缺口不回收）——**主工作区与所有 worktree 共享同一份号源与同一把锁**；repoRoot 不是仓库根（如 `--root` 指到仓库子目录）或非 git 目录时 fail-soft 回退检出内旧布局 `todos/.todo-cli/next-id`，升级前的旧文件按 max 语义折叠进来（随后删除）。**发号下界 = `max(计数器现值, 旧布局计数器现值, 全台账 max(条目 id, globalId) + 1)`**：台账对齐兜住与另一 clone/分支合并进来的号（共享目录治不了跨 clone），计数器缺失时同一式子即自愈。损坏报 `ID_COUNTER_CORRUPT`、台账不可解析报 `ID_LEDGER_UNREADABLE`（删计数器文件重跑即自愈）。**双轨**：`文件#id` 继续承担展示 / `dependsOn` 引用 / 对齐文档命名（人类契约不变），`globalId` 只进 `list --json` 与机器判定——`lint` 查重、跨分支合并冲突按其判同条目取并集。旧 v1/v2/v3 文件读入时 `globalId` 归一为 null：读命令（`list`/`summary`/`triage`/`lint`）照常可读（`lint` 报 `globalId 缺失` 引导），六个写命令（`add`/`claim`/`align`/`complete`/`reopen`/`dep`）fail-closed 报 `GLOBAL_ID_PENDING`——**先跑 `migrate global-id`**（`--dry-run` 只预演：预检重号中止 / 无缺口幂等零动作 / 迁移中断后重跑接续，已写文件保留）。**已发生的重复号用 `migrate global-id --repair`**：仲裁规则 = 规范序（文件名升序 → 数组序）下每个重复号的**首见条目保留原号**、其余重发新号；逐文件逐字段等价自检（只允许重发条目的 globalId 变）+ 收尾全台账复检；输出「旧号 → 新号」清单；`--dry-run` 只列计划（零写盘零取号），无重复号幂等零动作；复检仍有问题（重复未清或存在未迁移缺号）报出 + exit 1（缺号先跑 `migrate global-id`）。
 
 对齐文档固定派生 `todos/align/<文件基名>#<id>.md`（无自由路径参数），需四小节 `## 意图` / `## 范围` / `## 验收标准` / `## 人工确认` 各带非空正文，且正文出现 `<名>#<id>` 标记；`claim` 只打印路径与必填小节，**不代建文件**。缺失报 `ALIGN_DOC_MISSING`，结构不全报 `ALIGN_DOC_INCOMPLETE`。从 `aligning`/`aligned` 用 `complete` 收口**必须带 `--note`**（取消/搁置留原因）。模板单源在 `docs/tools/todo-cli.md`。
 
@@ -90,4 +90,4 @@ todo.mjs --help
 
 ## 设计权威
 
-命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）、`docs/adr/0007-todo-reopen.md`（回退与归档决策）、`docs/adr/0008-todo-global-id.md`（全局 id 与双轨决策）、`docs/adr/0009-todo-priority-soft-field.md`（优先级软字段决策）。
+命令面/锁/存储决策以代码与卡片为准：`docs/tools/todo-cli.md`（仓库卡片）、`docs/adr/0002-todos-json-storage.md`（JSON 权威决策）、`docs/adr/0007-todo-reopen.md`（回退与归档决策）、`docs/adr/0008-todo-global-id.md`（全局 id、双轨、共享计数器与修复通道决策）、`docs/adr/0009-todo-priority-soft-field.md`（优先级软字段决策）。
