@@ -7,7 +7,7 @@
  * 损坏/缺失/异 pid（子 pi 进程、崩溃残留、并发实例）一律 fail-closed 为未激活，
  * `--create-new` 二次确认照常拦截。
  *
- * 三份同构实现（pwr / opencode-bridge / deep-init 各一份）是刻意重复：
+ * 四份同构实现（pwr / opencode-bridge / deep-init / jev-safe-gate 各一份）是刻意重复：
  * 扩展部署时被复制为独立目录，无法跨目录 import；语义由契约卡锁死。
  */
 import * as fs from "node:fs";

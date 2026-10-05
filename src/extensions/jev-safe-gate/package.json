@@ -1,0 +1,25 @@
+{
+  "name": "pi-extension-jev-safe-gate",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "jev-safe-gate — tool_call 前置的 Jev 风险判断门：只拦 bash 危险命令，先过便宜候选筛，候选交给内置 typesafe/jev-latest 分类器判断，可疑（或置信度低）时弹一次确认；判定结果只加摩擦、绝不授予任何权限；solo 免审批模式开启时完全不介入",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^1.0.1",
+    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}

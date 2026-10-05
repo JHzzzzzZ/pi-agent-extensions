@@ -17,6 +17,7 @@
 | human-notify | `HumanNotifyDeps`（派生 / 平台 / 时钟 / 环境） | 进程派生、平台探测 |
 | run-timer | 无显式 deps 口——`aligned-ticker` 的 `now` 可注入，工厂测试经 before/after mock `setTimeout` + `fireTick()` | 时钟（特例：timer 直接 mock） |
 | stream-token-speed | `StatusPort`（status-port.ts，状态上报端口；`createStatusPort()` 工厂） | 测试用 `RecordingStatusPort` 实现该接口（test/fixtures.ts） |
+| jev-safe-gate | `GatePorts`（gate.ts：solo 读取 / hasUI / 候选筛 / classify / confirm / release——判定层的全部外界面）、`JevSafeGateDeps`（index.ts：solo 读取 / 判断超时 / 日志出口）、`ClassifierRegistryLike`（`ctx.modelRegistry` 里真正用到的那一小面） | 分类器网络调用、宿主 UI、solo 状态文件、时钟（超时计时器） |
 
 ## 时钟约定
 

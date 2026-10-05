@@ -28,6 +28,7 @@
 | 30 | pwr | `30:pwr` |
 | 40 | solo-mode | `40:solo-mode` |
 | 50 | stream-token-speed | `50:stream-token-speed` |
+| 60 | jev-safe-gate | `60:jev-safe-gate` |
 
 规则：两位数字带 + `:`，留 10 的间隔供未来插入；新增插件按语义带编号，并同步 `test/status-bar-contract.test.ts` 的 bands 表（该测试同时校验键字面量确实出现在对应源码）。排序带键只是内部键，用户不可见。
 
@@ -36,7 +37,7 @@
 宿主 `footer.js` 把各扩展状态 `sortedStatuses.join(" ")` 后按宽度右截断：段间只有单空格、按字符硬切、无优先级；`setStatus` 文本里的 `\n` 也会被 `sanitizeStatusText()` 吞成空格——**多行 footer 必须接管 footer 渲染（`ctx.ui.setFooter`），本轮不做**（宿主补丁已禁用，见 `AGENTS.md` 规则红线·仓库边界）。替代约定：
 
 - **首段定格 + 段分隔**：按 key 排序后，**最靠前的可见段不加 `│ `**（行首定格，避免悬空前导竖线），其余段之间以 `│ `（U+2502 + 空格）连接。任一段**出现/消失**（undefined ↔ 有文本）时，所有已登记段立即重算前缀并重渲染（事件驱动，不靠轮询）。
-- **协调机制（每插件一份 `status-band.ts`）**：宿主没有「谁在最前」的查询 API（`ExtensionUIContext` 只写不读，`FooterDataProvider` 仅在 `ctx.ui.setFooter` 自定义 footer 时可见）。因此五个写入者各自携带一份 `status-band.ts`：`writeBand(key, text, writer)` 把**逻辑文本（不含前缀）**与真实写 UI 回调交给模块，由模块按同一 `localeCompare` 规则判定最前段、拼前缀后调 `writer`。协调走 `globalThis` 上的 `Symbol.for("pi.status-bar.bands.v1")` 共享登记表——不跨插件 import，单目录仍可复制安装；**局限**：只认识同样使用本模块的写入者（本仓库五个 footer 写入者已覆盖，宿主内置/第三方 status 文本不计入判定）。宿主 `join` 只提供单空格，段边界全靠该前缀；前缀决策在插件样式之前，样式包装的是含前缀的完整文本。
+- **协调机制（每插件一份 `status-band.ts`）**：宿主没有「谁在最前」的查询 API（`ExtensionUIContext` 只写不读，`FooterDataProvider` 仅在 `ctx.ui.setFooter` 自定义 footer 时可见）。因此各写入者（现六个）各自携带一份 `status-band.ts`：`writeBand(key, text, writer)` 把**逻辑文本（不含前缀）**与真实写 UI 回调交给模块，由模块按同一 `localeCompare` 规则判定最前段、拼前缀后调 `writer`。协调走 `globalThis` 上的 `Symbol.for("pi.status-bar.bands.v1")` 共享登记表——不跨插件 import，单目录仍可复制安装；**局限**：只认识同样使用本模块的写入者（本仓库六个 footer 写入者已覆盖，宿主内置/第三方 status 文本不计入判定）。宿主 `join` 只提供单空格，段边界全靠该前缀；前缀决策在插件样式之前，样式包装的是含前缀的完整文本。
 - **瘦身格式**（宽度按终端显示列；goal 目标按 CJK 双宽截到 20 列）：
 
 | 带 | 扩展 | 格式 | 示例（非最前段） |
@@ -46,13 +47,14 @@
 | 30 | pwr | `pwr <active>▶[ <finished>✓]`（无活跃 run 时清状态） | `│ pwr 2▶ 1✓` |
 | 40 | solo-mode | `⚡ solo`（静态） | `│ ⚡ solo` |
 | 50 | stream-token-speed | `TTFT <ms>ms · <值>`；汇总 `TTFT <ms>ms · ~<平均> tok/s` | `│ TTFT 412ms · 86.4 tok/s` |
+| 60 | jev-safe-gate | `⚠ jev 放行N（<原因短标签>）`，**只在有 fail-open 放行时出现**（无放行不占宽度） | `│ ⚠ jev 放行1（超时）` |
 
-同屏例如（goal 最前，无前导分隔符）：`◎ 修复全部测试 · 4轮 · 1m05s │ tok72% mcp40%(14:30) │ pwr 2▶ 1✓`。
+同屏例如（goal 最前，无前导分隔符）：`◎ 修复全部测试 · 4轮 · 1m05s │ tok72% mcp40%(14:30) │ pwr 2▶ 1✓`；jev-safe-gate 段只在它真的放过一次未判断的命令时出现：`… │ pwr 2▶ 1✓ │ ⚠ jev 放行1（超时）`。
 
 provider-quota 各 adapter 文本（前缀由 `status-band` 统一加）：OpenRouter `$12.50 (used $3.25)`；DeepSeek `10.00 CNY`；ChatAnywhere `60.00`；智谱 `tok72% mcp40%(14:30)`（跨日 `(09-11 00:44)`，时间不可解析/早于 now-24h 则省略括号，只剩时间时输出 `(16:00)`）；OpenCode Go `15%/6%/3%(03:41)`（缺失窗口跳过，重置时间取命中限额窗口 rolling>weekly>monthly，否则 5h 窗口）。智谱/Go 只保留绝对时间，倒计时已删。stream-token-speed 等待态 `TTFT —`、热身 `TTFT 412ms · —`、无流式数据时清除状态（不再显示「无流式速度数据」）。
 
-- **宽度账**（120 列、五段全亮最坏）：goal 段 38（含 20 列 CJK 目标，最前段无前缀）+ 其余四段含各自 `│ ` 前缀（GLM 22 + pwr 11 + solo 9 + stream 汇总 26）+ 宿主 join 4 空格 ≈ **108 列**。
-- 生命周期：各写入者 `session_shutdown` 必须经 `writeBand(key, undefined, …)` 清登记（避免 `/reload` / 会话切换后残留文本影响首段判定）；stream-token-speed 自 v 2.x 起在 shutdown 清上一轮汇总。
+- **宽度账**（120 列、最坏）：goal 段 38（含 20 列 CJK 目标，最前段无前缀）+ 其余段含各自 `│ ` 前缀（GLM 22 + pwr 11 + solo 9 + stream 汇总 26）+ 宿主 join 4 空格 ≈ **108 列**；jev-safe-gate 段（约 15 列）**只在 fail-open 放行后**出现，常态不占宽度，全段同时亮时约 124 列（超宽由宿主右截断，与既有行为一致）。
+- 生命周期：各写入者 `session_shutdown` 必须经 `writeBand(key, undefined, …)` 清登记（避免 `/reload` / 会话切换后残留文本影响首段判定）；stream-token-speed 自 v 2.x 起在 shutdown 清上一轮汇总；jev-safe-gate 另在 `session_start` 清零放行计数并清段。
 - 非目标：不做字段轮播、不做跨插件聚合、不改宿主排序/截断行为。
 
 ## widget 排序带（编辑器上方，宿主键 `widget-band`）
