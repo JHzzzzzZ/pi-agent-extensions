@@ -1,8 +1,8 @@
 # solo 审批门 — 跨扩展契约（solo-mode ↔ 审批方）
 
-> last verified @ 775638d
+> last verified @ 20acc24
 
-solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/solo` 开启后，**审批摩擦类**确认自动按批准路径通过。本卡是唯一语义事实来源——读者（pwr / opencode-bridge / deep-init 各一份 `solo-gate.ts`）与写者（solo-mode）都必须符合本卡。
+solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/solo` 开启后，**审批摩擦类**确认自动按批准路径通过。本卡是唯一语义事实来源——读者（pwr / opencode-bridge / deep-init / jev-safe-gate 各一份 `solo-gate.ts`）与写者（solo-mode）都必须符合本卡。
 
 ## 状态文件（唯一事实来源）
 
@@ -17,9 +17,9 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 
 **写者生命周期**：状态只在"当前会话进程 + 当前扩展实例"内成立——`/reload`、`/new`、`/resume`、`/fork` 与进程退出都会复位为关闭（带 `pi --solo` 启动时，新会话按该 flag 重新启用）；开启需一次 `ctx.ui.confirm`，无 UI 环境拒绝激活——**例外**：`pi --solo` 经宿主原生 flag 通道显式声明意图，跳过确认且无 UI 也生效（无头 `-p` / `--mode json` 可用）。
 
-## 读者实现约定（三份同构 `solo-gate.ts` 是刻意重复）
+## 读者实现约定（四份同构 `solo-gate.ts` 是刻意重复）
 
-扩展部署时被复制为独立目录，无法跨目录 import，因此 pwr / opencode-bridge / deep-init 各自复制一份约 20 行的只读实现，且：
+扩展部署时被复制为独立目录，无法跨目录 import，因此 pwr / opencode-bridge / deep-init / jev-safe-gate 各自复制一份约 20 行的只读实现，且：
 
 - **每次判定现读文件，不缓存**（`/solo` 随时可切换）；
 - 默认读取 `process.env`（环境表用于测试注入）；
@@ -32,6 +32,7 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 | pwr | 批准卡（`workflow_validate` 弹卡点）、`workflow_start` 门控、已保存命令 `/workflow:run <name>` | **只产生 once 批准，绝不写 remembered 记录**；solo 关闭后既有 remembered 批准不受影响 |
 | opencode-bridge | sync 确认、端口切换确认、restore 的选择 + 确认 | restore 自动选最新备份（列表本就"最新在前"）；备份链与指纹门控不变 |
 | deep-init | `--create-new` 的 confirm-required 门控 | 仅放行该门；update 模式与其它校验不变 |
+| jev-safe-gate | **无**（不自动批准任何门） | 方向相反：solo 开启时本门**完全不介入**（不筛候选、不调 classify、不弹框）——solo 的语义就是"本会话不要摩擦"；只读状态，绝不替任何既有门放行 |
 
 **明确不采纳**：误触保护类确认（agent-team viewer `D` 两步停止、`/team:clear`、pwr `/workflow:delete` 选择）、pi 的 `project_trust` 提示——solo 只豁免"审批摩擦"，不豁免"防误触"。
 
@@ -48,3 +49,4 @@ solo-mode 扩展（`docs/extensions/solo-mode.md`）提供"免审批模式"：`/
 - pwr：`src/extensions/pwr/tests/solo-gate.test.ts` + `src/extensions/pwr/test/entry.test.ts` 的 solo 集成（弹卡点、workflow_start、已保存命令）。
 - opencode-bridge：`solo-gate.test.ts` + `index.test.ts` 的 sync/端口切换/restore 三条 solo 路径。
 - deep-init：`solo-gate.test.ts` + `index.test.ts` 的 `planDispatch` 与命令接线。
+- jev-safe-gate：`test/solo-gate.test.ts`（fail-closed 四态）+ `test/index-host.test.ts` 的 solo 豁免（真实宿主事件路径：solo 开启零 classify/零弹框，关掉后同一条命令恢复拦截）。

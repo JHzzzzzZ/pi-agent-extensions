@@ -67,13 +67,14 @@ test("widget 排序带：三个写入者各带一份同源 widget-band.ts（不�
   }
 });
 
-test("footer 排序带：五个键 localeCompare 顺序固定且字面量来自各自插件源码", () => {
+test("footer 排序带：六个键 localeCompare 顺序固定且字面量来自各自插件源码", () => {
   const bands = [
     ["goal", "10:goal", "src/extensions/goal/index.ts"],
     ["provider-quota", "20:provider-quota", "src/extensions/provider-quota/index.ts"],
     ["pwr", "30:pwr", "src/extensions/pwr/src/ui/renderer.ts"],
     ["solo-mode", "40:solo-mode", "src/extensions/solo-mode/index.ts"],
     ["stream-token-speed", "50:stream-token-speed", "src/extensions/stream-token-speed/status-port.ts"],
+    ["jev-safe-gate", "60:jev-safe-gate", "src/extensions/jev-safe-gate/observability.ts"],
   ] as const;
   const keys = bands.map(([, key]) => key);
   const sorted = [...keys].sort((a, b) => a.localeCompare(b));
@@ -83,13 +84,14 @@ test("footer 排序带：五个键 localeCompare 顺序固定且字面量来自�
   }
 });
 
-test("footer 段前缀：五个写入者各带一份 status-band.ts（最前段无前缀，其余段 `│ `）", () => {
+test("footer 段前缀：六个写入者各带一份 status-band.ts（最前段无前缀，其余段 `│ `）", () => {
   const writers = [
     ["goal", "src/extensions/goal/status-band.ts", "src/extensions/goal/index.ts"],
     ["provider-quota", "src/extensions/provider-quota/status-band.ts", "src/extensions/provider-quota/index.ts"],
     ["pwr", "src/extensions/pwr/src/ui/status-band.ts", "src/extensions/pwr/src/ui/renderer.ts"],
     ["solo-mode", "src/extensions/solo-mode/status-band.ts", "src/extensions/solo-mode/index.ts"],
     ["stream-token-speed", "src/extensions/stream-token-speed/status-band.ts", "src/extensions/stream-token-speed/status-port.ts"],
+    ["jev-safe-gate", "src/extensions/jev-safe-gate/status-band.ts", "src/extensions/jev-safe-gate/index.ts"],
   ] as const;
   for (const [name, bandFile, boundaryFile] of writers) {
     const band = read(bandFile);

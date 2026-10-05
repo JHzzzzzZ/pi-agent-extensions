@@ -1,6 +1,6 @@
 # solo-mode — 免审批模式（审批门自动批准）
 
-> last verified @ 775638d
+> last verified @ 20acc24
 
 ## 职责与边界
 
@@ -25,7 +25,7 @@
 
 ## 不变量
 
-- **状态文件契约**（`docs/cross/solo-approval-gate.md`）：路径 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`，`{pid, activatedAt}`，激活判定必须同时满足可读 + JSON 合法 + `pid === process.pid`；其余一律 fail-closed。读者三份 `solo-gate.ts` 与写者同构，改一处必须四处同步。
+- **状态文件契约**（`docs/cross/solo-approval-gate.md`）：路径 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`，`{pid, activatedAt}`，激活判定必须同时满足可读 + JSON 合法 + `pid === process.pid`；其余一律 fail-closed。读者四份 `solo-gate.ts` 与写者同构，改一处必须五处同步。
 - **只清自己的 pid**：`session_start` / `session_shutdown` / 关闭只处理 own-pid 文件，绝不删除异 pid 文件（并发 Pi 实例互不干扰）；崩溃残留靠 pid 不匹配自然失效。
 - **启动 flag 走宿主原生通道**：`pi.registerFlag("solo", {type:"boolean", default:false})` + `pi.getFlag("solo")`——不直读 `process.argv`（宿主会拒绝未注册的 `--solo`：`Unknown option: --solo`），也不自行定义 flag 名字以外的解析；值归一由 `soloFlagEnabled`（true/"true"/"1"）负责。
 - **对 PWR 只产生 once**：solo 绝不写 remembered 批准记录（`src/extensions/pwr/index.ts` 三处接线都强制降级 once），solo 关闭后既有 remembered 批准不受影响。
@@ -44,5 +44,5 @@
 
 - 必跑：`node --experimental-strip-types --test src/extensions/solo-mode/index.test.ts`（22 个，仓库根执行）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
 - 改命令面/文案：只动 `index.ts` 常量区与 `parseSoloCommand`，同步 `index.test.ts` 的解析与文案断言 + 根 README 小节。
-- 改状态文件契约（路径/字段/判定）：同步 `docs/cross/solo-approval-gate.md` + pwr/opencode-bridge/deep-init 的 `solo-gate.ts` 与其测试——**契约卡与三份实现必须一致**。
+- 改状态文件契约（路径/字段/判定）：同步 `docs/cross/solo-approval-gate.md` + pwr/opencode-bridge/deep-init/jev-safe-gate 的 `solo-gate.ts` 与其测试——**契约卡与四份实现必须一致**。
 - 新增采纳方：按 `docs/cross/solo-approval-gate.md` 的"新增采纳方步骤"（复制 `solo-gate.ts` + 门处判定 + notify + 两类测试 + 文档）。

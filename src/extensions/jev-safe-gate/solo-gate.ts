@@ -1,14 +1,17 @@
 /**
- * opencode-bridge - solo 审批门读取（跨扩展契约 docs/cross/solo-approval-gate.md）
+ * jev-safe-gate — solo 审批门读取（跨扩展契约 docs/cross/solo-approval-gate.md）
  *
  * solo-mode 扩展把"当前进程处于免审批模式"写进
  * `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`，内容 `{pid, activatedAt}`。
  * 本模块只读：仅当文件可读、JSON 合法且 `pid === process.pid` 才返回激活——
- * 损坏/缺失/异 pid（子 pi 进程、崩溃残留、并发实例）一律 fail-closed 为未激活，
- * 确认框照常弹出。
+ * 损坏/缺失/异 pid（子 pi 进程、崩溃残留、并发实例）一律 fail-closed 为未激活。
  *
- * 四份同构实现（pwr / opencode-bridge / deep-init / jev-safe-gate 各一份）是刻意重复：
- * 扩展部署时被复制为独立目录，无法跨目录 import；语义由契约卡锁死。
+ * 本扩展对 solo 的用法与其它采纳方相反：solo 开启时**完全不介入**（不筛候选、
+ * 不调 classify、不弹框）——solo 的语义就是"本会话不要摩擦"；fail-closed 在这里
+ * 意味着「读不到 solo 状态 ⇒ 按未开启处理 ⇒ 门照常工作」。
+ *
+ * 四份同构实现（pwr / opencode-bridge / deep-init / jev-safe-gate 各一份）是刻意
+ * 重复：扩展部署时被复制为独立目录，无法跨目录 import；语义由契约卡锁死。
  */
 import * as fs from "node:fs";
 import * as os from "node:os";

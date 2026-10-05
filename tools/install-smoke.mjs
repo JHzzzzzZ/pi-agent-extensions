@@ -114,6 +114,9 @@ export const EXTENSION_EXPECTATIONS = {
   "provider-quota": { commands: ["quota"], uiKeys: ["20:provider-quota"] },
   "solo-mode": { commands: ["solo", "solo:off", "solo:on", "solo:status"], uiKeys: ["40:solo-mode"] },
   "timeout-bg": { commands: ["bg", "bg:clear", "bg:kill"], uiKeys: [] },
+  // 无命令扩展：状态条段只在 fail-open 放行后才出现，启动期不写任何可见 TUI 键
+  // （session_start 只是清段），因此只能以"加载不抛错"证明。
+  "jev-safe-gate": { commands: [], uiKeys: [] },
   // 无命令扩展：只能以启动期 TUI 写入或"加载不抛错"证明。
   "run-timer": { commands: [], uiKeys: ["widget-band"] },
   "virtual-model-router": { commands: [], uiKeys: [] },
