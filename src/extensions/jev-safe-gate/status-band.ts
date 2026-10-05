@@ -1,5 +1,5 @@
 /**
- * solo-mode — footer 段前缀协调（跨插件契约 docs/cross/status-bar.md）
+ * jev-safe-gate — footer 段前缀协调（跨插件契约 docs/cross/status-bar.md）
  *
  * 宿主 footer 按 key `localeCompare` 排序后把各扩展的 `setStatus` 文本 join 成一行，
  * 没有「谁在最前」的查询 API。本模块统一决定段前缀：**排序最靠前的可见段不加
