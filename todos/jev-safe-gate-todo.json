@@ -6,7 +6,7 @@
       "id": 1,
       "globalId": 326,
       "text": "jev-safe-gate 新扩展：tool_call 前置的 Jev 风险判断，只能加摩擦（可疑→弹确认），绝不因判定安全而跳过确定性审批门；solo 模式下仍可抬高摩擦",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/jev-safe-gate",
       "tags": [
         "typesafe",
@@ -16,10 +16,12 @@
       ],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "合并 9845238（15 扩展 / 20 套件，根 2.63.0）：tool_call 前置 Jev 风险门——只拦 bash（正则候选筛，非候选零 classify 零宿主调用）、候选经内置 typesafe/jev-latest 判定、可疑或拿不准弹一次确认（拒绝拦、同意原样执行）、fail-open 六路全部可观测（footer ⚠ jev 放行N + 首次 notify + headless stderr，且无 UI 判定排在候选筛之后以免计数被日常命令稀释）、solo 开启零介入（经跨扩展契约读状态）。本扩展 50 测试 + typecheck 0；全量门 20/20 套件 2168 用例绿。跨厂商评审 2 轮无新意见（kimi-coding/k3-256k：第 1 轮 3 条建议全采纳，第 2 轮 OK；遗留一条非阻断边界 NaN confidence 已记入 merge commit）。真机验收 6 项待用户跑 docs/jev-safe-gate-checklist.md（需先 push + pi update）。安装冒烟 install-smoke 红属既有 general#17（全局 skill 未隔离）与 general#18（pi 1.0 内置扩展误报），与本条无关"
+      ],
       "createdAt": "2026-09-22T14:13:08.684Z",
       "claimedAt": "2026-10-05T00:10:21.232Z",
-      "completedAt": null,
+      "completedAt": "2026-10-05T03:05:40.085Z",
       "alignedAt": "2026-10-05T00:20:38.739Z"
     }
   ]
