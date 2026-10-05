@@ -1,6 +1,6 @@
 # jev-safe-gate — tool_call 前置的 Jev 风险判断门
 
-> last verified @ dc85f11
+> last verified @ 20acc24
 
 一句话：`pi.on("tool_call")` 上只拦 `bash`，先过便宜正则候选筛，候选才交给内置 `typesafe/jev-latest` 分类器判断；可疑（或拿不准）弹**一次**宿主确认，用户拒绝则阻止这次调用。
 

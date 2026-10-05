@@ -1,6 +1,6 @@
 # 跨扩展横切契约：注入端口（Deps）与测试 fake 模式
 
-> last verified @ 775638d
+> last verified @ 20acc24
 >
 > 仓库统一模式：**依赖注入经 deps 对象**，不用 mock 库、无全局注入。fake 只替进程/IO/时钟边界，不做被测行为的"纸面替身"。
 
