@@ -141,15 +141,17 @@
       "id": 8,
       "globalId": 313,
       "text": "危险指令审批未被 solo 模式豁免（用户 2026-09-17 实测反馈）：`/solo:on` 后执行 `rm -rf` 这类指令仍弹审批窗（无 UI 环境更是直接 block）。根因：该门不在本仓库 12 插件内，而在用户级全局扩展 `~/.pi/agent/extensions/permission-gate.ts`（34 行：`pi.on(tool_call)` + `ctx.ui.select`；模式 /\\brm\\s+(-rf?|--recursive)/i、/\\bsudo\\b/i、/\\b(chmod|chown)\\b.*777/i），它不读 solo 状态文件 `${PI_SOLO_MODE_FILE:-~/.pi/agent/solo-mode.json}`；而 solo 契约（docs/cross/solo-approval-gate.md）当前只覆盖 pwr / opencode-bridge / deep-init 三家的审批摩擦门，tool_call 级拦截从未进入范围。要求（口径待对齐）：① 先定这类门算「审批摩擦」（solo 自动批准）还是「误触保护」（保持人工）——rm/sudo/chmod 不可逆，建议默认只在显式开关/白名单内豁免并留审计，不默认全豁免；② 落点三选一：(a) solo-mode 侧自建危险指令门（本仓库内做 tool_call 钩子 + 复用 solo 状态判据，用户随后退役全局 permission-gate）；(b) 仓库外 permission-gate 读 solo 状态文件（红线 8：仓库外改动需用户逐次批准，含备份与回滚登记）；(c) 上游方案（宿主无 solo 概念，需先提 issue/PR）；③ 语义沿用状态文件 pid 校验 + fail-closed（异 pid / 损坏 ⇒ 照常弹窗），no-UI 口径要显式定（现状：permission-gate 无 UI 时直接 block）；`protected-paths.ts` 那类无弹窗硬 block 不属本条（保持不动）。验收：solo 开启时按定稿口径不再弹窗（或仅白名单内豁免）+ solo 关闭时照常弹窗，均有测试锁定；docs/cross/solo-approval-gate.md 与 docs/extensions/solo-mode.md 同步；若动仓库外文件，文件/备份/回滚写进交付报告。",
-      "status": "open",
+      "status": "done",
       "branch": null,
       "tags": [],
       "priority": 7,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "用户 2026-10-04 指示从台账取消（未说明原因）。背景：本条是同一块地的一角——jev-safe-gate#1 新增的正是「bash 危险命令前置审批」，其对齐文档将记录 solo 状态是否豁免该门的口径；如日后要恢复本条，用 reopen 即可"
+      ],
       "createdAt": "2026-09-18T00:06:28.662Z",
       "claimedAt": null,
-      "completedAt": null,
+      "completedAt": "2026-10-05T00:13:11.746Z",
       "alignedAt": null
     }
   ]
