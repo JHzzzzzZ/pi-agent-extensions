@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十四个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台、虚拟模型路由、危险命令判断门）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十五个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台、虚拟模型路由、危险命令判断门、内置工具远程后端）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -19,6 +19,7 @@
 | [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭） | 33 个（node:test） |
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
+| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单 | 50 个（node:test） |
 
 ## 安装
 
@@ -28,7 +29,7 @@
 
 ### 方式一：pi install（推荐）
 
-> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（15 个扩展）。不带 ref 的安装会装到 master 旧包。
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（16 个扩展）。不带 ref 的安装会装到 master 旧包。
 
 ```bash
 # 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
@@ -68,7 +69,7 @@ pi install ./pi-agent-extensions
 
 ### 只装其中几个扩展（按需安装）
 
-默认安装会把根 `package.json` `pi.extensions` 里的 15 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
+默认安装会把根 `package.json` `pi.extensions` 里的 16 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
 
 ```bash
 pi config        # 全局作用域（~/.pi/agent/settings.json）
@@ -101,7 +102,7 @@ pi config -l     # 项目作用域（.pi/settings.json），也可在里面按 T
 
 ### 安装自检（可选）
 
-不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 15 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 16 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
 
 ```bash
 node tools/install-smoke.mjs        # ✓ = 15/15 扩展在干净目录下加载成功；✗ 时打印问题清单
@@ -621,6 +622,30 @@ cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck 
 
 ---
 
+## remote-tools
+
+给七个内置工具加**远端执行**能力：调用时带 `remote` 就在远端主机跑，不带就与今天完全一致（委托宿主本地实现，零行为漂移）。
+
+```text
+read  path="/srv/app/src/index.ts"   remote="deploy@10.0.0.7"
+bash  command="git status --short"   remote="deploy@10.0.0.7" remoteCwd="/srv/app"
+grep  pattern="TODO" path="/srv/app" remote="deploy@10.0.0.7" remotePort=2222
+ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write / edit / find 同理
+```
+
+- **三个参数** — `remote`（`"[user@]host"`，省略或留空 = 本机）、`remotePort`（1-65535，省略用 `~/.ssh/config`）、`remoteCwd`（仅 `bash`，省略 = 远端 `$HOME`）；`ls`/`find`/`grep` 省略 `path` 也用远端 `$HOME`，相对路径按远端 `$HOME` 解析
+- **保真优先** — `read`/`write`/`edit`/`ls`/`find`/`bash` 用宿主**同一份** `createXxxToolDefinition` 配远端 Operations，截断/限流/渲染器/提示词片段全部沿用内置；只有 `grep` 必须整份重写（宿主的 `GrepOperations` 覆盖不到真正的 ripgrep 搜索），代价是其自定义 TUI 渲染器回落默认
+- **零运行时依赖** — 只调系统 `ssh`（Windows 自带 OpenSSH 即可）；不做密码登录、不存凭据，走密钥 / ssh-agent；非交互（`BatchMode`）且拒绝未知主机指纹，首次连一台机器请先在终端手工 `ssh` 一次
+- **远端缺 `ripgrep` 时** — `grep`/`find` 回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不再生效）
+- **安全与 fail-closed** — 路径必须是远端绝对 POSIX 路径（模型给的 `C:/…` 或相对路径在发 ssh 之前就报错）；只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`），其余 `PI_*` 绝不送远端；错误消息全静态模板
+- **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`、远端图片不做 MIME 探测
+
+```bash
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 50 个测试
+```
+
+---
+
 ## todo-cli
 
 `todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 撤销 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/优先级/依赖/时间戳都是原生字段；schema v4）。**统一全局 id**（`globalId` 全台账唯一、永不回收的机器主键；计数器与它的 id 锁住在 **git 公共目录** `<git-common-dir>/todo-cli/`，主工作区与所有 worktree 共享同一份号源与同一把锁，非 git 根 fail-soft 回退 `todos/.todo-cli/next-id`；发号下界 `max(计数器, 旧布局计数器, 全台账 max(条目 id, globalId)+1)` 兜住跨 clone/合并进来的号；`文件#id` 展示/引用/对齐文档命名双轨不变；存量旧台账先 `migrate global-id`、已发生的重复号用 `migrate global-id --repair` 仲裁重发（首见保留、其余重发），迁移前六个写命令报 `GLOBAL_ID_PENDING`；见 [`docs/adr/0008-todo-global-id.md`](docs/adr/0008-todo-global-id.md)）——让跨文件重号与合并仲裁有唯一机器身份。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。**回退通道 `reopen`**（见 [`docs/adr/0007-todo-reopen.md`](docs/adr/0007-todo-reopen.md)）：在途条目（aligning/aligned/processing）退回 `open` 池（清 branch/claimedAt/alignedAt，注记留痕，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`），从对齐阶段撤销必带 `--note`、done 拒绝、已是 open 幂等——修的是「状态说在途、事实从未开工」的虚空 processing。**依赖门**（`dependsOn` 规范引用 `文件#id`，见 [`docs/adr/0005-todo-depends-on.md`](docs/adr/0005-todo-depends-on.md)）：依赖未 done（含悬空）时第二次 `claim` fail-closed（`DEP_BLOCKED`），`list` 行尾标阻塞、`triage` 列明细；写路径拒绝悬空/自引用/环，`lint` 另做全量图扫描兑合并产物。**优先级 `priority`**（1-10，10 最高，见 [`docs/adr/0009-todo-priority-soft-field.md`](docs/adr/0009-todo-priority-soft-field.md)）：`add --priority` 写入（缺省 5、非法 fail-closed），`list` 行内 `[pN]` 标记、`--sort priority` 降序排、`--json` 带字段；全版本可选软字段、不占版本位（版本位 v3→v4 归 globalId 姊妹单）、不进状态机/依赖门。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|depends|lock|query|migrate|globalid|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
@@ -668,7 +693,7 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 
 ## 开发约定
 
-全仓测试一条命令（20 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
+全仓测试一条命令（21 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
 
 ```bash
 npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 / --jobs 4 更高并发）

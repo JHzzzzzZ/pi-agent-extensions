@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。15 个插件目录收在 `src/extensions/` 下：`pwr/`（Pi Workflow Runtime，本地工作流编排）与 14 个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台、虚拟模型路由、危险命令判断门）；仓库根另有独立运行的 **agent-manager**（带浏览器前端的 agent 管理工具，非 Pi 扩展，agent 不感知）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
+Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）。16 个插件目录收在 `src/extensions/` 下：`pwr/`（Pi Workflow Runtime，本地工作流编排）与 15 个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台、虚拟模型路由、危险命令判断门、内置工具远程后端）；仓库根另有独立运行的 **agent-manager**（带浏览器前端的 agent 管理工具，非 Pi 扩展，agent 不感知）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。
 
 每个扩展的职责边界、文件地图、数据流、不变量与已知坑：见 [`docs/INDEX.md`](docs/INDEX.md) 路由到的卡片与各扩展 README。安装/加载：复制到 `~/.pi/agent/extensions/`（全局）或 `.pi/extensions/`（受信任项目），Pi 中执行 `/reload` 生效。
 
@@ -35,7 +35,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 - `test/` — 仓库根自检（状态条契约 / 安装冒烟纯逻辑）；todo CLI 的测试随工具住在 `.agents/skills/todo-cli/todo-cli/test/`，由根脚本 `npm run test:todo` 指向该 glob（命令见下节）。
 - `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 15 扩展加载）。用法见脚本头与 `docs/tools/`。
 - `.agents/skills/todo-cli/` — 仓库内项目级 skill：`SKILL.md`（命令参考卡）+ `scripts/todo.sh` 包装器 + `todo-cli/`（todo CLI 入口与实现同居，任意 git 仓库任意 cwd 可用；仓库根解析 = `--root` > `git rev-parse --show-toplevel`，见 `docs/tools/todo-cli.md`）。
-- `src/extensions/<插件名>/` — 15 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
+- `src/extensions/<插件名>/` — 16 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
 - `agent-manager/` — 独立 Node 工具，**非扩展**：不 import 宿主 SDK、不注册 pi 扩展点、已从根 `pi.extensions` 注销，仅 listen `127.0.0.1`；边界与数据流见 `docs/tools/agent-manager.md`。
 - `history/team-runs/<runId>/` — repo-dev 团队 run 的本地留档目录（`history/` 已 gitignore，不入库）：每 run 固定七份文档 `00-task` / `10-design` / `20-writer-N` / `30-integration` / `40-review` / `50-acceptance` / `90-run-report`，头部带元数据（runId / 日期 / 参与成员），单作者执笔、定稿后只追加不改写。
 
@@ -55,7 +55,7 @@ node --test runtime/test/scheduler.test.ts
 仓库根（无任何依赖）：
 
 ```bash
-npm run test:all        # 全仓 20 套件一条命令（逐条计时/失败聚合；--jobs N 调并发；见 docs/tools/test-all.md）
+npm run test:all        # 全仓 21 套件一条命令（逐条计时/失败聚合；--jobs N 调并发；见 docs/tools/test-all.md）
 npm run test:contract   # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke      # 安装冒烟工具的纯逻辑单测
 npm run test:todo       # todo CLI 单测（随工具住在 .agents/skills/todo-cli/todo-cli/test/，含进程边界 E2E）
@@ -83,6 +83,7 @@ cd src/extensions/opencode-bridge && npm install && npm test && npm run typechec
 cd agent-manager && npm install && npm test && npm run typecheck   # 另 npm run test:e2e opt-in（需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
 cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck   # 50 个（含宿主事件路径：真实加载 + ExtensionRunner）
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 50 个（含本地保真对照与 Windows 路径往返）
 ```
 
 ## 代码约定与常见模式
@@ -125,7 +126,7 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 
 - **Node ≥ 22.18**（原生 type-stripping——`.ts` 直接运行；已在 Node 22.23.1 / Windows 验证）。不用 Bun、无构建步骤、无 bundler。
 - **npm**（package-lock v3）。包管理器不是 Bun/pnpm。
-- TypeScript ^5.8（解析为 5.9.3）；`@earendil-works/pi-*` 仅作 devDependencies——宿主 Pi 环境在运行时解析它们。用到 pi 1.0 工具面 API（`exposure`/`outputSchema`/`annotations`/`namespace`）的扩展锁 `^1.0.0`+：pwr / agent-team / loop / timeout-bg；virtual-model-router 同样锁 `^1.0.0`（`pi.registerVirtualModel` 是 1.0 起的 API）；其余仍 `^0.85.1`（deep-init / opencode-bridge，统一口径见 `todos/general-todo.json` 的「统一 devDependencies 宿主版本口径」条目）。
+- TypeScript ^5.8（解析为 5.9.3）；`@earendil-works/pi-*` 仅作 devDependencies——宿主 Pi 环境在运行时解析它们。用到 pi 1.0 工具面 API（`exposure`/`outputSchema`/`annotations`/`namespace`）的扩展锁 `^1.0.0`+：pwr / agent-team / loop / timeout-bg；virtual-model-router 同样锁 `^1.0.0`（`pi.registerVirtualModel` 是 1.0 起的 API）；remote-tools 也锁 `^1.0.0`（内置工具的 `createXxxToolDefinition` + Operations 接缝与 `ToolDefinition` 是 1.0 面）；其余仍 `^0.85.1`（deep-init / opencode-bridge，统一口径见 `todos/general-todo.json` 的「统一 devDependencies 宿主版本口径」条目）。
 - 工作区使用的 Pi 扩展 API 面：`pi.on`（`session_start`、`agent_start`、`agent_settled`、`turn_start/end`、`model_select`、`message_start/update/end`、`input`、`before_agent_start`、`tool_call`、`tool_result`）、`pi.registerCommand`、`pi.registerTool`、`pi.registerProvider`、`pi.registerVirtualModel`、`pi.registerShortcut`、`pi.registerEntryRenderer`、`pi.appendEntry`、`pi.sendMessage`、`ctx.ui.setStatus/setWidget/notify`、`ctx.sessionManager.getEntries`。
 - 配置经环境变量（`CHATANYWHERE_API_KEY`、`CHATANYWHERE_BASE_URL`）或 `~/.pi/agent/auth.json` 按 provider id 键（provider-quota——明确不用环境变量）。
 - 安装形态：所有扩展都是带 `index.ts` 入口的目录（chatanywhere-provider 另在 package.json 声明 `pi.extensions: ["./index.ts"]`）；目录复制进 `extensions/` 后 pi 自动加载。
