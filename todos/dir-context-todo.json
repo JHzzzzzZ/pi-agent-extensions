@@ -1,0 +1,24 @@
+{
+  "version": 4,
+  "title": "dir-context-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "globalId": 356,
+      "text": "嵌套 AGENTS.md 目录作用域上下文注入：模型 touch 到某个目录（read/write/edit/ls/grep/find/bash）时，自动把该目录祖先链上的 AGENTS.override.md / AGENTS.md / CLAUDE.md 注入上下文（pi 原生只加载 cwd 及祖先链，子树一概不读）；补上 Claude Code 的 on-demand nested context 能力",
+      "status": "processing",
+      "branch": "feat/dir-context-scoped-injection",
+      "tags": [
+        "new-plugin",
+        "context-injection"
+      ],
+      "priority": 8,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-10T17:50:00.559Z",
+      "claimedAt": "2026-10-10T17:50:09.555Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-10T18:19:44.348Z"
+    }
+  ]
+}
