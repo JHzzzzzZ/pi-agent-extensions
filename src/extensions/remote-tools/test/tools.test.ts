@@ -385,6 +385,38 @@ test("远端非字符串 path 视作未提供：落回远端 §HOME 并给出带
 	assert.equal((recorder.calls.at(-1)?.args.at(-1) ?? "").includes(`'${HOME}'`), true, "非字符串 path 应落回远端 $HOME");
 });
 
+test("用户实测现场回归：remote: \"null\" 必须走本机（零 ssh），输出与不带 remote 逐字一致", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "remote-tools-absence-"));
+	await writeFile(path.join(dir, "a.ts"), "const absent = null;\n", "utf8");
+	const recorder = recordTools((request) => {
+		throw new Error(`不应发 ssh：${request.args.join(" ")}`);
+	});
+	const ctx = ctxFor(dir);
+	const tool = recorder.tools.get("read")!;
+
+	const clean = await tool.execute(ID, { path: "a.ts" }, undefined, undefined, ctx);
+	for (const remote of ["null", "NULL", " undefined "]) {
+		const literal = await tool.execute(ID, { path: "a.ts", remote } as never, undefined, undefined, ctx);
+		assert.equal(textOf(literal as never), textOf(clean as never), `remote=${remote} 应等价于本机`);
+	}
+	assert.equal(recorder.calls.length, 0, "缺省值字面量不得拉起 ssh");
+});
+
+test("remoteCwd: \"null\" 当未提供 ⇒ 远端 cwd 落 $HOME（不是 $HOME/null）", async () => {
+	const recorder = recordTools(homeProbeAware(() => ({ exitCode: 0 })));
+
+	await recorder.tools.get("bash")!.execute(
+		ID,
+		{ command: "pwd", remote: REMOTE, remoteCwd: "null" } as never,
+		undefined,
+		undefined,
+		ctxFor(process.cwd()),
+	);
+	const command = recorder.calls.at(-1)?.args.at(-1) ?? "";
+	assert.match(command, new RegExp(`^cd '${HOME}' \\|\\| exit 201; `), command);
+	assert.equal(command.includes("null"), false, "cwd 不应拼成 $HOME/null");
+});
+
 test("session 缓存：同一目标多次调用只解析一次远端 $HOME", async () => {
 	const recorder = recordTools(
 		homeProbeAware((request) => {

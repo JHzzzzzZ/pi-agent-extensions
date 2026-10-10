@@ -13,6 +13,7 @@
 import { spawn } from "node:child_process";
 
 import { ErrorCodes, failure, type RemoteToolsFailure, type RemoteToolsErrorCode } from "./errors.ts";
+import { isAbsenceLiteral } from "./paths.ts";
 
 /** 远端连接目标（remote 为空 = 本地模式，不用本类型表达）。 */
 export interface SshTarget {
@@ -53,7 +54,8 @@ function normalizePort(value: unknown): number | undefined | "invalid" {
 export function parseTarget(input: TargetInput): TargetParse {
 	const remote = typeof input.remote === "string" ? input.remote.trim() : "";
 
-	if (remote === "") return { ok: true, target: null };
+	// 空串、纯空白与缺省值字面量（"null"/"undefined"/"nil"…）都是「没给」——不尝试 ssh。
+	if (remote === "" || isAbsenceLiteral(remote)) return { ok: true, target: null };
 
 	const port = normalizePort(input.remotePort);
 	if (port === "invalid") {

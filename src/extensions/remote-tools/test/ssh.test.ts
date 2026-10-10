@@ -58,6 +58,20 @@ test("非法端口：正数越界与非整数 fail-closed（真错的仍拦）",
 	}
 });
 
+test("缺省值字面量当「未提供」：null/undefined/nil/none/n/a 走本机；自由字符串仍当主机名", () => {
+	// 用户实测：agent 把 JSON null 序列化成字符串 "null"，被当主机名去 ssh → SSH_CONNECT_FAILED
+	for (const remote of ["null", "NULL", " None ", "undefined", "nil", "Nil", "n/a", "NA"]) {
+		const parsed = parseTarget({ remote, remotePort: 0 });
+		assert.deepEqual(parsed, { ok: true, target: null }, `${remote} 应视为未提供（本地）`);
+	}
+
+	// 自由字符串一律不猜：仍当主机名（连不上就响亮报错，绝不静默跑本机）
+	for (const remote of ["local", "false", "true", "myhost", "nas", "nullhost"]) {
+		const parsed = parseTarget({ remote });
+		assert.equal(parsed.ok && parsed.target?.host, remote, `${remote} 仍应被当主机名`);
+	}
+});
+
 test("非法目标：空 user/host、多 @、带空格、前导 -、内嵌端口都拒绝", () => {
 	const cases = ["@host", "user@", "user@a@b", "host name", "-oProxyCommand=bash", "host:22", "user@@host"];
 	for (const remote of cases) {

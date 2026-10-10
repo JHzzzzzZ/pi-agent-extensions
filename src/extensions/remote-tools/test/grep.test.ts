@@ -81,6 +81,15 @@ test("搜索根解析：省略 → 远端 $HOME；绝对原样；相对按远端
 	assert.equal(resolveRemoteSearchPath("C:/Users/me", "/home/deploy"), "C:/Users/me");
 });
 
+test("缺省值字面量路径当未提供：\"null\" 落回基准目录；\"./null\" 仍是真路径（真叫 null 的文件写法）", () => {
+	for (const input of ["null", " NULL ", "undefined", "nil", "none", "n/a"]) {
+		assert.equal(resolveRemoteSearchPath(input, "/home/deploy"), "/home/deploy", input);
+	}
+	assert.equal(resolveRemoteSearchPath("./null", "/home/deploy"), "/home/deploy/null");
+	assert.equal(resolveRemoteSearchPath("src/nil", "/home/deploy"), "/home/deploy/src/nil");
+	assert.equal(resolveRemoteSearchPath("nullhost", "/home/deploy"), "/home/deploy/nullhost");
+});
+
 test("搜索根解析：~ 开头在**发 ssh 之前**被拒（由 assertModelPathInput 守，不走 resolveRemoteSearchPath）", () => {
 	for (const input of ["~/x", "~", "~/"]) {
 		assert.throws(() => assertModelPathInput(input), new RegExp(ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE), input);

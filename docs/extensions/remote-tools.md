@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ b63d6c8
+> last verified @ b778075
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
@@ -46,6 +46,10 @@
   `constrainedSampling: {strict: "prefer"}`，采样器会把可选字段一并填出（数字填 `0`、字符串填空串）。
   所以：`remote` 非字符串/空串/纯空白 ⇒ 本地模式；本地模式**完全忽略** `remotePort`/`remoteCwd`；
   `remotePort` 为 `null`/非数字/`NaN`/`<= 0` ⇒ 当未提供；只有**正数越界或非整数**才报 `INVALID_REMOTE_PORT`。
+  另：`null`/`undefined`/`nil`/`none`/`n/a`（大小写无关、trim 后）这类**缺省值字面量**也当「没给」
+  （agent 会把 JSON null 序列化成字符串 "null"，被当主机名去 ssh；`remote`→本机、`remoteCwd`/`path`→远端基准）。
+  判据是「缺省值字面量 → 容忍；内容 → 不猜」：`local`/`false`/任意自由字符串仍当主机名（`local` 是常见的
+  `~/.ssh/config` 别名，当本机 = 静默跑错机器）；连带限制——远端机器/目录不能恰好叫这些词。
   实测教训：没有远端意图的字段绝不能让本地调用失败（用户实测本地 read 被 `remotePort: 0` 打断）。
   同理 `path`/`remoteCwd` 拿到的**非字符串**也当未提供（否则 `null.trim()` 会抛无错误码的裸 TypeError）。
 - **远端 $HOME 缓存失败不毒化**：session 按目标永久缓存，所以 `home()` 失败时清缓存、下次重试（瞬时网络抖动
@@ -61,10 +65,11 @@
   「不存在/是目录/正常」）、`createRemoteSession`、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单
 - `grep.ts` — 整份重写的远程 grep：`rg --json` 解析 + 与内置同形的输出/限流/截断，rg 缺失时 GNU grep 回退
 - `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`toHostPath`/`toRemotePath`/`stripHostMarker`）
+  + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_*`/`SSH_*`/`REMOTE_*`/`RIPGREP_MISSING`）
-- `test/` — 63 个：57 个纯本地（`ssh.test.ts`(10) / `paths.test.ts`(8) / `ops.test.ts`(14) / `grep.test.ts`(12) / `tools.test.ts`(13)）+ 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `test/` — 68 个：62 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(8) / `ops.test.ts`(14) / `grep.test.ts`(13) / `tools.test.ts`(16)）+ 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10 已执行）
 
