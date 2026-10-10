@@ -1,9 +1,9 @@
 {
   "name": "pi-extension-dir-context",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
-  "description": "dir-context — 目录作用域上下文注入：模型触碰某目录（read/write/edit/ls/bash 单文件读）时，自动把该目录祖先链上严格位于 cwd 之下的 AGENTS.override.md / AGENTS.md / CLAUDE.md 注入当次工具结果（pi 原生只加载 cwd 及其祖先链，子树一概不读）；会话内去重、compact 后按需重载，零运行时 npm 依赖",
+  "description": "dir-context — 目录作用域上下文注入：模型触碰某目录（read/write/edit/ls/bash 单文件读，含 codemode 脚本里的 tools.* 经顶层结果代偿）时，自动把该目录祖先链上严格位于 cwd 之下的 AGENTS.override.md / AGENTS.md / CLAUDE.md 注入当次工具结果（pi 原生只加载 cwd 及其祖先链，子树一概不读）；会话内去重、compact 后按需重载，零运行时 npm 依赖",
   "engines": {
     "node": ">=22.18"
   },

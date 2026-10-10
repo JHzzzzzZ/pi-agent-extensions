@@ -28,6 +28,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 | `read` / `write` / `edit` 的 `path`（含 `write` 新建文件） | 是，锚点 = 文件所在目录 |
 | `ls` 的 `path`（省略 = 当前目录） | 是，锚点 = 该目录（指向文件时退到父目录） |
 | `bash` 里**恰好一个**单文件读（`cat` / `head` / `tail`） | 是，锚点 = 该文件所在目录 |
+| codemode 脚本里的 `tools.read` / `write` / `edit` / `ls` / bash 单文件读 | 是（v1.1），按 codemode **顶层**结果的 `details.calls` 提取，多个触碰取并集 |
 | `grep` / `find` / 其它工具 | 否 |
 | bash 带重定向、变量展开、命令替换、多文件 | 否（拿不准就不认） |
 
@@ -37,8 +38,8 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 - **作用域**：`realpath` 后必须落在 cwd 之内，否则零注入（符号链接逃逸、`../` 越界、`repo` vs `repo-evil` 都拦住）。
 - **去重**：会话内每文件一次；`/compact` 后清空缓存，再触碰会重新注入。
 - **预算**：单文件 32 KiB / 单次 128 KiB，按 UTF-8 码点边界截断并留标记。
-- **降级**：失败的结果、纯图片结果、嵌套工具调用不注入；读不出上下文文件时只跳过（不标记已注入，下次还能重试）。
-- **codemode（已决策、待实现）**：脚本里 `tools.read/write/edit/ls/bash` 触碰目录**目前不触发**（嵌套调用结果只回到脚本、不进 transcript）；修法见 `docs/adr/0012-dir-context-codemode.md`。
+- **降级**：失败的结果、纯图片结果、嵌套工具调用本身不注入；读不出上下文文件时只跳过（不标记已注入，下次还能重试）。
+- **codemode（v1.1）**：脚本里的 `tools.read/write/edit/ls/bash` 是嵌套调用（结果只回到脚本、不进 transcript），本扩展改在读 codemode **顶层**结果的 `details.calls`（宿主记好的嵌套调用明细）并注入一次——与顶层共用同一份去重/预算。脚本失败（`isError`）、`args` 被宿主截断（超过 200 字符的调用，如带 `content` 的 `write`）或解析失败一律跳过（少注入，不误注入）。
 - **结构化结果**：原样回传 `structuredContent`（宿主契约：替换 `content` 而不回传它就等于丢掉结构化结果）。
 - **链接**：指向 cwd 之外的上下文文件整个跳过（fail-closed，既不注入外部内容也不把外部路径展示出来）。
 
@@ -49,7 +50,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 ## 开发
 
 ```bash
-npm install && npm test && npm run typecheck   # 46 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
+npm install && npm test && npm run typecheck   # 63 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
 ```
 
-设计决策与不变量见仓库 `docs/extensions/dir-context.md` 与 `docs/adr/0011-dir-context-scoped-injection.md`。
+设计决策与不变量见仓库 `docs/extensions/dir-context.md`、`docs/adr/0011-dir-context-scoped-injection.md` 与 `docs/adr/0012-dir-context-codemode.md`。
