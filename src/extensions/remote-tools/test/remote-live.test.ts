@@ -28,6 +28,7 @@ import {
 } from "../ops.ts";
 import { buildSshArgs, createSpawnExec, parseTarget, runSsh } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
+import { png1x1 } from "./fixtures.ts";
 
 const ID = "live-call";
 
@@ -97,6 +98,52 @@ test("真机：write → read → edit → ls 往返（临时目录，结束清�
 
 	await createRemoteBashOps(session).exec(`rm -rf ${JSON.stringify(marker)}`, baseDir, { onData: () => {}, timeout: 30 });
 	assert.equal(await ls.exists(marker), false, "清理失败：临时目录仍在");
+});
+
+test("真机：远端 read 图片走图片管线（真 PNG → image 块；文本文件不受影响）", { skip }, async () => {
+	// 这条是真机才验得了的：样本要经真 ssh 以 base64 回来、真 PNG 再交给宿主的 processImage。
+	const tools = new Map<string, ToolDefinition>();
+	registerRemoteTools(
+		{
+			registerTool(tool: ToolDefinition) {
+				tools.set(tool.name, tool);
+			},
+		} as unknown as ExtensionAPI,
+		{ exec: createSpawnExec(), cwd: process.cwd() },
+	);
+	const ctx = {
+		cwd: process.cwd(),
+		sessionManager: { getSessionId: () => "live-image", getSessionFile: () => undefined },
+	} as unknown as ExtensionToolContext;
+
+	const remote = targetInput as string;
+	const base = baseDirInput ?? (await makeSession().home());
+	const marker = `${base}/.pi-remote-tools-image-${Date.now()}`;
+	const pngPath = `${marker}/pic.png`;
+	const textPath = `${marker}/note.txt`;
+	const textOf = (result: { content: Array<{ type: string; text?: string }> }): string =>
+		result.content.map((part) => (part.type === "text" ? (part.text ?? "") : "")).join("");
+
+	try {
+		await tools.get("bash")!.execute(ID, { command: `mkdir -p '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+		await tools
+			.get("bash")!
+			.execute(ID, { command: `printf '%s' '${png1x1().toString("base64")}' | base64 -d > '${pngPath}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+		await tools.get("write")!.execute(ID, { path: textPath, content: "plain text\n", remote }, undefined, undefined, ctx);
+
+		const image = (await tools.get("read")!.execute(ID, { path: pngPath, remote }, undefined, undefined, ctx)) as {
+			content: Array<{ type: string; mimeType?: string; data?: string }>;
+		};
+		const block = image.content.find((part) => part.type === "image");
+		assert.equal(block?.mimeType, "image/png", JSON.stringify(image.content.map((part) => part.type)));
+		assert.equal((block?.data ?? "").length > 0, true, "图片数据必须随结果回传（processImage 之后）");
+
+		const plain = await tools.get("read")!.execute(ID, { path: textPath, remote }, undefined, undefined, ctx);
+		assert.match(textOf(plain as never), /plain text/);
+	} finally {
+		await tools.get("bash")!.execute(ID, { command: `rm -rf '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+		assert.equal(await createRemoteLsOps(makeSession()).exists(marker), false, "清理失败：临时目录仍在");
+	}
 });
 
 test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → 远端 write/read/ls/grep/find/bash）", { skip }, async () => {

@@ -32,6 +32,7 @@ import { ErrorCodes } from "../errors.ts";
 import { DEGRADED_MARKER } from "../ops.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import { createSessionCache, registerRemoteTools } from "../tools.ts";
+import { png1x1 } from "./fixtures.ts";
 
 const ID = "call-1";
 const REMOTE = "deploy@10.0.0.7";
@@ -42,7 +43,7 @@ interface Recorder {
 	calls: SshExecRequest[];
 }
 
-function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult> = () => ({})): Recorder {
+function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult> = () => ({}), extraDeps: { markerAnchor?: string | undefined } = {}): Recorder {
 	const tools = new Map<string, ToolDefinition>();
 	const calls: SshExecRequest[] = [];
 	const exec: SshExec = async (request) => {
@@ -54,7 +55,7 @@ function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult
 			tools.set(tool.name, tool);
 		},
 	} as unknown as ExtensionAPI;
-	registerRemoteTools(pi, { exec, cwd: process.cwd() });
+	registerRemoteTools(pi, { exec, cwd: process.cwd(), ...extraDeps });
 	return { tools, calls };
 }
 
@@ -266,6 +267,46 @@ test("远端 find 降级：远端缺 ripgrep 时结果里带降级标注", async
 	assert.match(text, /a\.ts/);
 	assert.match(text, /远端缺少 ripgrep，已回退 POSIX find/);
 });
+test("标记根守卫：锚文件缺失时远端调用 fail-closed（专码 + 零 ssh），本地调用不受影响", async () => {
+	const bogusAnchor = path.join(tmpdir(), `pi-remote-no-anchor-${Date.now()}`, "index.ts");
+	const recorder = recordTools(() => {
+		throw new Error("守卫必须在 ssh 之前拦住");
+	}, { markerAnchor: bogusAnchor });
+
+	await assert.rejects(
+		() => recorder.tools.get("read")!.execute(ID, { path: "/srv/a.ts", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd())),
+		new RegExp(ErrorCodes.HOST_MARKER_CONFLICT),
+	);
+	assert.equal(recorder.calls.length, 0, "守卫触发时不该发 ssh");
+
+	// 本地分支与守卫无关：零 ssh、行为照旧（红线：本地分支不受影响）
+	const dir = await mkdtemp(path.join(tmpdir(), "remote-tools-guard-"));
+	await writeFile(path.join(dir, "a.ts"), "local body\n", "utf8");
+	const local = await recorder.tools.get("read")!.execute(ID, { path: "a.ts" }, undefined, undefined, ctxFor(dir));
+	assert.match(textOf(local as never), /local body/);
+	assert.equal(recorder.calls.length, 0);
+});
+
+test("远端 read 图片：走宿主图片管线（补上 detectImageMimeType 端口），不再当文本读（用户实测 bug）", async () => {
+	const png = png1x1();
+	const recorder = recordTools(
+		homeProbeAware((request) => {
+			const command = request.args.at(-1) ?? "";
+			if (command.includes("head -c")) return { stdout: Buffer.from(png.toString("base64")) };
+			if (command.startsWith("if [ -e ")) return { stdout: png };
+			return {};
+		}),
+	);
+
+	const result = await recorder.tools.get("read")!.execute(ID, { path: "/srv/app/pic.png", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd()));
+	const content = (result as { content: Array<{ type: string; mimeType?: string; data?: string }> }).content;
+	const image = content.find((part) => part.type === "image");
+	assert.equal(image?.mimeType, "image/png", textOf(result as never));
+	assert.equal((image?.data ?? "").length > 0, true, "图片数据必须随结果回传");
+	assert.match(textOf(result as never), /Read image file \[image\/png\]/);
+	assert.equal(recorder.calls.length, 2, "一次远端 read = 嗅探（搭 access）+ 读取，共两条 ssh");
+});
+
 test("失败映射：未知主机指纹 / 相对路径 / 端口非法 都 fail-closed，且错误里带错误码", async () => {
 	const hostKeyFailure = recordTools(() => ({ exitCode: 255, stderr: "Host key verification failed." }));
 	await assert.rejects(

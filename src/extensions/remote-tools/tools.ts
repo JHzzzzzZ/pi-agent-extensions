@@ -52,7 +52,7 @@ import {
 	createRemoteSession,
 	createRemoteWriteOps,
 } from "./ops.ts";
-import { assertModelPathInput, toHostPath } from "./paths.ts";
+import { assertMarkerRootUsable, assertModelPathInput, toHostPath } from "./paths.ts";
 import { type SshExec, type SshTarget, formatTarget, parseTarget, validateRemotePath } from "./ssh.ts";
 
 const REMOTE_GUIDELINE =
@@ -63,6 +63,8 @@ export interface RemoteToolsDeps {
 	exec: SshExec;
 	/** 本地 cwd（remote 为空且 ctx 无 cwd 时的本地实现基准）。 */
 	cwd: string;
+	/** 标记根锚定的文件（默认真实扩展目录里的 index.ts；测试接缝）。 */
+	markerAnchor?: string | undefined;
 }
 
 type RemoteTargetParams = { remote?: string | undefined; remotePort?: number | undefined };
@@ -166,6 +168,8 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		const parsed = parseTarget({ remote: params.remote, remotePort: params.remotePort });
 		if (!parsed.ok) throw new Error(`${parsed.code}: ${parsed.message}`);
 		if (parsed.target === null) return { kind: "local" };
+		// 信道前提的运行时守卫：锚文件不是普通文件时本地就可能真的存在标记根，先 fail-closed（在发 ssh 之前）。
+		assertMarkerRootUsable(deps.markerAnchor);
 		const session = sessionFor(parsed.target);
 		return { kind: "remote", session, home: () => session.home() };
 	}
