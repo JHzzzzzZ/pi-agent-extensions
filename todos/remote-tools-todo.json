@@ -74,6 +74,27 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 5,
+      "globalId": 357,
+      "text": "remote-tools 参数校验过严导致本地调用被残留字段打断（用户 2026-10-10 实测报错）：宿主 constrainedSampling strict 会让采样器把可选字段一起填（remotePort=0/空串），当前 parseTarget 对「remote 为空 + 给了 remotePort」与「remote 非空 + remotePort=0/null」都报 INVALID_REMOTE_PORT，使本地 read/write 等调用直接失败。要求：非数字/null/<=0 的 remotePort 视为未提供；remote 非字符串/空串视为本地；只有正数越界才报错",
+      "status": "done",
+      "branch": "fix/remote-tools-port-robustness",
+      "tags": [
+        "bug",
+        "regression"
+      ],
+      "priority": 8,
+      "dependsOn": [],
+      "notes": [
+        "对齐文档 todos/align/remote-tools-todo#5.md 落盘；确认来源=用户实测报告，范围待用户一句确认（不阻塞修复推进）",
+        "合并 ad61713（主干 21 套件 2237 用例 0 fail）；单元 56 绿 + typecheck 零错误；真机 6/6 + 手工（本地读带 remotePort:0 正常、远端 bash 带 remotePort:0 走默认端口）；跨厂商评审并行进行中，意见来了照常处理"
+      ],
+      "createdAt": "2026-10-10T18:03:18.198Z",
+      "claimedAt": "2026-10-10T18:03:18.421Z",
+      "completedAt": "2026-10-10T18:08:34.824Z",
+      "alignedAt": "2026-10-10T18:03:36.982Z"
     }
   ]
 }
