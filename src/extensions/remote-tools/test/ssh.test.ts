@@ -50,8 +50,8 @@ test("目标解析：user@host / 只有 host / 端口覆盖", () => {
 	assert.deepEqual(withPort, { ok: true, target: { host: "10.0.0.7", user: "deploy", port: 2222 } });
 });
 
-test("非法端口：0 / 越界 / 小数都 fail-closed", () => {
-	for (const remotePort of [0, 65536, 22.5]) {
+test("非法端口：正数越界与非整数 fail-closed（真错的仍拦）", () => {
+	for (const remotePort of [65536, 22.5]) {
 		const parsed = parseTarget({ remote: "host", remotePort });
 		assert.equal(parsed.ok, false);
 		assert.equal(parsed.ok === false && parsed.code, ErrorCodes.INVALID_REMOTE_PORT);
@@ -67,10 +67,26 @@ test("非法目标：空 user/host、多 @、带空格、前导 -、内嵌端口
 	}
 });
 
-test("给了 remotePort 却没给 remote：报错而不是静默忽略", () => {
-	const parsed = parseTarget({ remotePort: 2222 });
-	assert.equal(parsed.ok, false);
-	assert.equal(parsed.ok === false && parsed.code, ErrorCodes.INVALID_REMOTE_PORT);
+test("采样器噪声不得打断调用：remotePort 为 0 / null / 非数字 / 负数 一律当「未提供」", () => {
+	// 本地模式：忽略一切 remotePort（用户实测：本地 read 被 remotePort: 0 打断）
+	for (const remotePort of [0, null, undefined, "22", Number.NaN, -1, {}, []]) {
+		const local = parseTarget({ remote: undefined, remotePort });
+		assert.deepEqual(local, { ok: true, target: null }, `本地模式应忽略 ${JSON.stringify(remotePort)}`);
+		const blank = parseTarget({ remote: "   ", remotePort });
+		assert.deepEqual(blank, { ok: true, target: null }, `空白 remote 应视为本地（${JSON.stringify(remotePort)}）`);
+	}
+
+	// 远端模式：端口当未指定（用 ssh 默认或 ~/.ssh/config），不报错
+	for (const remotePort of [0, null, undefined, "2222", Number.NaN, -1]) {
+		const parsed = parseTarget({ remote: "deploy@10.0.0.7", remotePort });
+		assert.deepEqual(parsed, { ok: true, target: { host: "10.0.0.7", user: "deploy", port: undefined } }, `应视为未指定端口：${JSON.stringify(remotePort)}`);
+	}
+
+	// remote 本身是噪声也一样：非字符串/空串 = 本地
+	for (const remote of [null, 22, {}, [], ""]) {
+		const parsed = parseTarget({ remote, remotePort: 0 });
+		assert.deepEqual(parsed, { ok: true, target: null }, `非字符串 remote 应为本地：${JSON.stringify(remote)}`);
+	}
 });
 
 test("ssh 参数：非交互、拒绝未知指纹、连接超时、端口可选、远端命令是最后一个参数", () => {

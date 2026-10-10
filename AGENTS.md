@@ -83,7 +83,7 @@ cd src/extensions/opencode-bridge && npm install && npm test && npm run typechec
 cd agent-manager && npm install && npm test && npm run typecheck   # 另 npm run test:e2e opt-in（需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
 cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck   # 50 个（含宿主事件路径：真实加载 + ExtensionRunner）
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 54 个（含本地保真对照、Windows 路径往返、输入护栏）+ 6 个真机 opt-in
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 56 个（含本地保真对照、Windows 路径往返、输入护栏、采样器噪声）+ 6 个真机 opt-in
 ```
 
 ## 代码约定与常见模式

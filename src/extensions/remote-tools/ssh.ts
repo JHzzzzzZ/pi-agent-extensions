@@ -22,8 +22,9 @@ export interface SshTarget {
 }
 
 export interface TargetInput {
-	remote?: string | undefined;
-	remotePort?: number | undefined;
+	/** 任意类型：非字符串（含 null/数字）一律视为未提供（宿主 strict 采样器会给可选字段填噪声）。 */
+	remote?: unknown;
+	remotePort?: unknown;
 }
 
 export type TargetParse = { ok: true; target: SshTarget | null } | RemoteToolsFailure;
@@ -35,22 +36,28 @@ export const CONNECT_TIMEOUT_SECONDS = 10;
 export const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 
 /**
- * 解析 remote / remotePort。空串与纯空白视为本地模式（返回 target: null）；
- * 其余非法形态一律 fail-closed，绝不猜测。
+ * 端口归一（容忍宿主 strict 采样器填的噪声）：非 number / NaN / <= 0 ⇒ 未提供；
+ * 正数但非整数或 >65535 ⇒ "invalid"（那是真的写错了，值得报错）。
+ */
+function normalizePort(value: unknown): number | undefined | "invalid" {
+	if (typeof value !== "number" || Number.isNaN(value) || value <= 0) return undefined;
+	if (!Number.isInteger(value) || value > 65535) return "invalid";
+	return value;
+}
+
+/**
+ * 解析 remote / remotePort。空串、非字符串与纯空白都视为本地模式（返回 target: null）；
+ * **本地模式完全忽略 remotePort**——没有远端意图的字段不得让调用失败。
+ * 其余非法形态一律 fail-closed（目标形态、正数越界端口），绝不猜测。
  */
 export function parseTarget(input: TargetInput): TargetParse {
 	const remote = typeof input.remote === "string" ? input.remote.trim() : "";
-	const port = input.remotePort;
 
-	if (remote === "") {
-		if (port !== undefined) {
-			return failure(ErrorCodes.INVALID_REMOTE_PORT, "remotePort 只能在提供 remote 时使用。");
-		}
-		return { ok: true, target: null };
-	}
+	if (remote === "") return { ok: true, target: null };
 
-	if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) {
-		return failure(ErrorCodes.INVALID_REMOTE_PORT, "remotePort 必须是 1-65535 的整数。");
+	const port = normalizePort(input.remotePort);
+	if (port === "invalid") {
+		return failure(ErrorCodes.INVALID_REMOTE_PORT, "remotePort 必须是 1-65535 的整数（不指定端口请省略该参数）。");
 	}
 
 	if (remote.startsWith("-") || /\s/.test(remote) || remote.includes(":")) {
