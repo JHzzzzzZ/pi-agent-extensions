@@ -19,6 +19,7 @@ import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveAnchor } from "./anchor.ts";
 import { discoverContextFiles } from "./discover.ts";
+import { ErrorCodes, type DirContextError } from "./errors.ts";
 import { buildInjection, type ContextFileContent } from "./inject.ts";
 import { canonicalize, toDisplayPath } from "./paths.ts";
 import { writeBand } from "./status-band.ts";
@@ -58,10 +59,12 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     renderStatus(ctx);
   };
 
-  const notifyWarn = (ctx: ExtensionContext, message: string): void => {
-    if (!ctx.hasUI) return;
+  /** 读取失败只报一次（fail-open 降级 + 可观测），错误码来自本层 errors.ts。 */
+  const reportReadFailure = (ctx: ExtensionContext, error: DirContextError): void => {
+    if (readFailureReported || !ctx.hasUI) return;
+    readFailureReported = true;
     try {
-      ctx.ui.notify(message, "warning");
+      ctx.ui.notify(`dir-context：${error.message}（${error.code}）`, "warning");
     } catch {
       /* UI 异常隔离 */
     }
@@ -82,6 +85,8 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
 
   pi.on("tool_result", async (event, ctx) => {
     if (event.isError || event.parentToolCallId) return undefined;
+    // 无文本内容的结果（例：纯图片 read）不注入：追加元信息对非文本结果没有落点。
+    if (!event.content.some((block) => block.type === "text")) return undefined;
     const touch = detectTouch(event.toolName, event.input);
     if (!touch) return undefined;
 
@@ -95,17 +100,14 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
 
     const contents: ContextFileContent[] = [];
     for (const absolutePath of pending) {
-      const content = readContextFile(absolutePath);
-      if (content === null) {
+      const read = readContextFile(absolutePath);
+      if (!read.ok) {
         // 读不出来就不标记已注入：下个触碰还能重试（fail-open，但可观测一次）。
-        if (!readFailureReported) {
-          readFailureReported = true;
-          notifyWarn(ctx, "dir-context：有上下文文件读取失败，本次跳过；详情见工单 docs/extensions/dir-context.md");
-        }
+        reportReadFailure(ctx, read);
         continue;
       }
       injected.add(absolutePath);
-      contents.push({ absolutePath, relativePath: toDisplayPath(root, absolutePath), content });
+      contents.push({ absolutePath, relativePath: toDisplayPath(root, absolutePath), content: read.value });
     }
     if (contents.length === 0) return undefined;
 
@@ -116,7 +118,13 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     renderStatus(ctx);
 
     // 只追加一个 text block：原内容逐字保留在前，注入内容在后（模型读到的顺序即此）。
-    return { content: [...event.content, { type: "text", text: injection.text }] };
+    // 宿主契约：替换 `content` 而不回传 `structuredContent` 会**丢掉**结构化结果
+    //（`ToolResultEventResult` 明文警告 + runner 真的 delete），而 `read` / `bash` 都产出
+    // structuredContent —— 必须原样回传，否则 transcript 里的结构化数据静默丢失。
+    return {
+      content: [...event.content, { type: "text", text: injection.text }],
+      ...(event.structuredContent !== undefined ? { structuredContent: event.structuredContent } : {}),
+    };
   });
 
   const statusHandler = async (_args: string, ctx: ExtensionContext): Promise<void> => {
@@ -143,11 +151,11 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   };
 }
 
-function readContextFile(absolutePath: string): string | null {
+function readContextFile(absolutePath: string): { ok: true; value: string } | DirContextError {
   try {
-    return fs.readFileSync(absolutePath, "utf8");
+    return { ok: true, value: fs.readFileSync(absolutePath, "utf8") };
   } catch {
-    return null;
+    return { ok: false, code: ErrorCodes.contextReadFailed, message: "上下文文件读取失败（权限/编码/竞态删除），本次跳过" };
   }
 }
 

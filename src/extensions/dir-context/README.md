@@ -37,7 +37,9 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 - **作用域**：`realpath` 后必须落在 cwd 之内，否则零注入（符号链接逃逸、`../` 越界、`repo` vs `repo-evil` 都拦住）。
 - **去重**：会话内每文件一次；`/compact` 后清空缓存，再触碰会重新注入。
 - **预算**：单文件 32 KiB / 单次 128 KiB，按 UTF-8 码点边界截断并留标记。
-- **降级**：失败的结果、嵌套工具调用不注入；读不出上下文文件时只跳过（不标记已注入，下次还能重试）。
+- **降级**：失败的结果、纯图片结果、嵌套工具调用不注入；读不出上下文文件时只跳过（不标记已注入，下次还能重试）。
+- **结构化结果**：原样回传 `structuredContent`（宿主契约：替换 `content` 而不回传它就等于丢掉结构化结果）。
+- **链接**：指向 cwd 之外的上下文文件整个跳过（fail-closed，既不注入外部内容也不把外部路径展示出来）。
 
 ## 不要与同类扩展同装
 
@@ -46,7 +48,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 ## 开发
 
 ```bash
-npm install && npm test && npm run typecheck   # 42 个测试
+npm install && npm test && npm run typecheck   # 46 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
 ```
 
 设计决策与不变量见仓库 `docs/extensions/dir-context.md` 与 `docs/adr/0010-dir-context-scoped-injection.md`。

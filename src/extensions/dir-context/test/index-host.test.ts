@@ -100,15 +100,23 @@ function toolResult(input: {
   text?: string;
   isError?: boolean;
   parentToolCallId?: string;
+  /** 宿主真实形状：read/bash 都产出结构化结果（回归用）。 */
+  structuredContent?: unknown;
+  /** false = 无文本内容（纯图片结果），用于验证不注入。 */
+  hasText?: boolean;
 }): ToolResultEvent {
   return {
     type: "tool_result",
     toolCallId: "call-1",
     toolName: input.toolName,
     input: input.toolInput,
-    content: [{ type: "text", text: input.text ?? "工具原始输出" }],
+    content:
+      input.hasText === false
+        ? [{ type: "image" as const, data: "aGk=", mimeType: "image/png" }]
+        : [{ type: "text" as const, text: input.text ?? "工具原始输出" }],
     isError: input.isError ?? false,
     details: undefined,
+    ...(input.structuredContent !== undefined ? { structuredContent: input.structuredContent as never } : {}),
     ...(input.parentToolCallId ? { parentToolCallId: input.parentToolCallId } : {}),
   } as ToolResultEvent;
 }
@@ -238,6 +246,34 @@ test("失败结果 / 非触发工具 / cwd 之外 / 嵌套调用：逐字不变�
     ),
     undefined,
     "嵌套调用（codemode 等）：结果只回到调用方工具，注入无意义",
+  );
+});
+
+test("宿主契约回归：注入后 structuredContent 必须原样保留（read/bash 都产出它）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  // 宿主明文契约：替换 content 而不回传 structuredContent 会把它删掉
+  //（ToolResultEventResult + runner 的 delete）——丢弃结构化结果 = 静默改坏原结果。
+  const structured = { file: { path: "src/components/Button.tsx" }, truncated: false };
+  const result = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, structuredContent: structured }),
+  );
+  assert.ok(result?.content, "必须注入");
+  assert.deepEqual(result.structuredContent, structured, "structuredContent 必须逐字保留");
+});
+
+test("无文本内容的结果（纯图片）：不注入", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, hasText: false }),
+    ),
+    undefined,
   );
 });
 

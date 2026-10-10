@@ -20,7 +20,7 @@
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
 | [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单 | 57 个（+6 真机 opt-in） |
-| [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次） | 42 个（node:test） |
+| [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次） | 46 个（node:test） |
 
 ## 安装
 
@@ -678,13 +678,13 @@ Loaded src/components/AGENTS.md
 - **作用域 fail-closed** —— 锚点经 `realpath` 归一后必须落在 cwd 之内；`../outside`、`~/.pi/agent/…`、符号链接逃逸、`repo` vs `repo-evil` 前缀冒充一律零注入
 - **去重与重载** —— 会话内每个文件只注入一次；`/compact` 后缓存清空，模型再触碰同一目录时会重新注入（不然那段上下文从窗口里消失后就永久丢了）
 - **预算** —— 单文件 32 KiB、单次注入 128 KiB，按 UTF-8 码点边界截断（不会劈开中文或 emoji），截断与丢弃都在块内留标记
-- **只追加，不修工具本身** —— 原结果逐字保留在前；失败的结果（`isError`）、嵌套工具调用（codemode 之类）、无候选目录都返回原结果（fail-open 降级）
+- **只追加，不修工具本身** —— 原结果逐字保留在前且**原样回传 `structuredContent`**（宿主契约：替换 `content` 而不回传它就等于丢掉结构化结果，而 `read`/`bash` 都产出它）；失败的结果（`isError`）、纯图片结果、嵌套工具调用（codemode 之类）、无候选目录都返回原结果（fail-open 降级）
 - **命令面与状态** —— `/dir-context` 或 `/dir-context:status` 列出本会话已注入的清单；footer 段 `70:dir-context` 只在真的注入过之后出现
 - **不做** —— 不做 `.claude/rules/` 风格的 glob 路径规则、不做 `@path` 导入展开、不做 cwd 之外注入、不读 `settings.json` 配置项（v1 无开关）
 - **不要与同类扩展同装** —— [`pi-subdir-context`](https://github.com/ruttybob/pi-subdir-context)、[`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) 与本扩展都在 `read` 路径注入，同装会让同一份 AGENTS.md 进两次上下文（功能不冲突，只是浪费 token）；那两家只钩 `read`，本扩展多覆盖 `write`/`edit`/`ls`/bash
 
 ```bash
-cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 42 个测试
+cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 46 个测试
 ```
 
 ---

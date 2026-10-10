@@ -99,6 +99,24 @@ test("锚点在 cwd 之外：零发现（防御性，上游已 fail-closed）", 
   assert.deepEqual(discoverContextFiles({ anchorDir: outside, rootDir: project }), []);
 });
 
+test("文件级链接逃逸：内容在 cwd 之外时整个候选跳过（fail-closed，不伪装路径）", (t) => {
+  const tree = makeTree();
+  t.after(tree.cleanup);
+  const project = path.join(tree.root, "repo");
+  const outside = path.join(tree.root, "outside");
+  fs.mkdirSync(path.join(project, "src"), { recursive: true });
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, "shared.md"), "外部内容");
+  try {
+    fs.symlinkSync(path.join(outside, "shared.md"), path.join(project, "src", "AGENTS.md"), "file");
+  } catch (error) {
+    t.skip(`本机无法创建文件链接（${String(error)}），跳过文件级逃逸用例`);
+    return;
+  }
+
+  assert.deepEqual(discoverContextFiles({ anchorDir: path.join(project, "src"), rootDir: project }), []);
+});
+
 test("锚点在 cwd 之下但目录不存在（write 新文件且路径更深）：不抛错，向上找已存在的级", (t) => {
   const tree = makeTree();
   t.after(tree.cleanup);
@@ -108,4 +126,23 @@ test("锚点在 cwd 之下但目录不存在（write 新文件且路径更深）
 
   const files = discoverContextFiles({ anchorDir: path.join(project, "src", "nope", "deeper"), rootDir: project });
   assert.deepEqual(files, [path.join(project, "src", "AGENTS.md")]);
+});
+
+test("文件链接指向 cwd 之内：正常发现（取磁盘真名）", (t) => {
+  const tree = makeTree();
+  t.after(tree.cleanup);
+  const project = path.join(tree.root, "repo");
+  fs.mkdirSync(path.join(project, "notes"), { recursive: true });
+  fs.mkdirSync(path.join(project, "src"), { recursive: true });
+  fs.writeFileSync(path.join(project, "notes", "shared.md"), "共享约定");
+  try {
+    fs.symlinkSync(path.join(project, "notes", "shared.md"), path.join(project, "src", "AGENTS.md"), "file");
+  } catch (error) {
+    t.skip(`本机无法创建文件链接（${String(error)}），跳过链接内解析用例`);
+    return;
+  }
+
+  assert.deepEqual(discoverContextFiles({ anchorDir: path.join(project, "src"), rootDir: project }), [
+    path.join(project, "notes", "shared.md"),
+  ]);
 });

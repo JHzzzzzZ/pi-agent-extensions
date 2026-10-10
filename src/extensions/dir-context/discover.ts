@@ -45,10 +45,12 @@ function pickInDir(dir: string, root: string): string | null {
       if (!fs.statSync(candidate).isFile()) continue;
       // Windows（含 macOS 默认卷）文件名大小写不敏感：探 `AGENTS.md` 会命中小写的
       // `AGENTS.MD`，而返回的探针名会让 transcript 里的 `Loaded` 行指向不存在的文件名。
-      // realpath 拿回磁盘上的真实名字；若真实位置落在 cwd 之外（链接逃逸），保留探针名
-      // 而不把 cwd 之外的路径展示出去。
+      // realpath 拿回磁盘上的真实名字；若真实位置落在 cwd 之外（文件级链接逃逸），整个
+      // 候选跳过——fail-closed，与「cwd 之外零注入」同一口径（既不注入外部内容，也不把
+      // cwd 之外的路径展示出去）。同一目录的其它候选名照旧向下探。
       const real = fs.realpathSync.native(candidate);
-      return isInside(root, real) ? real : candidate;
+      if (!isInside(root, real)) continue;
+      return real;
     } catch {
       /* 不存在 / 无权限：继续试下一个候选名 */
     }
