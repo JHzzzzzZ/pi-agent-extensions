@@ -155,8 +155,8 @@ _Avoid_: 锁清理、强制解锁
 _Avoid_: 远程模式、ssh 模式（它是一次调用的目标，不是会话状态）
 
 **宿主标记（host marker）**:
-remote-tools 内部把远端路径编码成宿主形态的固定前缀（Windows `<当前盘>:\pi-remote\…`、POSIX `//pi-remote/…`），
-使宿主的 `path.resolve` 原样保留它、本地 `realpath` 以 ENOENT 失败（文件锁只容忍 ENOENT/ENOTDIR）、`path.relative` 与宿主 find 同命名空间；
+remote-tools 内部把远端路径编码成宿主形态的固定前缀 **标记根** `<扩展目录>/index.ts/pi-remote/…`（两平台同一形态；锚在一个已存在的普通文件下 ⇒ 本地建不出该目录），
+使宿主的 `path.resolve` 原样保留它、本地 `path`/`fs` 给 missing-path 错误（ENOENT/ENOTDIR：文件锁只容忍这两个码、read 的变体探测吞错）、`path.relative` 与宿主 find 同命名空间；
 它同时是「这条路径经过宿主解析」的**凭证**（模型直给的 `C:/…`、相对路径不带标记 ⇒ 发 ssh 前拒绝）。信道根因与硬化见 ADR-0010。
 _Avoid_: 虚拟路径、沙箱根、chroot
 

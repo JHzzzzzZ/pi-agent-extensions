@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ b778075
+> last verified @ b7094f0
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
@@ -27,9 +27,11 @@
 ## 不变量（改代码前必须知道）
 
 - **本地分支绝不触网**：`remote` 为空时直接调宿主本地定义，不 spawn ssh（`test/tools.test.ts` 用「假 exec 一旦被调用就抛错」锁住）。
-- **路径换算只有一个出口**：交给内置工具的远端路径一律经 `toHostPath`（`//pi-remote` 前缀，命中宿主
-  `normalizeWindowsShellPath` 的 UNC 早退分支，既不注入盘符也不动大小写），ops 层经 `toRemotePath` 还原。
-  没有标记的形态原样返回、由 `validateRemotePath` 拒绝——**模型给的 `C:/…` 与相对路径在发 ssh 之前就 fail-closed**。
+- **路径换算只有一个出口，且标记根结构上不可占用**：交给内置工具的远端路径一律经 `toHostPath`，前缀是 **标记根**
+  `<扩展目录>/index.ts/pi-remote`（锚在一个**已存在的普通文件**下：只要锚文件还是普通文件，本地就**建不出**这个目录
+  ——实测 Windows `mkdir -p` → `ENOTDIR`、`realpath` → `ENOENT`，所以宿主 read 的本地变体探测没有可命中的本地文件），
+  ops 层经 `toRemotePath` 还原。没有标记的形态原样返回、由 `validateRemotePath` 拒绝——**模型给的 `C:/…` 与相对路径在发 ssh 之前就 fail-closed**。
+  配套运行时守卫 `assertMarkerRootUsable`：锚文件不是普通文件时远端调用 fail-closed 报 `HOST_MARKER_CONFLICT`（本地分支零影响）。
 - **校验先于 ssh**：目标形态（前导 `-` / 空格 / 多 `@` / 内嵌端口）、端口范围、路径形态三者在任何 ssh 进程之前完成。
   绝对路径不需要远端 `$HOME` ⇒ 不为此多发一次 ssh（只有省略/相对路径才解析，且同目标只解析一次）。
 - **已知主机指纹 fail-closed**：`BatchMode=yes` + `StrictHostKeyChecking=yes`；未收录指纹/认证失败报
@@ -55,6 +57,11 @@
   `~/.ssh/config` 别名，当本机 = 静默跑错机器）；连带限制——远端机器/目录不能恰好叫这些词。
   实测教训：没有远端意图的字段绝不能让本地调用失败（用户实测本地 read 被 `remotePort: 0` 打断）。
   同理 `path`/`remoteCwd` 拿到的**非字符串**也当未提供（否则 `null.trim()` 会抛无错误码的裸 TypeError）。
+- **可选端口必须补齐：`ReadOperations.detectImageMimeType` 不实现，宿主就把图片当文本读**（宿主 `read.js` 是
+  `ops.detectImageMimeType ? … : undefined`，用户实测远端 PNG 读出 `�PNG…`）。实现方式：嗅探样本搭 `access`
+  那一次往返的顺风车（`head -c 8192 … | base64`，零额外往返），判定交给**宿主同一份**
+  `detectSupportedImageMimeTypeFromFile`（包根唯一导出；纯 buffer 版未导出、深路径被 `exports` 封死 ⇒ 样本落
+  本地临时文件再喂进去，用完即删），魔数/动图/BMP 规则零复制。接新工具/跟新宿主时先枚举 `XxxOperations` 的**全部端口（含可选）**。
 - **远端 $HOME 缓存失败不毒化**：session 按目标永久缓存，所以 `home()` 失败时清缓存、下次重试（瞬时网络抖动
   不能让该目标所有相对路径调用挂到 `/reload`）。
 
@@ -64,19 +71,21 @@
 - `tools.ts` — 7 个同名覆盖的接线：schema 拼接（内置参数 + remote 三件套）、本地/远端分派、
   `resolveToolPath`（校验 + $HOME 懒解析）、`remoteContext`（把内置定义的 `ctx.cwd` 换成远端基准）、
   session 缓存（同目标共享、`$HOME` 只解析一次）
-- `ops.ts` — 远端 Operations 后端：read/write/edit/ls/find/bash 的远端原语（`if [ -e ]` 一次往返区分
-  「不存在/是目录/正常」）、`createRemoteSession`、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单
+- `ops.ts` — 远端 Operations 后端：read/write/edit/ls/find/bash 的远端原语（**目录分支在前**的 `if/elif` 一次往返区分
+  「不存在/是目录/正常」——`-e` 对目录同样成立，顺序写反会把「是目录」误报成「不可读」；read 的 `access` 顺带取回图片嗅探样本，`detectImageMimeType` 消费）、
+  `createRemoteSession`、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单
 - `grep.ts` — 整份重写的远程 grep：`rg --json` 解析 + 与内置同形的输出/限流/截断，rg 缺失时 GNU grep 回退
-- `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`toHostPath`/`toRemotePath`/`stripHostMarker`）
+- `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`HOST_PATH_ROOT`/`toHostPath`/`toRemotePath`/`stripHostMarker`）
+  + 标记根守卫（`assertMarkerRootUsable`：锚文件必须是普通文件）
   + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
-- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED`）
-- `test/` — 68 个：62 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(8) / `ops.test.ts`(14) / `grep.test.ts`(13) / `tools.test.ts`(16)）+ 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
+- `test/` — 77 个：70 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(18) / `grep.test.ts`(13) / `tools.test.ts`(18)）+ 7 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
 
 ## 真机验收（2026-10-10 已执行）
 
-目标：本机 WSL Ubuntu（`user@127.0.0.1:22`，Linux 内核 + 已装 ripgrep），Windows 侧跑测试。6 个用例**全绿**：
+目标：本机 WSL Ubuntu（`user@127.0.0.1:22`，Linux 内核 + 已装 ripgrep），Windows 侧跑测试。7 个用例**全绿**：
 
 ```bash
 PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
@@ -84,14 +93,16 @@ PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
 ```
 
 覆盖：建连 + 远端 `$HOME` 解析、bash 目录/退出码/缺目录结构化错误、ops 层 write→read→edit→ls 往返、
-**工具层端到端**（注册覆盖 → `//pi-remote` 标记 → 宿主 path 解析 → ops 还原 → 远端 write/read/ls/grep（真 rg）/find/bash）、
-远端不存在/无权限的结构化错误码、不可达主机 fail-closed。
+远端**图片**走宿主图片管线（真 PNG → image 块；`#8`）、**工具层端到端**（注册覆盖 → 标记根 → 宿主 path 解析 → ops 还原 →
+远端 write/read/ls/grep（真 rg）/find/bash）、远端不存在/无权限的结构化错误码、不可达主机 fail-closed。
+本地侧另有结构性断言（不靠真机也能守）：`paths.test.ts` 断言 `mkdir -p 标记根` 必失败、`realpath` 必是 missing-path 错误。
 
 两个只有真机才能发现的问题（已修 + 已加回归测试）：
 
 1. **宿主形态不能是 UNC**：`withFileMutationQueue`（write/edit 内部）在本地做 `fs.realpath`，Windows 上
    `\\pi-remote\…` 报 `UNKNOWN: unknown error`（只容忍 ENOENT/ENOTDIR）⇒ 远端 write/edit 直接失败。
-   改成平台相关宿主形态（Windows 用 `C:\pi-remote\…`；POSIX 用 `//pi-remote/…`），两者都让本地 `realpath` 以 ENOENT 失败。
+   当时的修法是平台相关宿主形态（Windows `C:\pi-remote\…`、POSIX `//pi-remote/…`，本地 `realpath` 给 ENOENT）；
+   `#7` 之后统一成标记根 `<扩展目录>/index.ts/pi-remote`（更强的结构性保证，见 ADR-0010 决策 3）。
 2. **`test -r -w <path>` 是非法表达式**：POSIX `test` 三参数形态会以非零退出码失败，把可写文件误报成
    `REMOTE_NOT_WRITABLE`（edit 的 access 检查）。改成 `test -r <p> && test -w <p>`。
 
@@ -116,7 +127,9 @@ PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
 - **清单三处同步**：根 `package.json` 的 `pi.extensions`、`tools/install-smoke.mjs` 的 `EXTENSION_EXPECTATIONS`
   （本扩展无命令无 uiKeys）、`tools/test-all.mjs` 的套件表（`install: true`）；漏一处 `test:smoke` / `test-all` 的漂移测试就红。
 - **宿主对工具路径有本地副作用**：write/edit 的 `withFileMutationQueue` 会 `fs.realpath`、read 会 `accessSync`
-  探本地变体（NFD / 弯引号）——所以宿主形态必须让本地 fs 以 ENOENT 失败（`C:\pi-remote\…`），不能用 UNC。
+  探本地变体（NFD / 弯引号）——所以宿主形态必须让本地 path/fs 给 missing-path 错误。旧形态 `C:\pi-remote\…`
+  靠「本机恰好不存在」维持这条前提（本地真有该目录时变体探测会静默读错文件，用户 2026-10-10 复现）；现在
+  标记根锚在自带普通文件下 ⇒ 本地**建不出**该目录，前提成了结构事实（详见 ADR-0010 决策 3）。
 - **远端 `bash` 的中断只 kill 本地 ssh**：远端命令可能继续跑（v1 已记录，未做远端进程组清理）。
 - **不启用 `ControlMaster`**：Windows OpenSSH 不支持连接复用，复用交给用户自己的 `~/.ssh/config`；
   因此把「N 次往返」压到关键路径上——`ls` 的 readdir 用 `ls -A1p` 一次拿回 entry 类型并缓存，随后的逐条 `stat` 零 ssh。
@@ -134,4 +147,5 @@ PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
 - **评审记录（`#6`）**：同款 reviewer = OK（0 阻断/1 建议/5 备注）：建议①（文件地图 `paths.ts` 补新职责）采纳；
   建议②（`last verified` 改指文档提交）**驳回**，理由=仓库惯例是**指向被验证的代码提交**（见 `docs/extensions/jev-safe-gate.md`
   头部 = feat 提交，其后的文档同步提交信息就是「同步 … last verified 标记（@ 20acc24）」）。
-- **在途（`#7`）**：信道硬化的口径（`A+B'` vs `R1`）等用户确认；见 ADR-0010 决策 3 与 `todos/remote-tools-todo.json`。
+- **评审记录（`#7`/`#8`）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 4 备注）：① `readFile` 的目录分支位次错误（`-e` 对目录同样成立 ⇒ 先 `cat` 把「是目录」误报成「权限不足」，`exit 4` 真机不可达）——已改为目录分支在前，并补命令形态断言与真机目录断言；② 真机用例里过时的旧标记注释——已改；③ 本卡“见下方评审记录”的悬空引用——已补（即本条）；④ 规格里绕口的范围外措辞——第 1 轮称已改但实际未落地，第 2 轮回补（现为「不做远端文件缓存」）。第 2 轮（复评本轮修复）= 可合并（0 阻断 / 0 建议 / 2 文档备注）：⑤ 规格范围外措辞回补——已改；⑥ 本卡 `ops.ts` 文件地图还写着「`if [ -e ]` 一次往返区分不存在/是目录/正常」——已改为「目录分支在前的 `if/elif`」。第 3 轮（复核两条文档备注）= 可合并（0 阻断 / 0 建议 / 0 备注）：四条核对全部通过，无新意见。
+- **坑（评审备注记录的边缘场景）**：若扩展目录路径**本身**含 U+00A0 之类的 unicode 空格，宿主的 `normalizePath` 会把它改写成普通空格 ⇒ 标记根前缀失配 ⇒ 远端调用 fail-closed 报 `REMOTE_PATH_NOT_ABSOLUTE`（是误报，不是静默放行；概率极低，记录不改）。

@@ -1,6 +1,6 @@
 # remote-tools 复用宿主 Operations 接缝，并用宿主本地路径命名空间当远端路径信道
 
-Status: accepted（2026-10-10，`remote-tools-todo#1` / `#6`；决策 1、2 已落地，决策 3「信道硬化」待 `#7` 用户确认）
+Status: accepted（2026-10-10，`remote-tools-todo#1` / `#6`；决策 1、2、3 均已落地——决策 3 的信道硬化由 `#7` 落地）
 
 ## 背景
 
@@ -27,14 +27,15 @@ Status: accepted（2026-10-10，`remote-tools-todo#1` / `#6`；决策 1、2 已�
 
 ## 决策 2：远端路径编码进宿主本地路径命名空间当信道
 
-交给内置工具的远端路径统一编码成宿主形态：Windows `<当前盘>:\pi-remote\…`、POSIX `//pi-remote/…`
-（`paths.ts` 的 `toHostPath` / `toRemotePath`）。同一编码兼作「这条路径经过宿主解析」的**凭证**：
+交给内置工具的远端路径统一编码成宿主形态：**标记根** `<扩展目录>/index.ts/pi-remote/…`（两平台同一形态；
+`paths.ts` 的 `HOST_PATH_ROOT` / `toHostPath` / `toRemotePath`）。同一编码兼作「这条路径经过宿主解析」的**凭证**：
 模型自己给的 `C:/…`、相对路径没有标记，ops 层原样返回后由 `validateRemotePath` 拒绝（fail-closed）。
 
 为什么**必须**是这种形态（三条同时满足，均为实测）：`path.resolve` 原样保留（既不注入进程盘符、
-也不让 `normalizeWindowsShellPath` 把单字母首段当 Git-Bash 盘符）、本地 `fs.realpath` 给 **ENOENT**
-（write/edit 的 `withFileMutationQueue` 只容忍 ENOENT/ENOTDIR）、`path.relative` 与宿主 find 的相对化
-落在同一命名空间。
+也不让 `normalizeWindowsShellPath` 把单字母首段当 Git-Bash 盘符）、本地 `path`/`fs` 给 missing-path 错误
+（`ENOENT`/`ENOTDIR`：write/edit 的 `withFileMutationQueue` 只容忍这两个码、read 的变体探测吞掉一切错误）、
+`path.relative` 与宿主 find 的相对化落在同一命名空间。标记根放在**扩展目录里一个已存在的普通文件**下面
+（而不是盘符根/根目录下的 `pi-remote`）是决策 3 的结论，见下。
 
 **根因（2026-10-10 用户复现并回滚）**：这条信道借用了**别人管理的命名空间**，靠一条**不可执行**的约定
 「本地不存在该前缀」维持。本地真存在该目录时：
@@ -48,14 +49,38 @@ Status: accepted（2026-10-10，`remote-tools-todo#1` / `#6`；决策 1、2 已�
 
 写入不受影响（所有实际 I/O 都走注入的 ssh ops；`withFileMutationQueue` 的 `realpath` 只当锁键）。
 
-## 决策 3（待 `#7` 确认）：信道硬化 = 显式守卫 + Windows 结构性不可违反
+## 决策 3（`#7` 已落地）：信道前提从「约定」变成「结构性事实 + 被执行的检查」
 
-- **A｜显式守卫**：远端调用前检查标记根是否存在（Windows `<当前盘>:\pi-remote`、POSIX `/pi-remote`），
-  存在即 fail-closed 报专码 `HOST_MARKER_CONFLICT` 并提示删/改名；**本地分支不受影响**。
-- **B'｜Windows 结构性不可违反**：标记名改用含 `?` 的名字（Windows 文件名非法字符 ⇒ 本地永不可能存在；
-  实测 `realpath` 仍为 ENOENT，不会重蹈 UNC 的 UNKNOWN）；POSIX 无此字符，继续靠 A。
+采用 **C'（标记根锚在扩展自带的普通文件下）+ A（运行时守卫）**：
 
-把「不可执行的约定」变成「被执行的检查」，两平台都不再可能静默读错。
+- **C'｜结构性不可占用（主机制，两平台通用）**：标记根 = `<扩展目录>/index.ts/pi-remote`。锚点是一个**已存在的
+  普通文件**（扩展入口自己）⇒ 只要它还是普通文件，本地就**建不出**这个目录：实测 Windows
+  `mkdir -p <标记根>` → `ENOTDIR`、`realpath` → `ENOENT`（含深层、弯引号、345 字符长路径样本）；POSIX 同理
+  `ENOTDIR`。于是「本地不存在该前缀」不再是靠人守的约定，而是文件系统的结构事实——变体探测根本没有可命中的本地文件。
+- **A｜运行时守卫（兜底）**：远端调用前检查锚文件仍是普通文件，不是就 fail-closed 报专码 `HOST_MARKER_CONFLICT`
+  （本地分支不受影响，零额外 fs 操作）。它兜住「锚文件被删/被换成目录」这一种破坏方式。
+- 二者一起把原根因的三个后果（变体探测读错文件 / fail-closed 归因失真 / 前提只被断言未被执行）全部消掉。
+
+被否决的备选（同一轮考虑）：
+
+- **B'｜Windows 用含 `?` 的标记名**：`?` 在 Windows 文件名里非法 ⇒ 本地永不可能存在，但 POSIX 没有这种字符
+  （只覆盖一半平台），且换成 C' 后不再必要。
+- **只做 A**：能报错但不能防患，属于「事后熔断」；C' 才是把前提变成结构事实。
+- **`<扩展目录>/pi-remote`（子目录形态）**：只是「不太可能被占用」（pi 会重克隆包缓存、项目级安装时
+  标记根落在用户项目里），没变成结构性，不采。
+
+## 决策 4（`#8` 已落地）：接缝里的**可选端口**必须补齐，且判定逻辑只从宿主同一份实现取
+
+`ReadOperations.detectImageMimeType` 是可选的，不实现它宿主就静默把图片当文本读（`read.js` 的
+`ops.detectImageMimeType ? … : undefined`；用户实测 PNG 读出 `�PNG…` 乱码）。补实现时的两条取舍：
+
+- **判定不复刻**：魔数/动图 PNG/BMP 校验在宿主 `utils/mime.js` 只此一份，而包根只导出
+  `detectSupportedImageMimeTypeFromFile`（纯 buffer 版未导出，包 `exports` 又封死深路径 import）⇒
+  远端取回的嗅探样本先落到**本地临时文件**、再交给这个函数。代价是每次远端 read 一次本地临时文件
+  （用完即删）；换来宿主升级自动跟上（备选是复制 ~50 行魔数逻辑，判为漂移负债，否决）。
+- **不新增往返**：样本搭 `access` 那一次往返的顺风车（`head -c 8192 … | base64`），read 仍是 2 次 ssh；
+  样本上限取 8192 ≥ 宿主 `IMAGE_TYPE_SNIFF_BYTES = 4100`，宿主将来调大也不会嗅到截断样本。
+- 纪律：接新工具或跟新宿主时，先枚举 `XxxOperations` 的**全部端口（含可选）**，再决定实现哪些。
 
 ## Considered Options
 
@@ -77,8 +102,10 @@ Status: accepted（2026-10-10，`remote-tools-todo#1` / `#6`；决策 1、2 已�
 - 信道是**内部实现细节**：模型侧契约仍是 `path`（远端绝对 POSIX）+ `remote`/`remotePort`/`remoteCwd`
   （对齐文档的扁平参数口径）；换信道不动模型面。
 - 宿主对工具路径有**本地副作用**（read 的变体探测、write/edit 的 realpath 锁键）——卡片「坑」与本 ADR 的
-  根因是同一件事；硬化后**仍保留**「标记根不得与本地同名」这条硬约束（Windows 由非法字符保证、POSIX 由守卫保证）。
+  根因是同一件事；硬化后标记根是**结构上不可占用**的（C'），守卫（A）只是兜底。
+- 代价：标记根路径比原 `C:\pi-remote` 长 ~90 字符，且随安装形态变化（全局扩展目录 / 包缓存 clone / 项目
+  `.pi/extensions/`），单测不再断言常量前缀（用导出的 `HOST_PATH_ROOT`）。
 - `grep` 渲染器丢失、宿主行为漂移需随宿主版本手工跟（`docs/extensions/remote-tools.md` 的
   `last verified @` 行就是这条纪律的落点）。
-- 相关验收：单元 62（+6 真机 opt-in）、真机 6/6（WSL Ubuntu）、以及 `#7` 的复现实验（本地存在标记根 ⇒
+- 相关验收：单元 70（+7 真机 opt-in）、真机 7/7（WSL Ubuntu）、以及 `#7` 的复现实验（本地存在标记根 ⇒
   变体探测读错文件名、`paths.test.ts` 的 realpath 断言转红）。

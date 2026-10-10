@@ -28,6 +28,7 @@ import {
 } from "../ops.ts";
 import { buildSshArgs, createSpawnExec, parseTarget, runSsh } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
+import { png1x1 } from "./fixtures.ts";
 
 const ID = "live-call";
 
@@ -99,8 +100,54 @@ test("真机：write → read → edit → ls 往返（临时目录，结束清�
 	assert.equal(await ls.exists(marker), false, "清理失败：临时目录仍在");
 });
 
+test("真机：远端 read 图片走图片管线（真 PNG → image 块；文本文件不受影响）", { skip }, async () => {
+	// 这条是真机才验得了的：样本要经真 ssh 以 base64 回来、真 PNG 再交给宿主的 processImage。
+	const tools = new Map<string, ToolDefinition>();
+	registerRemoteTools(
+		{
+			registerTool(tool: ToolDefinition) {
+				tools.set(tool.name, tool);
+			},
+		} as unknown as ExtensionAPI,
+		{ exec: createSpawnExec(), cwd: process.cwd() },
+	);
+	const ctx = {
+		cwd: process.cwd(),
+		sessionManager: { getSessionId: () => "live-image", getSessionFile: () => undefined },
+	} as unknown as ExtensionToolContext;
+
+	const remote = targetInput as string;
+	const base = baseDirInput ?? (await makeSession().home());
+	const marker = `${base}/.pi-remote-tools-image-${Date.now()}`;
+	const pngPath = `${marker}/pic.png`;
+	const textPath = `${marker}/note.txt`;
+	const textOf = (result: { content: Array<{ type: string; text?: string }> }): string =>
+		result.content.map((part) => (part.type === "text" ? (part.text ?? "") : "")).join("");
+
+	try {
+		await tools.get("bash")!.execute(ID, { command: `mkdir -p '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+		await tools
+			.get("bash")!
+			.execute(ID, { command: `printf '%s' '${png1x1().toString("base64")}' | base64 -d > '${pngPath}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+		await tools.get("write")!.execute(ID, { path: textPath, content: "plain text\n", remote }, undefined, undefined, ctx);
+
+		const image = (await tools.get("read")!.execute(ID, { path: pngPath, remote }, undefined, undefined, ctx)) as {
+			content: Array<{ type: string; mimeType?: string; data?: string }>;
+		};
+		const block = image.content.find((part) => part.type === "image");
+		assert.equal(block?.mimeType, "image/png", JSON.stringify(image.content.map((part) => part.type)));
+		assert.equal((block?.data ?? "").length > 0, true, "图片数据必须随结果回传（processImage 之后）");
+
+		const plain = await tools.get("read")!.execute(ID, { path: textPath, remote }, undefined, undefined, ctx);
+		assert.match(textOf(plain as never), /plain text/);
+	} finally {
+		await tools.get("bash")!.execute(ID, { command: `rm -rf '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+		assert.equal(await createRemoteLsOps(makeSession()).exists(marker), false, "清理失败：临时目录仍在");
+	}
+});
+
 test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → 远端 write/read/ls/grep/find/bash）", { skip }, async () => {
-	// 这一条才走完整链路：同名覆盖 → resolveToolPath 的 //pi-remote 标记 → 宿主 path 解析 → ops 还原 → 真 ssh。
+	// 这一条才走完整链路：同名覆盖 → resolveToolPath 的标记根前缀 → 宿主 path 解析 → ops 还原 → 真 ssh。
 	const tools = new Map<string, ToolDefinition>();
 	registerRemoteTools(
 		{
@@ -169,6 +216,13 @@ test("真机：远端不存在 / 无权限报结构化错误码（不是未捕�
 
 	await assert.rejects(() => read.readFile("/definitely/missing/pi-remote-tools.ts"), isNotFoundOrUnreadable);
 	await assert.rejects(() => read.readFile("/proc/1/mem"), isNotFoundOrUnreadable);
+
+	// 目录的归因必须真的是「是目录」——`-e` 对目录同样成立，分支顺序写反就会误报成权限问题（评审备注 1）。
+	const directory = baseDirInput ?? (await makeSession().home());
+	await assert.rejects(
+		() => read.readFile(directory),
+		(error: unknown) => error instanceof Error && error.message.startsWith(ErrorCodes.REMOTE_NOT_READABLE) && error.message.includes("是目录"),
+	);
 });
 
 test("真机：不可达/未知主机 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {

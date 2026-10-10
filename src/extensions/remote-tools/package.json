@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-remote-tools",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "remote-tools — 内置工具的 SSH 远程后端：给 read/write/edit/bash/grep/find/ls 增加 remote/remotePort（bash 另有 remoteCwd）参数，remote 为空时委托宿主本地实现（零行为漂移），非空时用系统 ssh 在远端执行；远端缺 ripgrep 时回退远端 grep -r 并在结果里标注降级；零运行时 npm 依赖",
   "engines": {

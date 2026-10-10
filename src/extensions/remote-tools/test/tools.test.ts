@@ -32,6 +32,7 @@ import { ErrorCodes } from "../errors.ts";
 import { DEGRADED_MARKER } from "../ops.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import { createSessionCache, registerRemoteTools } from "../tools.ts";
+import { png1x1 } from "./fixtures.ts";
 
 const ID = "call-1";
 const REMOTE = "deploy@10.0.0.7";
@@ -42,7 +43,7 @@ interface Recorder {
 	calls: SshExecRequest[];
 }
 
-function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult> = () => ({})): Recorder {
+function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult> = () => ({}), extraDeps: { markerAnchor?: string | undefined } = {}): Recorder {
 	const tools = new Map<string, ToolDefinition>();
 	const calls: SshExecRequest[] = [];
 	const exec: SshExec = async (request) => {
@@ -54,7 +55,7 @@ function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult
 			tools.set(tool.name, tool);
 		},
 	} as unknown as ExtensionAPI;
-	registerRemoteTools(pi, { exec, cwd: process.cwd() });
+	registerRemoteTools(pi, { exec, cwd: process.cwd(), ...extraDeps });
 	return { tools, calls };
 }
 
@@ -71,6 +72,9 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 		.map((part) => (part.type === "text" ? (part.text ?? "") : ""))
 		.join("");
 }
+
+/** readFile 的远端命令特征：目录分支排在 -e 之前，所以不能再用 `if [ -e ` 当特征（评审备注 1 的分支重排）。 */
+const isRemoteReadFile = (command: string): boolean => command.includes("; then LC_ALL=C cat ");
 
 /** 宿主的远端路径探测/读取都回答「存在且是目录」或给定内容。 */
 function homeProbeAware(inner: (request: SshExecRequest) => Partial<SshExecResult>) {
@@ -164,7 +168,7 @@ test("远端分派：read 的 ssh 命令里是远端路径（Windows 盘符污�
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
 			if (command.startsWith("test -r")) return {};
-			if (command.startsWith("if [ -e ")) return { stdout: Buffer.from("remote-file-body\n") };
+			if (isRemoteReadFile(command)) return { stdout: Buffer.from("remote-file-body\n") };
 			return {};
 		}),
 	);
@@ -184,7 +188,7 @@ test("远端分派：相对 path 按远端 $HOME 解析；remotePort 透传成 -
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
 			if (command.startsWith("test -r")) return {};
-			if (command.startsWith("if [ -e ")) return { stdout: Buffer.from("body\n") };
+			if (isRemoteReadFile(command)) return { stdout: Buffer.from("body\n") };
 			return {};
 		}),
 	);
@@ -266,6 +270,46 @@ test("远端 find 降级：远端缺 ripgrep 时结果里带降级标注", async
 	assert.match(text, /a\.ts/);
 	assert.match(text, /远端缺少 ripgrep，已回退 POSIX find/);
 });
+test("标记根守卫：锚文件缺失时远端调用 fail-closed（专码 + 零 ssh），本地调用不受影响", async () => {
+	const bogusAnchor = path.join(tmpdir(), `pi-remote-no-anchor-${Date.now()}`, "index.ts");
+	const recorder = recordTools(() => {
+		throw new Error("守卫必须在 ssh 之前拦住");
+	}, { markerAnchor: bogusAnchor });
+
+	await assert.rejects(
+		() => recorder.tools.get("read")!.execute(ID, { path: "/srv/a.ts", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd())),
+		new RegExp(ErrorCodes.HOST_MARKER_CONFLICT),
+	);
+	assert.equal(recorder.calls.length, 0, "守卫触发时不该发 ssh");
+
+	// 本地分支与守卫无关：零 ssh、行为照旧（红线：本地分支不受影响）
+	const dir = await mkdtemp(path.join(tmpdir(), "remote-tools-guard-"));
+	await writeFile(path.join(dir, "a.ts"), "local body\n", "utf8");
+	const local = await recorder.tools.get("read")!.execute(ID, { path: "a.ts" }, undefined, undefined, ctxFor(dir));
+	assert.match(textOf(local as never), /local body/);
+	assert.equal(recorder.calls.length, 0);
+});
+
+test("远端 read 图片：走宿主图片管线（补上 detectImageMimeType 端口），不再当文本读（用户实测 bug）", async () => {
+	const png = png1x1();
+	const recorder = recordTools(
+		homeProbeAware((request) => {
+			const command = request.args.at(-1) ?? "";
+			if (command.includes("head -c")) return { stdout: Buffer.from(png.toString("base64")) };
+			if (isRemoteReadFile(command)) return { stdout: png };
+			return {};
+		}),
+	);
+
+	const result = await recorder.tools.get("read")!.execute(ID, { path: "/srv/app/pic.png", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd()));
+	const content = (result as { content: Array<{ type: string; mimeType?: string; data?: string }> }).content;
+	const image = content.find((part) => part.type === "image");
+	assert.equal(image?.mimeType, "image/png", textOf(result as never));
+	assert.equal((image?.data ?? "").length > 0, true, "图片数据必须随结果回传");
+	assert.match(textOf(result as never), /Read image file \[image\/png\]/);
+	assert.equal(recorder.calls.length, 2, "一次远端 read = 嗅探（搭 access）+ 读取，共两条 ssh");
+});
+
 test("失败映射：未知主机指纹 / 相对路径 / 端口非法 都 fail-closed，且错误里带错误码", async () => {
 	const hostKeyFailure = recordTools(() => ({ exitCode: 255, stderr: "Host key verification failed." }));
 	await assert.rejects(
@@ -329,7 +373,7 @@ test("远端也用得起噪声端口：remotePort: 0 视作未指定，照常走
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
 			if (command.startsWith("test -r")) return {};
-			if (command.startsWith("if [ -e ")) return { stdout: Buffer.from("body\n") };
+			if (isRemoteReadFile(command)) return { stdout: Buffer.from("body\n") };
 			return {};
 		}),
 	);
@@ -368,8 +412,8 @@ test("远端非字符串 path 视作未提供：落回远端 §HOME 并给出带
 	const recorder = recordTools(
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
-			// 基准目录是目录：远端 readFile 应该报「是目录」而不是抛裸 TypeError
-			if (command.startsWith("if [ -e ")) return { exitCode: 4 };
+			// 基准目录是目录：远端 readFile 应该报「是目录」而不是抛裸 TypeError（目录分支现在真的排在前面）
+			if (command.startsWith("if [ -d ")) return { exitCode: 4 };
 			return {};
 		}),
 	);

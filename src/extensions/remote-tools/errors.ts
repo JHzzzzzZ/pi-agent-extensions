@@ -26,6 +26,8 @@ export const ErrorCodes = {
 	REMOTE_WRITE_FAILED: "REMOTE_WRITE_FAILED",
 	/** 远端命令非零退出（bash 透传退出码，此处用于内部工具调用）。 */
 	REMOTE_COMMAND_FAILED: "REMOTE_COMMAND_FAILED",
+	/** 标记根锚定的文件缺失或被替换（本地路径信道的前提被破坏）⇒ 远端调用 fail-closed。 */
+	HOST_MARKER_CONFLICT: "HOST_MARKER_CONFLICT",
 } as const;
 
 export type RemoteToolsErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

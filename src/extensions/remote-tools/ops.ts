@@ -15,6 +15,10 @@ import type {
 	ReadOperations,
 	WriteOperations,
 } from "@earendil-works/pi-coding-agent";
+import { detectSupportedImageMimeTypeFromFile } from "@earendil-works/pi-coding-agent";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { ErrorCodes, type RemoteToolsErrorCode } from "./errors.ts";
 import { toRemotePath } from "./paths.ts";
@@ -29,8 +33,52 @@ const EXIT_CWD_MISSING = 201;
 const EXIT_NOT_FOUND = 3;
 const EXIT_IS_DIRECTORY = 4;
 
+/**
+ * 宿主 read 的图片嗅探上限（宿主 dist/utils/mime.js 的 IMAGE_TYPE_SNIFF_BYTES = 4100）。
+ * 这里取 8192 ≥ 它：把整段样本交给宿主同一份检测实现，宿主将来调大上限也不会嗅到截断样本。
+ */
+const IMAGE_SNIFF_BYTES = 8192;
+
 function fail(code: RemoteToolsErrorCode, message: string): never {
 	throw new Error(`${code}: ${message}`);
+}
+
+/**
+ * 读探针：一次往返同时拿到「可读吗」与「前 8192 字节样本」（base64 文本，二进制安全）。
+ * 目录不做样本（由 readFile 报「是目录」，错误归因与本地实现一致）；嗅探本身失败不算访问失败
+ * （`|| true`：远端缺 base64 之类退化成「不是图片」，与不实现该端口时的行为一致）。
+ */
+function buildReadProbeCommand(remotePath: string): string {
+	const quoted = shellQuote(remotePath);
+	return (
+		`if [ ! -e ${quoted} ]; then exit ${EXIT_NOT_FOUND}; ` +
+		`elif [ -d ${quoted} ]; then exit 0; ` +
+		`elif [ ! -r ${quoted} ]; then exit 1; ` +
+		`else head -c ${IMAGE_SNIFF_BYTES} ${quoted} | base64 || true; fi`
+	);
+}
+
+/** base64 文本 → 样本字节（远端换行/包装差异一律忽略）。 */
+function decodeBase64Sample(stdout: Buffer): Buffer {
+	return Buffer.from(stdout.toString("utf8").replace(/\s+/g, ""), "base64");
+}
+
+/**
+ * 交给**宿主同一份**实现判定：包根只导出 detectSupportedImageMimeTypeFromFile（纯 buffer 版未导出，
+ * 深路径 import 被包 exports 封死），所以样本先落到本地临时文件再喂给它——魔数/动图/BMP 规则零复制，
+ * 宿主升级自动跟上。空样本（目录、空文件）宿主也判 null，提前返回省掉临时文件。
+ */
+async function detectMimeFromSample(sampleBytes: Buffer): Promise<string | null> {
+	if (sampleBytes.length === 0) return null;
+	const dir = await mkdtemp(join(tmpdir(), "pi-remote-sniff-"));
+	try {
+		const file = join(dir, "sample.bin");
+		await writeFile(file, sampleBytes);
+		return await detectSupportedImageMimeTypeFromFile(file);
+	} finally {
+		// 清理失败不该把一次成功的读取变成错误（临时目录残留无害）。
+		await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+	}
 }
 
 /** 宿主解析后的路径 → 远端绝对路径；不可还原或不是绝对 POSIX 路径就 fail-closed。 */
@@ -126,18 +174,40 @@ async function testAccess(session: RemoteSession, hostPath: string, testFlags: s
 }
 
 export function createRemoteReadOps(session: RemoteSession): ReadOperations {
+	/** 本次 read 的嗅探样本：access 顺带取回、detectImageMimeType 消费（一次 read 只针对一个路径）。 */
+	let sample: { remotePath: string; bytes: Buffer } | undefined;
+
+	async function probe(remotePath: string): Promise<Buffer> {
+		const result = await runChecked(session, buildReadProbeCommand(remotePath));
+		if (result.exitCode === EXIT_NOT_FOUND) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
+		if (result.exitCode !== 0) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端文件不可读（权限不足）。");
+		return decodeBase64Sample(result.stdout);
+	}
+
 	return {
 		async readFile(absolutePath: string): Promise<Buffer> {
 			const remotePath = requireRemotePath(absolutePath);
 			const quoted = shellQuote(remotePath);
-			const result = await runChecked(session, `if [ -e ${quoted} ]; then LC_ALL=C cat ${quoted}; elif [ -d ${quoted} ]; then exit ${EXIT_IS_DIRECTORY}; else exit ${EXIT_NOT_FOUND}; fi`);
+			// 目录判断必须排在 -e 之前：`-e` 对目录同样成立，先 cat 会把「是目录」误报成「权限不足」（跨厂商评审备注 1）。
+			const result = await runChecked(session, `if [ -d ${quoted} ]; then exit ${EXIT_IS_DIRECTORY}; elif [ -e ${quoted} ]; then LC_ALL=C cat ${quoted}; else exit ${EXIT_NOT_FOUND}; fi`);
 			if (result.exitCode === EXIT_NOT_FOUND) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
 			if (result.exitCode === EXIT_IS_DIRECTORY) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端路径是目录，无法按文件读取。");
 			if (result.exitCode !== 0) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端文件不可读（权限不足）。");
 			return result.stdout;
 		},
+		/** 可读性检查 + 顺带取回图片嗅探样本（同一条 ssh）。 */
 		async access(absolutePath: string): Promise<void> {
-			await testAccess(session, absolutePath, "-r", ErrorCodes.REMOTE_NOT_READABLE, "远端文件不可读（权限不足）。");
+			const remotePath = requireRemotePath(absolutePath);
+			sample = { remotePath, bytes: await probe(remotePath) };
+		},
+		/**
+		 * 宿主 read 只在提供该端口时才走图片管线（read.js 的 `ops.detectImageMimeType ? … : undefined`），
+		 * 没有它就是「PNG 当文本读」。样本已由 access 取回时不触网；否则补一条嗅探命令（不应发生）。
+		 */
+		async detectImageMimeType(absolutePath: string): Promise<string | null> {
+			const remotePath = requireRemotePath(absolutePath);
+			if (sample?.remotePath !== remotePath) sample = { remotePath, bytes: await probe(remotePath) };
+			return detectMimeFromSample(sample.bytes);
 		},
 	};
 }

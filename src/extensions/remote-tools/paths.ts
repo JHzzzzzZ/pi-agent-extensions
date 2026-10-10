@@ -9,34 +9,65 @@
  *   - `relativizeFindResultPath`（find 用）在本机 path 空间里求相对路径，未标记的远端绝对路径会被算成
  *     "../../../srv/…" 乱码。
  *
- * 所以宿主形态是**平台相关**的，两条不变式同时满足：
- *   1. 本地 `path` 家族不改写它（Windows：带盘符的 `C:\pi-remote\…`；POSIX：`//pi-remote/…`）；
- *   2. 本地 `realpath` 以 ENOENT 失败（Windows 上不能用 UNC，否则错误码是 UNKNOWN）。
- * 标记 `pi-remote` 同时是「这条路径经过宿主解析」的凭证：模型自己给的 `C:/…`、相对路径没有标记，
+ * 所以宿主形态必须同时满足：
+ *   1. 本地 `path` 家族不改写它（绝对路径，带盘符/根斜杠）；
+ *   2. 本地 `path`/`fs` 调用给的是 **missing-path 错误**（`ENOENT` / `ENOTDIR`）：`withFileMutationQueue`
+ *      只容忍这两个码，`resolveReadPathAsync` 的变体探测会吞掉一切错误再逐条试变体名。
+ * 第 2 条曾经靠一条**不可执行的约定**维持（「本机一定不存在 C:\pi-remote」）：本地真有该目录时，变体探测
+ * 会用本地文件命中，把远端读取的文件名换成变体名 ⇒ 静默读错文件（2026-10-10 用户复现）。
+ *
+ * 现在把它变成**结构性事实**：标记根锚在扩展目录里一个已存在的普通文件下面
+ * （`<扩展目录>/index.ts/pi-remote`）——只要锚文件还是普通文件，本机就建不出这个目录
+ * （实测 Windows：`mkdir -p` 报 ENOTDIR、`realpath` 报 ENOENT；POSIX 同理 ENOTDIR）。
+ * `assertMarkerRootUsable` 是配套的运行时守卫，兜住「锚文件被删/被换成目录」这一种破坏方式。
+ *
+ * 标记段 `pi-remote` 同时是「这条路径经过宿主解析」的凭证：模型自己给的 `C:/…`、相对路径没有标记，
  * ops 层原样返回、由 validateRemotePath 拒绝（fail-closed）。另外**所有**返回给宿主的远端路径
  * （含 find 的 glob 结果）都必须带标记，否则宿主会用自己的 path 语义把它算成乱码。
  */
 
+import { statSync } from "node:fs";
 import path from "node:path";
 
 import { ErrorCodes } from "./errors.ts";
 
-/** 宿主侧路径标记：既避免平台改写，又标明「这来自宿主解析」。 */
+/** 宿主侧路径标记段：既避免平台改写，又标明「这来自宿主解析」。 */
 export const HOST_PATH_MARKER = "pi-remote";
 
-/** 宿主盘符（Windows 专用）：取当前工作目录所在盘，避免硬编码 "C:"。 */
-function hostDrive(): string {
-	const root = path.parse(process.cwd()).root.replace(/[\\/]+$/, "");
-	return /^[A-Za-z]:$/.test(root) ? root : "C:";
+/** 标记根锚定的普通文件：扩展入口自己（扩展目录里必然存在，且是文件而不是目录）。 */
+const MARKER_ANCHOR_FILE = path.join(import.meta.dirname, "index.ts");
+
+/** 交给宿主 path/fs 解析时用的路径前缀（绝对路径，两平台同一形态）。 */
+export const HOST_PATH_ROOT = path.join(MARKER_ANCHOR_FILE, HOST_PATH_MARKER);
+
+/** 归一成可比较形态：统一分隔符、折叠重复斜杠、去掉尾分隔符（Windows 盘符/路径大小写无关，比较时降格）。 */
+function normalizeForCompare(value: string): string {
+	const slashed = value.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+	const trimmed = slashed.length > 1 ? slashed.replace(/\/+$/, "") : slashed;
+	return process.platform === "win32" ? trimmed.toLowerCase() : trimmed;
+}
+
+/**
+ * 远端调用前的守卫：锚文件必须仍是普通文件。
+ * 它被删掉或被换成目录，标记根在本地就真的可能存在 ⇒ 信道前提被破坏，fail-closed 报专码。
+ * 本地分支不调用它（不产生额外 fs 操作）。anchorFile 参数是测试接缝，生产用默认值。
+ */
+export function assertMarkerRootUsable(anchorFile: string = MARKER_ANCHOR_FILE): void {
+	let isFile = false;
+	try {
+		isFile = statSync(anchorFile).isFile();
+	} catch {
+		isFile = false;
+	}
+	if (!isFile) {
+		throw new Error(`${ErrorCodes.HOST_MARKER_CONFLICT}: 宿主标记锚文件缺失或被替换，远端路径信道不可用；请恢复或重装 remote-tools 扩展。`);
+	}
 }
 
 /** 远端 POSIX 绝对路径 → 交给宿主 path/fs 解析时用的形态（纯加前缀；输入当作干净的远端路径）。 */
 export function toHostPath(remotePath: string): string {
 	const remote = remotePath.startsWith("/") ? remotePath : `/${remotePath}`;
-	if (process.platform === "win32") {
-		return `${hostDrive()}\\${HOST_PATH_MARKER}${remote.replace(/\//g, "\\")}`;
-	}
-	return `//${HOST_PATH_MARKER}${remote}`;
+	return HOST_PATH_ROOT + (process.platform === "win32" ? remote.replace(/\//g, "\\") : remote);
 }
 
 /**
@@ -67,17 +98,15 @@ export function assertModelPathInput(input: unknown): void {
 	}
 }
 
-/** 剥掉宿主标记（顺带归一反斜杠与重复斜杠）；没有标记时按原样归一返回。 */
+/** 剥掉宿主标记根前缀（归一反斜杠与重复斜杠）；没有标记时按原样归一返回。 */
 export function stripHostMarker(hostPath: string): string {
 	const slashed = hostPath.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
-	if (slashed === `/${HOST_PATH_MARKER}`) return "/";
-	if (slashed.startsWith(`/${HOST_PATH_MARKER}/`)) return slashed.slice(HOST_PATH_MARKER.length + 1);
-	const driveMarked = new RegExp(`^[A-Za-z]:/${HOST_PATH_MARKER}(?:/(.*))?$`).exec(slashed);
-	if (driveMarked !== null) {
-		const rest = driveMarked[1] ?? "";
-		return rest === "" ? "/" : `/${rest}`;
-	}
-	return slashed;
+	const root = normalizeForCompare(HOST_PATH_ROOT);
+	const head = slashed.slice(0, root.length);
+	const matched = process.platform === "win32" ? head.toLowerCase() === root : head === root;
+	if (!matched) return slashed;
+	const rest = slashed.slice(root.length);
+	return rest.startsWith("/") ? rest : `/${rest}`;
 }
 
 /** 宿主 path 解析结果 → 远端 POSIX 绝对路径；没有宿主标记的形态原样返回（由调用方校验后拒绝）。 */

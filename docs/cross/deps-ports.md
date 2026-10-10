@@ -18,7 +18,7 @@
 | run-timer | 无显式 deps 口——`aligned-ticker` 的 `now` 可注入，工厂测试经 before/after mock `setTimeout` + `fireTick()` | 时钟（特例：timer 直接 mock） |
 | stream-token-speed | `StatusPort`（status-port.ts，状态上报端口；`createStatusPort()` 工厂） | 测试用 `RecordingStatusPort` 实现该接口（test/fixtures.ts） |
 | jev-safe-gate | `GatePorts`（gate.ts：solo 读取 / hasUI / 候选筛 / classify / confirm / release——判定层的全部外界面）、`JevSafeGateDeps`（index.ts：solo 读取 / 判断超时 / 日志出口）、`ClassifierRegistryLike`（`ctx.modelRegistry` 里真正用到的那一小面） | 分类器网络调用、宿主 UI、solo 状态文件、时钟（超时计时器） |
-| remote-tools | `SshExec`（ssh.ts，进程边界口：`{ file, args, stdin, timeoutMs, signal, onData }` → `{ exitCode, stdout, stderr, timedOut, spawnFailed }`）、`RemoteToolsDeps = { exec, cwd }`（tools.ts 入口）、`RemoteSession`（target + exec，$HOME 懒解析与失败不毒化） | 系统 `ssh` 子进程（测试用手写 fake，断言**实际发给 ssh 的命令字符串**：test/tools.test.ts、test/ops.test.ts） |
+| remote-tools | `SshExec`（ssh.ts，进程边界口：`{ file, args, stdin, timeoutMs, signal, onData }` → `{ exitCode, stdout, stderr, timedOut, spawnFailed }`）、`RemoteToolsDeps = { exec, cwd, markerAnchor? }`（tools.ts 入口；`markerAnchor` 是标记根守卫的测试接缝）、`RemoteSession`（target + exec，$HOME 懒解析与失败不毒化） | 系统 `ssh` 子进程（测试用手写 fake，断言**实际发给 ssh 的命令字符串**：test/tools.test.ts、test/ops.test.ts） |
 | dir-context | **无注入端口（有意）**——被测行为就是「真实路径语义 + 宿主事件契约」本身：路径/realpath/链接/包含校验用**真实临时目录树**，宿主交互用**真实 `discoverAndLoadExtensions` + 真实 `ExtensionRunner.emitToolResult`**（只 fake `sessionManager`/`modelRegistry`/actions 这些本扩展不读的对象） | 文件系统与宿主事件分发（两者都不是「纸面替身」能代表的边界） |
 
 ## 时钟约定

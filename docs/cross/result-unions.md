@@ -21,7 +21,7 @@
 
 ## pwr 之外
 
-- `src/extensions/remote-tools/errors.ts` — 单文件错误码对象（10 个：`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED`）；消息全静态模板，不插值远端路径内容或远端输出。`#7` 落地后会新增 `HOST_MARKER_CONFLICT`（信道硬化）。层内契约见 `docs/extensions/remote-tools.md`。
+- `src/extensions/remote-tools/errors.ts` — 单文件错误码对象（11 个：`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`（`#7` 信道硬化：标记根锚文件被删/被换））；消息全静态模板，不插值远端路径内容或远端输出。层内契约见 `docs/extensions/remote-tools.md`。
 - `src/extensions/dir-context/errors.ts` — 单文件错误码对象，**刻意只有 2 个**（`DIR_CONTEXT_PATH_RESOLUTION_FAILED` / `DIR_CONTEXT_CONTEXT_READ_FAILED`）：本扩展把绝大多数不正常情形设计成「不注入」（返回 `null` / `undefined`）而不是失败，所以「不在作用域内」「没有候选文件」「嵌套调用」都不是错误码；读取失败只报一次告警且**不标记已注入**（下个触碰可重试）。层内契约见 `docs/extensions/dir-context.md`。
 - `src/extensions/agent-team/types.ts` — `TeamErrorCodes`（result union，上限同款：8 任务 / 8 并发 / 50KB / 8KB）；v1.21.0 新增 `RUN_NOT_TERMINAL`（续跑请求时父 run 仍在跑）与 `RESUME_UNAVAILABLE`（父 run 无 leader 会话镜像）。
 - 其余扩展（loop / goal / opencode-bridge / deep-init / human-notify）走 `{ ok }` 联合或 deps 注入失败路径，各自 test 文件内锁定契约；没有独立 errors.ts 的（单文件扩展）直接在文件内 `as const` 码对象。

@@ -21,6 +21,7 @@ import {
 	createRemoteWriteOps,
 } from "../ops.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
+import { animatedPngSample, bmpSample, gifSample, jpegSample, losslessJpegSample, png1x1, textSample, webpSample } from "./fixtures.ts";
 
 const TARGET = { host: "10.0.0.7", user: "deploy", port: 2222 };
 
@@ -61,7 +62,11 @@ test("readFile：单轮命令区分不存在/是目录/正常读取，二进制�
 	const content = await ops.readFile("/srv/app/bin.dat");
 	assert.deepEqual(content, Buffer.from([0x00, 0xff, 0x41]));
 	assert.equal(session.calls.length, 1);
-	assert.match(session.calls[0].args.at(-1) ?? "", /^if \[ -e '\/srv\/app\/bin\.dat' \]; then LC_ALL=C cat '\/srv\/app\/bin\.dat'; elif \[ -d /);
+	// 目录分支必须排在 -e 之前：`-e` 对目录同样成立，先 cat 会把「是目录」误报成「不可读」（评审备注 1）。
+	assert.match(
+		session.calls[0].args.at(-1) ?? "",
+		/^if \[ -d '\/srv\/app\/bin\.dat' \]; then exit 4; elif \[ -e '\/srv\/app\/bin\.dat' \]; then LC_ALL=C cat '\/srv\/app\/bin\.dat'; else exit 3; fi$/,
+	);
 });
 
 test("readFile：远端不存在 / 是目录 分别给出结构化错误码", async () => {
@@ -85,7 +90,11 @@ test("access：可读/可写/读写分别用 test -r / -w / -r -w，并先用 -e
 	await write.access?.("/srv/app/a.ts");
 	await edit.access("/srv/app/a.ts");
 
-	assert.equal(session.calls[0].args.at(-1), "if [ -e '/srv/app/a.ts' ]; then test -r '/srv/app/a.ts'; else exit 3; fi");
+	// read 的 access 顺带把图片嗅探样本取回来（见本文件末的图片识别用例）：一次往返干两件事。
+	assert.equal(
+		session.calls[0].args.at(-1),
+		"if [ ! -e '/srv/app/a.ts' ]; then exit 3; elif [ -d '/srv/app/a.ts' ]; then exit 0; elif [ ! -r '/srv/app/a.ts' ]; then exit 1; else head -c 8192 '/srv/app/a.ts' | base64 || true; fi",
+	);
 	assert.equal(session.calls[1].args.at(-1), "if [ -e '/srv/app/a.ts' ]; then test -w '/srv/app/a.ts'; else exit 3; fi");
 	// 读写两个标志必须拆成两条 test（`test -r -w <path>` 是非法表达式，真机验收抓到过）
 	assert.equal(
@@ -235,6 +244,78 @@ test("路径校验先于 ssh：相对路径/Windows 路径直接报错且不发�
 	assert.match(await failureOf(readOps.readFile("src/a.ts")), new RegExp(`^${ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE}`));
 	assert.match(await failureOf(lsOps.readdir("C:\\tmp")), new RegExp(`^${ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE}`));
 	assert.equal(session.calls.length, 0);
+});
+
+/* ── 远端 read 的图片识别（remote-tools#8）──────────────────────────────────
+ * 宿主 read 只在 ops 提供了 detectImageMimeType 时才走图片管线（read.js:80），否则把 PNG 当文本读。
+ * 下面断言三件事：样本取不取得到、判定交给谁（宿主同一份实现）、往返次数有没有涨。
+ */
+
+const SNIFF_COMMAND = /if \[ ! -e .* \]; then exit 3; elif \[ -d .* \]; then exit 0; elif \[ ! -r .* \]; then exit 1; else head -c 8192 .* \| base64 \|\| true; fi/;
+
+/** 假 ssh：嗅探命令回样本的 base64（真实 ssh 就是这样把字节带回来的），其余命令走 inner。 */
+function sniffingExec(sample: Buffer, inner: (request: SshExecRequest) => Partial<SshExecResult> = () => ({})): RemoteSession & ScriptedExec {
+	const scripted = makeExec((request) => {
+		if ((request.args.at(-1) ?? "").includes("head -c")) return { stdout: Buffer.from(sample.toString("base64")) };
+		return inner(request);
+	});
+	const session = createRemoteSession({ target: TARGET, exec: scripted.exec, homeDir: "/home/deploy" });
+	return Object.assign(session, scripted);
+}
+
+test("远端 read 图片识别：样本搭 access 的顺风车（合计一条 ssh），PNG 判成 image/png", async () => {
+	const session = sniffingExec(png1x1());
+	const ops = createRemoteReadOps(session);
+
+	await ops.access("/srv/app/pic.png");
+	assert.equal(await ops.detectImageMimeType?.("/srv/app/pic.png"), "image/png");
+	assert.equal(session.calls.length, 1, "access + detect 必须只发一条 ssh（不给每次 read 加往返）");
+	assert.match(session.calls[0].args.at(-1) ?? "", SNIFF_COMMAND);
+	assert.match(session.calls[0].args.at(-1) ?? "", /head -c 8192 '\/srv\/app\/pic\.png'/);
+});
+
+test("远端 read 图片识别：样本交给宿主导出的同一实现判定（正例/反例都按宿主规则）", async () => {
+	const cases: Array<[string, Buffer, string | null]> = [
+		["png", png1x1(), "image/png"],
+		["jpeg", jpegSample(), "image/jpeg"],
+		["gif", gifSample(), "image/gif"],
+		["webp", webpSample(), "image/webp"],
+		["bmp", bmpSample(), "image/bmp"],
+		["有损 DC 帧 JPEG", losslessJpegSample(), null],
+		["动图 PNG（acTL 早于 IDAT）", animatedPngSample(), null],
+		["文本", textSample(), null],
+		["空样本", Buffer.alloc(0), null],
+	];
+
+	for (const [label, sample, expected] of cases) {
+		const session = sniffingExec(sample);
+		const ops = createRemoteReadOps(session);
+		await ops.access("/srv/app/sample.bin");
+		assert.equal(await ops.detectImageMimeType?.("/srv/app/sample.bin"), expected, label);
+		assert.equal(session.calls.length, 1, `${label}：不应多发 ssh`);
+	}
+});
+
+test("远端 read 图片识别：detect 单独调用（未先 access）也工作，只发一条嗅探命令", async () => {
+	const session = sniffingExec(png1x1());
+	const ops = createRemoteReadOps(session);
+
+	assert.equal(await ops.detectImageMimeType?.("/srv/app/pic.png"), "image/png");
+	assert.equal(session.calls.length, 1);
+	assert.match(session.calls[0].args.at(-1) ?? "", SNIFF_COMMAND);
+});
+
+test("远端 read 图片识别：不存在/不可读沿既有错误码；目录放行且样本为空 ⇒ 不是图片", async () => {
+	const missing = makeSession(() => ({ exitCode: 3 }));
+	assert.match(await failureOf(createRemoteReadOps(missing).access("/srv/nope")), new RegExp(`^${ErrorCodes.REMOTE_NOT_FOUND}`));
+
+	const unreadable = makeSession(() => ({ exitCode: 1 }));
+	assert.match(await failureOf(createRemoteReadOps(unreadable).access("/srv/secret")), new RegExp(`^${ErrorCodes.REMOTE_NOT_READABLE}`));
+
+	const directory = makeSession(() => ({ stdout: Buffer.alloc(0) }));
+	const ops = createRemoteReadOps(directory);
+	await ops.access("/srv/app");
+	assert.equal(await ops.detectImageMimeType?.("/srv/app"), null);
 });
 
 test("远端 $HOME：懒解析一次并缓存，失败不毒化缓存（下次调用重试）", async () => {
