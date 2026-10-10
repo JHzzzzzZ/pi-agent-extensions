@@ -121,8 +121,8 @@
       "id": 7,
       "globalId": 359,
       "text": "宿主标记路径的前提硬化（外部评审发现，已核代码确认为真）：remote-tools 借本地路径命名空间当信道（Windows C:\\pi-remote\\…，POSIX //pi-remote/…），安全性押在「本机一定不存在这个前缀」这条隐含假设上；若本机真有该目录：① read 的文件名会被本地变体探测带偏（read.js 的 resolveReadPathAsync 用本地 accessSync 依次试 原路径→AM/PM→NFD→弯引号，结果直接喂远端 ops.readFile，名字含 ' / 非 ASCII / AM-PM 时窗口成立）；② fail-closed 退化（本该 ENOENT 的探测变成功，错误归因失真）；③ paths.test.ts 的 realpath ENOENT 断言只是断言、无运行时守卫。要求：把隐含假设变成显式检查——远端调用前检测标记根（Windows 盘符根\\pi-remote、POSIX /pi-remote）是否存在，存在则 fail-closed 报专码（本地分支不受影响）",
-      "status": "open",
-      "branch": null,
+      "status": "processing",
+      "branch": "fix/remote-tools-marker-image",
       "tags": [
         "safety",
         "hardening"
@@ -131,9 +131,26 @@
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-10-10T18:33:42.425Z",
-      "claimedAt": null,
+      "claimedAt": "2026-10-10T19:03:28.618Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-10-10T19:05:09.670Z"
+    },
+    {
+      "id": 8,
+      "globalId": 360,
+      "text": "远端 read 读图片退化成二进制文本（用户 2026-10-10 实测）：createRemoteReadOps 没有实现 ReadOperations 的可选端口 detectImageMimeType，宿主 read.js:80 的 \"ops.detectImageMimeType ? … : undefined\" 因此判定为非图片，PNG/JPEG 等被当 UTF-8 文本读出（�PNG… 乱码）并进文本截断管线。要求：远端分支补上该端口，按宿主同一嗅探口径（前 4100 字节魔数：PNG 非动图 / JPEG 非有损 / GIF87a-89a / WebP / 合法 BMP）识别图片 MIME，非图片返回 null；不得给每次远端 read 增加 ssh 往返；本地分支行为不变。",
+      "status": "processing",
+      "branch": "fix/remote-tools-marker-image",
+      "tags": [
+        "bugfix"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-10T19:03:28.747Z",
+      "claimedAt": "2026-10-10T19:05:09.677Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-10T19:05:14.027Z"
     }
   ]
 }
