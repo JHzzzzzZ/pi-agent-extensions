@@ -364,6 +364,27 @@ test("远端非字符串 remoteCwd / path 视作未提供：不抛裸 TypeError�
 	}
 });
 
+test("远端非字符串 path 视作未提供：落回远端 §HOME 并给出带错误码的失败，而不是裸 TypeError（评审 B1）", async () => {
+	const recorder = recordTools(
+		homeProbeAware((request) => {
+			const command = request.args.at(-1) ?? "";
+			// 基准目录是目录：远端 readFile 应该报「是目录」而不是抛裸 TypeError
+			if (command.startsWith("if [ -e ")) return { exitCode: 4 };
+			return {};
+		}),
+	);
+
+	await assert.rejects(
+		() => recorder.tools.get("read")!.execute(ID, { path: null, remote: REMOTE } as never, undefined, undefined, ctxFor(process.cwd())),
+		(error: unknown) => {
+			if (!(error instanceof Error)) return false;
+			assert.doesNotMatch(error.message, /TypeError|Cannot read propert/i, "不得抛裸 TypeError");
+			return /^REMOTE_(NOT_READABLE|NOT_FOUND)/.test(error.message);
+		},
+	);
+	assert.equal((recorder.calls.at(-1)?.args.at(-1) ?? "").includes(`'${HOME}'`), true, "非字符串 path 应落回远端 $HOME");
+});
+
 test("session 缓存：同一目标多次调用只解析一次远端 $HOME", async () => {
 	const recorder = recordTools(
 		homeProbeAware((request) => {
