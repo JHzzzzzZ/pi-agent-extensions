@@ -19,7 +19,7 @@
 | [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭） | 33 个（node:test） |
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
-| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单 | 62 个（+6 真机 opt-in） |
+| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单 | 70 个（+7 真机 opt-in） |
 | [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次） | 46 个（node:test） |
 
 ## 安装
@@ -640,10 +640,10 @@ ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write /
 - **远端缺 `ripgrep` 时** — `grep`/`find` 回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不再生效）
 - **参数健壮** — 没有远端意图的字段不影响调用：`remote` 传空串/纯空白/缺省值字面量（`null`/`undefined`/`nil`/`none`/`n/a`）一律当本机；`remotePort` 是 `null`/非数字/`0`/负数也当没给（宿主 strict 采样器会把可选字段填成 `0`）；**自由字符串仍当主机名**（`local` 是常见的 ssh 别名，当本机会静默跑错机器）；只有真正说错的值（越界端口、带标记首段的路径、`~` 开头）才 fail-closed
 - **安全与 fail-closed** — 路径必须是远端绝对 POSIX 路径（模型给的 `C:/…` 或相对路径在发 ssh 之前就报错）；只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`），其余 `PI_*` 绝不送远端；错误消息全静态模板
-- **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`、远端图片不做 MIME 探测
+- **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`
 
 ```bash
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 62 个 + 6 个真机 opt-in（未设 PI_REMOTE_TOOLS_TEST_TARGET 时跳过）
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 70 个 + 7 个真机 opt-in（未设 PI_REMOTE_TOOLS_TEST_TARGET 时跳过）
 ```
 
 ---

@@ -83,7 +83,7 @@ cd src/extensions/opencode-bridge && npm install && npm test && npm run typechec
 cd agent-manager && npm install && npm test && npm run typecheck   # 另 npm run test:e2e opt-in（需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
 cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck   # 50 个（含宿主事件路径：真实加载 + ExtensionRunner）
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 62 个（含本地保真对照、Windows 路径往返、输入护栏、采样器噪声、缺省值字面量）+ 6 个真机 opt-in
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 70 个（含本地保真对照、Windows 路径往返、标记根结构性断言、输入护栏、采样器噪声、缺省值字面量、图片嗅探）+ 7 个真机 opt-in
 cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 46 个（含真实 ExtensionRunner 宿主事件路径：触发面/去重/compact 重载/cwd 边界 fail-closed）
 ```
 
@@ -142,4 +142,4 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **性能门：** `src/extensions/pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
 - **测试数：** 唯一来源是根 `README.md`（AGENTS.md 不再复制数字，防过期）。
 
-- **覆盖缺口：** 全库无 TODO/only 标记；条件跳过只有两种合法形态——平台/凭据不满足（`agent-manager/e2e.test.ts` 的真机 e2e、`dir-context` 的文件符号链接用例）与 opt-in 真机目标未设（`remote-tools` 6 个），且必须 `skip` 而非静默绿。
+- **覆盖缺口：** 全库无 TODO/only 标记；条件跳过只有两种合法形态——平台/凭据不满足（`agent-manager/e2e.test.ts` 的真机 e2e、`dir-context` 的文件符号链接用例）与 opt-in 真机目标未设（`remote-tools` 7 个），且必须 `skip` 而非静默绿。
