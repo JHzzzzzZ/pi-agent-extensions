@@ -33,7 +33,8 @@
       "./src/extensions/solo-mode/index.ts",
       "./src/extensions/timeout-bg/index.ts",
       "./src/extensions/virtual-model-router/index.ts",
-      "./src/extensions/jev-safe-gate/index.ts"
+      "./src/extensions/jev-safe-gate/index.ts",
+      "./src/extensions/remote-tools/index.ts"
     ]
   }
 }

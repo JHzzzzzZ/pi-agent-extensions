@@ -120,6 +120,7 @@ export const EXTENSION_EXPECTATIONS = {
   // 无命令扩展：只能以启动期 TUI 写入或"加载不抛错"证明。
   "run-timer": { commands: [], uiKeys: ["widget-band"] },
   "virtual-model-router": { commands: [], uiKeys: [] },
+  "remote-tools": { commands: [], uiKeys: [] },
   "stream-token-speed": { commands: [], uiKeys: ["50:stream-token-speed"] },
   "human-notify": { commands: [], uiKeys: [] },
   "chatanywhere-provider": { commands: [], uiKeys: [] },
