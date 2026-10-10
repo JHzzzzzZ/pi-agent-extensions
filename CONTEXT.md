@@ -105,8 +105,12 @@ _Avoid_: 目标目录、根目录（那是 cwd / git root）
 _Avoid_: 子 AGENTS.md、局部指令
 
 **嵌套调用（nested call）**:
-在工具内部发起的工具调用（典型是 codemode 脚本的 `tools.read(...)`），结果**只回到调用方工具、不进 transcript**（宿主明文约定），因此不是只有「模型看不到」一个后果，而是依靠它的中间产物也会变（脚本拿到的是被改过的返回值）。dir-context 对嵌套调用零注入；codemode 场景的补偿方案是读 codemode **顶层**结果的 `details.calls`（`name` + 紧凑 JSON `args`）——已决策、待实现，见 `docs/adr/0012-dir-context-codemode.md`。
+在工具内部发起的工具调用（典型是 codemode 脚本的 `tools.read(...)`），结果**只回到调用方工具、不进 transcript**（宿主明文约定），因此不是只有「模型看不到」一个后果，而是依靠它的中间产物也会变（脚本拿到的是被改过的返回值）。dir-context 对嵌套调用零注入，靠「顶层结果代偿」补偿。
 _Avoid_: 子调用、内部调用（与 agent-team 的「成员子进程」撞词）
+
+**顶层结果代偿（top-level compensation）**:
+codemode 路径下把「脚本碰了哪些路径」从嵌套调用搬到**顶层**结果的 `details.calls`（`{ name, args, status }[]`，宿主记好的明细）上处理的做法：翻译回同一套触碰语义、多触碰取并集、与顶层共用同一份去重与预算。它不改脚本拿到的返回值，只在模型看得到的那个结果里注入。`args` 是宿主的截断预览，解析失败则跳过该条。见 `docs/adr/0012-dir-context-codemode.md`。
+_Avoid_: 嵌套注入（那是被否决的 C 档）、补偿注入
 
 ---
 
