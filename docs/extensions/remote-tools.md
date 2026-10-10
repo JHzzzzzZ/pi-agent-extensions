@@ -8,6 +8,8 @@
 
 ## 为什么这么做（决策原因）
 
+> 架构决策全文（含「路径信道」的根因与硬化取舍）见 [`docs/adr/0010-remote-tools-host-operations-seam.md`](../adr/0010-remote-tools-host-operations-seam.md)。
+
 - **不动内置工具的参数面，也不存在「加参数到宿主 dist」这条路**：宿主把 8 个内置工具的执行后端做成了
   **公开可替换的 Operations 接缝**（`dist/core/tools/*.d.ts` 的注释原文就是 *"Override these to delegate
   command execution to remote systems (for example SSH)"*），扩展 `pi.registerTool()` 注册同名工具会覆盖

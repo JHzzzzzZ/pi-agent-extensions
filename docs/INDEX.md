@@ -23,6 +23,7 @@
 | shell 工具超时语义（超时转后台 / 默认超时 / 后台任务注册表与日志） | `extensions/timeout-bg.md` |
 | tool_call 前置的 Jev 风险判断门（候选筛 / 分类器判定 / fail-open 可观测 / solo 豁免）与真机验收步骤 | `extensions/jev-safe-gate.md` + `jev-safe-gate-checklist.md` |
 | 把内置工具（read/write/edit/bash/grep/find/ls）改道到远端主机（remote/remotePort/remoteCwd 参数、Operations 接缝覆盖、Windows 路径空间换算、rg 降级） | `extensions/remote-tools.md` |
+| 远端工具的架构决策：为什么复用宿主定义只换 Operations（grep 例外）、为什么把远端路径编码进本地路径命名空间当信道、该信道的根因与硬化取舍 | `adr/0010-remote-tools-host-operations-seam.md` + `extensions/remote-tools.md` |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |
