@@ -638,6 +638,7 @@ ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write /
 - **保真优先** — `read`/`write`/`edit`/`ls`/`find`/`bash` 用宿主**同一份** `createXxxToolDefinition` 配远端 Operations，截断/限流/渲染器/提示词片段全部沿用内置；只有 `grep` 必须整份重写（宿主的 `GrepOperations` 覆盖不到真正的 ripgrep 搜索），代价是其自定义 TUI 渲染器回落默认
 - **零运行时依赖** — 只调系统 `ssh`（Windows 自带 OpenSSH 即可）；不做密码登录、不存凭据，走密钥 / ssh-agent；非交互（`BatchMode`）且拒绝未知主机指纹，首次连一台机器请先在终端手工 `ssh` 一次
 - **远端缺 `ripgrep` 时** — `grep`/`find` 回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不再生效）
+- **参数健壮** — 没有远端意图的字段不影响调用：`remote` 传空串/纯空白/缺省值字面量（`null`/`undefined`/`nil`/`none`/`n/a`）一律当本机；`remotePort` 是 `null`/非数字/`0`/负数也当没给（宿主 strict 采样器会把可选字段填成 `0`）；**自由字符串仍当主机名**（`local` 是常见的 ssh 别名，当本机会静默跑错机器）；只有真正说错的值（越界端口、带标记首段的路径、`~` 开头）才 fail-closed
 - **安全与 fail-closed** — 路径必须是远端绝对 POSIX 路径（模型给的 `C:/…` 或相对路径在发 ssh 之前就报错）；只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`），其余 `PI_*` 绝不送远端；错误消息全静态模板
 - **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`、远端图片不做 MIME 探测
 

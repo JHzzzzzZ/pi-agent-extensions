@@ -21,6 +21,7 @@
 
 ## pwr 之外
 
+- `src/extensions/remote-tools/errors.ts` — 单文件错误码对象（10 个：`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED`）；消息全静态模板，不插值远端路径内容或远端输出。`#7` 落地后会新增 `HOST_MARKER_CONFLICT`（信道硬化）。层内契约见 `docs/extensions/remote-tools.md`。
 - `src/extensions/agent-team/types.ts` — `TeamErrorCodes`（result union，上限同款：8 任务 / 8 并发 / 50KB / 8KB）；v1.21.0 新增 `RUN_NOT_TERMINAL`（续跑请求时父 run 仍在跑）与 `RESUME_UNAVAILABLE`（父 run 无 leader 会话镜像）。
 - 其余扩展（loop / goal / opencode-bridge / deep-init / human-notify）走 `{ ok }` 联合或 deps 注入失败路径，各自 test 文件内锁定契约；没有独立 errors.ts 的（单文件扩展）直接在文件内 `as const` 码对象。
 

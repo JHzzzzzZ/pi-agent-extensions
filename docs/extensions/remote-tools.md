@@ -8,7 +8,8 @@
 
 ## 为什么这么做（决策原因）
 
-> 架构决策全文（含「路径信道」的根因与硬化取舍）见 [`docs/adr/0010-remote-tools-host-operations-seam.md`](../adr/0010-remote-tools-host-operations-seam.md)。
+> 架构决策全文（含「路径信道」的根因与硬化取舍）见 [`docs/adr/0010-remote-tools-host-operations-seam.md`](../adr/0010-remote-tools-host-operations-seam.md)；
+> 需求规格（问题/方案/用户故事/实现与测试决策/范围外）见 [`docs/specs/remote-tools.md`](../specs/remote-tools.md)。
 
 - **不动内置工具的参数面，也不存在「加参数到宿主 dist」这条路**：宿主把 8 个内置工具的执行后端做成了
   **公开可替换的 Operations 接缝**（`dist/core/tools/*.d.ts` 的注释原文就是 *"Override these to delegate
@@ -70,7 +71,7 @@
   + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
-- `errors.ts` — 错误码单源（`INVALID_REMOTE_*`/`SSH_*`/`REMOTE_*`/`RIPGREP_MISSING`）
+- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED`）
 - `test/` — 68 个：62 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(8) / `ops.test.ts`(14) / `grep.test.ts`(13) / `tools.test.ts`(16)）+ 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10 已执行）
@@ -125,7 +126,12 @@ PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
   影响仅限显示（宿主 ls 拿 stat 只为拼 `/`，不靠它决策）；若要完全对齐，用
   `find <dir> -mindepth 1 -maxdepth 1 -printf '%Y\t%f\n'`（`%Y` 跟随 symlink，实测 `d/d/N` 与 `test -d` 一致）——
   代价是多一套两格式解析与非 GNU find 的回退分支，故 v1 不做。
-- **评审记录**：第 1 轮 kimi-coding/k3-256k = OK with notes（0 阻断/3 建议/5 备注），逐条处理见提交 `fb4e6a4`；
-  第 2 轮同款 reviewer = 可合并（0 阻断/1 建议/2 备注）：建议 S1（`ls -p` 不跟随 symlink 的文档失实）已按本卡修正；
+- **评审记录**：第 1 轮 kimi-coding/k3-256k = OK with notes（0 阻断/3 建议/5 备注），逐条处理见提交 `fb4e6a4`；  第 2 轮同款 reviewer = 可合并（0 阻断/1 建议/2 备注）：建议 S1（`ls -p` 不跟随 symlink 的文档失实）已按本卡修正；
   备注 B1（readdir 对「权限不足」的 `ls` 退出码 2 会报 `REMOTE_NOT_FOUND`；实际路径在宿主 ls 的 exists/stat 阶段已拦，
   当前不可达）、B2（文件名含 `\r` 或反斜杠时行式解析失真）均记录不改。被驳回的建议：无。
+- **评审记录（`#5` 备注轮）**：同款 reviewer = 可合并（0 阻断/0 建议/2 记录级）：B1（非字符串 `path` 分支无测试覆盖）已补 read 用例；
+  B2（`resolveToolPath` 与 `assertModelPathInput` 重复判空）记录不改。
+- **评审记录（`#6`）**：同款 reviewer = OK（0 阻断/1 建议/5 备注）：建议①（文件地图 `paths.ts` 补新职责）采纳；
+  建议②（`last verified` 改指文档提交）**驳回**，理由=仓库惯例是**指向被验证的代码提交**（见 `docs/extensions/jev-safe-gate.md`
+  头部 = feat 提交，其后的文档同步提交信息就是「同步 … last verified 标记（@ 20acc24）」）。
+- **在途（`#7`）**：信道硬化的口径（`A+B'` vs `R1`）等用户确认；见 ADR-0010 决策 3 与 `todos/remote-tools-todo.json`。

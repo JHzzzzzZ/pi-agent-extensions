@@ -18,6 +18,7 @@
 | run-timer | 无显式 deps 口——`aligned-ticker` 的 `now` 可注入，工厂测试经 before/after mock `setTimeout` + `fireTick()` | 时钟（特例：timer 直接 mock） |
 | stream-token-speed | `StatusPort`（status-port.ts，状态上报端口；`createStatusPort()` 工厂） | 测试用 `RecordingStatusPort` 实现该接口（test/fixtures.ts） |
 | jev-safe-gate | `GatePorts`（gate.ts：solo 读取 / hasUI / 候选筛 / classify / confirm / release——判定层的全部外界面）、`JevSafeGateDeps`（index.ts：solo 读取 / 判断超时 / 日志出口）、`ClassifierRegistryLike`（`ctx.modelRegistry` 里真正用到的那一小面） | 分类器网络调用、宿主 UI、solo 状态文件、时钟（超时计时器） |
+| remote-tools | `SshExec`（ssh.ts，进程边界口：`{ file, args, stdin, timeoutMs, signal, onData }` → `{ exitCode, stdout, stderr, timedOut, spawnFailed }`）、`RemoteToolsDeps = { exec, cwd }`（tools.ts 入口）、`RemoteSession`（target + exec，$HOME 懒解析与失败不毒化） | 系统 `ssh` 子进程（测试用手写 fake，断言**实际发给 ssh 的命令字符串**：test/tools.test.ts、test/ops.test.ts） |
 
 ## 时钟约定
 
@@ -26,7 +27,7 @@
 
 ## fake 选型规则
 
-1. 进程边界（spawn 子 pi / helper）→ 手写 fake（pwr：`test/helpers.ts` 的 `makeFakeRunner`、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn` + `waitForChild`；agent-team：入口 `{ spawn }`）。
+1. 进程边界（spawn 子 pi / helper / **ssh**）→ 手写 fake（pwr：`test/helpers.ts` 的 `makeFakeRunner`、`runner/test/helpers.ts` 的 `FakeChild` + `makeFakeSpawn` + `waitForChild`；agent-team：入口 `{ spawn }`；remote-tools：`SshExec` 注入，测试断言命令字符串而非过程）。
 2. 宿主交互（TUI 渲染、终端输入）→ **实例化真实组件，只 fake 终端**（agent-team `viewer-host.test.ts`）；结构 fake（`as never`）仅用于宿主交互确实不在测试范围的情形。
 3. 纯逻辑 → 不 fake，直接测真函数；文件头注明边界与动机。
 4. 集成 → 接线真实模块链，只 mock 最外层 spawn（pwr `runner/test/integration.test.ts` 模式）。

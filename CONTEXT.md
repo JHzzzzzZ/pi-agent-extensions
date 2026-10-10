@@ -1,6 +1,6 @@
 # dev_extensions（Pi 扩展工作区）
 
-Pi 编码助手的扩展工作区：17 个零构建 TypeScript ESM 插件（pwr 工作流编排、agent-team 多 agent 协作等，见 AGENTS.md）+ 仓库级工具（todo CLI、install-smoke）+ 独立工具 agent-manager。本文件是全仓术语表；架构与目录事实在 AGENTS.md，决策记录在 `docs/adr/`。
+Pi 编码助手的扩展工作区：16 个零构建 TypeScript ESM 插件（`src/extensions/` 下的 `typesafe/` 只剩 node_modules、未注册进 `pi.extensions`）（pwr 工作流编排、agent-team 多 agent 协作等，见 AGENTS.md）+ 仓库级工具（todo CLI、install-smoke）+ 独立工具 agent-manager。本文件是全仓术语表；架构与目录事实在 AGENTS.md，决策记录在 `docs/adr/`。
 
 ## Language
 
@@ -137,6 +137,31 @@ _Avoid_: 导出、md 视图
 **stale 抢占**:
 锁残留（pid 已死 / 内容损坏 / 超 60s）被下一个写者就地接管并重试的机制；SIGKILL 中断释放的唯一路径。
 _Avoid_: 锁清理、强制解锁
+
+### 远端工具（remote-tools 域）
+
+**远端（remote）**:
+七个内置工具（read/write/edit/bash/grep/find/ls）的可选参数 `remote="[user@]host"`：非空即把该次调用路由到远端主机执行（经系统 `ssh`），
+省略 / 空串 / 纯空白 / **缺省值字面量** = 在本机执行（与内置行为逐字一致）。配套 `remotePort`（远端端口，非数字/`null`/`<=0` 视作未提供）与
+`remoteCwd`（仅 bash 的远端工作目录，省略 = 远端 `$HOME`）。
+_Avoid_: 远程模式、ssh 模式（它是一次调用的目标，不是会话状态）
+
+**宿主标记（host marker）**:
+remote-tools 内部把远端路径编码成宿主形态的固定前缀（Windows `<当前盘>:\pi-remote\…`、POSIX `//pi-remote/…`），
+使宿主的 `path.resolve` 原样保留它、本地 `realpath` 以 ENOENT 失败（文件锁只容忍 ENOENT/ENOTDIR）、`path.relative` 与宿主 find 同命名空间；
+它同时是「这条路径经过宿主解析」的**凭证**（模型直给的 `C:/…`、相对路径不带标记 ⇒ 发 ssh 前拒绝）。信道根因与硬化见 ADR-0010。
+_Avoid_: 虚拟路径、沙箱根、chroot
+
+**缺省值字面量（absence literal）**:
+模型/序列化器把 JSON 的 `null`/`undefined` 写成字符串的产物（`null`/`undefined`/`nil`/`none`/`n/a`，大小写无关、trim 后比较）；
+对 `remote`/`remotePort`/`path`/`remoteCwd` 一律当「未提供」。**自由字符串不在其列**（`local` 是常见的 `~/.ssh/config` 别名，
+把它当本机会静默跑错机器）——判据是「缺省值字面量 → 容忍；内容 → 不猜」。
+_Avoid_: 空值、nil 值、默认值（它表达的是「这个参数没给」）
+
+**降级（degraded）**:
+远端缺 `ripgrep` 时 `grep`/`find` 回退 GNU `grep -r` / POSIX `find` 的行为：结果里附「已回退」标注（`.gitignore` 不再生效），
+且降级标记在同一次 ssh 往返里用 stderr 上的 `PI_REMOTE_TOOLS_DEGRADED` 回传（不额外探测一轮）。与「连接失败」区分：降级是成功的搜索，只是语义弱化。
+_Avoid_: 失败、回退模式（它不是错误路径）
 
 ### 状态条与 widget 契约（跨插件）
 
