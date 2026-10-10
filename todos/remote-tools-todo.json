@@ -116,6 +116,24 @@
       "claimedAt": "2026-10-10T18:21:05.239Z",
       "completedAt": "2026-10-10T18:28:50.733Z",
       "alignedAt": "2026-10-10T18:21:24.994Z"
+    },
+    {
+      "id": 7,
+      "globalId": 359,
+      "text": "宿主标记路径的前提硬化（外部评审发现，已核代码确认为真）：remote-tools 借本地路径命名空间当信道（Windows C:\\pi-remote\\…，POSIX //pi-remote/…），安全性押在「本机一定不存在这个前缀」这条隐含假设上；若本机真有该目录：① read 的文件名会被本地变体探测带偏（read.js 的 resolveReadPathAsync 用本地 accessSync 依次试 原路径→AM/PM→NFD→弯引号，结果直接喂远端 ops.readFile，名字含 ' / 非 ASCII / AM-PM 时窗口成立）；② fail-closed 退化（本该 ENOENT 的探测变成功，错误归因失真）；③ paths.test.ts 的 realpath ENOENT 断言只是断言、无运行时守卫。要求：把隐含假设变成显式检查——远端调用前检测标记根（Windows 盘符根\\pi-remote、POSIX /pi-remote）是否存在，存在则 fail-closed 报专码（本地分支不受影响）",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "safety",
+        "hardening"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-10T18:33:42.425Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
