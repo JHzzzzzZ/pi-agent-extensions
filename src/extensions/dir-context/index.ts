@@ -8,7 +8,7 @@
  * on-demand nested CLAUDE.md（官方原文：*"loads each one once Claude reads, writes,
  * or edits another file in that subdirectory"*），并多覆盖 `ls` 与「写新文件」。
  *
- * 设计要点（决策记录见 todos/align/dir-context-todo#1.md 与 docs/adr/0010）：
+ * 设计要点（决策记录见 todos/align/dir-context-todo#1.md 与 docs/adr/0011）：
  * - 注入通道 = `tool_result` 追加 text block（最窄的公开接缝；失败不影响工具本身）。
  * - 会话内每绝对路径只注入一次；`session_compact` 后清空（compact 会把之前的注入
  *   从上下文里抹掉，必须允许按需重载，否则那段上下文永久丢失）。

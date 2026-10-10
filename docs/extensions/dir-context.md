@@ -4,7 +4,7 @@
 
 一句话：模型**触碰某个目录**（`read` / `write` / `edit` / `ls` / bash 单文件读）时，把该目录到 cwd 之间、**严格位于 cwd 之下**的 `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` 追加到当次工具结果里。
 
-规格：`docs/specs/dir-context.md`·决策：`docs/adr/0010-dir-context-scoped-injection.md`·对齐：`todos/align/dir-context-todo#1.md`。
+规格：`docs/specs/dir-context.md`·决策：`docs/adr/0011-dir-context-scoped-injection.md`·对齐：`todos/align/dir-context-todo#1.md`。
 
 ## 为什么这么做
 

@@ -1,7 +1,7 @@
 # dir-context — 目录作用域上下文注入（规格）
 
 > 状态：已实现（v1.0.0，entry `dir-context-todo#1`）
-> 对齐记录：[`todos/align/dir-context-todo#1.md`](../align/dir-context-todo#1.md)·决策：[`docs/adr/0010-dir-context-scoped-injection.md`](../adr/0010-dir-context-scoped-injection.md)
+> 对齐记录：[`todos/align/dir-context-todo#1.md`](../align/dir-context-todo#1.md)·决策：[`docs/adr/0011-dir-context-scoped-injection.md`](../adr/0011-dir-context-scoped-injection.md)
 
 ## 问题陈述
 
@@ -22,7 +22,7 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 
 ## 实现决策
 
-1. **通道 = `tool_result` 追加 text block**：原 `content` 逐字保留在前；注入内容带 `Loaded <相对路径>` 抬头与 `<dir-context path="…">` 包裹，供 transcript 肉眼核对。备选（`turn_end` 独立消息 / 改 `tool_call` 入参 / `before_agent_start` 全量塞）见 ADR-0010。
+1. **通道 = `tool_result` 追加 text block**：原 `content` 逐字保留在前；注入内容带 `Loaded <相对路径>` 抬头与 `<dir-context path="…">` 包裹，供 transcript 肉眼核对。备选（`turn_end` 独立消息 / 改 `tool_call` 入参 / `before_agent_start` 全量塞）见 ADR-0011。
 2. **必须回传 `structuredContent`**：宿主明文契约规定「替换 `content` 而不返回 `structuredContent` 就丢掉结构化结果」（runner 真的 `delete`），`read` / `bash` 都产出它 ⇒ 原样回传（跨厂商评审 B1）。
 3. **发现顺序**：每目录唯一一个、优先级 `AGENTS.override.md` > `AGENTS.md` > `AGENTS.MD` > `CLAUDE.md` > `CLAUDE.MD`（与 pi 原生候选集合一致）、结果**由外向内**；返回 realpath 归一后的磁盘真名。
 4. **作用域 fail-closed**：锚点经 `realpath` 归一后必须落在 cwd 之内（链接逃逸、`repo` vs `repo-evil` 前缀冒充、`../` 越界一律零注入）；cwd 自身的上下文文件不注入（pi 已加载）。

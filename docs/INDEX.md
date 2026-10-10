@@ -23,7 +23,7 @@
 | shell 工具超时语义（超时转后台 / 默认超时 / 后台任务注册表与日志） | `extensions/timeout-bg.md` |
 | tool_call 前置的 Jev 风险判断门（候选筛 / 分类器判定 / fail-open 可观测 / solo 豁免）与真机验收步骤 | `extensions/jev-safe-gate.md` + `jev-safe-gate-checklist.md` |
 | 把内置工具（read/write/edit/bash/grep/find/ls）改道到远端主机（remote/remotePort/remoteCwd 参数、Operations 接缝覆盖、Windows 路径空间换算、rg 降级） | `extensions/remote-tools.md` |
-| 目录作用域上下文注入（嵌套 AGENTS.md 何时触发 / 注入通道与顺序 / cwd 边界 fail-closed / 会话去重与 compact 重载 / 截断预算） | `extensions/dir-context.md` + `adr/0010-dir-context-scoped-injection.md` |
+| 目录作用域上下文注入（嵌套 AGENTS.md 何时触发 / 注入通道与顺序 / cwd 边界 fail-closed / 会话去重与 compact 重载 / 截断预算） | `extensions/dir-context.md` + `adr/0011-dir-context-scoped-injection.md` |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |
