@@ -65,6 +65,7 @@
   「不存在/是目录/正常」）、`createRemoteSession`、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单
 - `grep.ts` — 整份重写的远程 grep：`rg --json` 解析 + 与内置同形的输出/限流/截断，rg 缺失时 GNU grep 回退
 - `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`toHostPath`/`toRemotePath`/`stripHostMarker`）
+  + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_*`/`SSH_*`/`REMOTE_*`/`RIPGREP_MISSING`）
