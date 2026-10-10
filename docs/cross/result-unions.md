@@ -1,6 +1,6 @@
 # 跨扩展横切契约：result union 与四层错误码全景
 
-> last verified @ 775638d
+> last verified @ 6676d8a
 >
 > 仓库统一约定：**结果联合优先于异常**——`{ ok: true, value } | { ok: false, code, message }`，调用方用判别联合收窄。每层有自己的错误码文件；新失败模式必须登记到所属层的码表，禁止临时字符串码。错误消息 = 静态模板 + 受控 detail，不插值用户输入/密钥/源码。
 
