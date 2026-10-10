@@ -106,7 +106,13 @@ PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
 - **远端 `bash` 的中断只 kill 本地 ssh**：远端命令可能继续跑（v1 已记录，未做远端进程组清理）。
 - **不启用 `ControlMaster`**：Windows OpenSSH 不支持连接复用，复用交给用户自己的 `~/.ssh/config`；
   因此把「N 次往返」压到关键路径上——`ls` 的 readdir 用 `ls -A1p` 一次拿回 entry 类型并缓存，随后的逐条 `stat` 零 ssh。
-- **`ls -A1p` 的尾斜杠语义**：目录项带尾斜杠（symlink→目录也算目录，与 `test -d` 一致）；readdir 返回的名字必须剥掉尾斜杠，
-  否则宿主 ls 会拼出 `name//`。
+- **`ls -A1p` 的尾斜杠语义与它的一处分叉**：目录项带尾斜杠（节省 N 次 ssh，见下）；但 GNU `ls -p` **不跟随符号链接**，
+  `link→目录` 不带尾斜杠 ⇒ 会被缓存为「文件」、宿主 ls 显示时不加 `/`（本地 `fs.stat`/远端 `test -d` 都跟随 symlink）。
+  实测（真机）：`ls -A1p` 给 `real_dir/`、`link_to_dir`（无斜杠），而 `test -d link_to_dir` = 真。
+  影响仅限显示（宿主 ls 拿 stat 只为拼 `/`，不靠它决策）；若要完全对齐，用
+  `find <dir> -mindepth 1 -maxdepth 1 -printf '%Y\t%f\n'`（`%Y` 跟随 symlink，实测 `d/d/N` 与 `test -d` 一致）——
+  代价是多一套两格式解析与非 GNU find 的回退分支，故 v1 不做。
 - **评审记录**：第 1 轮 kimi-coding/k3-256k = OK with notes（0 阻断/3 建议/5 备注），逐条处理见提交 `fb4e6a4`；
-  被驳回的建议：无（P2 五条中四条采纳、一条按「文档与实现对齐」方式收口）。
+  第 2 轮同款 reviewer = 可合并（0 阻断/1 建议/2 备注）：建议 S1（`ls -p` 不跟随 symlink 的文档失实）已按本卡修正；
+  备注 B1（readdir 对「权限不足」的 `ls` 退出码 2 会报 `REMOTE_NOT_FOUND`；实际路径在宿主 ls 的 exists/stat 阶段已拦，
+  当前不可达）、B2（文件名含 `\r` 或反斜杠时行式解析失真）均记录不改。被驳回的建议：无。
