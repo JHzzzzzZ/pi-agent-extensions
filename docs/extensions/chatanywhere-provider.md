@@ -48,5 +48,5 @@
 
 - 必跑：`node --experimental-strip-types --test src/extensions/chatanywhere-provider/test/*.test.ts`（32 个）；真机 `/reload` 后 `/model` 目检。
 - 改 catalog/MODEL_LINES/策略表（NON_CHAT / GENERATION_FLOORS）：同步 + 跑发现类测试（目录自洽测试会抓不一致）。
-- 改归并规则：先写锁定行为的失败测试再实现（纯函数，直接测）。
+- 改归并规则：同一变更内补锁定该行为的测试（纯函数，直接测）。
 - 真实探测验证（需要 auth.json 的 chatanywhere key）：probeModels → selectForRegistration 打印清单。
