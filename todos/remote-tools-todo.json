@@ -1,0 +1,27 @@
+{
+  "version": 4,
+  "title": "remote-tools-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "globalId": 351,
+      "text": "新增 remote-tools 插件：把内置工具 read/write/edit/bash/grep/find/ls 的 Operations 接缝换成 SSH 远程后端（官方 Gondolin 同款做法），支持本地/远程切换与只读/读写模式；运行时零 npm 依赖，走系统 ssh/scp CLI",
+      "status": "done",
+      "branch": "feat/remote-tools-ssh-ops",
+      "tags": [
+        "new-plugin",
+        "tool-routing"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "对齐文档 todos/align/remote-tools-todo#1.md 结构校验通过；10 条决策逐条确认，待用户放行 processing",
+        "合并 18927d9（16 扩展 / 21 套件）；主干全量 21/21 套件 2235 用例（2229 pass / 0 fail / 6 真机 opt-in skip）；真机验收 6/6（WSL Ubuntu user@127.0.0.1，拓出并修掉 UNC 宿主形态致 write/edit 本地 realpath 报 UNKNOWN、test -r -w 非法表达式）；跨厂商评审 2 轮（kimi-coding/k3-256k：第 1 轮 OK with notes 3 建议 + 5 备注全处理，第 2 轮可合并 0 阻断）"
+      ],
+      "createdAt": "2026-10-10T14:08:19.766Z",
+      "claimedAt": "2026-10-10T14:13:44.830Z",
+      "completedAt": "2026-10-10T16:23:42.831Z",
+      "alignedAt": "2026-10-10T14:19:58.876Z"
+    }
+  ]
+}
