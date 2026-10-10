@@ -16,7 +16,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 
 | 参数 | 适用工具 | 说明 |
 | --- | --- | --- |
-| `remote` | 全部 7 个 | 远端 SSH 目标 `"[user@]host"`；**省略或留空 = 在本机执行**（与内置行为一致） |
+| `remote` | 全部 7 个 | 远端 SSH 目标 `"[user@]host"`；**省略或留空 = 在本机执行**（与内置行为一致）。缺省值字面量 `null`/`undefined`/`nil`/`none`/`n/a` 也当没给（agent 常把 JSON null 写成字符串），但 `local`/`false` 等自由字符串仍当主机名 |
 | `remotePort` | 全部 7 个 | 远端 SSH 端口 1-65535；省略用 `~/.ssh/config` / ssh 默认。**噪声容错**：`null`/非数字/`0`/负数一律当作未指定，不会报错 |
 | `remoteCwd` | 仅 `bash` | 远端工作目录；省略 = 远端 `$HOME` |
 
@@ -49,7 +49,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-57 个（node:test，全本地）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（宿主路径往返与输入护栏）、
+62 个（node:test，全本地）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（宿主路径往返与输入护栏）、
 `test/ops.test.ts`（发给 ssh 的命令构造与错误映射）、`test/grep.test.ts`（rg 事件解析/降级/限流）、
 `test/tools.test.ts`（注册覆盖、本地保真对照、远端分派、session 缓存）。
 
