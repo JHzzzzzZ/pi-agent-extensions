@@ -49,6 +49,18 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-50 个（node:test）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（Windows 路径往返）、
+51 个（node:test）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（Windows 路径往返）、
 `test/ops.test.ts`（发给 ssh 的命令构造与错误映射）、`test/grep.test.ts`（rg 事件解析/降级/限流）、
 `test/tools.test.ts`（注册覆盖、本地保真对照、远端分派、session 缓存）。
+
+另有一个**真机 opt-in** 文件 `test/remote-live.test.ts`（6 个，默认跳过，接真实 ssh 进程）：
+
+```bash
+# Git Bash 下必须加 MSYS2_ENV_CONV_EXCL='*'，否则 /home/… 会被改写成 C:/Program Files/Git/home/…
+MSYS2_ENV_CONV_EXCL='*' PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 \
+  PI_REMOTE_TOOLS_TEST_DIR=/home/user \
+  node --test test/remote-live.test.ts      # PI_REMOTE_TOOLS_TEST_PORT 可选；目录需可写，用例自建临时子目录并清理
+```
+
+2026-10-10 在本机 WSL Ubuntu（`user@127.0.0.1`）跑通 6/6，并拓出两个只有真机才能发现的问题
+（UNC 宿主形态让 write/edit 的本地 realpath 报 UNKNOWN；`test -r -w <path>` 非法表达式）——均已修 + 加回归测试。

@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 0558752
+> last verified @ 0558752（真机验收修复见后续 fix 提交）
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
@@ -51,7 +51,31 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_*`/`SSH_*`/`REMOTE_*`/`RIPGREP_MISSING`）
-- `test/` — 50 个：`ssh.test.ts`(10) / `paths.test.ts`(6) / `ops.test.ts`(14) / `grep.test.ts`(11) / `tools.test.ts`(9)
+- `test/` — 51 个：`ssh.test.ts`(10) / `paths.test.ts`(7) / `ops.test.ts`(14) / `grep.test.ts`(11) / `tools.test.ts`(9)；另有 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+
+## 真机验收（2026-10-10 已执行）
+
+目标：本机 WSL Ubuntu（`user@127.0.0.1:22`，Linux 内核 + 已装 ripgrep），Windows 侧跑测试。6 个用例**全绿**：
+
+```bash
+PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
+  node --test test/remote-live.test.ts
+```
+
+覆盖：建连 + 远端 `$HOME` 解析、bash 目录/退出码/缺目录结构化错误、ops 层 write→read→edit→ls 往返、
+**工具层端到端**（注册覆盖 → `//pi-remote` 标记 → 宿主 path 解析 → ops 还原 → 远端 write/read/ls/grep（真 rg）/find/bash）、
+远端不存在/无权限的结构化错误码、不可达主机 fail-closed。
+
+两个只有真机才能发现的问题（已修 + 已加回归测试）：
+
+1. **宿主形态不能是 UNC**：`withFileMutationQueue`（write/edit 内部）在本地做 `fs.realpath`，Windows 上
+   `\\pi-remote\…` 报 `UNKNOWN: unknown error`（只容忍 ENOENT/ENOTDIR）⇒ 远端 write/edit 直接失败。
+   改成平台相关宿主形态（Windows 用 `C:\pi-remote\…`；POSIX 用 `//pi-remote/…`），两者都让本地 `realpath` 以 ENOENT 失败。
+2. **`test -r -w <path>` 是非法表达式**：POSIX `test` 三参数形态会以非零退出码失败，把可写文件误报成
+   `REMOTE_NOT_WRITABLE`（edit 的 access 检查）。改成 `test -r <p> && test -w <p>`。
+
+从 Git Bash 跑时注意：`PI_REMOTE_TOOLS_TEST_DIR=/home/user` 会被 MSYS 改写成 `C:/Program Files/Git/home/user`
+（插件会正确拒绝它），加 `MSYS2_ENV_CONV_EXCL='*'` 即可。
 
 ## 测试口径（为什么这么测）
 
@@ -70,4 +94,6 @@
   用 `Object.create` 覆盖，保留原型链上的 getter），否则远端命令会在本机项目目录上 `cd`。
 - **清单三处同步**：根 `package.json` 的 `pi.extensions`、`tools/install-smoke.mjs` 的 `EXTENSION_EXPECTATIONS`
   （本扩展无命令无 uiKeys）、`tools/test-all.mjs` 的套件表（`install: true`）；漏一处 `test:smoke` / `test-all` 的漂移测试就红。
+- **宿主对工具路径有本地副作用**：write/edit 的 `withFileMutationQueue` 会 `fs.realpath`、read 会 `accessSync`
+  探本地变体（NFD / 弯引号）——所以宿主形态必须让本地 fs 以 ENOENT 失败（`C:\pi-remote\…`），不能用 UNC。
 - **远端 `bash` 的中断只 kill 本地 ssh**：远端命令可能继续跑（v1 已记录，未做远端进程组清理）。
