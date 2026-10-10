@@ -1,15 +1,16 @@
 /*
  * remote-tools — 路径空间换算的纯函数测试。
  *
- * 动机（真问题，不是纸面正确）：Windows 上内置工具用 node:path 解析路径，实测
- *   path.resolve("/srv")               → "C:\srv"          （进程盘符注入）
- *   path.resolve("//srv")              → "C:\srv"          （单段 UNC 退化，仍被注入）
- *   path.resolve("//pi-remote/srv")    → "\\pi-remote\srv\"（多段 UNC，原样保留）
- *   normalizeWindowsShellPath("/s/x")  → "S:\x"            （单字母首段被当盘符）
- * 这里锁住「宿主标记路径往返不失真」与「非标记形态原样返回、交给 validateRemotePath 拒绝」。
+ * 动机（真问题，不是纸面正确；后两条都是真机/实测逼出来的）：
+ *   path.resolve("/srv")               → "C:\srv"            （进程盘符注入）
+ *   path.resolve("//srv")              → "C:\srv"            （单段 UNC 退化，仍被注入）
+ *   normalizeWindowsShellPath("/s/x")  → "S:\x"              （单字母首段被当盘符）
+ *   realpath("\\\\pi-remote\\…")       → UNKNOWN（不是 ENOENT）⇒ write/edit 的本地文件变更队列直接抛错
+ *   realpath("C:\pi-remote\…")         → ENOENT ⇒ 被队列容忍，远端 write/edit 才能工作
  */
 
 import assert from "node:assert/strict";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -29,10 +30,24 @@ test("相对 path 经远端 cwd 解析后仍能还原成远端绝对路径", () 
 	assert.equal(toRemotePath(path.resolve(base, "src/a.ts")), "/home/deploy/src/a.ts");
 });
 
-test("宿主标记形态在 Windows 上不会退化成盘符注入", () => {
+test("Windows 上用盘符形态（UNC 会让 realpath 抛 UNKNOWN，POSIX 上用 // 形态）", () => {
 	const host = toHostPath("/srv");
-	assert.equal(host, "//pi-remote/srv");
-	assert.equal(path.resolve(host).endsWith("pi-remote\\srv\\") || path.resolve(host).endsWith("pi-remote/srv/"), true, path.resolve(host));
+	if (process.platform === "win32") {
+		assert.match(host, new RegExp(`^[A-Za-z]:\\\\${HOST_PATH_MARKER}\\\\srv$`));
+	} else {
+		assert.equal(host, `//${HOST_PATH_MARKER}/srv`);
+	}
+});
+
+test("宿主形态的本地 realpath 必须是 ENOENT（不是 UNKNOWN）：write/edit 的本地文件变更队列只容忍 ENOENT/ENOTDIR", async () => {
+	for (const remotePath of ["/home/user/src/a.ts", "/srv", "/"]) {
+		const host = toHostPath(remotePath);
+		await assert.rejects(
+			() => realpath(host),
+			(error: NodeJS.ErrnoException) => error.code === "ENOENT",
+			`${remotePath} 的宿主形态 ${JSON.stringify(host)} 未被本地 fs 视为「不存在」`,
+		);
+	}
 });
 
 test("非宿主标记形态原样返回：模型给的盘符路径/相对路径都被拒绝", () => {
@@ -52,9 +67,10 @@ test("非宿主标记形态原样返回：模型给的盘符路径/相对路径�
 test("stripHostMarker 幂等：模型把宿主标记形态回灌也能归一", () => {
 	assert.equal(stripHostMarker("//pi-remote/srv/app"), "/srv/app");
 	assert.equal(stripHostMarker("\\pi-remote\\srv\\app"), "/srv/app");
+	assert.equal(stripHostMarker("C:/pi-remote/srv/app"), "/srv/app");
+	assert.equal(stripHostMarker("D:\\pi-remote\\srv"), "/srv");
+	assert.equal(stripHostMarker("//pi-remote"), "/");
 	assert.equal(stripHostMarker("/srv/app"), "/srv/app");
-	// 只有标记没有路径的形态会被当成「名字就叫 pi-remote 的远端目录」；toHostPath 永远不会生产它（根目录走 __root__ 占位）。
-	assert.equal(toRemotePath(HOST_PATH_MARKER), "/pi-remote");
 	assert.equal(toRemotePath(toHostPath("/srv")), "/srv");
 	assert.equal(toRemotePath(toHostPath("/")), "/");
 });

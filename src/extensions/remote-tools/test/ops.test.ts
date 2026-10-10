@@ -86,8 +86,12 @@ test("access：可读/可写/读写分别用 test -r / -w / -r -w，并先用 -e
 	await edit.access("/srv/app/a.ts");
 
 	assert.equal(session.calls[0].args.at(-1), "if [ -e '/srv/app/a.ts' ]; then test -r '/srv/app/a.ts'; else exit 3; fi");
-	assert.match(session.calls[1].args.at(-1) ?? "", /^if \[ -e '\/srv\/app\/a\.ts' \]; then test -w '\/srv\/app\/a\.ts'; else exit 3; fi$/);
-	assert.match(session.calls[2].args.at(-1) ?? "", /test -r -w '\/srv\/app\/a\.ts'/);
+	assert.equal(session.calls[1].args.at(-1), "if [ -e '/srv/app/a.ts' ]; then test -w '/srv/app/a.ts'; else exit 3; fi");
+	// 读写两个标志必须拆成两条 test（`test -r -w <path>` 是非法表达式，真机验收抓到过）
+	assert.equal(
+		session.calls[2].args.at(-1),
+		"if [ -e '/srv/app/a.ts' ]; then test -r '/srv/app/a.ts' && test -w '/srv/app/a.ts'; else exit 3; fi",
+	);
 });
 
 test("access：路径不存在报 REMOTE_NOT_FOUND，权限不足报各自的不可读/不可写码", async () => {

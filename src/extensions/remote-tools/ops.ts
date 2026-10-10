@@ -103,8 +103,15 @@ function lines(buffer: Buffer): string[] {
 async function testAccess(session: RemoteSession, hostPath: string, testFlags: string, code: RemoteToolsErrorCode, message: string): Promise<void> {
 	const remotePath = requireRemotePath(hostPath);
 	const quoted = shellQuote(remotePath);
+	// 多个标志必须拆成多条 test 用 && 连接：`test -r -w <path>` 是非法表达式（POSIX test 三参数形态），
+	// 实机上会以非零退出码失败、把可写文件误报成不可写（真机验收抓到过）。
+	const checks = testFlags
+		.split(/\s+/)
+		.filter((flag) => flag !== "")
+		.map((flag) => `test ${flag} ${quoted}`)
+		.join(" && ");
 	// 一次往返里区分「不存在」与「权限不足」：与本地实现的错误语义对齐（fail-closed）。
-	const result = await runChecked(session, `if [ -e ${quoted} ]; then test ${testFlags} ${quoted}; else exit ${EXIT_NOT_FOUND}; fi`);
+	const result = await runChecked(session, `if [ -e ${quoted} ]; then ${checks}; else exit ${EXIT_NOT_FOUND}; fi`);
 	if (result.exitCode === EXIT_NOT_FOUND) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
 	if (result.exitCode !== 0) fail(code, message);
 }
