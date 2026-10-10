@@ -1,7 +1,7 @@
 # 对齐：dir-context-todo#1 — 目录作用域上下文注入（嵌套 AGENTS.md on-demand）
 
 - 条目：`dir-context-todo#1`（tags: `new-plugin`, `context-injection`）· 分支引用：`feat/dir-context-scoped-injection`
-- 日期：2026-10-11（UTC）· 参与：用户（全部决策）+ agent（事实核查与方案）
+- 日期：2026-10-10（UTC）· 参与：用户（全部决策）+ agent（事实核查与方案）
 - 状态：本轮会话逐条确认完毕，待用户放行进入 `processing`
 
 ## 意图
@@ -59,7 +59,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链** 的上下文文�
 
 ## 人工确认
 
-- **确认人**：用户（本会话）· **日期**：2026-10-11（UTC）· **方式**：对话内结构化问卷（5 问 + 默认值清单），用户回复「没问题」
+- **确认人**：用户（本会话）· **日期**：2026-10-10（UTC）· **方式**：对话内结构化问卷（5 问 + 默认值清单），用户回复「没问题」
 - **逐条决策**：
   1. 名字 = **`dir-context`**（目录 / todo 文件 / 命令面前缀）
   2. 触发面 = **B 档：Claude 对齐（read/write/edit + bash 单文件读）再加 `ls`**；不做 grep/find

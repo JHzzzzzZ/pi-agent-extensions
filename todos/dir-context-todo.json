@@ -26,7 +26,7 @@
       "id": 2,
       "globalId": 361,
       "text": "dir-context v1.1：codemode 支持——脚本内通过 tools.read/write/edit/ls/bash 触碰目录时不触发注入（嵌套调用结果只回到脚本、不进 transcript，v1.0.0 有意跳过），导致模型用 codemode 读写深层文件时拿不到该目录的局部约定。方案 A（推荐）：在 codemode 自身的顶层 tool_result 上读 details.calls（CodemodeNestedCall[]：name + args 紧凑 JSON + status），复用现成 touch/anchor/discover/inject 提取触碰目录并集注入一次；备选 B 扫脚本源码字符串（模糊，否）、C 放开嵌套注入（会污染脚本返回值，否）、D 维持现状",
-      "status": "aligning",
+      "status": "aligned",
       "branch": null,
       "tags": [
         "enhancement",
@@ -38,7 +38,7 @@
       "createdAt": "2026-10-10T19:06:05.062Z",
       "claimedAt": "2026-10-10T19:06:05.252Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-10-10T19:10:50.803Z"
     }
   ]
 }
