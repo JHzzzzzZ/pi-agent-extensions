@@ -38,6 +38,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 - **去重**：会话内每文件一次；`/compact` 后清空缓存，再触碰会重新注入。
 - **预算**：单文件 32 KiB / 单次 128 KiB，按 UTF-8 码点边界截断并留标记。
 - **降级**：失败的结果、纯图片结果、嵌套工具调用不注入；读不出上下文文件时只跳过（不标记已注入，下次还能重试）。
+- **codemode（已决策、待实现）**：脚本里 `tools.read/write/edit/ls/bash` 触碰目录**目前不触发**（嵌套调用结果只回到脚本、不进 transcript）；修法见 `docs/adr/0012-dir-context-codemode.md`。
 - **结构化结果**：原样回传 `structuredContent`（宿主契约：替换 `content` 而不回传它就等于丢掉结构化结果）。
 - **链接**：指向 cwd 之外的上下文文件整个跳过（fail-closed，既不注入外部内容也不把外部路径展示出来）。
 

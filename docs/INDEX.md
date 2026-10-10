@@ -25,6 +25,7 @@
 | 把内置工具（read/write/edit/bash/grep/find/ls）改道到远端主机（remote/remotePort/remoteCwd 参数、Operations 接缝覆盖、Windows 路径空间换算、rg 降级） | `extensions/remote-tools.md` |
 | 远端工具的架构决策：为什么复用宿主定义只换 Operations（grep 例外）、为什么把远端路径编码进本地路径命名空间当信道、该信道的根因与硬化取舍 | `adr/0010-remote-tools-host-operations-seam.md` + `extensions/remote-tools.md` |
 | 目录作用域上下文注入（嵌套 AGENTS.md 何时触发 / 注入通道与顺序 / cwd 边界 fail-closed / 会话去重与 compact 重载 / 截断预算） | `extensions/dir-context.md` + `adr/0011-dir-context-scoped-injection.md` |
+| codemode 脚本里触碰目录算不算触发（嵌套调用为何不注入 / 按 `details.calls` 提取的决策与备选否决 / 待实现状态） | `adr/0012-dir-context-codemode.md` + `extensions/dir-context.md` |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |

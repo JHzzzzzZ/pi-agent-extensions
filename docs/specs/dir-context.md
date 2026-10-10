@@ -1,7 +1,7 @@
 # dir-context — 目录作用域上下文注入（规格）
 
 > 状态：已实现（v1.0.0，entry `dir-context-todo#1`）
-> 对齐记录：[`todos/align/dir-context-todo#1.md`](../align/dir-context-todo#1.md)·决策：[`docs/adr/0011-dir-context-scoped-injection.md`](../adr/0011-dir-context-scoped-injection.md)
+> 对齐记录：[`todos/align/dir-context-todo#1.md`](../align/dir-context-todo#1.md)·决策：[`docs/adr/0011-dir-context-scoped-injection.md`](../adr/0011-dir-context-scoped-injection.md)（v1.0.0）+ [`docs/adr/0012-dir-context-codemode.md`](../adr/0012-dir-context-codemode.md)（v1.1，待实现）
 
 ## 问题陈述
 
@@ -29,7 +29,6 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 5. **去重与重载**：会话内每绝对路径一次；`session_start` / `session_compact` 清空缓存（compact 后上下文已不在窗口里，必须允许按需重载）。
 6. **预算**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 码点边界截断；截断与丢弃都在块内留标记。
 7. **降级**：`isError` 结果、无文本内容的结果、嵌套工具调用（`parentToolCallId`）、无候选目录、读取失败（只报一次告警，不标记已注入以便重试）——一律返回 `undefined` 透传原结果。
-
 ## 测试决策
 
 - 框架 `node:test` + `node:assert/strict`；46 个（触碰识别 6 / 锚点解析 9 / 发现 10 / 注入与截断 8 / 宿主事件路径 13）。
@@ -37,6 +36,12 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 - 文件系统用**真实临时目录树**（realpath、链接、大小写不敏感正是被测对象），不用路径字符串替身。
 - 平台条件跳过仅 2 处（创建文件符号链接需权限），skip 而非静默绿。
 - 真机验收 A/B（真实 `pi -p`，模型 kimi-coding/k3-256k）：问「只读 Button.tsx，回答该目录暗号」——带扩展答出暗号且 transcript 里出现 `Loaded src/components/AGENTS.md`，不带扩展答「文件里没有暗号、按你的要求我没读其它文件」。
+
+## 已知缺口（v1.1 已决策、待实现）
+
+**codemode 脚本内的触碰不触发注入**。嵌套调用（`tools.read/write/edit/ls/bash` 从脚本里发起）的结果只回到调用方脚本、不进 transcript（宿主 `docs/extensions.md`），所以 v1.0.0 有意跳过 `parentToolCallId`；代价是模型改用 codemode 干活时又拿不到局部约定。
+
+已定方案（未实现，见 [ADR-0012](../adr/0012-dir-context-codemode.md)、工单 `dir-context-todo#2`）：在 **codemode 自身的顶层结果**上读 `details.calls`（`CodemodeNestedCall { name, args, status }`，`args` 是紧凑 JSON 预览），复用本规格第 3-7 条的发现/顺序/去重/预算注入一次；`error`/`cancelled` 的嵌套调用照算，`args` 截断或解析失败则跳过。**代码现状仍是跳过嵌套调用**，勿把该方案当已实现行为读。
 
 ## 范围外
 

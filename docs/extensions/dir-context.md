@@ -4,7 +4,7 @@
 
 一句话：模型**触碰某个目录**（`read` / `write` / `edit` / `ls` / bash 单文件读）时，把该目录到 cwd 之间、**严格位于 cwd 之下**的 `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` 追加到当次工具结果里。
 
-规格：`docs/specs/dir-context.md`·决策：`docs/adr/0011-dir-context-scoped-injection.md`·对齐：`todos/align/dir-context-todo#1.md`。
+规格：`docs/specs/dir-context.md`·决策：`docs/adr/0011-dir-context-scoped-injection.md`（通道/边界/去重）+ `docs/adr/0012-dir-context-codemode.md`（codemode，待实现）·对齐：`todos/align/dir-context-todo#1.md`。
 
 ## 为什么这么做
 
@@ -19,6 +19,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 - **顺序 = 由外向内**：祖先在前、最靠近锚点的最后；同目录只取一个（`AGENTS.override.md` > `AGENTS.md` > `AGENTS.MD` > `CLAUDE.md` > `CLAUDE.MD`，与 pi 原生的文件集合一致）。
 - **去重键是绝对路径，作用域是会话**：同一文件只注入一次；`session_compact` / `session_start` 清空缓存——compact 会把先前的注入从上下文里抹掉，必须允许**按需重载**（Claude 同语义），否则那段上下文永久丢失。`session_shutdown` 只清状态段登记。
 - **嵌套工具调用（`event.parentToolCallId`）不注入**：这类结果只回到调用方工具（如 codemode 脚本），不进 transcript，注入没有意义。
+- **已知缺口（v1.1 已决策、待实现）**：因此**在 codemode 脚本里用 `tools.read/write/edit/ls/bash` 触碰目录不会触发注入**——脚本读深层文件时拿不到那目录的局部约定。修法已定（在 codemode 自身的顶层结果上按 `details.calls` 的 `name + args` 提取触碰，复用同一套发现/去重/预算），见 `docs/adr/0012-dir-context-codemode.md` 与工单 `dir-context-todo#2`；**当前代码仍是跳过嵌套调用**，别把 ADR 当现状读。
 - **`isError` 结果不注入**：失败结果里追加指令只会污染错误诊断。
 - **bash 是保守白名单**：只认整条命令里**恰好一个** `cat` / `head` / `tail` 的单文件目标；带重定向（`>`/`<`）、变量展开（`$`/反引号）、多文件、非白名单命令一律「拿不准」⇒ 零注入。漏判只是少注入，误判最多多注入一个目录。
 - **预算是硬上限**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 **码点**边界截断（绝不劈开多字节字符/代理对），被截断/被丢弃都在块内留标记。

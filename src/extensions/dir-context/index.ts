@@ -13,7 +13,8 @@
  * - 会话内每绝对路径只注入一次；`session_compact` 后清空（compact 会把之前的注入
  *   从上下文里抹掉，必须允许按需重载，否则那段上下文永久丢失）。
  * - cwd 之外的触碰、失败结果、嵌套工具调用一律零注入（fail-open 降级，绝不改坏
- *   原结果）。
+ *   原结果）。嵌套调用（codemode 脚本发起）的补偿方案——在 codemode 顶层结果上按
+ *   `details.calls` 提取触碰——已决策但**未实现**，见 ADR-0012 / 工单 dir-context-todo#2。
  */
 import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -84,6 +85,8 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    // 嵌套调用（codemode 脚本的 tools.* 等）：结果只回到调用方工具、不进 transcript，
+    // 注入无意义。codemode 场景的补偿方案见 ADR-0012（v1.1 待实现）。
     if (event.isError || event.parentToolCallId) return undefined;
     // 无文本内容的结果（例：纯图片 read）不注入：追加元信息对非文本结果没有落点。
     if (!event.content.some((block) => block.type === "text")) return undefined;

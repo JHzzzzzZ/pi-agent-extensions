@@ -680,6 +680,7 @@ Loaded src/components/AGENTS.md
 - **去重与重载** —— 会话内每个文件只注入一次；`/compact` 后缓存清空，模型再触碰同一目录时会重新注入（不然那段上下文从窗口里消失后就永久丢了）
 - **预算** —— 单文件 32 KiB、单次注入 128 KiB，按 UTF-8 码点边界截断（不会劈开中文或 emoji），截断与丢弃都在块内留标记
 - **只追加，不修工具本身** —— 原结果逐字保留在前且**原样回传 `structuredContent`**（宿主契约：替换 `content` 而不回传它就等于丢掉结构化结果，而 `read`/`bash` 都产出它）；失败的结果（`isError`）、纯图片结果、嵌套工具调用（codemode 之类）、无候选目录都返回原结果（fail-open 降级）
+- **codemode（已决策、待实现）** —— 脚本里用 `tools.read/write/edit/ls/bash` 触碰目录**目前不会触发**（嵌套调用结果只回到脚本）；修法已定：在 codemode 自身的顶层结果上按 `details.calls` 提取触碰并复用同一套发现/去重/预算，见 [`docs/adr/0012-dir-context-codemode.md`](docs/adr/0012-dir-context-codemode.md)
 - **命令面与状态** —— `/dir-context` 或 `/dir-context:status` 列出本会话已注入的清单；footer 段 `70:dir-context` 只在真的注入过之后出现
 - **不做** —— 不做 `.claude/rules/` 风格的 glob 路径规则、不做 `@path` 导入展开、不做 cwd 之外注入、不读 `settings.json` 配置项（v1 无开关）
 - **不要与同类扩展同装** —— [`pi-subdir-context`](https://github.com/ruttybob/pi-subdir-context)、[`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) 与本扩展都在 `read` 路径注入，同装会让同一份 AGENTS.md 进两次上下文（功能不冲突，只是浪费 token）；那两家只钩 `read`，本扩展多覆盖 `write`/`edit`/`ls`/bash
