@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 0558752（真机验收修复见后续 fix 提交）
+> last verified @ fb4e6a4
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
@@ -37,6 +37,13 @@
 - **错误消息全静态模板**：不插值远端路径内容或远端输出，避免把远端内容回灌进模型上下文；错误码在 `errors.ts`。
 - **降级要在同一次往返里上报**：远端缺 rg 时不额外探测（多一轮 ssh），而是在同一条远端命令里分支、
   用 stderr 上的 `PI_REMOTE_TOOLS_DEGRADED` 标记回传，再在结果里附 `[远端缺少 ripgrep，已回退 …]`。
+- **凡是要交回宿主的远端路径都必须带宿主标记**：不只输入（`toHostPath`），**输出也一样**（find 的 `glob` 结果）。
+  宿主的 find 用本机 `path.relative(searchPath, entry)` 求相对路径，未标记的绝对路径会被算成 `../../../srv/…` 乱码
+  （真机 + 评审都拓到）。
+- **模型的路径输入先过 `assertModelPathInput`**（发 ssh 之前）：首段不得是宿主标记 `pi-remote`、不得 `~` 开头
+  （拼成 `$HOME/~/x` 是错的）。两者都是 fail-closed，不静默指错目录。
+- **远端 $HOME 缓存失败不毒化**：session 按目标永久缓存，所以 `home()` 失败时清缓存、下次重试（瞬时网络抖动
+  不能让该目标所有相对路径调用挂到 `/reload`）。
 
 ## 文件地图
 
@@ -51,7 +58,7 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_*`/`SSH_*`/`REMOTE_*`/`RIPGREP_MISSING`）
-- `test/` — 51 个：`ssh.test.ts`(10) / `paths.test.ts`(7) / `ops.test.ts`(14) / `grep.test.ts`(11) / `tools.test.ts`(9)；另有 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `test/` — 60 个：54 个纯本地（`ssh.test.ts`(10) / `paths.test.ts`(8) / `ops.test.ts`(14) / `grep.test.ts`(12) / `tools.test.ts`(10)）+ 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10 已执行）
 
@@ -97,3 +104,9 @@ PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
 - **宿主对工具路径有本地副作用**：write/edit 的 `withFileMutationQueue` 会 `fs.realpath`、read 会 `accessSync`
   探本地变体（NFD / 弯引号）——所以宿主形态必须让本地 fs 以 ENOENT 失败（`C:\pi-remote\…`），不能用 UNC。
 - **远端 `bash` 的中断只 kill 本地 ssh**：远端命令可能继续跑（v1 已记录，未做远端进程组清理）。
+- **不启用 `ControlMaster`**：Windows OpenSSH 不支持连接复用，复用交给用户自己的 `~/.ssh/config`；
+  因此把「N 次往返」压到关键路径上——`ls` 的 readdir 用 `ls -A1p` 一次拿回 entry 类型并缓存，随后的逐条 `stat` 零 ssh。
+- **`ls -A1p` 的尾斜杠语义**：目录项带尾斜杠（symlink→目录也算目录，与 `test -d` 一致）；readdir 返回的名字必须剥掉尾斜杠，
+  否则宿主 ls 会拼出 `name//`。
+- **评审记录**：第 1 轮 kimi-coding/k3-256k = OK with notes（0 阻断/3 建议/5 备注），逐条处理见提交 `fb4e6a4`；
+  被驳回的建议：无（P2 五条中四条采纳、一条按「文档与实现对齐」方式收口）。

@@ -49,7 +49,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-51 个（node:test）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（Windows 路径往返）、
+54 个（node:test，全本地）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（宿主路径往返与输入护栏）、
 `test/ops.test.ts`（发给 ssh 的命令构造与错误映射）、`test/grep.test.ts`（rg 事件解析/降级/限流）、
 `test/tools.test.ts`（注册覆盖、本地保真对照、远端分派、session 缓存）。
 
