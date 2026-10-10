@@ -346,10 +346,20 @@ test("预算耗尽被丢弃的文件不算已注入：下次触碰仍能注入�
   assert.doesNotMatch(firstText, /Loaded a\/b\/c\/d\/e\/AGENTS\.md/, "最后一份超过单次预算，本次必然被丢弃");
   assert.match(firstText, /skipped \(injection budget exhausted\): a\/b\/c\/d\/e\/AGENTS\.md/, "丢弃必须在块内留标记");
 
+  // 清单与去重缓存同源：被丢弃的那份不得出现在 /dir-context 的已注入清单里（计数 = 4）。
+  const command = h.runner.getCommand("dir-context:status");
+  assert.ok(command, "命令必须可解析");
+  await command.handler("", h.runner.createCommandContext());
+  const listed = h.seen.notifies.at(-1) ?? "";
+  assert.match(listed, /已注入 4 个嵌套上下文文件/, `清单计数必须只数真正注入的文件：${listed}`);
+  assert.doesNotMatch(listed, /a\/b\/c\/d\/e\/AGENTS\.md/, "被预算丢弃的不算已注入");
+
   const second = await h.runner.emitToolResult(
     toolResult({ toolName: "read", toolInput: { path: "a/b/c/d/e/y.ts" } }),
   );
   assert.match(injectedText(second), /Loaded a\/b\/c\/d\/e\/AGENTS\.md/, "被预算丢弃 ≠ 已注入：下次触碰应当补上");
+  await command.handler("", h.runner.createCommandContext());
+  assert.match(h.seen.notifies.at(-1) ?? "", /已注入 5 个嵌套上下文文件/, "补上后清单计数跟进（4 → 5）");
 });
 
 test("codemode 顶层结果：按 details.calls 一次注入并集，原 content 与 details 逐字保留", async (t) => {
