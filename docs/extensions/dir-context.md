@@ -1,10 +1,10 @@
 # dir-context — 目录作用域上下文注入（嵌套 AGENTS.md on-demand）
 
-> last verified @ b5ccf87
+> last verified @ 3cc315f
 
-一句话：模型**触碰某个目录**（`read` / `write` / `edit` / `ls` / bash 单文件读）时，把该目录到 cwd 之间、**严格位于 cwd 之下**的 `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` 追加到当次工具结果里。
+一句话：模型**触碰某个目录**（`read` / `write` / `edit` / `ls` / bash 单文件读；codemode 脚本里的 `tools.*` 走顶层结果代偿）时，把该目录到 cwd 之间、**严格位于 cwd 之下**的 `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` 追加到当次工具结果里。
 
-规格：`docs/specs/dir-context.md`·决策：`docs/adr/0011-dir-context-scoped-injection.md`（通道/边界/去重）+ `docs/adr/0012-dir-context-codemode.md`（codemode，待实现）·对齐：`todos/align/dir-context-todo#1.md`。
+规格：`docs/specs/dir-context.md`·决策：`docs/adr/0011-dir-context-scoped-injection.md`（通道/边界/去重）+ `docs/adr/0012-dir-context-codemode.md`（codemode，v1.1 已实现）·对齐：`todos/align/dir-context-todo#1.md`。
 
 ## 为什么这么做
 
@@ -19,10 +19,10 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 - **顺序 = 由外向内**：祖先在前、最靠近锚点的最后；同目录只取一个（`AGENTS.override.md` > `AGENTS.md` > `AGENTS.MD` > `CLAUDE.md` > `CLAUDE.MD`，与 pi 原生的文件集合一致）。
 - **去重键是绝对路径，作用域是会话**：同一文件只注入一次；`session_compact` / `session_start` 清空缓存——compact 会把先前的注入从上下文里抹掉，必须允许**按需重载**（Claude 同语义），否则那段上下文永久丢失。`session_shutdown` 只清状态段登记。
 - **嵌套工具调用（`event.parentToolCallId`）不注入**：这类结果只回到调用方工具（如 codemode 脚本），不进 transcript，注入没有意义。
-- **已知缺口（v1.1 已决策、待实现）**：因此**在 codemode 脚本里用 `tools.read/write/edit/ls/bash` 触碰目录不会触发注入**——脚本读深层文件时拿不到那目录的局部约定。修法已定（在 codemode 自身的顶层结果上按 `details.calls` 的 `name + args` 提取触碰，复用同一套发现/去重/预算），见 `docs/adr/0012-dir-context-codemode.md` 与工单 `dir-context-todo#2`；**当前代码仍是跳过嵌套调用**，别把 ADR 当现状读。
+- **codemode 走「顶层结果代偿」（v1.1）**：脚本里的 `tools.read/write/edit/ls/bash` 不直接注入，改在读它**顶层** codemode 结果的 `details.calls`（`{ name, args, status }[]`），把每个嵌套调用翻译回同一套触碰语义；多个触碰取目录链**并集**（同一文件一次、整体仍由外向内），与顶层共用同一份会话缓存与预算。`status` 为 `error`/`cancelled` 的调用**照算**（文件可能已被读写）；`args` 解析失败、非触碰工具、`isError` 的 codemode 结果一律跳过。
 - **`isError` 结果不注入**：失败结果里追加指令只会污染错误诊断。
 - **bash 是保守白名单**：只认整条命令里**恰好一个** `cat` / `head` / `tail` 的单文件目标；带重定向（`>`/`<`）、变量展开（`$`/反引号）、多文件、非白名单命令一律「拿不准」⇒ 零注入。漏判只是少注入，误判最多多注入一个目录。
-- **预算是硬上限**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 **码点**边界截断（绝不劈开多字节字符/代理对），被截断/被丢弃都在块内留标记。
+- **预算是硬上限**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 **码点**边界截断（绝不劈开多字节字符/代理对），被截断/被丢弃都在块内留标记。**「已注入」只标记真正进了文本的文件**：被预算丢弃的不算（否则后续触碰永久拿不到那份上下文——与读取失败的重试语义自相矛盾）；目录链并集让一次注入覆盖多个文件后，这条路径是常态（外部评审 P2）。
 - **发现用磁盘真名、链接逃逸整个跳过**：探到候选名后走 `realpathSync.native` 取磁盘上的真实文件名再返回（Windows 大小写不敏感的文件系统会让探 `AGENTS.md` 命中 `AGENTS.MD`，返回探针名会让 transcript 的 `Loaded` 行指向不存在的文件）；若真实位置落在 cwd 之外（文件级链接逃逸）则该候选**整个跳过**——fail-closed，与「cwd 之外零注入」同一口径，既不注入外部内容也不把外部路径展示出去。
 - **状态段走契约**：footer 键 `70:dir-context`（`docs/cross/status-bar.md`），文本 `<N> dir-context`，**只在真的注入过之后出现**；写入必须经 `status-band.ts` 的 `writeBand`，`session_shutdown` 清登记。
 
@@ -30,6 +30,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 
 - `index.ts` — 接线：`tool_result` / `session_start` / `session_compact` / `session_shutdown` + 命令面（`/dir-context`、`/dir-context:status`）+ 已注入清单
 - `touch.ts` — 工具 + 入参 → 被触碰的路径（含 bash 单文件读白名单与引号感知切词）
+- `codemode.ts` — codemode **顶层**结果的 `details.calls` → 触碰列表（纯函数：工具名 + 结构双重判真、`args` 截断降级、按路径去重保序）
 - `anchor.ts` — 被触碰的路径 → 锚点目录（目录类触碰指向文件时退到父目录）+ cwd 包含校验
 - `discover.ts` — 锚点 → cwd 之间的每级唯一上下文文件（由外向内）
 - `inject.ts` — 注入文本格式、码点安全截断、预算（纯函数）
@@ -39,6 +40,9 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 
 ## 坑
 
+- **`isCodemodeTool` 不在宿主的公开导出面**：pi 1.1.0 的包入口只导出 `CodemodeToolDetails` 类型，`isCodemodeTool` 只存在于内部模块（`dist/extensions/codemode/tool.d.ts`）⇒ ADR-0012 里「用它判真伪」落不了地（红线 8：不改宿主、不 import 内部路径）。改用「工具名 `codemode` + `details.calls` 是数组」双重判真；同名第三方工具不带这个结构就不会误伤。
+- **`details.calls[].args` 是宿主的截断预览**（`previewArgs` 上限 200 字符、超出加 `...` 尾）：解析不出合法 JSON 就跳过该条 ⇒ **codemode 路径对 `write` / `edit` 这类自带大载荷的调用覆盖弱于顶层**（顶层拿到的是完整入参；实测 `tools.read` 的 `{"path":…,"offset":null,"limit":null}` 正常解析）。这是「少注入不误注入」的取舍，别把它“修”成猜 JSON。
+- **判 codemode 用的是工具名字面量**：宿主不允许脚本里再起脚本（无递归风险），但工具被改名/包装时补偿路径静默失效（顶层行为不受影响）。
 - **Windows 上目录 symlink 需要管理员权限**：链接逃逸用例必须用 `junction`（普通权限可用）；建不出来时 `t.skip` 而不是静默绿。
 - **测试的临时目录要 `realpathSync.native` 归一**：被测实现返回 canonical 路径，期望值不归一就会在 Windows 上因大小写/短路径差异假红。
 - **`ExtensionRunner` 的第 3 个构造参数就是 `ctx.cwd`**（不是扩展目录）：宿主集成测试里必须传临时项目目录。
@@ -50,8 +54,9 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 
 ## 测试与验证
 
-- `cd src/extensions/dir-context && npm install && npm test && npm run typecheck`（46 个：触碰识别 6 / 锚点解析 9 / 发现 10（含 2 个平台条件跳过）/ 注入与截断 8 / 宿主事件路径 13）
+- `cd src/extensions/dir-context && npm install && npm test && npm run typecheck`（64 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 8 / codemode 明细 10 / 宿主事件路径 18）
 - 宿主事件路径测试走**真实 `discoverAndLoadExtensions`（jiti 走 index.ts）+ 真实 `ExtensionRunner.emitToolResult`**，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）；文件系统是真实临时目录树（realpath 与包含校验正是被测对象）。
 - **2 个平台条件跳过**：创建文件符号链接需要权限（Windows 需管理员/开发者模式），建不出来时 `t.skip` 而非静默绿（Linux/macOS 上会真跑）。
 - 真机验收：在真实会话里读一个深层文件（如 `src/extensions/pwr/engine/spec.ts`），transcript 里出现 `Loaded <相对路径>` 且内容正确；`/dir-context` 能列出已注入清单。
+- **codemode 真机验收（v1.1）**：临时 agent 目录 + 真实 `pi --mode json -p --tools +codemode`，让模型用脚本 `tools.read` 读深层文件——codemode 工具结果里出现 `Loaded <相对路径>`，且模型答得出只写在嵌套 `AGENTS.md` 里的暗号（观测脚本：临时目录自建，跑完删除）。
 - 上游对照物：Claude Code 官方文档（`code.claude.com/docs/en/memory` 的 "How CLAUDE.md files load"）；两个先行 pi 扩展只钩 `read`，本扩展的差异面就是 `write`/`edit`/`ls`/bash 与「写新文件也触发」。

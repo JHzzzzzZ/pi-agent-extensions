@@ -1,6 +1,6 @@
 # ADR-0012：codemode 下的目录作用域上下文走「顶层结果 + 嵌套调用明细」提取
 
-- 状态：已决策，**待实现**（dir-context v1.1；确认记录见 `todos/align/dir-context-todo#2.md` 的 `## 人工确认`）
+- 状态：已实现（dir-context v1.1；确认记录见 `todos/align/dir-context-todo#2.md` 的 `## 人工确认`）
 - 日期：2026-10-10（UTC）
 - 相关：`docs/adr/0011-dir-context-scoped-injection.md`、`docs/extensions/dir-context.md`、`docs/specs/dir-context.md`、工单 `dir-context-todo#2`
 
@@ -30,8 +30,14 @@
 - **维持现状**（codemode 里不注入，靠模型自己读 AGENTS.md）：缺口明确、可复现，且 codemode 正是「批量读写文件」的场景，恰恰最需要局部约定。
 - **改成往 codemode 结果里塞一份「脚本触碰到的路径清单」**（不发内容、只提示模型去读）：多一次模型往返，且上下文进入时机晚于脚本决策——不如直接把内容给上。
 
+## 落地偏差（实现时发现，已按红线 8 就地解决）
+
+1. **`isCodemodeTool` 不可用**：决策第 1 条要求用它判真伪，但 pi 1.1.0 的包入口（`exports["."]` → `dist/index.d.ts`）只导出 `CodemodeToolDetails` / `CodemodeStoreEntryData` 类型与 `createCodemodeExtension`，**`isCodemodeTool` 只存在于内部模块**（`dist/extensions/codemode/tool.d.ts`），而包的 `exports` 没有子路径入口。不带兜底就只剩两条违规路：import 宿主内部路径，或改宿主（红线 8 禁止）。落地方案：**「工具名 `codemode` + `details.calls` 是数组」双重结构守卫**（`codemode.ts` 的 `detectCodemodeTouches`）——内置 codemode 的工具名是固定字面量（`CODEMODE_TOOL_NAME`），同名第三方工具不带这个 `details` 结构就不会被误伤；代价是工具被改名/包装时补偿路径静默失效（顶层行为不受影响）。
+2. **`args` 截断比预期更“贵”**：`previewArgs` 上限 200 字符。实测 `read` 的 `args` 是 `{"path":"…","offset":null,"limit":null}`（可解析），而 `write`（带 `content`）与 `edit`（带 `edits`）极易超限 ⇒ 解析失败、该条跳过。即：**codemode 路径对「脚本里新建/编辑深层文件」的覆盖弱于顶层**。这是「少注入不误注入」既定口径的必然结果，已在卡片与规格的「已知边界」中写明；拿完整入参需要宿主开口子，同期不做。
+
 ## 后果
 
 - codemode 路径重新拿到与顶层一致的局部上下文；两条路径共用同一份去重/预算/顺序实现，不会语义漂移。
 - 新增成本面：一次脚本可能触碰很多目录，一次结果里就可能带进多份上下文（受 128 KiB 上限约束）。若实测在长会话里偏贵，后续可加「每次 codemode 结果的目录数上限」——本轮不做（YAGNI，先看真实用量）。
 - 依赖宿主 `details.calls` 的形状：它属于**公开的类型面**（`CodemodeToolDetails`），但仍是宿主实现细节的投影；本 ADR 记录形状快照，出现漂移时按卡片「坑」一节的降级策略处理（解析不出就跳过，不误注入）。
+- 真机验收（2026-10-11，临时 agent 目录 + 真实 `pi --mode json -p --tools +codemode`，模型 `opencode-go/deepseek-v4-flash`）：提示要求用脚本 `tools.read` 读 `src/components/Button.tsx`——codemode 工具结果尾部出现 `Loaded src/AGENTS.md` 与 `Loaded src/components/AGENTS.md`，且模型答出只写在嵌套 `AGENTS.md` 里的暗号；脚本输出与 `details` 均未被改坏。

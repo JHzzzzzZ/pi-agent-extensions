@@ -102,6 +102,8 @@ function toolResult(input: {
   parentToolCallId?: string;
   /** 宿主真实形状：read/bash 都产出结构化结果（回归用）。 */
   structuredContent?: unknown;
+  /** 扩展工具的 details（如 codemode 的嵌套调用明细）。 */
+  details?: unknown;
   /** false = 无文本内容（纯图片结果），用于验证不注入。 */
   hasText?: boolean;
 }): ToolResultEvent {
@@ -115,10 +117,24 @@ function toolResult(input: {
         ? [{ type: "image" as const, data: "aGk=", mimeType: "image/png" }]
         : [{ type: "text" as const, text: input.text ?? "工具原始输出" }],
     isError: input.isError ?? false,
-    details: undefined,
+    details: input.details,
     ...(input.structuredContent !== undefined ? { structuredContent: input.structuredContent as never } : {}),
     ...(input.parentToolCallId ? { parentToolCallId: input.parentToolCallId } : {}),
   } as ToolResultEvent;
+}
+
+/**
+ * 真实 `CodemodeToolDetails` 形状：calls 是宿主的嵌套调用明细（`previewArgs` 的紧凑 JSON）。
+ * 传字符串则原样当 `args` 用（用于锁定截断/非法 JSON 的降级）。
+ */function codemodeDetails(calls: Array<{ name: string; args: unknown; status?: string }>): unknown {
+  return {
+    calls: calls.map((call, index) => ({
+      id: `call-1/${index + 1}`,
+      name: call.name,
+      args: typeof call.args === "string" ? call.args : JSON.stringify(call.args),
+      status: call.status ?? "ok",
+    })),
+  };
 }
 
 function injectedText(result: { content?: unknown } | undefined): string {
@@ -305,4 +321,133 @@ test("命令面：裸 dir-context 与 dir-context:status 都已注册且能列�
     h.seen.notifies.some((message) => message.includes("src/components/AGENTS.md")),
     `命令输出必须列出已注入文件：${JSON.stringify(h.seen.notifies)}`,
   );
+});
+
+// —— codemode 补偿路径（v1.1 / ADR-0012）：脚本里的嵌套调用本身不注入，但它的**顶层**
+// codemode 结果带着 `details.calls`，在那里把「脚本碰了哪些目录」翻译回同一套触碰语义。
+
+test("预算耗尽被丢弃的文件不算已注入：下次触碰仍能注入（并集让这条路径成为常态）", async (t) => {
+  // 五级目录 × 各 32 KiB（单文件上限）⇒ 合计 160 KiB > 单次 128 KiB 上限，
+  // 最后一个（最靠近锚点的）被预算丢弃。它元数据进了 injected 的话，
+  // 后续触碰会因「已注入」而永久拿不到那份上下文——与读取失败的重试语义矛盾。
+  const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "dir-context-budget-")));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const deep = path.join(cwd, "a", "b", "c", "d", "e");
+  fs.mkdirSync(deep, { recursive: true });
+  const filler = "x".repeat(32 * 1024);
+  const dirOf = { a: path.join(cwd, "a"), b: path.join(cwd, "a", "b"), c: path.join(cwd, "a", "b", "c"), d: path.join(cwd, "a", "b", "c", "d"), e: deep };
+  for (const [name, dir] of Object.entries(dirOf)) fs.writeFileSync(path.join(dir, "AGENTS.md"), `${name}${filler}`);
+
+  const h = await startHarness(t, cwd);
+  const first = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "a/b/c/d/e/x.ts" } }),
+  );
+  const firstText = injectedText(first);
+  assert.doesNotMatch(firstText, /Loaded a\/b\/c\/d\/e\/AGENTS\.md/, "最后一份超过单次预算，本次必然被丢弃");
+  assert.match(firstText, /skipped \(injection budget exhausted\): a\/b\/c\/d\/e\/AGENTS\.md/, "丢弃必须在块内留标记");
+
+  // 清单与去重缓存同源：被丢弃的那份不得出现在 /dir-context 的已注入清单里（计数 = 4）。
+  const command = h.runner.getCommand("dir-context:status");
+  assert.ok(command, "命令必须可解析");
+  await command.handler("", h.runner.createCommandContext());
+  const listed = h.seen.notifies.at(-1) ?? "";
+  assert.match(listed, /已注入 4 个嵌套上下文文件/, `清单计数必须只数真正注入的文件：${listed}`);
+  assert.doesNotMatch(listed, /a\/b\/c\/d\/e\/AGENTS\.md/, "被预算丢弃的不算已注入");
+
+  const second = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "a/b/c/d/e/y.ts" } }),
+  );
+  assert.match(injectedText(second), /Loaded a\/b\/c\/d\/e\/AGENTS\.md/, "被预算丢弃 ≠ 已注入：下次触碰应当补上");
+  await command.handler("", h.runner.createCommandContext());
+  assert.match(h.seen.notifies.at(-1) ?? "", /已注入 5 个嵌套上下文文件/, "补上后清单计数跟进（4 → 5）");
+});
+
+test("codemode 顶层结果：按 details.calls 一次注入并集，原 content 与 details 逐字保留", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  const original = "Script completed\nWall time 0.1 seconds\nOutput:\n已读完\n";
+  const details = codemodeDetails([
+    { name: "read", args: { path: "src/components/Button.tsx" } },
+    { name: "bash", args: { command: "cat src/index.ts" } },
+  ]);
+  const result = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "…" }, text: original, details }),
+  );
+
+  const blocks = (result?.content ?? []) as Array<{ type: string; text: string }>;
+  assert.equal(blocks.length, 2, "只追加一个 text block（一次注入）");
+  assert.equal(blocks[0]?.text, original, "原内容逐字保留在前");
+  const text = blocks[1]?.text ?? "";
+  assert.match(text, /Loaded src\/AGENTS\.md/);
+  assert.match(text, /Loaded src\/components\/AGENTS\.md/);
+  assert.equal(text.split("Loaded src/AGENTS.md").length - 1, 1, "并集：两个触碰共享的祖先只注入一次");
+  assert.ok(text.indexOf("src 约定") < text.indexOf("组件约定"), "由外向内");
+  assert.deepEqual(result?.details, details, "details 必须原样保留（宿主 runner 只替换显式返回的字段）");
+});
+
+test("codemode 与顶层共用同一份去重缓存：顶层注入过的文件在脚本里不再注入", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  assert.ok((await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" } })))?.content);
+  const script = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: codemodeDetails([{ name: "read", args: { path: "src/components/Button.tsx" } }]) }),
+  );
+  assert.equal(script, undefined, "全部已注入过 ⇒ handler 返回 undefined（透传原结果）");
+
+  await h.runner.emit({ type: "session_compact", compactionEntry: {} as never, fromExtension: false, reason: "manual", willRetry: false });
+  assert.ok(
+    (await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" } })))?.content,
+    "compact 后两者一并解禁（按需重载）",
+  );
+});
+
+test("codemode 降级：失败脚本 / 空 calls / 截断 args / 非触碰工具 ⇒ 零注入，原结果透传", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+  const emit = (details: unknown, isError = false) =>
+    h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" }, isError, details }));
+
+  assert.equal(
+    await emit(codemodeDetails([{ name: "read", args: { path: "src/components/Button.tsx" } }]), true),
+    undefined,
+    "脚本失败（isError）的 codemode 结果不注入",
+  );
+  assert.equal(await emit({ calls: [] }), undefined, "脚本没碰任何可认的路径");
+  assert.equal(
+    await emit(codemodeDetails([{ name: "grep", args: { pattern: "x", path: "src" } }, { name: "chat", args: "opencode-go/x" }])),
+    undefined,
+    "非触碰工具（含 models.*）零注入",
+  );
+  const truncated = `${JSON.stringify({ path: "src/components/Button.tsx", content: "x".repeat(400) }).slice(0, 197)}...`;
+  assert.equal(await emit(codemodeDetails([{ name: "write", args: truncated }])), undefined, "args 截断 ⇒ 跳过该条（少注入，不误注入）");
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "some-tool", toolInput: {}, details: codemodeDetails([{ name: "read", args: { path: "src/components/Button.tsx" } }]) })),
+    undefined,
+    "同名形状但不是 codemode（工具名不同）⇒ 走普通路径，零注入",
+  );
+});
+
+test("codemode 里触碰 cwd 之外 / 已注入过的组合：只注入未注入的部分", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  const result = await h.runner.emitToolResult(
+    toolResult({
+      toolName: "codemode",
+      toolInput: { code: "…" },
+      details: codemodeDetails([
+        { name: "read", args: { path: "../outside.ts" } },
+        { name: "ls", args: { path: "src/components" } },
+      ]),
+    }),
+  );
+  const text = injectedText(result);
+  assert.match(text, /Loaded src\/components\/AGENTS\.md/);
+  assert.doesNotMatch(text, /outside/, "cwd 之外的触碰不产生注入");
 });

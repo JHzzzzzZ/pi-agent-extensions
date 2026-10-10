@@ -84,7 +84,7 @@ cd agent-manager && npm install && npm test && npm run typecheck   # 另 npm run
 cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck   # 50 个（含宿主事件路径：真实加载 + ExtensionRunner）
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 62 个（含本地保真对照、Windows 路径往返、输入护栏、采样器噪声、缺省值字面量）+ 6 个真机 opt-in
-cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 46 个（含真实 ExtensionRunner 宿主事件路径：触发面/去重/compact 重载/cwd 边界 fail-closed）
+cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 64 个（含真实 ExtensionRunner 宿主事件路径：触发面/去重/compact 重载/cwd 边界 fail-closed/codemode 顶层结果代偿/预算丢弃不标记）
 ```
 
 ## 代码约定与常见模式

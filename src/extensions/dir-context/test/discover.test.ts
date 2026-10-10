@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CONTEXT_FILE_NAMES, discoverContextFiles } from "../discover.ts";
+import { CONTEXT_FILE_NAMES, discoverContextFiles, discoverContextFilesForAnchors } from "../discover.ts";
 
 function makeTree(): { root: string; cleanup: () => void } {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "dir-context-discover-"));
@@ -126,6 +126,67 @@ test("锚点在 cwd 之下但目录不存在（write 新文件且路径更深）
 
   const files = discoverContextFiles({ anchorDir: path.join(project, "src", "nope", "deeper"), rootDir: project });
   assert.deepEqual(files, [path.join(project, "src", "AGENTS.md")]);
+});
+
+test("多个锚点取并集：共享祖先只出现一次，整体仍由外向内", (t) => {
+  const tree = makeTree();
+  t.after(tree.cleanup);
+  const project = path.join(tree.root, "repo");
+  fs.mkdirSync(path.join(project, "src", "components"), { recursive: true });
+  fs.mkdirSync(path.join(project, "src", "utils"), { recursive: true });
+  fs.writeFileSync(path.join(project, "src", "AGENTS.md"), "src");
+  fs.writeFileSync(path.join(project, "src", "components", "AGENTS.md"), "components");
+  fs.writeFileSync(path.join(project, "src", "utils", "AGENTS.md"), "utils");
+
+  // 一次 codemode 脚本碰了两个子树：祖先 src/AGENTS.md 只注入一次（共享），
+  // 两个子目录按锚点顺序（= 脚本里的调用顺序）排在后面。
+  assert.deepEqual(
+    discoverContextFilesForAnchors({
+      anchorDirs: [path.join(project, "src", "components"), path.join(project, "src", "utils")],
+      rootDir: project,
+    }),
+    [
+      path.join(project, "src", "AGENTS.md"),
+      path.join(project, "src", "components", "AGENTS.md"),
+      path.join(project, "src", "utils", "AGENTS.md"),
+    ],
+  );
+});
+
+test("多个锚点：不同深度仍严格由外向内（锚点顺序不改变层级顺序）", (t) => {
+  const tree = makeTree();
+  t.after(tree.cleanup);
+  const project = path.join(tree.root, "repo");
+  fs.mkdirSync(path.join(project, "a", "b", "c"), { recursive: true });
+  fs.mkdirSync(path.join(project, "z"), { recursive: true });
+  fs.writeFileSync(path.join(project, "a", "AGENTS.md"), "a");
+  fs.writeFileSync(path.join(project, "a", "b", "AGENTS.md"), "b");
+  fs.writeFileSync(path.join(project, "z", "AGENTS.md"), "z");
+
+  assert.deepEqual(
+    discoverContextFilesForAnchors({
+      anchorDirs: [path.join(project, "a", "b", "c"), path.join(project, "z")],
+      rootDir: project,
+    }),
+    [path.join(project, "a", "AGENTS.md"), path.join(project, "z", "AGENTS.md"), path.join(project, "a", "b", "AGENTS.md")],
+    "同级按锚点顺序；深层永远排在后（由外向内）",
+  );
+});
+
+test("多个锚点：cwd 之外与 cwd 自身的锚点照旧零发现", (t) => {
+  const tree = makeTree();
+  t.after(tree.cleanup);
+  const project = path.join(tree.root, "repo");
+  const outside = path.join(tree.root, "outside");
+  fs.mkdirSync(path.join(project, "src"), { recursive: true });
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, "AGENTS.md"), "外部");
+  fs.writeFileSync(path.join(project, "src", "AGENTS.md"), "src");
+
+  assert.deepEqual(
+    discoverContextFilesForAnchors({ anchorDirs: [outside, project, path.join(project, "src")], rootDir: project }),
+    [path.join(project, "src", "AGENTS.md")],
+  );
 });
 
 test("文件链接指向 cwd 之内：正常发现（取磁盘真名）", (t) => {

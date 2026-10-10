@@ -13,18 +13,20 @@
  * - 会话内每绝对路径只注入一次；`session_compact` 后清空（compact 会把之前的注入
  *   从上下文里抹掉，必须允许按需重载，否则那段上下文永久丢失）。
  * - cwd 之外的触碰、失败结果、嵌套工具调用一律零注入（fail-open 降级，绝不改坏
- *   原结果）。嵌套调用（codemode 脚本发起）的补偿方案——在 codemode 顶层结果上按
- *   `details.calls` 提取触碰——已决策但**未实现**，见 ADR-0012 / 工单 dir-context-todo#2。
+ *   原结果）。嵌套调用（codemode 脚本发起）的补偿路径：**顶层** codemode 结果带
+ *   `details.calls`（每个嵌套调用的 name/args/status），据此提取触碰并复用同一套
+ *   发现/去重/预算（ADR-0012）。
  */
 import * as fs from "node:fs";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { resolveAnchor } from "./anchor.ts";
-import { discoverContextFiles } from "./discover.ts";
+import { detectCodemodeTouches } from "./codemode.ts";
+import { discoverContextFilesForAnchors } from "./discover.ts";
 import { ErrorCodes, type DirContextError } from "./errors.ts";
 import { buildInjection, type ContextFileContent } from "./inject.ts";
 import { canonicalize, toDisplayPath } from "./paths.ts";
 import { writeBand } from "./status-band.ts";
-import { detectTouch } from "./touch.ts";
+import { detectTouch, type Touch } from "./touch.ts";
 
 /** footer 排序带键（契约见 docs/cross/status-bar.md，带号 70 = jev-safe-gate 之后）。 */
 export const STATUS_KEY = "70:dir-context";
@@ -85,20 +87,19 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    // 嵌套调用（codemode 脚本的 tools.* 等）：结果只回到调用方工具、不进 transcript，
-    // 注入无意义。codemode 场景的补偿方案见 ADR-0012（v1.1 待实现）。
-    if (event.isError || event.parentToolCallId) return undefined;
-    // 无文本内容的结果（例：纯图片 read）不注入：追加元信息对非文本结果没有落点。
-    if (!event.content.some((block) => block.type === "text")) return undefined;
-    const touch = detectTouch(event.toolName, event.input);
-    if (!touch) return undefined;
+    const touches = collectTouches(event);
+    if (touches.length === 0) return undefined;
 
-    const anchor = resolveAnchor({ rawPath: touch.rawPath, kind: touch.kind, cwd: ctx.cwd });
-    if (!anchor.ok) return undefined;
-    if (anchor.anchorDir === null) return undefined;
+    const anchorDirs: string[] = [];
+    for (const touch of touches) {
+      const anchor = resolveAnchor({ rawPath: touch.rawPath, kind: touch.kind, cwd: ctx.cwd });
+      if (!anchor.ok || anchor.anchorDir === null) continue;
+      anchorDirs.push(anchor.anchorDir);
+    }
+    if (anchorDirs.length === 0) return undefined;
 
     const root = canonicalize(ctx.cwd);
-    const pending = discoverContextFiles({ anchorDir: anchor.anchorDir, rootDir: root }).filter((file) => !injected.has(file));
+    const pending = discoverContextFilesForAnchors({ anchorDirs, rootDir: root }).filter((file) => !injected.has(file));
     if (pending.length === 0) return undefined;
 
     const contents: ContextFileContent[] = [];
@@ -109,13 +110,15 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
         reportReadFailure(ctx, read);
         continue;
       }
-      injected.add(absolutePath);
       contents.push({ absolutePath, relativePath: toDisplayPath(root, absolutePath), content: read.value });
     }
     if (contents.length === 0) return undefined;
 
+    // 标记「已注入」必须等 buildInjection 之后，只认真正进了文本的那些：被预算丢弃的
+    // 文件没有进上下文，标记了就等于承诺了没发生的事（后续触碰永久拿不到那份内容）。
     const injection = buildInjection(contents);
     for (const file of injection.injected) {
+      injected.add(file.absolutePath);
       loaded.push({ relativePath: file.relativePath, truncated: file.truncated, bytes: file.bytes });
     }
     renderStatus(ctx);
@@ -152,6 +155,26 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     injected.clear();
     loaded.length = 0;
   };
+}
+
+/**
+ * 一次工具结果 → 被触碰的路径（可能多个）。两类路径：
+ * - 普通工具：入参即触碰（真实入参，完整）。
+ * - codemode：顶层结果带 `details.calls`，把脚本里的嵌套调用翻译回同一套触碰语义（ADR-0012）。
+ *
+ * 三类一律零注入：嵌套调用自身的`tool_result`（结果不进 transcript，注入无意义——codemode 由
+ * 它的顶层结果代偿）、失败结果（尾部追加指令只会污染错误诊断）、无文本内容的结果（纯图片等，
+ * 追加元信息没有落点）。
+ */
+function collectTouches(event: ToolResultEvent): Touch[] {
+  if (event.isError || event.parentToolCallId) return [];
+  if (!event.content.some((block) => block.type === "text")) return [];
+
+  const nested = detectCodemodeTouches(event.toolName, event.details);
+  if (nested !== null) return nested;
+
+  const touch = detectTouch(event.toolName, event.input);
+  return touch ? [touch] : [];
 }
 
 function readContextFile(absolutePath: string): { ok: true; value: string } | DirContextError {

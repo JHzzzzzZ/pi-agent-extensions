@@ -38,6 +38,37 @@ export function discoverContextFiles(input: DiscoverInput): string[] {
   return found.reverse();
 }
 
+export interface DiscoverUnionInput {
+  anchorDirs: readonly string[];
+  rootDir: string;
+}
+
+/**
+ * 多个锚点的**并集**：codemode 的一次脚本可能触碰很多目录/文件，逐个锚点各自发现后合并——
+ * 同一文件只保留一次，整体仍按**由外向内**排列（层级深度升序；同深度保持锚点顺序，即脚本里的
+ * 调用顺序）。顺序语义与单锚点一致，因此两条路径共用同一份注入文本形状。
+ */
+export function discoverContextFilesForAnchors(input: DiscoverUnionInput): string[] {
+  const root = canonicalize(input.rootDir);
+  const seen = new Set<string>();
+  const ordered: Array<{ file: string; depth: number }> = [];
+
+  for (const anchorDir of input.anchorDirs) {
+    for (const file of discoverContextFiles({ anchorDir, rootDir: root })) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      ordered.push({ file, depth: depthUnder(root, file) });
+    }
+  }
+  // Array.sort 在 V8 上稳定：同深度保持发现顺序（= 锚点顺序）。
+  ordered.sort((left, right) => left.depth - right.depth);
+  return ordered.map((entry) => entry.file);
+}
+
+function depthUnder(root: string, file: string): number {
+  return path.relative(root, file).split(path.sep).length;
+}
+
 function pickInDir(dir: string, root: string): string | null {
   for (const name of CONTEXT_FILE_NAMES) {
     const candidate = path.join(dir, name);
