@@ -126,8 +126,7 @@ function toolResult(input: {
 /**
  * 真实 `CodemodeToolDetails` 形状：calls 是宿主的嵌套调用明细（`previewArgs` 的紧凑 JSON）。
  * 传字符串则原样当 `args` 用（用于锁定截断/非法 JSON 的降级）。
- */
-function codemodeDetails(calls: Array<{ name: string; args: unknown; status?: string }>): unknown {
+ */function codemodeDetails(calls: Array<{ name: string; args: unknown; status?: string }>): unknown {
   return {
     calls: calls.map((call, index) => ({
       id: `call-1/${index + 1}`,
@@ -326,6 +325,32 @@ test("命令面：裸 dir-context 与 dir-context:status 都已注册且能列�
 
 // —— codemode 补偿路径（v1.1 / ADR-0012）：脚本里的嵌套调用本身不注入，但它的**顶层**
 // codemode 结果带着 `details.calls`，在那里把「脚本碰了哪些目录」翻译回同一套触碰语义。
+
+test("预算耗尽被丢弃的文件不算已注入：下次触碰仍能注入（并集让这条路径成为常态）", async (t) => {
+  // 五级目录 × 各 32 KiB（单文件上限）⇒ 合计 160 KiB > 单次 128 KiB 上限，
+  // 最后一个（最靠近锚点的）被预算丢弃。它元数据进了 injected 的话，
+  // 后续触碰会因「已注入」而永久拿不到那份上下文——与读取失败的重试语义矛盾。
+  const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "dir-context-budget-")));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const deep = path.join(cwd, "a", "b", "c", "d", "e");
+  fs.mkdirSync(deep, { recursive: true });
+  const filler = "x".repeat(32 * 1024);
+  const dirOf = { a: path.join(cwd, "a"), b: path.join(cwd, "a", "b"), c: path.join(cwd, "a", "b", "c"), d: path.join(cwd, "a", "b", "c", "d"), e: deep };
+  for (const [name, dir] of Object.entries(dirOf)) fs.writeFileSync(path.join(dir, "AGENTS.md"), `${name}${filler}`);
+
+  const h = await startHarness(t, cwd);
+  const first = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "a/b/c/d/e/x.ts" } }),
+  );
+  const firstText = injectedText(first);
+  assert.doesNotMatch(firstText, /Loaded a\/b\/c\/d\/e\/AGENTS\.md/, "最后一份超过单次预算，本次必然被丢弃");
+  assert.match(firstText, /skipped \(injection budget exhausted\): a\/b\/c\/d\/e\/AGENTS\.md/, "丢弃必须在块内留标记");
+
+  const second = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "a/b/c/d/e/y.ts" } }),
+  );
+  assert.match(injectedText(second), /Loaded a\/b\/c\/d\/e\/AGENTS\.md/, "被预算丢弃 ≠ 已注入：下次触碰应当补上");
+});
 
 test("codemode 顶层结果：按 details.calls 一次注入并集，原 content 与 details 逐字保留", async (t) => {
   const project = makeProject();

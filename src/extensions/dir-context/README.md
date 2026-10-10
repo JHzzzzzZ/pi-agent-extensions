@@ -50,7 +50,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 ## 开发
 
 ```bash
-npm install && npm test && npm run typecheck   # 63 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
+npm install && npm test && npm run typecheck   # 64 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
 ```
 
 设计决策与不变量见仓库 `docs/extensions/dir-context.md`、`docs/adr/0011-dir-context-scoped-injection.md` 与 `docs/adr/0012-dir-context-codemode.md`。

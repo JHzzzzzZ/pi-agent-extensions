@@ -110,13 +110,15 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
         reportReadFailure(ctx, read);
         continue;
       }
-      injected.add(absolutePath);
       contents.push({ absolutePath, relativePath: toDisplayPath(root, absolutePath), content: read.value });
     }
     if (contents.length === 0) return undefined;
 
+    // 标记「已注入」必须等 buildInjection 之后，只认真正进了文本的那些：被预算丢弃的
+    // 文件没有进上下文，标记了就等于承诺了没发生的事（后续触碰永久拿不到那份内容）。
     const injection = buildInjection(contents);
     for (const file of injection.injected) {
+      injected.add(file.absolutePath);
       loaded.push({ relativePath: file.relativePath, truncated: file.truncated, bytes: file.bytes });
     }
     renderStatus(ctx);
