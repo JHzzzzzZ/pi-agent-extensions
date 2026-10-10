@@ -69,7 +69,7 @@ test("非法目标：空 user/host、多 @、带空格、前导 -、内嵌端口
 
 test("采样器噪声不得打断调用：remotePort 为 0 / null / 非数字 / 负数 一律当「未提供」", () => {
 	// 本地模式：忽略一切 remotePort（用户实测：本地 read 被 remotePort: 0 打断）
-	for (const remotePort of [0, null, undefined, "22", Number.NaN, -1, {}, []]) {
+	for (const remotePort of [0, null, undefined, "22", Number.NaN, -1, {}, [], 70000]) {
 		const local = parseTarget({ remote: undefined, remotePort });
 		assert.deepEqual(local, { ok: true, target: null }, `本地模式应忽略 ${JSON.stringify(remotePort)}`);
 		const blank = parseTarget({ remote: "   ", remotePort });
