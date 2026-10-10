@@ -6,7 +6,7 @@
       "id": 1,
       "globalId": 356,
       "text": "嵌套 AGENTS.md 目录作用域上下文注入：模型 touch 到某个目录（read/write/edit/ls/grep/find/bash）时，自动把该目录祖先链上的 AGENTS.override.md / AGENTS.md / CLAUDE.md 注入上下文（pi 原生只加载 cwd 及祖先链，子树一概不读）；补上 Claude Code 的 on-demand nested context 能力",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/dir-context-scoped-injection",
       "tags": [
         "new-plugin",
@@ -14,10 +14,12 @@
       ],
       "priority": 8,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "2026-10-11 @ merge 363fea5（docs 回填 b0e8aec）：新扩展 src/extensions/dir-context v1.0.0 交付。触发面 = read/write/edit 的 path + ls 的目标目录 + bash 里恰好一个 cat/head/tail 单文件读（对齐 Claude Code 的 on-demand nested CLAUDE.md，另加 ls 与写新文件）；**与本条原始登记文本的差异**：grep/find 不做（递归搜索按 path 只注入一层是近似而非精确，对齐时用户确认选 B 档），cwd 之外的路径也不注入（不沿 git root 兜底）。不变量：由外向内、每目录唯一一个（override > AGENTS.md > AGENTS.MD > CLAUDE.md > CLAUDE.MD）、会话内每绝对路径一次 + session_compact/session_start 清空、realpath 包含校验 fail-closed（链接逃逸/repo vs repo-evil）、原样回传 structuredContent（宿主契约）、32 KiB/文件 + 128 KiB/次码点安全截断、失败结果/无文本结果/嵌套调用一律透传。命令面 /dir-context 与 /dir-context:status；footer 段 70:dir-context（契约文档 + 根契约测试同步）。规模：17 扩展 / 22 套件 / 2289 用例；dir-context 46 个（44 pass / 2 平台条件跳过——创建文件符号链接需权限）。验收：全仓 test:all 绿（含一次 root:todo 偶发红，定点复现并作为证据记入 todo-cli#20）；真机 A/B（真实 pi -p + kimi-coding/k3-256k：带扩展答出只在嵌套 AGENTS.md 里的暗号且 transcript 出现 Loaded 标记，不带扩展答「文件里没有暗号、按你的要求我没读其它文件」）；install-smoke 因已登记的他源 provenance 假红整体失败（builtin /llama、/mcp 与用户级 skill，见 general-todo#29），无任何 dir-context 相关条目。跨厂商评审 2 轮（kimi-coding/k3-256k）：第 1 轮 1 阻断（注入时静默丢弃 structuredContent——宿主明文契约）4 建议（补 specs/ADR 改号/死码/文件级链接逃逸），全部处理；第 2 轮无新意见。GOAL.md §5 自检：这次让「派 Agent 框架」更近了——插件形态补上 pi 原生缺的按需子树上下文，agent 派 sub agent / team 成员进深层目录干活时自动获得该目录的局部约定，少一层人工贴上下文；还差：真实连续一周使用验证它在长会话里的 token 成本是否可控（去重 + compact 重载是否够）、以及是否需要 .claude/rules 式的 glob 作用域规则"
+      ],
       "createdAt": "2026-10-10T17:50:00.559Z",
       "claimedAt": "2026-10-10T17:50:09.555Z",
-      "completedAt": null,
+      "completedAt": "2026-10-10T18:58:04.504Z",
       "alignedAt": "2026-10-10T18:19:44.348Z"
     }
   ]
