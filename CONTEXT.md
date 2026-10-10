@@ -1,6 +1,6 @@
 # dev_extensions（Pi 扩展工作区）
 
-Pi 编码助手的扩展工作区：12 个零构建 TypeScript ESM 插件（pwr 工作流编排、agent-team 多 agent 协作等，见 AGENTS.md）+ 仓库级工具（todo CLI、install-smoke）+ 独立工具 agent-manager。本文件是全仓术语表；架构与目录事实在 AGENTS.md，决策记录在 `docs/adr/`。
+Pi 编码助手的扩展工作区：17 个零构建 TypeScript ESM 插件（pwr 工作流编排、agent-team 多 agent 协作等，见 AGENTS.md）+ 仓库级工具（todo CLI、install-smoke）+ 独立工具 agent-manager。本文件是全仓术语表；架构与目录事实在 AGENTS.md，决策记录在 `docs/adr/`。
 
 ## Language
 
@@ -89,6 +89,22 @@ _Avoid_: 断链、坏引用
 **依赖环（dep cycle）**:
 依赖闭包回到自身的引用链（含自引用）；写入路径拒绝并回显环路径，`lint` 对合并产物报告。
 _Avoid_: 循环依赖（口语可，但报错与文档统一用「依赖环」）
+
+### 目录作用域上下文注入（dir-context 域）
+
+**触碰（touch）**:
+模型对某个目录产生可静态判定的读写意向的动作：`read`/`write`/`edit` 的 `path`、`ls` 的 `path`、bash 里恰好一个单文件读（`cat`/`head`/`tail`）的目标。是「按需加载子树上下文」的触发词。
+_Avoid_: 访问、命中（与依赖门/候选筛的“命中”撞词）
+
+**锚点目录（anchor dir）**:
+一次触碰的解析起点：文件类触碰取文件所在目录，目录类触碰取该目录本身；必须在 `realpath` 后落在 cwd 之内，否则视为无锚点（零注入）。向上发现的起点就是它。
+_Avoid_: 目标目录、根目录（那是 cwd / git root）
+
+**嵌套上下文文件（nested context file）**:
+位于 cwd **之下**的 `AGENTS.override.md` / `AGENTS.md` / `AGENTS.MD` / `CLAUDE.md` / `CLAUDE.MD`；每目录只取优先级最高的一个。与 pi 原生启动时加载的「祖先链上下文文件」互补——后者在系统提示里，前者按需进工具结果。
+_Avoid_: 子 AGENTS.md、局部指令
+
+---
 
 ### 工具与位置
 

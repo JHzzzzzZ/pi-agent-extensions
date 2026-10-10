@@ -121,6 +121,8 @@ export const EXTENSION_EXPECTATIONS = {
   "run-timer": { commands: [], uiKeys: ["widget-band"] },
   "virtual-model-router": { commands: [], uiKeys: [] },
   "remote-tools": { commands: [], uiKeys: [] },
+  // 无命令扩展：注入发生后才写状态段（启动期只清登记，因此不能列成启动期 TUI 键）。
+  "dir-context": { commands: ["dir-context", "dir-context:status"], uiKeys: [] },
   "stream-token-speed": { commands: [], uiKeys: ["50:stream-token-speed"] },
   "human-notify": { commands: [], uiKeys: [] },
   "chatanywhere-provider": { commands: [], uiKeys: [] },
