@@ -21,7 +21,7 @@ import { Type } from "typebox";
 
 import { ErrorCodes, type RemoteToolsErrorCode } from "./errors.ts";
 import { DEGRADED_MARKER, type RemoteSession, createRemoteLsOps } from "./ops.ts";
-import { assertModelPathInput } from "./paths.ts";
+import { assertModelPathInput, isAbsenceLiteral } from "./paths.ts";
 import { runSsh, shellQuote, validateRemotePath } from "./ssh.ts";
 
 const DEFAULT_LIMIT = 100;
@@ -112,7 +112,8 @@ export function formatContextLine(filePath: string, lineNumber: number, text: st
 
 /** 搜索根解析：省略 = 远端 $HOME；绝对 POSIX 路径原样；其余按远端 cwd 相对解析（Windows 盘符形态原样交给上层拒绝）。 */
 export function resolveRemoteSearchPath(input: unknown, baseDir: string): string {
-	if (typeof input !== "string" || input.trim() === "") return baseDir;
+	// 非字符串与缺省值字面量（"null"/"undefined"…）都是「没给」⇒ 落回基准目录（否则会拼成 $HOME/null 这种静默错目录）。
+	if (typeof input !== "string" || isAbsenceLiteral(input) || input.trim() === "") return baseDir;
 	const normalized = input.trim().replace(/\\/g, "/");
 	if (/^[A-Za-z]:\//.test(normalized)) return normalized;
 	if (normalized.startsWith("/")) return normalized.replace(/\/+$/, "") || "/";

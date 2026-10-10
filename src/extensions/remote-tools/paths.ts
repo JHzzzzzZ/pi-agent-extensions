@@ -40,6 +40,18 @@ export function toHostPath(remotePath: string): string {
 }
 
 /**
+ * 缺省值字面量：模型/序列化器把 JSON 的 null/undefined 写成字符串的常见产物（用户实测：`remote: "null"`
+ * 被当主机名去 ssh）。这些词与「未提供」同义，大小写无关、trim 后比较。
+ * 刻意**不含** `local` / `false` / `true` / `-`：`local` 是常见 `~/.ssh/config` 别名，把它当本机会静默跑错机器。
+ */
+export const ABSENCE_LITERALS: ReadonlySet<string> = new Set(["null", "undefined", "nil", "none", "n/a", "na"]);
+
+/** 字符串是不是缺省值字面量（非字符串返回 false）。 */
+export function isAbsenceLiteral(value: unknown): boolean {
+	return typeof value === "string" && ABSENCE_LITERALS.has(value.trim().toLowerCase());
+}
+
+/**
  * 模型给的远端路径输入护栏（在任何 ssh 进程之前跑）：
  *   - 首段不得是宿主标记 `pi-remote`（可能是回灌的宿主形态，也可能撞上真实目录，两种都 fail-closed）；
  *   - 不做 `~` 展开（展开要在远端做，本扩展不加额外往返），拼成 `$HOME/~/x` 是错的，直接拒。
