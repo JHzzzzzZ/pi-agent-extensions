@@ -42,6 +42,11 @@
   （真机 + 评审都拓到）。
 - **模型的路径输入先过 `assertModelPathInput`**（发 ssh 之前）：首段不得是宿主标记 `pi-remote`、不得 `~` 开头
   （拼成 `$HOME/~/x` 是错的）。两者都是 fail-closed，不静默指错目录。
+- **参数判定容忍采样器噪声（remote-tools#5 回归）**：覆盖同名工具会继承宿主的
+  `constrainedSampling: {strict: "prefer"}`，采样器会把可选字段一并填出（数字填 `0`、字符串填空串）。
+  所以：`remote` 非字符串/空串/纯空白 ⇒ 本地模式；本地模式**完全忽略** `remotePort`/`remoteCwd`；
+  `remotePort` 为 `null`/非数字/`NaN`/`<= 0` ⇒ 当未提供；只有**正数越界或非整数**才报 `INVALID_REMOTE_PORT`。
+  实测教训：没有远端意图的字段绝不能让本地调用失败（用户实测本地 read 被 `remotePort: 0` 打断）。
 - **远端 $HOME 缓存失败不毒化**：session 按目标永久缓存，所以 `home()` 失败时清缓存、下次重试（瞬时网络抖动
   不能让该目标所有相对路径调用挂到 `/reload`）。
 
@@ -58,7 +63,7 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_*`/`SSH_*`/`REMOTE_*`/`RIPGREP_MISSING`）
-- `test/` — 60 个：54 个纯本地（`ssh.test.ts`(10) / `paths.test.ts`(8) / `ops.test.ts`(14) / `grep.test.ts`(12) / `tools.test.ts`(10)）+ 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `test/` — 62 个：56 个纯本地（`ssh.test.ts`(10) / `paths.test.ts`(8) / `ops.test.ts`(14) / `grep.test.ts`(12) / `tools.test.ts`(12)）+ 6 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10 已执行）
 

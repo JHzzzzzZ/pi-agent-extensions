@@ -17,7 +17,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 | 参数 | 适用工具 | 说明 |
 | --- | --- | --- |
 | `remote` | 全部 7 个 | 远端 SSH 目标 `"[user@]host"`；**省略或留空 = 在本机执行**（与内置行为一致） |
-| `remotePort` | 全部 7 个 | 远端 SSH 端口 1-65535；省略用 `~/.ssh/config` / ssh 默认 |
+| `remotePort` | 全部 7 个 | 远端 SSH 端口 1-65535；省略用 `~/.ssh/config` / ssh 默认。**噪声容错**：`null`/非数字/`0`/负数一律当作未指定，不会报错 |
 | `remoteCwd` | 仅 `bash` | 远端工作目录；省略 = 远端 `$HOME` |
 
 远端路径规则：`path` 必须是**远端绝对 POSIX 路径**（`/srv/app/src/a.ts`）。省略 `path`（`ls`/`find`/`grep`）或不给 `remoteCwd` 时用远端 `$HOME`；相对路径按远端 `$HOME` 解析。Windows 盘符路径（`C:/…`）会被拒绝。
@@ -49,7 +49,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-54 个（node:test，全本地）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（宿主路径往返与输入护栏）、
+56 个（node:test，全本地）：`test/ssh.test.ts`（传输/目标解析/失败分类）、`test/paths.test.ts`（宿主路径往返与输入护栏）、
 `test/ops.test.ts`（发给 ssh 的命令构造与错误映射）、`test/grep.test.ts`（rg 事件解析/降级/限流）、
 `test/tools.test.ts`（注册覆盖、本地保真对照、远端分派、session 缓存）。
 

@@ -281,8 +281,9 @@ test("失败映射：未知主机指纹 / 相对路径 / 端口非法 都 fail-c
 		new RegExp(ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE),
 	);
 	await assert.rejects(
-		() => mustNotRun.tools.get("read")!.execute(ID, { path: "/srv/a.ts", remote: REMOTE, remotePort: 0 }, undefined, undefined, ctxFor(process.cwd())),
+		() => mustNotRun.tools.get("read")!.execute(ID, { path: "/srv/a.ts", remote: REMOTE, remotePort: 70000 }, undefined, undefined, ctxFor(process.cwd())),
 		new RegExp(ErrorCodes.INVALID_REMOTE_PORT),
+		"正数越界的端口是真错，仍然拦",
 	);
 	await assert.rejects(
 		() => mustNotRun.tools.get("read")!.execute(ID, { path: "/srv/a.ts", remote: "-oProxyCommand=x" }, undefined, undefined, ctxFor(process.cwd())),
@@ -305,6 +306,43 @@ test("失败映射：未知主机指纹 / 相对路径 / 端口非法 都 fail-c
 		() => missing.tools.get("read")!.execute(ID, { path: "/srv/gone.ts", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd())),
 		new RegExp(ErrorCodes.REMOTE_NOT_FOUND),
 	);
+});
+
+test("采样器噪声不得打断本地调用：带 remotePort: 0 与不带时输出逐字一致，且零 ssh（用户实测回归）", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "remote-tools-noise-"));
+	await writeFile(path.join(dir, "a.ts"), "const noise = 0;\n", "utf8");
+	const recorder = recordTools((request) => {
+		throw new Error(`本地分支不应发 ssh：${request.args.join(" ")}`);
+	});
+	const ctx = ctxFor(dir);
+	const tool = recorder.tools.get("read")!;
+
+	const clean = await tool.execute(ID, { path: "a.ts" }, undefined, undefined, ctx);
+	const noisy = await tool.execute(ID, { path: "a.ts", remotePort: 0, remote: "", remoteCwd: "/srv" }, undefined, undefined, ctx);
+
+	assert.equal(textOf(noisy as never), textOf(clean as never), "噪声字段不得改变本地输出");
+	assert.equal(recorder.calls.length, 0, "噪声字段不得拉起 ssh");
+});
+
+test("远端也用得起噪声端口：remotePort: 0 视作未指定，照常走远端默认端口", async () => {
+	const recorder = recordTools(
+		homeProbeAware((request) => {
+			const command = request.args.at(-1) ?? "";
+			if (command.startsWith("test -r")) return {};
+			if (command.startsWith("if [ -e ")) return { stdout: Buffer.from("body\n") };
+			return {};
+		}),
+	);
+
+	const result = await recorder.tools.get("read")!.execute(
+		ID,
+		{ path: "/srv/a.ts", remote: REMOTE, remotePort: 0 },
+		undefined,
+		undefined,
+		ctxFor(process.cwd()),
+	);
+	assert.match(textOf(result as never), /body/);
+	assert.equal(recorder.calls[0].args.includes("-p"), false, "remotePort: 0 不应生成 -p");
 });
 
 test("session 缓存：同一目标多次调用只解析一次远端 $HOME", async () => {
