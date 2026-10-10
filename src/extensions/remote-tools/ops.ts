@@ -61,7 +61,16 @@ export function createRemoteSession(options: RemoteSessionOptions): RemoteSessio
 		target: options.target,
 		exec: options.exec,
 		home(): Promise<string> {
-			homePromise ??= options.homeDir === undefined ? resolveRemoteHome(options.target, options.exec) : Promise.resolve(options.homeDir);
+			if (homePromise === undefined) {
+				const attempt =
+					options.homeDir === undefined ? resolveRemoteHome(options.target, options.exec) : Promise.resolve(options.homeDir);
+				// 失败就清缓存：session 本身被 tools.ts 按目标永久缓存，瞬时网络抖动不能把 $HOME 永久钉死（
+				// 否则该目标所有相对路径调用要到 /reload 才能恢复）。
+				homePromise = attempt.catch((error: unknown) => {
+					homePromise = undefined;
+					throw error;
+				});
+			}
 			return homePromise;
 		},
 	};
@@ -168,6 +177,10 @@ export function createRemoteEditOps(session: RemoteSession): EditOperations {
 }
 
 export function createRemoteLsOps(session: RemoteSession): LsOperations {
+	// 宿主 ls 会先 readdir、再对**每一条** entry 调 stat（dist/core/tools/ls.js），
+	// 直接实现 stat 就是 N+1 次 ssh 往返（无 ControlMaster 时每轮都是完整握手）。
+	// 所以 readdir 用 `ls -A1p`（目录带尾斜杠）一次性把类型拿回来，缓存给随后的 stat 用，0 额外往返。
+	const entryTypes = new Map<string, boolean>();
 	return {
 		async exists(absolutePath: string): Promise<boolean> {
 			const remotePath = requireRemotePath(absolutePath);
@@ -176,6 +189,8 @@ export function createRemoteLsOps(session: RemoteSession): LsOperations {
 		},
 		async stat(absolutePath: string): Promise<{ isDirectory: () => boolean }> {
 			const remotePath = requireRemotePath(absolutePath);
+			const cached = entryTypes.get(remotePath);
+			if (cached !== undefined) return { isDirectory: () => cached };
 			const quoted = shellQuote(remotePath);
 			const result = await runChecked(session, `if [ -d ${quoted} ]; then printf 'd'; elif [ -e ${quoted} ]; then printf 'f'; else exit ${EXIT_NOT_FOUND}; fi`);
 			if (result.exitCode === EXIT_NOT_FOUND) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
@@ -185,10 +200,18 @@ export function createRemoteLsOps(session: RemoteSession): LsOperations {
 		},
 		async readdir(absolutePath: string): Promise<string[]> {
 			const remotePath = requireRemotePath(absolutePath);
-			const result = await runChecked(session, `ls -A1 ${shellQuote(remotePath)}`);
+			const result = await runChecked(session, `ls -A1p ${shellQuote(remotePath)}`);
 			if (result.exitCode === 2) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端目录不存在。");
 			if (result.exitCode !== 0) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端目录不可读（权限不足）。");
-			return lines(result.stdout);
+			const raw = lines(result.stdout);
+			entryTypes.clear();
+			for (const entry of raw) {
+				const isDirectory = entry.endsWith("/");
+				const name = isDirectory ? entry.slice(0, -1) : entry;
+				if (name === "") continue;
+				entryTypes.set(`${remotePath === "/" ? "" : remotePath}/${name}`, isDirectory);
+			}
+			return raw.map((entry) => (entry.endsWith("/") ? entry.slice(0, -1) : entry)).filter((name) => name !== "");
 		},
 	};
 }

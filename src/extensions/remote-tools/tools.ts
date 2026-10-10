@@ -52,7 +52,7 @@ import {
 	createRemoteSession,
 	createRemoteWriteOps,
 } from "./ops.ts";
-import { stripHostMarker, toHostPath } from "./paths.ts";
+import { assertModelPathInput, toHostPath } from "./paths.ts";
 import { type SshExec, type SshTarget, formatTarget, parseTarget, validateRemotePath } from "./ssh.ts";
 
 const REMOTE_GUIDELINE =
@@ -119,7 +119,8 @@ export interface ResolvedToolPath {
 /** 路径校验先于 ssh；只有省略或相对路径才需要解析远端 $HOME。 */
 export function resolveToolPath(plan: RemotePlan, input: string | undefined): Promise<ResolvedToolPath>;
 export async function resolveToolPath(plan: RemotePlan, input: string | undefined): Promise<ResolvedToolPath> {
-	const candidate = input === undefined ? undefined : stripHostMarker(input);
+	if (input !== undefined) assertModelPathInput(input);
+	const candidate = input;
 	if (candidate !== undefined && isRemoteAbsoluteCandidate(candidate)) {
 		return { remotePath: assertRemotePath(resolveRemoteSearchPath(candidate, "/")), baseDir: "/" };
 	}
@@ -267,7 +268,9 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 					glob: async (pattern, cwd, options) => {
 						const result = await rich.glob(pattern, cwd, options);
 						sink.degraded = result.degraded;
-						return result.entries;
+						// 必须返回**宿主标记形态**：宿主 find 用本机 path.relative(searchPath, entry) 求相对，
+						// 未标记的远端绝对路径会被算成 "../../../srv/…" 乱码（真机与评审都拓到过）。
+						return result.entries.map((entry) => toHostPath(entry));
 					},
 				},
 			});
@@ -304,7 +307,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		name: "grep",
 		label: "grep",
 		description:
-			"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. 传 remote 时改在远端主机搜索（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）；远端缺 ripgrep 时回退 GNU grep 并在结果里标注降级。",
+			"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars. 传 remote 时改在远端主机搜索（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）；远端缺 ripgrep 时回退 GNU grep 并在结果里标注降级。",
 		promptSnippet: "Search file contents for patterns (respects .gitignore)",
 		promptGuidelines: [REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...remoteGrepSchema.properties, ...remoteTargetProperties }),

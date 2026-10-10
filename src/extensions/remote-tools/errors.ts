@@ -22,14 +22,10 @@ export const ErrorCodes = {
 	REMOTE_NOT_READABLE: "REMOTE_NOT_READABLE",
 	/** 远端路径不可写。 */
 	REMOTE_NOT_WRITABLE: "REMOTE_NOT_WRITABLE",
-	/** 远端目标不是目录（ls/find/grep 的 path）。 */
-	REMOTE_NOT_DIRECTORY: "REMOTE_NOT_DIRECTORY",
 	/** 远端写入失败（mkdir/writeFile）。 */
 	REMOTE_WRITE_FAILED: "REMOTE_WRITE_FAILED",
 	/** 远端命令非零退出（bash 透传退出码，此处用于内部工具调用）。 */
 	REMOTE_COMMAND_FAILED: "REMOTE_COMMAND_FAILED",
-	/** 远端缺少 ripgrep，已回退 POSIX 工具（结果里带降级标注）。 */
-	RIPGREP_MISSING: "RIPGREP_MISSING",
 } as const;
 
 export type RemoteToolsErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

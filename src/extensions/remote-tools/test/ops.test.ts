@@ -125,11 +125,11 @@ test("writeFile：远端失败映射为 REMOTE_WRITE_FAILED", async () => {
 	assert.match(message, new RegExp(`^${ErrorCodes.REMOTE_WRITE_FAILED}`));
 });
 
-test("ls 后端：exists / stat（d|f 标记）/ readdir 解析", async () => {
+test("ls 后端：exists / stat（d|f 标记）/ readdir 解析；readdir 预取类型使后续 stat 零 ssh（宿主 ls 对每条 entry 调 stat）", async () => {
 	const session = makeSession((request) => {
 		const command = request.args.at(-1) ?? "";
 		if (command.includes("printf 'd'")) return { stdout: Buffer.from("d") };
-		if (command.startsWith("ls -A1")) return { stdout: Buffer.from("src\nREADME.md\n\n") };
+		if (command.startsWith("ls -A1p")) return { stdout: Buffer.from("src/\nREADME.md\n\n") };
 		return {};
 	});
 	const ops = createRemoteLsOps(session);
@@ -138,6 +138,12 @@ test("ls 后端：exists / stat（d|f 标记）/ readdir 解析", async () => {
 	assert.equal((await ops.stat("/srv/app")).isDirectory(), true);
 	assert.deepEqual(await ops.readdir("/srv/app"), ["src", "README.md"]);
 	assert.match(session.calls[1].args.at(-1) ?? "", /printf 'd'/);
+
+	// 预取后：目录带尾斜杠 ⇒ isDirectory true；文件 ⇒ false；两者都不再发 ssh。
+	const callsAfterReaddir = session.calls.length;
+	assert.equal((await ops.stat("/srv/app/src")).isDirectory(), true);
+	assert.equal((await ops.stat("/srv/app/README.md")).isDirectory(), false);
+	assert.equal(session.calls.length, callsAfterReaddir, "readdir 预取后 stat 不应再发 ssh");
 });
 
 test("ls 后端：stat 对不存在的路径抛 REMOTE_NOT_FOUND；exists 返回 false 而非抛错", async () => {
@@ -231,13 +237,19 @@ test("路径校验先于 ssh：相对路径/Windows 路径直接报错且不发�
 	assert.equal(session.calls.length, 0);
 });
 
-test("远端 $HOME：懒解析一次并缓存，供 bash 缺省目录与省略 path 使用", async () => {
-	const scripted = makeExec((request) => (request.args.at(-1) ?? "").includes("${HOME") ? { stdout: Buffer.from("/home/deploy\n") } : {});
-	const session = Object.assign(createRemoteSession({ target: TARGET, exec: scripted.exec }), scripted);
+test("远端 $HOME：懒解析一次并缓存，失败不毒化缓存（下次调用重试）", async () => {
+	let attempts = 0;
+	const scripted = makeExec((request) => {
+		if (!(request.args.at(-1) ?? "").includes("${HOME")) return {};
+		attempts++;
+		return attempts === 1 ? { exitCode: 255, stderr: "ssh: connect to host 10.0.0.7 port 22: Connection timed out" } : { stdout: Buffer.from("/home/deploy\n") };
+	});
+	const session = createRemoteSession({ target: TARGET, exec: scripted.exec });
 
+	assert.match(await failureOf(session.home()), new RegExp(`^${ErrorCodes.SSH_CONNECT_FAILED}`));
+	assert.equal(await session.home(), "/home/deploy", "一次失败后必须能重试成功");
 	assert.equal(await session.home(), "/home/deploy");
-	assert.equal(await session.home(), "/home/deploy");
-	assert.equal(scripted.calls.length, 1);
+	assert.equal(attempts, 2, "成功后就该缓存住，不再探测");
 
 	const failing = makeExec(() => ({ stdout: Buffer.from("\n") }));
 	const failingSession = createRemoteSession({ target: TARGET, exec: failing.exec });

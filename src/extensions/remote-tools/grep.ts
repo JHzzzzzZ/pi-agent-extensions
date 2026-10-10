@@ -21,7 +21,7 @@ import { Type } from "typebox";
 
 import { ErrorCodes, type RemoteToolsErrorCode } from "./errors.ts";
 import { DEGRADED_MARKER, type RemoteSession, createRemoteLsOps } from "./ops.ts";
-import { stripHostMarker } from "./paths.ts";
+import { assertModelPathInput } from "./paths.ts";
 import { runSsh, shellQuote, validateRemotePath } from "./ssh.ts";
 
 const DEFAULT_LIMIT = 100;
@@ -110,7 +110,7 @@ export function formatContextLine(filePath: string, lineNumber: number, text: st
 	return { text: `${filePath}-${lineNumber}- ${truncated}`, truncated: wasTruncated };
 }
 
-/** 搜索根解析：省略 = 远端 $HOME；绝对 POSIX 路径原样；其余按远端 cwd 相对解析（Windows 盘符形态拒绝）。 */
+/** 搜索根解析：省略 = 远端 $HOME；绝对 POSIX 路径原样；其余按远端 cwd 相对解析（Windows 盘符形态原样交给上层拒绝）。 */
 export function resolveRemoteSearchPath(input: string | undefined, baseDir: string): string {
 	if (input === undefined || input.trim() === "") return baseDir;
 	const normalized = input.trim().replace(/\\/g, "/");
@@ -220,7 +220,8 @@ function failGrep(code: RemoteToolsErrorCode, message: string): never {
 /** 远程 grep 的完整定义（工具名仍是 `grep`，远程分支由 tools.ts 分派进来）。 */
 export function executeRemoteGrep(deps: RemoteGrepDeps, params: RemoteGrepParams, signal: AbortSignal | undefined) {
 	return (async () => {
-		const searchPath = resolveRemoteSearchPath(params.path === undefined ? undefined : stripHostMarker(params.path), deps.baseDir);
+		if (params.path !== undefined) assertModelPathInput(params.path);
+		const searchPath = resolveRemoteSearchPath(params.path, deps.baseDir);
 		const checked = validateRemotePath(searchPath);
 		if (!checked.ok) failGrep(checked.code, checked.message);
 

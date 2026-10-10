@@ -227,6 +227,25 @@ test("远端分派：bash 用 remoteCwd（缺省远端 $HOME），命令经 onDa
 	assert.match(defaultCwd.calls.at(-1)?.args.at(-1) ?? "", new RegExp(`^cd '${HOME}' \\|\\| exit 201; `));
 });
 
+test("远端 find：结果必须是**相对搜索目录**的路径（宿主用本机 path.relative 算，未标记的绝对路径会变 ../../../srv/… 乱码）", async () => {
+	const recorder = recordTools(
+		homeProbeAware((request) => {
+			const command = request.args.at(-1) ?? "";
+			if (command.startsWith("test -e")) return {};
+			return { stdout: Buffer.from("/srv/app/a.ts\n/srv/app/src/b.ts\n") };
+		}),
+	);
+
+	const result = await recorder.tools.get("find")?.execute(
+		ID,
+		{ pattern: "**/*.ts", path: "/srv/app", remote: REMOTE },
+		undefined,
+		undefined,
+		ctxFor(process.cwd()),
+	);
+	assert.equal(textOf(result as never), "a.ts\nsrc/b.ts");
+});
+
 test("远端 find 降级：远端缺 ripgrep 时结果里带降级标注", async () => {
 	const recorder = recordTools(
 		homeProbeAware((request) => {
@@ -247,7 +266,6 @@ test("远端 find 降级：远端缺 ripgrep 时结果里带降级标注", async
 	assert.match(text, /a\.ts/);
 	assert.match(text, /远端缺少 ripgrep，已回退 POSIX find/);
 });
-
 test("失败映射：未知主机指纹 / 相对路径 / 端口非法 都 fail-closed，且错误里带错误码", async () => {
 	const hostKeyFailure = recordTools(() => ({ exitCode: 255, stderr: "Host key verification failed." }));
 	await assert.rejects(
@@ -269,6 +287,16 @@ test("失败映射：未知主机指纹 / 相对路径 / 端口非法 都 fail-c
 	await assert.rejects(
 		() => mustNotRun.tools.get("read")!.execute(ID, { path: "/srv/a.ts", remote: "-oProxyCommand=x" }, undefined, undefined, ctxFor(process.cwd())),
 		new RegExp(ErrorCodes.INVALID_REMOTE_TARGET),
+	);
+	await assert.rejects(
+		() => mustNotRun.tools.get("read")!.execute(ID, { path: "/pi-remote/a.ts", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd())),
+		new RegExp(ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE),
+		"模型路径不得带宿主标记首段（与宿主内部标记冲突，fail-closed）",
+	);
+	await assert.rejects(
+		() => mustNotRun.tools.get("read")!.execute(ID, { path: "~/a.ts", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd())),
+		new RegExp(ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE),
+		"远端不做 ~ 展开，直接拒绝",
 	);
 
 	// 远端不存在 → 错误码来自 ops 层

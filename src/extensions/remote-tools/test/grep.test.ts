@@ -9,6 +9,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { ErrorCodes } from "../errors.ts";
+import { assertModelPathInput } from "../paths.ts";
 import {
 	executeRemoteGrep,
 	finishGrepOutput,
@@ -77,6 +79,12 @@ test("搜索根解析：省略 → 远端 $HOME；绝对原样；相对按远端
 	assert.equal(resolveRemoteSearchPath("/srv/app/", "/home/deploy"), "/srv/app");
 	assert.equal(resolveRemoteSearchPath("src/nested", "/home/deploy"), "/home/deploy/src/nested");
 	assert.equal(resolveRemoteSearchPath("C:/Users/me", "/home/deploy"), "C:/Users/me");
+});
+
+test("搜索根解析：~ 开头在**发 ssh 之前**被拒（由 assertModelPathInput 守，不走 resolveRemoteSearchPath）", () => {
+	for (const input of ["~/x", "~", "~/"]) {
+		assert.throws(() => assertModelPathInput(input), new RegExp(ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE), input);
+	}
 });
 
 test("输出收尾：limit 与降级各给一条提示，字节截断走宿主 truncateHead", () => {

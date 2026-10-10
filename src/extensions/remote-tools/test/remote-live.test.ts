@@ -145,9 +145,9 @@ test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → �
 		const grepped = await tools.get("grep")!.execute(ID, { pattern: "live = 2", path: marker, remote }, undefined, undefined, ctx);
 		assert.match(text(grepped as never), /live\.ts:1: export const live = 2;/);
 
-		// find
+		// find：结果必须是**相对搜索目录**的路径（宿主用本机 path.relative 算，绝对路径会被算成 ../../../srv/… 乱码）
 		const found = await tools.get("find")!.execute(ID, { pattern: "**/*.ts", path: marker, remote }, undefined, undefined, ctx);
-		assert.match(text(found as never), /live\.ts/);
+		assert.equal(text(found as never).trim(), "live.ts");
 
 		// 省略 path 时基准是远端 $HOME（绝对不是本机项目目录）：/home/user/.ssh 是我们刚装过公钥的目录
 		const homeListing = await tools.get("ls")!.execute(ID, { remote }, undefined, undefined, ctx);

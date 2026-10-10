@@ -14,11 +14,11 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
-import { HOST_PATH_MARKER, stripHostMarker, toHostPath, toRemotePath } from "../paths.ts";
+import { assertModelPathInput, HOST_PATH_MARKER, stripHostMarker, toHostPath, toRemotePath } from "../paths.ts";
 import { validateRemotePath } from "../ssh.ts";
 
-test("往返不失真：绝对远端路径经宿主 path.resolve 后还原成原路径（含单字母首段与根目录）", () => {
-	for (const remotePath of ["/home/deploy/src/x.ts", "/srv", "/srv/app", "/s/x", "/D/x", "/a/b/c", "/"]) {
+test("往返不失真：绝对远端路径经宿主 path.resolve 后还原成原路径（含单字母首段、根目录、与标记段无关的真实目录）", () => {
+	for (const remotePath of ["/home/deploy/src/x.ts", "/srv", "/srv/app", "/s/x", "/D/x", "/a/b/c", "/", "/__root__/x", "/pi-remote/x"]) {
 		const host = toHostPath(remotePath);
 		const resolved = path.resolve(host);
 		assert.equal(toRemotePath(resolved), remotePath, `往返失败：${remotePath}（宿主形态 ${JSON.stringify(resolved)}）`);
@@ -61,6 +61,15 @@ test("非宿主标记形态原样返回：模型给的盘符路径/相对路径�
 		const remote = toRemotePath(input);
 		assert.equal(remote, expected, `原样返回：${input}`);
 		assert.equal(validateRemotePath(remote).ok, false, `应拒绝 ${input}`);
+	}
+});
+
+test("assertModelPathInput：宿主标记首段与 ~ 开头都拒，普通路径放行", () => {
+	for (const bad of [`/${HOST_PATH_MARKER}/x`, `//${HOST_PATH_MARKER}/x`, `C:/${HOST_PATH_MARKER}/x`, `C:\\${HOST_PATH_MARKER}\\x`, `/${HOST_PATH_MARKER}`, "~/x", "~", "~/"]) {
+		assert.throws(() => assertModelPathInput(bad), /REMOTE_PATH_NOT_ABSOLUTE/, bad);
+	}
+	for (const good of ["/srv/app", "/pi-remotes/x", "/srv/pi-remote/x", "/home/deploy"]) {
+		assert.doesNotThrow(() => assertModelPathInput(good), good);
 	}
 });
 
