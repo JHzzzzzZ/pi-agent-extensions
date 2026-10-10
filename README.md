@@ -19,7 +19,7 @@
 | [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭） | 33 个（node:test） |
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
-| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单 | 56 个（+6 真机 opt-in） |
+| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单 | 57 个（+6 真机 opt-in） |
 
 ## 安装
 
@@ -641,7 +641,7 @@ ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write /
 - **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`、远端图片不做 MIME 探测
 
 ```bash
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 56 个 + 6 个真机 opt-in（未设 PI_REMOTE_TOOLS_TEST_TARGET 时跳过）
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 57 个 + 6 个真机 opt-in（未设 PI_REMOTE_TOOLS_TEST_TARGET 时跳过）
 ```
 
 ---

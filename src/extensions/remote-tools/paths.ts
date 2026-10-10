@@ -44,7 +44,8 @@ export function toHostPath(remotePath: string): string {
  *   - 首段不得是宿主标记 `pi-remote`（可能是回灌的宿主形态，也可能撞上真实目录，两种都 fail-closed）；
  *   - 不做 `~` 展开（展开要在远端做，本扩展不加额外往返），拼成 `$HOME/~/x` 是错的，直接拒。
  */
-export function assertModelPathInput(input: string): void {
+export function assertModelPathInput(input: unknown): void {
+	if (typeof input !== "string") return; // 非字符串是 schema 外的噪声 ⇒ 当未提供（与 remotePort 同口径）
 	const normalized = input.trim().replace(/\\/g, "/");
 	if (normalized.startsWith("~")) {
 		throw new Error(`${ErrorCodes.REMOTE_PATH_NOT_ABSOLUTE}: 远端路径不支持 ~ 展开，请写绝对路径。`);

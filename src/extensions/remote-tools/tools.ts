@@ -116,11 +116,11 @@ export interface ResolvedToolPath {
 	baseDir: string;
 }
 
-/** 路径校验先于 ssh；只有省略或相对路径才需要解析远端 $HOME。 */
-export function resolveToolPath(plan: RemotePlan, input: string | undefined): Promise<ResolvedToolPath>;
-export async function resolveToolPath(plan: RemotePlan, input: string | undefined): Promise<ResolvedToolPath> {
-	if (input !== undefined) assertModelPathInput(input);
-	const candidate = input;
+/** 路径校验先于 ssh；只有省略或相对路径才需要解析远端 $HOME。非字符串输入（schema 外噪声）当未提供。 */
+export function resolveToolPath(plan: RemotePlan, input: unknown): Promise<ResolvedToolPath>;
+export async function resolveToolPath(plan: RemotePlan, input: unknown): Promise<ResolvedToolPath> {
+	if (typeof input === "string") assertModelPathInput(input);
+	const candidate = typeof input === "string" ? input : undefined;
 	if (candidate !== undefined && isRemoteAbsoluteCandidate(candidate)) {
 		return { remotePath: assertRemotePath(resolveRemoteSearchPath(candidate, "/")), baseDir: "/" };
 	}
