@@ -3,7 +3,7 @@
   "version": "2.63.0",
   "private": true,
   "type": "module",
-  "description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge / deep-init / human-notify / solo-mode / timeout-bg / virtual-model-router / jev-safe-gate；另有独立运行（非扩展）的 agent-manager 工具：会话浏览/检索/重命名/可恢复删除 + agent 子进程管理 + 零依赖浏览器前端",
+  "description": "Pi 扩展合集：PWR (Pi Workflow Runtime) + agent-team / stream-token-speed / chatanywhere-provider / provider-quota / run-timer / loop / goal / opencode-bridge / deep-init / human-notify / solo-mode / timeout-bg / virtual-model-router / jev-safe-gate / remote-tools；另有独立运行（非扩展）的 agent-manager 工具：会话浏览/检索/重命名/可恢复删除 + agent 子进程管理 + 零依赖浏览器前端",
   "keywords": [
     "pi-package"
   ],
@@ -33,7 +33,8 @@
       "./src/extensions/solo-mode/index.ts",
       "./src/extensions/timeout-bg/index.ts",
       "./src/extensions/virtual-model-router/index.ts",
-      "./src/extensions/jev-safe-gate/index.ts"
+      "./src/extensions/jev-safe-gate/index.ts",
+      "./src/extensions/remote-tools/index.ts"
     ]
   }
 }

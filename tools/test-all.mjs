@@ -123,6 +123,7 @@ export const DEFAULT_SUITES = [
   { ...strip, name: "timeout-bg", cwd: "src/extensions/timeout-bg", install: true, cmd: ["node", "--test", "test/*.test.ts"] },
   { ...strip, name: "virtual-model-router", cwd: "src/extensions/virtual-model-router", install: true, cmd: ["node", "--test", "test/*.test.ts"] },
   { ...strip, name: "jev-safe-gate", cwd: "src/extensions/jev-safe-gate", install: true, cmd: ["node", "--test", "test/*.test.ts"] },
+  { ...strip, name: "remote-tools", cwd: "src/extensions/remote-tools", install: true, cmd: ["node", "--test", "test/*.test.ts"] },
   {
     ...strip,
     name: "agent-manager",
