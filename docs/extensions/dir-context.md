@@ -1,6 +1,6 @@
 # dir-context — 目录作用域上下文注入（嵌套 AGENTS.md on-demand）
 
-> last verified @ 待定（合入后回填）
+> last verified @ 363fea5
 
 一句话：模型**触碰某个目录**（`read` / `write` / `edit` / `ls` / bash 单文件读）时，把该目录到 cwd 之间、**严格位于 cwd 之下**的 `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` 追加到当次工具结果里。
 

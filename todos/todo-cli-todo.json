@@ -349,7 +349,9 @@
       "tags": [],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "撤销 2026-10-10：从 aligning 回到未领取；定点复现（2026-10-11，dir-context 交付期的全量测试偶发红追查）：根 npm run test:all 的 root:todo 套件在 jobs 2 下 6 次里红 3 次；最小复现 = 在 todo-cli/ 目录并发跑两份 node --test \"test/*.test.ts\"（约 50% 红）。失败用例恒为 concurrency.test.ts:136「并发跨文件 add：3+3 真实子进程同时打两个文件，globalId 全台账唯一只靠 id.lock + 无锁残留」，断言落在 :210「计数器 = 全台账 max(globalId)+1（烧号即断）」：actual 2008 vs expected 2009 —— 即 globalId 互异（:209 通过）、无锁残留（:212 通过），但计数器落后于台账 max+1（该号来自另一并发进程发的号，计数器未跟上）。影响评估：不是丢条目/重号，而是计数器陈旧（下次 add 靠 max(计数器, 全台账 max+1) 自愈），与 #20 的「双持锁 ⇒ 丢条目/发同号」是同族但不同症状（本形态未触发双持），#20 里「未定点复现」这一环补上：真子进程并发 + 同仓多进程写即可定点复现，不必等到真机偶遇。失败现场留档：%TEMP%/todo-cli-failure-scenes/20261010T185448Z-并发跨文件-add-3-3-真实子进程同时打两个文件-globalId-全台账唯一只靠-id-lock-无锁残留.md。建议：修 #20 时把这条一起纳入验收（并发跑两份全套 = 稳定红）"
+      ],
       "createdAt": "2026-10-05T04:04:57.887Z",
       "claimedAt": null,
       "completedAt": null,

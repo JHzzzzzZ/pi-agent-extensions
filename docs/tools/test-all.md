@@ -1,6 +1,6 @@
 # test-all — 仓库全量测试入口（tools/test-all.mjs）
 
-> last verified @ 20acc24
+> last verified @ 363fea5
 
 ## 职责与边界
 
