@@ -22,6 +22,58 @@
       "claimedAt": "2026-10-10T14:13:44.830Z",
       "completedAt": "2026-10-10T16:23:42.831Z",
       "alignedAt": "2026-10-10T14:19:58.876Z"
+    },
+    {
+      "id": 2,
+      "globalId": 352,
+      "text": "remote-tools 后续：remote 参数加主机白名单/别名（如 /remote add prod user@host，模型只能引用已登记目标）——v1 自由填写的风险是命令输出可诱导模型连任意主机",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "follow-up",
+        "security"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-10T16:24:07.973Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 3,
+      "globalId": 353,
+      "text": "remote-tools 后续：远端只读模式（参数或会话级开关），命中只读时 write/edit/bash 结构化拒绝——v1 靠远端账号权限兜底",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "follow-up"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-10T16:24:08.223Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 4,
+      "globalId": 354,
+      "text": "remote-tools 后续：本地↔远端路径映射（localRoot/remoteRoot 前缀替换），免去模型每次手写远端绝对路径——v1 按对齐文档不做映射",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "follow-up"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-10T16:24:08.486Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
