@@ -147,7 +147,7 @@ test("真机：远端 read 图片走图片管线（真 PNG → image 块；文�
 });
 
 test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → 远端 write/read/ls/grep/find/bash）", { skip }, async () => {
-	// 这一条才走完整链路：同名覆盖 → resolveToolPath 的 //pi-remote 标记 → 宿主 path 解析 → ops 还原 → 真 ssh。
+	// 这一条才走完整链路：同名覆盖 → resolveToolPath 的标记根前缀 → 宿主 path 解析 → ops 还原 → 真 ssh。
 	const tools = new Map<string, ToolDefinition>();
 	registerRemoteTools(
 		{
@@ -216,6 +216,13 @@ test("真机：远端不存在 / 无权限报结构化错误码（不是未捕�
 
 	await assert.rejects(() => read.readFile("/definitely/missing/pi-remote-tools.ts"), isNotFoundOrUnreadable);
 	await assert.rejects(() => read.readFile("/proc/1/mem"), isNotFoundOrUnreadable);
+
+	// 目录的归因必须真的是「是目录」——`-e` 对目录同样成立，分支顺序写反就会误报成权限问题（评审备注 1）。
+	const directory = baseDirInput ?? (await makeSession().home());
+	await assert.rejects(
+		() => read.readFile(directory),
+		(error: unknown) => error instanceof Error && error.message.startsWith(ErrorCodes.REMOTE_NOT_READABLE) && error.message.includes("是目录"),
+	);
 });
 
 test("真机：不可达/未知主机 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {

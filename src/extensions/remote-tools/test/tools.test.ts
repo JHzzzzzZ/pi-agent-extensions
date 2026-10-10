@@ -73,6 +73,9 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 		.join("");
 }
 
+/** readFile 的远端命令特征：目录分支排在 -e 之前，所以不能再用 `if [ -e ` 当特征（评审备注 1 的分支重排）。 */
+const isRemoteReadFile = (command: string): boolean => command.includes("; then LC_ALL=C cat ");
+
 /** 宿主的远端路径探测/读取都回答「存在且是目录」或给定内容。 */
 function homeProbeAware(inner: (request: SshExecRequest) => Partial<SshExecResult>) {
 	return (request: SshExecRequest): Partial<SshExecResult> => {
@@ -165,7 +168,7 @@ test("远端分派：read 的 ssh 命令里是远端路径（Windows 盘符污�
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
 			if (command.startsWith("test -r")) return {};
-			if (command.startsWith("if [ -e ")) return { stdout: Buffer.from("remote-file-body\n") };
+			if (isRemoteReadFile(command)) return { stdout: Buffer.from("remote-file-body\n") };
 			return {};
 		}),
 	);
@@ -185,7 +188,7 @@ test("远端分派：相对 path 按远端 $HOME 解析；remotePort 透传成 -
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
 			if (command.startsWith("test -r")) return {};
-			if (command.startsWith("if [ -e ")) return { stdout: Buffer.from("body\n") };
+			if (isRemoteReadFile(command)) return { stdout: Buffer.from("body\n") };
 			return {};
 		}),
 	);
@@ -293,7 +296,7 @@ test("远端 read 图片：走宿主图片管线（补上 detectImageMimeType �
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
 			if (command.includes("head -c")) return { stdout: Buffer.from(png.toString("base64")) };
-			if (command.startsWith("if [ -e ")) return { stdout: png };
+			if (isRemoteReadFile(command)) return { stdout: png };
 			return {};
 		}),
 	);
@@ -370,7 +373,7 @@ test("远端也用得起噪声端口：remotePort: 0 视作未指定，照常走
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
 			if (command.startsWith("test -r")) return {};
-			if (command.startsWith("if [ -e ")) return { stdout: Buffer.from("body\n") };
+			if (isRemoteReadFile(command)) return { stdout: Buffer.from("body\n") };
 			return {};
 		}),
 	);
@@ -409,8 +412,8 @@ test("远端非字符串 path 视作未提供：落回远端 §HOME 并给出带
 	const recorder = recordTools(
 		homeProbeAware((request) => {
 			const command = request.args.at(-1) ?? "";
-			// 基准目录是目录：远端 readFile 应该报「是目录」而不是抛裸 TypeError
-			if (command.startsWith("if [ -e ")) return { exitCode: 4 };
+			// 基准目录是目录：远端 readFile 应该报「是目录」而不是抛裸 TypeError（目录分支现在真的排在前面）
+			if (command.startsWith("if [ -d ")) return { exitCode: 4 };
 			return {};
 		}),
 	);

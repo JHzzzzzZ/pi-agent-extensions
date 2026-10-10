@@ -188,7 +188,8 @@ export function createRemoteReadOps(session: RemoteSession): ReadOperations {
 		async readFile(absolutePath: string): Promise<Buffer> {
 			const remotePath = requireRemotePath(absolutePath);
 			const quoted = shellQuote(remotePath);
-			const result = await runChecked(session, `if [ -e ${quoted} ]; then LC_ALL=C cat ${quoted}; elif [ -d ${quoted} ]; then exit ${EXIT_IS_DIRECTORY}; else exit ${EXIT_NOT_FOUND}; fi`);
+			// 目录判断必须排在 -e 之前：`-e` 对目录同样成立，先 cat 会把「是目录」误报成「权限不足」（跨厂商评审备注 1）。
+			const result = await runChecked(session, `if [ -d ${quoted} ]; then exit ${EXIT_IS_DIRECTORY}; elif [ -e ${quoted} ]; then LC_ALL=C cat ${quoted}; else exit ${EXIT_NOT_FOUND}; fi`);
 			if (result.exitCode === EXIT_NOT_FOUND) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
 			if (result.exitCode === EXIT_IS_DIRECTORY) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端路径是目录，无法按文件读取。");
 			if (result.exitCode !== 0) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端文件不可读（权限不足）。");

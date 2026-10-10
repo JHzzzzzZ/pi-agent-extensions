@@ -62,7 +62,11 @@ test("readFile：单轮命令区分不存在/是目录/正常读取，二进制�
 	const content = await ops.readFile("/srv/app/bin.dat");
 	assert.deepEqual(content, Buffer.from([0x00, 0xff, 0x41]));
 	assert.equal(session.calls.length, 1);
-	assert.match(session.calls[0].args.at(-1) ?? "", /^if \[ -e '\/srv\/app\/bin\.dat' \]; then LC_ALL=C cat '\/srv\/app\/bin\.dat'; elif \[ -d /);
+	// 目录分支必须排在 -e 之前：`-e` 对目录同样成立，先 cat 会把「是目录」误报成「不可读」（评审备注 1）。
+	assert.match(
+		session.calls[0].args.at(-1) ?? "",
+		/^if \[ -d '\/srv\/app\/bin\.dat' \]; then exit 4; elif \[ -e '\/srv\/app\/bin\.dat' \]; then LC_ALL=C cat '\/srv\/app\/bin\.dat'; else exit 3; fi$/,
+	);
 });
 
 test("readFile：远端不存在 / 是目录 分别给出结构化错误码", async () => {
