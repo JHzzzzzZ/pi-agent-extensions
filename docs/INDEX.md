@@ -11,7 +11,7 @@
 | 问题类型 | 读这个 |
 | --- | --- |
 | `todos/` 工作流 CLI（todo.mjs）的命令面、路径安全、查重口径、JSON schema 与锁 | `tools/todo-cli.md` |
-| 全仓测试怎么跑（21 套件清单 / serial 口径 / 并发与依赖安装加速 / 实测对照） | `tools/test-all.md` |
+| 全仓测试怎么跑（22 套件清单 / serial 口径 / 并发与依赖安装加速 / 实测对照） | `tools/test-all.md` |
 | todo 对齐门状态机（open → aligning → aligned → processing → done）、对齐文档契约与 reopen 回退通道 | `tools/todo-cli.md` + `adr/0003-todo-align-gate.md` + `adr/0007-todo-reopen.md` |
 | todos 依赖门（dependsOn 引用 / 阻塞条目 / 环与悬空校验）与开工门的关系 | `tools/todo-cli.md` + `adr/0005-todo-depends-on.md` |
 | todos 优先级（priority 1-10 软字段 / add --priority / list `[pN]` 与 --sort priority / 不占版本位） | `tools/todo-cli.md` + `adr/0009-todo-priority-soft-field.md` + `specs/todo-cli-priority.md` |
@@ -23,6 +23,7 @@
 | shell 工具超时语义（超时转后台 / 默认超时 / 后台任务注册表与日志） | `extensions/timeout-bg.md` |
 | tool_call 前置的 Jev 风险判断门（候选筛 / 分类器判定 / fail-open 可观测 / solo 豁免）与真机验收步骤 | `extensions/jev-safe-gate.md` + `jev-safe-gate-checklist.md` |
 | 把内置工具（read/write/edit/bash/grep/find/ls）改道到远端主机（remote/remotePort/remoteCwd 参数、Operations 接缝覆盖、Windows 路径空间换算、rg 降级） | `extensions/remote-tools.md` |
+| 目录作用域上下文注入（嵌套 AGENTS.md 何时触发 / 注入通道与顺序 / cwd 边界 fail-closed / 会话去重与 compact 重载 / 截断预算） | `extensions/dir-context.md` + `adr/0010-dir-context-scoped-injection.md` |
 | 错误码 / result union 属于哪一层、四层全景 | `cross/result-unions.md` |
 | 注入端口（Deps）有哪些、测试 fake 怎么选 | `cross/deps-ports.md` |
 | 自定义消息 / entry 常量 / session 持久化键 | `cross/messages-entries.md` |
@@ -57,6 +58,7 @@
 | [virtual-model-router](extensions/virtual-model-router.md) | 虚拟模型路由：注册 `opencode-go/router`，每次请求按宿主 `reason` 路由到物理模型（user→强档 / continuation→便宜快档 / retry→升档或溢出换长上下文档 / direct→固定档），零额外 LLM 调用；档位表与注册身份在 `config.ts` 单一表；真机验收清单 `virtual-model-router-checklist.md` |
 | [jev-safe-gate](extensions/jev-safe-gate.md) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只意味着「本扩展不弹框」，绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入；真机验收清单 `jev-safe-gate-checklist.md` |
 | [remote-tools](extensions/remote-tools.md) | 内置工具的 SSH 远程后端：七个内置工具加 `remote`/`remotePort`（bash 另有 `remoteCwd`），`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝；grep 因接缝覆盖不到 ripgrep 搜索而整份重写，缺 rg 时回退 GNU grep 并标注降级）；零运行时依赖，只转发白名单会话变量，路径在发 ssh 前 fail-closed |
+| [dir-context](extensions/dir-context.md) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读）时，把该目录到 cwd 之间严格位于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；由外向内、会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断 |
 
 ## 工具卡（非插件）
 
@@ -66,7 +68,7 @@
 | --- | --- |
 | [todo-cli](tools/todo-cli.md) | `todos/` 工作流 CLI（仓库内项目级 skill 资产，入口与实现同居在 `.agents/skills/todo-cli/todo-cli/`）：十子命令（含 reopen 回退与 dep 依赖增删）+ list 结构化查询 flags + migrate 双向迁移子命令；仓库根解析 = `--root` > `git rev-parse --show-toplevel`（fail-closed）；存储 = `todos/<名>.json` 唯一权威（schema v4 五态对齐门 open→aligning→aligned→processing→done、全局 id `globalId` 统一主键 + 写门禁 `GLOBAL_ID_PENDING`、对齐文档 `todos/align/<名>#<id>.md`、reopen 归档 `.reopened-<UTC 紧凑>.md`）+ 每文件 O_EXCL 锁（取号另经 `locks/id.lock` 计数器）+ 原子写，triage 只读扫描 worktree↔条目；只读写 `todos/`、CLI-only 无 pi 依赖 |
 | [agent-manager](tools/agent-manager.md) | 独立 agent 管理工具（零依赖、非 Pi 扩展）：会话浏览/检索/重命名/可恢复删除 + pi 子进程启动/停止 + 浏览器前端；`node agent-manager/server.ts` |
-| [test-all](tools/test-all.md) | 仓库全量测试入口（`node tools/test-all.mjs` / `npm run test:all`，零依赖）：20 套件逐条计时 + 失败聚合退出码；`--jobs N` 并发（serial 三条负载敏感套件独占）、`--install` 新 worktree 依赖预装（`--prefer-offline`）；测试命令的唯一权威清单 |
+| [test-all](tools/test-all.md) | 仓库全量测试入口（`node tools/test-all.mjs` / `npm run test:all`，零依赖）：22 套件逐条计时 + 失败聚合退出码；`--jobs N` 并发（serial 三条负载敏感套件独占）、`--install` 新 worktree 依赖预装（`--prefer-offline`）；测试命令的唯一权威清单 |
 
 ## 收录与淘汰
 
