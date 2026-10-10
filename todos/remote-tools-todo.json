@@ -95,6 +95,27 @@
       "claimedAt": "2026-10-10T18:03:18.421Z",
       "completedAt": "2026-10-10T18:08:34.824Z",
       "alignedAt": "2026-10-10T18:03:36.982Z"
+    },
+    {
+      "id": 6,
+      "globalId": 358,
+      "text": "缺省值字面量容错（用户 2026-10-10 实测：agent 给 remote 传字符串 \"null\"，被当成主机名去 ssh → SSH_CONNECT_FAILED）：把 null/undefined/nil/none/n\\/a（大小写无关、trim 后）识别为「未提供」⇒ remote 落本机、remoteCwd 落 $HOME、path 落远端基准；自由字符串一律不猜（保持当主机名/路径，避免静默跑错机器）；文档写明「机器名不能叫这些」",
+      "status": "done",
+      "branch": "fix/remote-tools-absence-literals",
+      "tags": [
+        "bug",
+        "param-robustness"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [
+        "对齐文档落盘；口径由用户三选一回答「1」确认（只容忍缺省值字面量，自由字符串不猜）",
+        "合并 59cdce5；单元 62 绿 + typecheck 零错误；真机 6/6 + 手工三连（\"null\"→本机、自由字符串→仍 SSH_CONNECT_FAILED、真远端照常）；跨厂商评审 OK（0 阻断/1 建议：采纳 paths.ts 文件地图补职责、按仓库惯例驳回 last verified 指文档提交）；主干 test:all 20/21——唯一红是仓库已知并发 flake（todo-cli#13，temp 目录 EPERM rename），与本次无关"
+      ],
+      "createdAt": "2026-10-10T18:17:33.209Z",
+      "claimedAt": "2026-10-10T18:21:05.239Z",
+      "completedAt": "2026-10-10T18:28:50.733Z",
+      "alignedAt": "2026-10-10T18:21:24.994Z"
     }
   ]
 }
