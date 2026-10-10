@@ -465,6 +465,24 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 29,
+      "globalId": 355,
+      "text": "install-smoke 在本机对本仓树假红 3 条：builtin 命令（/llama、/mcp，来自 builtin:llama.cpp / builtin:mcp）与用户级 skill（~/.agents/skills/typesafe-ai）被判定「不在本次安装目录内」——provenance 检查缺 builtin:/用户级资源豁免口径；需在 tools/install-smoke.mjs 按来源分类（builtin 与用户级 skill 不参与安装目录核对）或纳入期望表。与 remote-tools 无关（该次运行无任何扩展相关报错）",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "install-smoke",
+        "false-red"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-10T16:33:28.840Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
