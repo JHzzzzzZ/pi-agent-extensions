@@ -29,14 +29,15 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 3. **发现顺序**：每目录唯一一个、优先级 `AGENTS.override.md` > `AGENTS.md` > `AGENTS.MD` > `CLAUDE.md` > `CLAUDE.MD`（与 pi 原生候选集合一致）、结果**由外向内**；返回 realpath 归一后的磁盘真名。
 4. **作用域 fail-closed**：锚点经 `realpath` 归一后必须落在 cwd 之内（链接逃逸、`repo` vs `repo-evil` 前缀冒充、`../` 越界一律零注入）；cwd 自身的上下文文件不注入（pi 已加载）。
 5. **去重与重载**：会话内每绝对路径一次；`session_start` / `session_compact` 清空缓存（compact 后上下文已不在窗口里，必须允许按需重载）。
-6. **预算**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 码点边界截断；截断与丢弃都在块内留标记。
+6. **预算**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 码点边界截断；截断与丢弃都在块内留标记。**「已注入」只标记真正进了文本的文件**：被预算丢弃的不算（否则后续触碰永久拿不到那份上下文，与读取失败的重试语义自相矛盾）；目录链并集让一次注入覆盖多个文件后，这条路径是常态。
 7. **降级**：`isError` 结果、无文本内容的结果、嵌套工具调用（`parentToolCallId`）、无候选目录、读取失败（只报一次告警，不标记已注入以便重试）——一律返回 `undefined` 透传原结果。
 8. **codemode 补偿路径（v1.1）**：嵌套调用自身不注入；改在读它**顶层** codemode 结果的 `details.calls`（`{ name, args, status }`，`args` 是宿主的紧凑 JSON 截断预览），把每个条目翻译回第 1 条的触碰语义（`read`/`write`/`edit`/`ls` + bash 单文件读白名单）。多条触碰取目录链**并集**（同一文件一次、整体仍由外向内，`discoverContextFilesForAnchors`），与顶层共用同一份会话去重缓存与预算。`status` 为 `error`/`cancelled` **照算**（文件可能已被读写，注入与脚本成败无关）；非触碰工具、`args` 截断或非法 JSON、`isError` 的 codemode 结果一律跳过（少注入，不误注入）。判真伪用「工具名 `codemode` + `details.calls` 是数组」双重结构守卫——宿主的 `isCodemodeTool` 不在公开导出面（见 ADR-0012 的落地偏差）。
 ## 测试决策
 
-- 框架 `node:test` + `node:assert/strict`；63 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细 10 / 宿主事件路径 17）。
+- 框架 `node:test` + `node:assert/strict`；64 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细 10 / 宿主事件路径 18）。
 - **宿主事件路径测试接真实实现**：`discoverAndLoadExtensions`（jiti 走真实 `index.ts`）+ 真实 `ExtensionRunner.emitToolResult`，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）。风险点在宿主接缝上，纸面替身抓不到。
 - 文件系统用**真实临时目录树**（realpath、链接、大小写不敏感正是被测对象），不用路径字符串替身。
+- **跨厂商评审一条 P2 已就地修复**（kimi-coding/k3-256k）：预算丢弃的文件曾被误标「已注入」而永不重试——修法是把 `injected` 标记移到 `buildInjection` 之后、只认 `injection.injected`，并用「五级目录 × 32 KiB（>128 KiB 上限）→ 最后一份被丢弃 → 下次触碰补上」的宿主用例锁定。
 - **codemode 补偿路径走真实宿主事件**：`details` 用真实 `CodemodeToolDetails` 形状（`calls[].{id,name,args,status}`）喂进真实 `ExtensionRunner.emitToolResult`，断言「注入后原 `content` 逐字保留、`details` 原样回传、只追加一个 text block」；纯逻辑（`args` 截断/非法 JSON/未知工具/结构守卫）在 `codemode.test.ts` 全覆盖。
 - 平台条件跳过仅 2 处（创建文件符号链接需权限），skip 而非静默绿。
 - 真机验收 A/B（真实 `pi -p`，模型 kimi-coding/k3-256k）：问「只读 Button.tsx，回答该目录暗号」——带扩展答出暗号且 transcript 里出现 `Loaded src/components/AGENTS.md`，不带扩展答「文件里没有暗号、按你的要求我没读其它文件」。
