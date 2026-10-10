@@ -1,7 +1,7 @@
 # ADR-0011：目录作用域上下文注入走 `tool_result` 追加 + 会话级去重
 
 - 状态：已采纳（v1.0.0）
-- 日期：2026-10-11（UTC）
+- 日期：2026-10-10（UTC）
 - 相关：`todos/align/dir-context-todo#1.md`、`docs/extensions/dir-context.md`、`docs/cross/status-bar.md`
 
 ## 背景

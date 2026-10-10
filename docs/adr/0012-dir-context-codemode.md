@@ -1,7 +1,7 @@
 # ADR-0012：codemode 下的目录作用域上下文走「顶层结果 + 嵌套调用明细」提取
 
 - 状态：已决策，**待实现**（dir-context v1.1；确认记录见 `todos/align/dir-context-todo#2.md` 的 `## 人工确认`）
-- 日期：2026-10-11（UTC）
+- 日期：2026-10-10（UTC）
 - 相关：`docs/adr/0011-dir-context-scoped-injection.md`、`docs/extensions/dir-context.md`、`docs/specs/dir-context.md`、工单 `dir-context-todo#2`
 
 ## 背景
