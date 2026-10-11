@@ -393,16 +393,16 @@
       "id": 24,
       "globalId": 341,
       "text": "package-lock.json 的 version 字段与 package.json 漂移（既有问题，本次反复撞到）：实测 pwr（lock 2.9.3 / pkg 2.10.0）、opencode-bridge（lock 1.7.0 / pkg 1.7.1）等至少 4 个扩展的 lock 顶层与 packages.\"\".version 落后于 package.json——后果是任何人跑 npm install（含 tools/test-all.mjs --install）都会顺手改这些 lock，把无关改动混进 diff，交付时只能逐个 git checkout 回滚。要求：各扩展重生成 lock 使 version 与 package.json 一致 + 加一条检查（或写进 test-all 的 --install 后校验）防再漂移",
-      "status": "open",
-      "branch": null,
+      "status": "processing",
+      "branch": "feat/general-lock-drift",
       "tags": [],
       "priority": 4,
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-10-04T01:02:10.620Z",
-      "claimedAt": null,
+      "claimedAt": "2026-10-11T12:01:19.541Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-10-11T12:02:03.546Z"
     },
     {
       "id": 25,
