@@ -121,6 +121,24 @@
       "claimedAt": "2026-10-11T06:49:11.634Z",
       "completedAt": "2026-10-11T08:10:15.713Z",
       "alignedAt": "2026-10-11T06:56:25.146Z"
+    },
+    {
+      "id": 7,
+      "globalId": 378,
+      "text": "远端约定文件存在但读不出（chmod 000）时静默注入空块（dir-context#6 验收发现，用户 2026-10-11 实测）：现象三连——① 注入一个空内容的 Loaded 块（noise）；② 提示行被抑制（用户会误以为「远端那个目录没有约定文件」）；③ 该路径被标记为已注入，chmod 644 后同一会话再 read 也拿不到真内容（要新会话）。根因：remote-tools/context.ts 的 buildContextCommand 用 [ -f \"$f\" ] 判存在（stat 不看读权限），随后 cat 失败只写 stderr ⇒ NUL 分帧里内容帧为空 ⇒ parseContextFiles 把「空内容」当合法文件收下。修法：命令行改 [ -r \"$f\" ] 分支，读不出时发一个带 SOH 前缀的标记帧（真实路径帧恒以 / 开头，不会撞车）；parseContextFiles 返回 { files, unreadable }；只要链上出现任一个读不出的候选就整条请求 ok:false（fail-closed，绝不静默少注入）⇒ 消费方退回提示行且不标记已注入。验收：单测覆盖标记帧解析与 ok:false；真机对照（chmod 000 → 出提示、无空块、不标记；chmod 644 后同一会话再 read 能拿到真内容）。",
+      "status": "processing",
+      "branch": "feat/dir-context-unreadable",
+      "tags": [
+        "bug",
+        "remote-tools"
+      ],
+      "priority": 4,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T08:32:22.219Z",
+      "claimedAt": "2026-10-11T08:32:34.384Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-11T08:34:55.955Z"
     }
   ]
 }
