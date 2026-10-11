@@ -1,6 +1,6 @@
 # 跨扩展横切契约：远端目录上下文能力协商
 
-> last verified @ 884f503
+> last verified @ 1c7c6d7
 >
 > 背景：`dir-context` 补的是「模型触碰某目录时自动注入该目录的 `AGENTS.md`」，但它**不会 ssh、
 > 也解不了远端路径**（`dir-context-todo#4` 的根因就是远端路径在字符串层面与本机路径不可区分）。
