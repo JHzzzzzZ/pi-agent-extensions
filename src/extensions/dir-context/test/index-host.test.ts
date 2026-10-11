@@ -29,6 +29,7 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { STATUS_KEY } from "../index.ts";
+import { REMOTE_CONTEXT_CHANNEL } from "../remote-context.ts";
 import { REMOTE_NOTICE } from "../remote.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -72,10 +73,15 @@ function makeProject(): { cwd: string; cleanup: () => void } {
   return { cwd, cleanup: () => fs.rmSync(cwd, { recursive: true, force: true }) };
 }
 
-async function startHarness(t: TestContext, cwd: string) {
+async function startHarness(t: TestContext, cwd: string, offerRemoteContext?: (box: Record<string, unknown>) => void) {
   const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "dir-context-agent-"));
   t.after(() => fs.rmSync(agentDir, { recursive: true, force: true }));
-  const loaded = await discoverAndLoadExtensions([EXT_DIR], cwd, agentDir, createEventBus());
+  // 假的远端取文件能力必须**先**订阅再让 index.ts 在 session_start 广播盒子（真实握手时序）。
+  const bus = createEventBus();
+  if (offerRemoteContext !== undefined) {
+    bus.on(REMOTE_CONTEXT_CHANNEL, (box) => offerRemoteContext(box as Record<string, unknown>));
+  }
+  const loaded = await discoverAndLoadExtensions([EXT_DIR], cwd, agentDir, bus);
   assert.deepEqual(loaded.errors, [], "扩展加载必须无错（jiti 走真实 index.ts）");
   assert.equal(loaded.extensions.length, 1);
 
@@ -570,6 +576,192 @@ test("codemode 顶层结果失败：组照旧消费（不跨结果残留），�
     /远端调用/,
     "失败结果不消耗「首次」配额",
   );
+});
+
+/**
+ * 假提供方：直接挂在真实 `EventBus` 的收集频道上，形状与 remote-tools 的 `context.ts` 一致
+ * （只省掉真 ssh）。真机对照见交付报告。
+ */
+function remoteProvider(files: Array<[string, string]>) {
+  const calls: Array<Record<string, unknown>> = [];
+  return {
+    calls,
+    offer: (box: Record<string, unknown>): void => {
+      box.remoteContext = {
+        fetchRemoteContext: async (request: Record<string, unknown>) => {
+          calls.push(request);
+          return { ok: true, dir: "/home/u/docs", files: files.map(([path, content]) => ({ path, content })) };
+        },
+      };
+    },
+  };
+}
+
+test("远端上下文自动注入：块头带来源、不再出现提示行、本机同名路径零泄漏", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/docs/AGENTS.md", "远端 docs 约定"]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  // 本机**确实存在** docs/AGENTS.md（诱饵）：注入的必须是远端那份，绝不能是同名本机文件。
+  const result = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" }, text: "远端文件内容" }),
+  );
+  const text = injectedText(result);
+  assert.match(text, /Loaded prod:\/home\/u\/docs\/AGENTS\.md/);
+  assert.match(text, /<dir-context remote="prod" path="\/home\/u\/docs\/AGENTS\.md">/);
+  assert.match(text, /远端 docs 约定/);
+  assert.doesNotMatch(text, /Loaded docs\/AGENTS\.md/, "本机同名路径的诱饵绝不出现（dir-context-todo#4 的不回归）");
+  assert.doesNotMatch(text, /远端调用/, "注入成功就不再有那行提示");
+  assert.deepEqual(provider.calls, [{ remote: "prod", path: "docs/x.md", kind: "file" }], "请求带原始路径与 kind（由提供方解析）");
+  assert.equal(h.seen.statuses.filter((status) => status !== undefined).length, 1, "远端注入也计进状态段");
+});
+
+test("远端能力取不到（ok:false）⇒ 不注入、退回那行提示", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd, (box) => {
+    box.remoteContext = { fetchRemoteContext: async () => ({ ok: false, code: "BOOM", message: "ssh 挂了" }) };
+  });
+
+  const text = injectedText(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+  );
+  assert.doesNotMatch(text, /Loaded/);
+  assert.match(text, /远端调用/);
+});
+
+test("同一远端目录第二次调用：纯透传（已注入过不是失败，也不再提示）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/docs/AGENTS.md", "远端 docs 约定"]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } }))),
+    /Loaded prod:/,
+  );
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/y.md", remote: "prod" } })),
+    undefined,
+    "没有新内容可注 ⇒ 既不重复注入也不弹提示",
+  );
+  assert.equal(provider.calls.length, 2, "仍然照常问了一次（对端只是没给新东西）");
+});
+
+test("不在触发面上的工具（grep）带 remote：不花那趟 ssh，只给提示", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/AGENTS.md", "x"]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  const text = injectedText(
+    await h.runner.emitToolResult(toolResult({ toolName: "grep", toolInput: { pattern: "x", path: "src", remote: "prod" } })),
+  );
+  assert.match(text, /远端调用/);
+  assert.equal(provider.calls.length, 0, "不在触发面上就不取远端上下文");
+});
+
+test("codemode 脚本里的远端触碰：在**顶层**结果注入（脚本内的结果模型看不到）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/docs/AGENTS.md", "远端 docs 约定"]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" }, parentToolCallId: "call-r" }),
+  );
+  const top = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-r", details: codemodeDetails([]) }),
+  );
+  const text = injectedText(top);
+  assert.match(text, /Loaded prod:\/home\/u\/docs\/AGENTS\.md/);
+  assert.doesNotMatch(text, /远端调用/, "注入成功就不再有提示");
+});
+
+test("远端请求去重与 kind 传递：同一脚本重复碰同目录只问一次，ls 传 directory", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/docs/AGENTS.md", "远端 docs 约定"]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  // 同一脚本里两次碰**同一个**远端文件（路径 + kind 全同）⇒ 去重成一次请求。
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" }, parentToolCallId: "call-d", index: 1 }),
+  );
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" }, parentToolCallId: "call-d", index: 2 }),
+  );
+  await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-d", details: codemodeDetails([]) }),
+  );
+  assert.deepEqual(provider.calls, [{ remote: "prod", path: "docs/x.md", kind: "file" }], "同路径同 kind 只问一次");
+
+  // `ls` 带 remote ⇒ kind 必须传 directory（提供方据此把该目录**自身**当锚点）。
+  const ls = remoteProvider([["/home/u/docs/AGENTS.md", "远端 docs 约定"]]);
+  const h2 = await startHarness(t, project.cwd, ls.offer);
+  assert.match(
+    injectedText(await h2.runner.emitToolResult(toolResult({ toolName: "ls", toolInput: { path: "docs", remote: "prod" } }))),
+    /Loaded prod:/,
+  );
+  assert.deepEqual(ls.calls, [{ remote: "prod", path: "docs", kind: "directory" }]);
+});
+
+test("部分失败：只要有请求取不到且这次什么都没注成 ⇒ 退回提示行（不猜成「远端没有约定文件」）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const calls: Array<Record<string, unknown>> = [];
+  const h = await startHarness(t, project.cwd, (box) => {
+    box.remoteContext = {
+      fetchRemoteContext: async (request: Record<string, unknown>) => {
+        calls.push(request);
+        return request.path === "docs/a.md"
+          ? { ok: false, code: "BOOM", message: "这一条 ssh 挂了" }
+          : { ok: true, dir: "/home/u/docs", files: [] };
+      },
+    };
+  });
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/a.md", remote: "prod" }, parentToolCallId: "call-p", index: 1 }),
+  );
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/b.md", remote: "prod" }, parentToolCallId: "call-p", index: 2 }),
+  );
+  const top = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-p", details: codemodeDetails([]) }),
+  );
+  assert.equal(calls.length, 2, "两个不同路径各问一次");
+  const text = injectedText(top);
+  assert.doesNotMatch(text, /Loaded/);
+  assert.match(text, /远端调用/, "取不到就说取不到");
+});
+
+test("远端注入与本地共用预算：超 32 KiB 按同一口径码点截断", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/docs/AGENTS.md", "x".repeat(40 * 1024)]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  const text = injectedText(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+  );
+  assert.match(text, /\[truncated to 32768 bytes of 40960 bytes\]/);
+});
+
+test("畸形能力载荷：notify 一次并退回提示行（不抛、不破坏会话）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd, (box) => {
+    box.remoteContext = "垃圾";
+  });
+
+  assert.equal(h.seen.notifies.length, 1);
+  assert.match(h.seen.notifies[0] ?? "", /畸形/);
+  const text = injectedText(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+  );
+  assert.match(text, /远端调用/);
 });
 
 test("状态条：注入后写一个计数状态（走 status-band 前缀协调）", async (t) => {

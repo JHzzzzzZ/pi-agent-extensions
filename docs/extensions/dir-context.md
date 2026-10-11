@@ -1,10 +1,10 @@
 # dir-context — 目录作用域上下文注入（嵌套 AGENTS.md on-demand）
 
-> last verified @ 6e29b03
+> last verified @ e090c60
 
-一句话：模型**触碰某个目录**（`read` / `write` / `edit` / `ls` / bash 单文件读；codemode 脚本里的 `tools.*` 走顶层结果代偿）时，把该目录到 cwd 之间、**严格位于 cwd 之下**的 `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` 追加到当次工具结果里；**远端调用**（入参带 `remote`）一律零注入。
+追加到当次工具结果里；带 `remote` 的调用**默认零注入**（远端路径不可与本机路径混解），装了 remote-tools 时改走能力协商**自动注入远端那条祖先链**。
 
-规格：`docs/specs/dir-context.md`·决策：`docs/adr/0011-dir-context-scoped-injection.md`（通道/边界/去重）+ `docs/adr/0012-dir-context-codemode.md`（codemode，v1.1 已实现）·对齐：`todos/align/dir-context-todo#1.md`。
+规格：`docs/specs/dir-context.md`·跨扩展契约：[`docs/cross/remote-context-capability.md`](../cross/remote-context-capability.md)（与 remote-tools 的能力协商）·决策：`docs/adr/0011-dir-context-scoped-injection.md`（通道/边界/去重）+ `docs/adr/0012-dir-context-codemode.md`（codemode，v1.1 已实现）·对齐：`todos/align/dir-context-todo#1.md`、`#6.md`。
 
 ## 为什么这么做
 
@@ -21,7 +21,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 - **嵌套工具调用（`event.parentToolCallId`）不注入**：这类结果只回到调用方工具（如 codemode 脚本），不进 transcript，注入没有意义。
 - **codemode 走「顶层结果代偿」（v1.1 起）**：脚本里的 `tools.read/write/edit/ls/bash` 不直接注入，改在读它**顶层** codemode 结果的触碰；多个触碰取目录链**并集**（同一文件一次、整体仍由外向内），与顶层共用同一份会话缓存与预算。**主来源 = 嵌套 `tool_result` 事件的完整 `input`**（v1.2，宿主不截断）：按发起它的顶层调用 id 缓冲，顶层结果到达时取走；`details.calls[].args`（宿主 200 字符截断预览）降级为**兜底**，两源并集去重。`status` 为 `error`/`cancelled` 的嵌套调用**照算**（缓冲不看 `isError`：文件可能已被读写）；非触碰工具、顶层 `isError` 的 codemode 结果一律跳过。
 - **嵌套触碰缓冲有界**（v1.2）：按顶层调用 id 分组（`parentToolCallId` == 顶层 `toolCallId`）；**取走判据 = 工具名 `codemode`**（与 `details` 形状解耦——形状漂移或缺 `details` 时该组照样消费、且缓冲触碰照旧生效）；单组 64 条（超出丢后续：少记不误记）、同时最多 8 组（超出淘汰最旧的组）；顶层结果到达**取走即删**（失败的顶层结果也消费该组，不跨结果残留）；`session_start` / `session_compact` / `session_shutdown` 清空。
-- **远端调用零注入（v1.3）**：入参带非空 `remote`（来自 remote-tools 一类插件）时，`path` 在**远端**解析，本机 cwd 与之无关 ⇒ 直接跳过触碰解析（不看 `path`、不做锚点解析、不碰文件系统），改追加一行提示。判据只看**入参字段**（`remote` 是非空字符串且不是缺省值字面量，trim + 大小写无关），**不 import remote-tools 任何模块、不共享代码**；字段缺失／空串／纯空白／缺省值字面量／非字符串 ⇒ 本地行为逐字不变（没装 remote-tools 时字段根本不存在）。三条通路各自独立拦截：顶层调用、嵌套 `tool_result` 事件、`details.calls` 兜底——后两条互不依赖，漏一条就是错注入。提示文案静态（不插值 host 等模型输入）、会话内一次、`session_start` / `session_compact` 后重置。提示**按入参字段附着，不限定工具**：带 `remote` 的 `grep` / `find`（本就不在触发面上、恒零注入）结果也会拿到那行提示，嵌套分支同理——附着面比「触发工具」宽一档，方向安全、会话内一次。
+- **远端调用：默认零注入，装了对端才自动注入（v1.3 起，v1.4 扩展）**：入参带非空 `remote` 时 `path` 在**远端**解析，按本地 cwd 解锚点会错注入（把本机同名路径的约定喂给远端结果）⇒ v1.3 一律零注入 + 一行提示。v1.4 起：若 `session_start` 的能力协商拿到了 remote-tools 提供的 `fetchRemoteContext`，就对**触发面上**的远端触碰申请远端上下文（一条 ssh 取完整条祖先链，由外向内、每目录取一个），去重/截断/预算/块格式**复用本地那一套**；块头标来源（`Loaded <host>:<远端绝对路径>` + `<dir-context remote="<host>" path="…">`）。**三态**：`injected`（注入了 ⇒ 不再追加提示）/ `nothing`（已注入过、或远端确实没有约定文件 ⇒ 不是失败也不提示）/ `unavailable`（没装对端或这一趟取失败 ⇒ 退回那行提示）。判据只看入参字段、**不 import remote-tools 任何模块**；字段缺失／空串／纯空白／缺省值字面量／非字符串 ⇒ 本地行为逐字不变。三条通路各自独立拦截：顶层调用、嵌套 `tool_result` 事件、`details.calls` 兜底。提示文案静态（不插值 host 等模型输入）、会话内一次、`session_start` / `session_compact` 后重置；提示**按入参字段附着，不限定工具**（`grep`/`find` 带 `remote` 也给提示，但不申请远端上下文）。
 - **`isError` 结果不注入**：失败结果里追加指令只会污染错误诊断。注意与「嵌套调用 `isError` 照算」分开读：前者管**正在注入的那次结果**，后者管**被缓冲的触碰**。
 - **bash 是保守白名单**：只认整条命令里**恰好一个** `cat` / `head` / `tail` 的单文件目标；带重定向（`>`/`<`）、变量展开（`$`/反引号）、多文件、非白名单命令一律「拿不准」⇒ 零注入。漏判只是少注入，误判最多多注入一个目录。
 - **预算是硬上限**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 **码点**边界截断（绝不劈开多字节字符/代理对），被截断/被丢弃都在块内留标记。**「已注入」只标记真正进了文本的文件**：被预算丢弃的不算（否则后续触碰永久拿不到那份上下文——与读取失败的重试语义自相矛盾）；目录链并集让一次注入覆盖多个文件后，这条路径是常态（外部评审 P2）。
@@ -33,6 +33,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 - `index.ts` — 接线：`tool_result` / `session_start` / `session_compact` / `session_shutdown` + 命令面（`/dir-context`、`/dir-context:status`）+ 已注入清单
 - `touch.ts` — 工具 + 入参 → 被触碰的路径（含 bash 单文件读白名单与引号感知切词）
 - `remote.ts` — 远端调用判据（只读入参 `remote` 字段；缺省值字面量集合自持一份）+ 一行提示文案
+- `remote-context.ts` — 远端上下文的**消费方**：能力握手（`pi.events` 收集频道）、请求/结果双向形状守卫、把对端给的文件合成本地同一套注入条目（去重键 `remote:<host>\0<路径>`）
 - `codemode.ts` — 触碰提取与缓冲（纯函数）：顶层 codemode 结果双重判真（工具名 `codemode` + `details.calls` 结构）、`args` 解析容错、`dedupeTouches` 并集去重、`createNestedTouchBuffer`（按顶层调用 id 归组的嵌套触碰缓冲，有界）
 - `anchor.ts` — 被触碰的路径 → 锚点目录（目录类触碰指向文件时退到父目录）+ cwd 包含校验
 - `discover.ts` — 锚点 → cwd 之间的每级唯一上下文文件（由外向内）
@@ -59,9 +60,10 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 
 ## 测试与验证
 
-- `cd src/extensions/dir-context && npm install && npm test && npm run typecheck`（97 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 宿主事件路径 36）
+（116 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 10 / 宿主事件路径 45）
 - 宿主事件路径测试走**真实 `discoverAndLoadExtensions`（jiti 走 index.ts）+ 真实 `ExtensionRunner.emitToolResult`**，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）；文件系统是真实临时目录树（realpath 与包含校验正是被测对象）。
 - **远端零注入的真机/真实函数 A/B（v1.3）**：同一条事件 `read { path: "src/components/Button.tsx", remote: "prod" }`（本机**确实存在** `src/components/AGENTS.md`）——修复前（HEAD）注入 `Loaded src/AGENTS.md`，修复后零注入 + 一行提示；A/B 脚本把两个版本各加载一次（`git show HEAD:<file>` 取出旧源码到临时目录）后在真实 `ExtensionRunner` 上跑同一条事件。
+- **远端自动注入的真机 A/B（v1.4）**：真实 `pi` + 真实 remote-tools + 真实 ssh 到本机 WSL（远端用其自带的 `~/.hermes/hermes-agent/` 多层真实 `AGENTS.md`，**不在远端写任何文件**），本地另造同名目录 + 诱饵 `AGENTS.md`——v1.3 对照：零注入 + 一行提示；v1.4：注入两条由外向内的远端块（带 `user@localhost:` 来源）、无提示、本地诱饵零泄漏；同文件连读两次：第二次纯透传。
 - **2 个平台条件跳过**：创建文件符号链接需要权限（Windows 需管理员/开发者模式），建不出来时 `t.skip` 而非静默绿（Linux/macOS 上会真跑）。
 - 真机验收：在真实会话里读一个深层文件（如 `src/extensions/pwr/engine/spec.ts`），transcript 里出现 `Loaded <相对路径>` 且内容正确；`/dir-context` 能列出已注入清单。
 - **codemode 真机验收（v1.1）**：临时 agent 目录 + 真实 `pi --mode json -p --tools +codemode`，让模型用脚本 `tools.read` 读深层文件——codemode 工具结果里出现 `Loaded <相对路径>`，且模型答得出只写在嵌套 `AGENTS.md` 里的暗号（观测脚本：临时目录自建，跑完删除）。

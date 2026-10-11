@@ -36,9 +36,10 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 8. **codemode 补偿路径（v1.1）**：嵌套调用自身不注入；改在读它**顶层** codemode 结果的触碰，把每个条目翻译回第 1 条的触碰语义（`read`/`write`/`edit`/`ls` + bash 单文件读白名单）。多条触碰取目录链**并集**（同一文件一次、整体仍由外向内），与顶层共用同一份会话去重缓存与预算。`status` 为 `error`/`cancelled` **照算**；非触碰工具、顶层 `isError` 的 codemode 结果一律跳过。判真伪用「工具名 `codemode` + `details.calls` 是数组」双重结构守卫——宿主的 `isCodemodeTool` 不在公开导出面（见 ADR-0012 的落地偏差）。
 9. **主来源 = 嵌套事件的完整入参（v1.2）**：`details.calls[].args` 是宿主的 200 字符截断预览，带大载荷的 `tools.write` / `tools.edit` 必然解析失败。改为在嵌套 `tool_result` 事件（`parentToolCallId` 非空）上取**完整 `event.input`**，按发起它的顶层调用 id 缓冲，顶层 codemode 结果到达时取走；`details.calls` 解析降级为**兜底**，两源并集去重。缓冲有界（单组 64 条、最多 8 组、取走即删、会话 reset 清空），且**不看嵌套调用的 `isError`**（文件可能已被读写）。**取走判据只看工具名 `codemode`**（与 `details` 形状解耦：形状漂移或缺 `details` 时缓冲照样消费、缓冲触碰照样生效）——否则那组缓冲会永久残留、里面的触碰被白白丢掉（首轮评审发现）。真机探针证据（`pi --mode json -p --tools +codemode` + 只记日志的临时扩展）：嵌套 `write` 事件 `inputKeys=["path","content"]`、`path` 完整、`content` 长度 300，而同一调用的 `details.calls[].args` 长度恰为 200 且以 `...` 结尾。
 10. **远端调用零注入（v1.3）**：判据是**入参字段**——`remote` 是非空字符串且不是缺省值字面量（`null`/`undefined`/`nil`/`none`/`n/a`/`na`，trim + 大小写无关；本插件自持一份小集合，不跨插件引用）。命中即跳过整条触碰链路（不看 `path`、不 resolveAnchor、不读文件系统），只追加一行静态提示（会话内一次，`session_start`/`session_compact` 重置）。**三条通路各自独立拦截**：① 顶层调用的入参；② 嵌套 `tool_result` 事件的 `input`（记触碰之前拦，否则记下的触碰会在顶层结果里变成错注入）；③ `details.calls` 兜底（独立于 ② 的第二来源，必须各自拦）。② 的远端记号汇到嵌套缓冲的 `remote` 位上，等顶层 codemode 结果到达时给提示（③ 只拦不注、**不记记号**——`detectCodemodeTouches` 是纯函数，拿不到缓冲；所以「只有在 `details.calls` 里可见的远端调用」（宿主不发嵌套事件时）会被静默跳过，方向安全：只是少一行提示）。提示**按入参字段附着、不限定工具**：带 `remote` 的 `grep` / `find`（不在触发面上、恒零注入）结果也会拿到那行提示——附着面比「触发工具」宽一档，方向安全（只是多一行文本）、会话内一次。
+11. **远端目录自动注入（v1.4）**：见 `docs/cross/remote-context-capability.md`。消费方在 `session_start` 广播盒子收能力；命中触发面的远端触碰把**原始** `path`（+`kind`）交给对端解析（本侧不猜远端路径），拿回由外向内的文件列表后走 `inject.ts` 的既有去重/截断/预算；块头带 `remote="<host>"` 与 `Loaded <host>:<路径>`；三态 `injected`/`nothing`/`unavailable` 决定是否退回那行提示。codemode 路径把请求同样缓冲进嵌套分组、在顶层 codemode 结果代偿。
 ## 测试决策
 
-- 框架 `node:test` + `node:assert/strict`；97 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 宿主事件路径 36）。
+- 框架 `node:test` + `node:assert/strict`；116 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 10 / 宿主事件路径 45）。
 - **宿主事件路径测试接真实实现**：`discoverAndLoadExtensions`（jiti 走真实 `index.ts`）+ 真实 `ExtensionRunner.emitToolResult`，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）。风险点在宿主接缝上，纸面替身抓不到。
 - 文件系统用**真实临时目录树**（realpath、链接、大小写不敏感正是被测对象），不用路径字符串替身。
 - **跨厂商评审一条 P2 已就地修复**（kimi-coding/k3-256k）：预算丢弃的文件曾被误标「已注入」而永不重试——修法是把 `injected` 标记移到 `buildInjection` 之后、只认 `injection.injected`，并用「五级目录 × 32 KiB（>128 KiB 上限）→ 最后一份被丢弃 → 下次触碰补上」的宿主用例锁定。
@@ -57,4 +58,4 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 
 ## 范围外
 
-不做 `.claude/rules/` 风格的 glob 路径作用域规则；不做 `@path` 导入展开；不做 cwd 之外注入；不做 `grep` / `find` 触发；不做 `settings.json` 配置项（v1 无开关）；不做 widget（避开 widget 排序带契约）；**不做「远端侧随行注入」**（在远端分支顺带读祖先链 AGENTS.md——留待第二个真机案例驱动，现在做会造出第二套去重/预算实现）；不自己 ssh、不做远端读取（本扩展一字节远端内容都不取）。
+**远端侧自动注入已实现（v1.4）**：v1.3 把远端调用改成零注入 + 一行提示后，`#6` 把它升级为**自动注入**——经宿主 `pi.events` 从 remote-tools 取回远端目录的祖先链（一条 ssh、由外向内、到远端 `$HOME` 或 `/` 为止），注入规则与本地完全共用；取不到就退回那行提示。方案与「为什么不在本侧 ssh」见 `todos/align/dir-context-todo#6.md` 与 `docs/cross/remote-context-capability.md`。

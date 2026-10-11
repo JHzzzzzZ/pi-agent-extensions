@@ -28,6 +28,10 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 - 目标主机已配好密钥 / ssh-agent，且指纹已在 `known_hosts` 里。本扩展非交互执行（`BatchMode=yes`）且拒绝未知指纹（`StrictHostKeyChecking=yes`）——首次连一台机器请先在终端手工 `ssh user@host` 一次。
 - 远端有 `ripgrep` 时 `grep`/`find` 语义与本地一致（遵守 `.gitignore`）；没有则回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不生效）。
 
+## 向 dir-context 提供远端上下文能力
+
+带 `remote` 的调用 `path` 在远端解析，所以 `dir-context` 默认不会为它注入 `AGENTS.md`。本扩展经宿主 `pi.events` 提供 `fetchRemoteContext`：**一条 ssh** 取回该目录祖先链上的 `AGENTS.md`/`CLAUDE.md`（相对/省略路径走到远端 `$HOME`、绝对路径走到 `/`，由外向内、每目录按优先级取一个，深度有上限）。**注入规则全在 dir-context**（本扩展只负责取文件），没装 dir-context 时这项能力没人用、不影响本扩展任何行为。契约见 [`docs/cross/remote-context-capability.md`](../../../docs/cross/remote-context-capability.md)。
+
 ## 实现要点（改代码前先读）
 
 - **不自己复刻内置行为**：`read` / `write` / `edit` / `ls` / `find` / `bash` 都用宿主同一份 `createXxxToolDefinition` 配上远端 Operations 实现，因此截断、限流、渲染器、提示词片段与内置完全一致；`remote` 为空时直接调宿主本地实现（零漂移、绝不 spawn ssh）。
@@ -53,10 +57,12 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-91 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（10，宿主路径往返、标记根的结构性断言与守卫）、
+114 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（10，宿主路径往返、标记根的结构性断言与守卫）、
 `test/ops.test.ts`（20，发给 ssh 的命令构造、错误映射、图片嗅探、ls/find 目录探针与缓存）、`test/grep.test.ts`（13，rg 事件解析/降级/限流）、
 `test/tools.test.ts`（20，注册覆盖、本地保真对照、远端分派、ls/find 结构化错误与往返数、图片端到端、session 缓存）、
 `test/capability.test.ts`（5，跨扩展能力载荷与订阅、job 托管端口索取与形状守卫）、
+`test/context.test.ts`（23，远端上下文能力：祖先链终点与深度上限、一趟 ssh 的命令拼装与 NUL 分帧、
+锚点/基准归一、请求与结果双向形状守卫、失败收敛与握手先到先得）、
 `test/bash-timeout.test.ts`（9，托管路径的进程边界：不断连 + 日志 + settle、terminate 杀远端并断 ssh、无端口时的旧行为）、
 `test/shell-composition.test.ts`（3，真实加载 remote-tools + timeout-bg：能力合并、job 托管频道、反向顺序冲突可见）；`test/fixtures.ts` 提供真 PNG 等样本。
 

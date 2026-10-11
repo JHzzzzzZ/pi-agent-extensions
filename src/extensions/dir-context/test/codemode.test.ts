@@ -163,7 +163,7 @@ test("嵌套缓冲：按父调用归组，take 取走即清（同一组不会被
   assert.deepEqual(buffer.take("call-A").touches, [{ rawPath: "src/a.ts", kind: "file" }]);
   assert.deepEqual(buffer.take("call-A").touches, [], "已取走的组不再返回");
   assert.deepEqual(buffer.take("call-B").touches, [{ rawPath: "src/b.ts", kind: "file" }], "其他组不受影响");
-  assert.deepEqual(buffer.take("call-C"), { touches: [], remote: false }, "未知组返回空组");
+  assert.deepEqual(buffer.take("call-C"), { touches: [], remote: false, remoteRequests: [] }, "未知组返回空组");
 });
 
 test("嵌套缓冲：远端记号与触碰是两个维度，互不干扰", () => {
@@ -176,10 +176,11 @@ test("嵌套缓冲：远端记号与触碰是两个维度，互不干扰", () =>
   assert.equal(remoteOnly.remote, true);
   assert.equal(buffer.take("call-B").remote, false, "没标过的组 remote 恒 false");
 
-  // 同一组里远端与本地混着来：本地的照记，记号也留着（顶层既注入又提示）。
+  // 同一组里远端与本地混着来：本地的照记，记号与取上下文请求也留着（顶层既注入又取远端）。
   const mixed = createNestedTouchBuffer();
   mixed.record("call-C", { rawPath: "src/a.ts", kind: "file" });
   mixed.markRemote("call-C");
+  mixed.recordRemoteRequest("call-C", { remote: "prod", path: "docs/x.md", kind: "file" });
   mixed.record("call-C", { rawPath: "src/c.ts", kind: "file" });
   assert.deepEqual(mixed.take("call-C"), {
     touches: [
@@ -187,6 +188,7 @@ test("嵌套缓冲：远端记号与触碰是两个维度，互不干扰", () =>
       { rawPath: "src/c.ts", kind: "file" },
     ],
     remote: true,
+    remoteRequests: [{ remote: "prod", path: "docs/x.md", kind: "file" }],
   });
 });
 

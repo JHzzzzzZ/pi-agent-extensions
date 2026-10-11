@@ -11,6 +11,8 @@ export const ErrorCodes = {
   pathResolutionFailed: "DIR_CONTEXT_PATH_RESOLUTION_FAILED",
   /** 发现阶段命中的上下文文件读不出来（权限/编码/竞态删除）。 */
   contextReadFailed: "DIR_CONTEXT_CONTEXT_READ_FAILED",
+  /** 远端上下文能力不可用：对端返回不符合契约的结果 / 超时未返回（消费方侧的结果守卫）。 */
+  remoteContextUnusable: "DIR_CONTEXT_REMOTE_CONTEXT_UNUSABLE",
 } as const;
 
 export type DirContextErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

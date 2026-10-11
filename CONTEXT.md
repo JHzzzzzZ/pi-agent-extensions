@@ -119,6 +119,14 @@ _Avoid_: 嵌套缓存、pending 列表（它是「按父调用归组」的缓冲
 **远端调用（remote call）**:
 入参带 `remote`（`"[user@]host"`，非空字符串且不是缺省值字面量）的一次工具调用：该次调用的 `path` 按**远端**规则解析，与本机 cwd 无关。dir-context 对远端调用**零注入**（fail-closed）——判据只看入参字段、不 import remote-tools；远端相对路径与本机相对路径在字符串层面不可区分，按本地 cwd 解锚点就是**错注入**（把本机约定喂给远端结果）。
 _Avoid_: 远程模式（它听起来像会话状态，实际是一次调用的目标）
+
+**远端上下文能力（remote context capability）**:
+消费方（dir-context）与提供方（remote-tools）经宿主 `pi.events` 收集频道协商的一项能力：消费方在 `session_start` 广播空盒子、提供方在**同步**回调里填 `fetchRemoteContext(request)`。分工是契约的核心——提供方只负责**取**（解析远端路径 + 一趟 ssh 拿回祖先链），消费方只负责**注入**（复用本地那套发现/去重/预算/块格式）。契约见 `docs/cross/remote-context-capability.md`。
+_Avoid_: 远端注入插件、ssh 代理（它不是传输层抽象，是一次「取约定文件」的请求）
+
+**远端注入块（remote context block）**:
+远端目录的约定文件在当次工具结果里追加的那一段：`Loaded <host>:<远端绝对路径>` + `<dir-context remote="<host>" path="<远端绝对路径>">`。与本地块（`Loaded <相对路径>` / `<dir-context path="…">`）靠 `remote` 属性区分——来源必须显式，否则模型会把远端约定当本机约定。
+_Avoid_: 远端 AGENTS.md（那是文件本身，不是这块注入）
 codemode 路径下把「脚本碰了哪些路径」从嵌套调用搬到**顶层**结果的 `details.calls`（`{ name, args, status }[]`，宿主记好的明细）上处理的做法：翻译回同一套触碰语义、多触碰取并集、与顶层共用同一份去重与预算。它不改脚本拿到的返回值，只在模型看得到的那个结果里注入。`args` 是宿主的截断预览，解析失败则跳过该条。见 `docs/adr/0012-dir-context-codemode.md`。
 _Avoid_: 嵌套注入（那是被否决的 C 档）、补偿注入
 

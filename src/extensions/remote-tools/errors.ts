@@ -28,6 +28,8 @@ export const ErrorCodes = {
 	REMOTE_WRITE_FAILED: "REMOTE_WRITE_FAILED",
 	/** 远端命令非零退出（bash 透传退出码，此处用于内部工具调用）。 */
 	REMOTE_COMMAND_FAILED: "REMOTE_COMMAND_FAILED",
+	/** 远端目录上下文（dir-context 的自动注入）取回失败：解析/ssh/非零退出。消费方据此退回一行提示。 */
+	REMOTE_CONTEXT_FAILED: "REMOTE_CONTEXT_FAILED",
 	/** 标记根锚定的文件缺失或被替换（本地路径信道的前提被破坏）⇒ 远端调用 fail-closed。 */
 	HOST_MARKER_CONFLICT: "HOST_MARKER_CONFLICT",
 	/** job 托管端口不符合跨扩展契约（形状或返回值非法，见 docs/cross/shell-tool-capability.md）。 */

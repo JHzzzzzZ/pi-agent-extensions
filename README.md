@@ -19,8 +19,8 @@
 | [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭）；bash 与 remote-tools 经 `pi.events` 组合（能力协商，两个功能都保留），**远端 bash 超时同样不杀 ssh、转后台并进统一 job 面**（`/bg`、`/bg:kill`、底部状态条段），`/bg:kill` 尽力杀远端进程组 | 53 个（node:test） |
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
-| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面），未装 timeout-bg 时超时语义与内置一致 | 91 个（+9 真机 opt-in） |
-| [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；codemode 走「顶层结果代偿」（主来源 = 嵌套事件的完整入参、`details.calls` 截断预览降级兜底）；带 `remote` 的远端调用一律零注入（只读入参字段，不依赖 remote-tools）；会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次） | 97 个（node:test） |
+| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链） | 114 个（+9 真机 opt-in） |
+| [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；codemode 走「顶层结果代偿」（主来源 = 嵌套事件的完整入参、`details.calls` 截断预览降级兜底）；带 `remote` 的调用**默认零注入**（只读入参字段，绝不按本地 cwd 解远端路径），装了 remote-tools 时经 `pi.events` 协商**自动注入远端那条祖先链**（块头标来源，取不到才退回一行提示）；会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次） | 116 个（node:test） |
 
 ## 安装
 
@@ -649,7 +649,7 @@ ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write /
 - **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`
 
 ```bash
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 91 个 + 9 个真机 opt-in（未设 PI_REMOTE_TOOLS_TEST_TARGET 时跳过）
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 114 个（+9 真机 opt-in；含远端上下文能力：祖先链/一趟 ssh/NUL 分帧/形状守卫/降级）
 ```
 
 ---
@@ -690,11 +690,13 @@ Loaded src/components/AGENTS.md
 - **codemode（v1.1 起）** —— 脚本里用 `tools.read/write/edit/ls/bash` 触碰目录也触发：嵌套调用自身的返回值不动（结果只回到脚本），改在读它**顶层** codemode 结果的触碰——**主来源是嵌套 `tool_result` 事件的完整入参**（v1.2，宿主不截断；带 300 字符 `content` 的 `tools.write` 也算），`details.calls[].args`（宿主 200 字符截断预览）降级为兜底，两源取并集 → 多个触碰取目录链**并集** → 与顶层共用同一份会话去重/预算注入一次。`status` 为 `error`/`cancelled` 的嵌套调用照算；顶层结果失败（`isError`）时不注入。缓冲有界（单组 64 条 / 最多 8 组 / 取走即删 / 会话 reset 清空）；见 [`docs/adr/0012-dir-context-codemode.md`](docs/adr/0012-dir-context-codemode.md)
 - **远端调用（v1.3）** —— 入参带非空 `remote` 时 `path` 在**远端**解析，与本机 cwd 无关：本扩展直接跳过锚点解析、不碰本地文件系统、不注入任何本机上下文，只在会话内首次远端触碰时追加**一行**静态提示（远端约定不会自动注入，需要就自己 `read` 那份远端目录下的文件）。字段缺失 / 空串 / 纯空白 / 缺省值字面量一律当**本地**处理——没装远端插件时字段根本不存在，行为逐字不变；本扩展**不依赖、不 import** remote-tools（只看一个入参字段）
 - **命令面与状态** —— `/dir-context` 或 `/dir-context:status` 列出本会话已注入的清单；footer 段 `70:dir-context` 只在真的注入过之后出现
+- **远端目录自动注入（v1.4）** —— 装了 remote-tools 时，带 `remote` 的调用不再只是「零注入 + 一行提示」：dir-context 经宿主 `pi.events` 拿到「取远端文件」能力，**一条 ssh** 取完整条祖先链（相对/省略路径走到远端 `$HOME`、绝对路径走到 `/`，由外向内、每目录取一个），再去重/截断/预算注入一次。块头自报来源（`Loaded <host>:<远端绝对路径>` + `<dir-context remote="<host>" path="…">`）。没装 remote-tools、或这一趟取不到 ⇒ 退回那行提示；已经注入过的目录再碰不再重复说。见 [`docs/cross/remote-context-capability.md`](docs/cross/remote-context-capability.md)
+- **命令面与状态** —— `/dir-context` 或 `/dir-context:status` 列出本会话已注入的清单
 - **不做** —— 不做 `.claude/rules/` 风格的 glob 路径规则、不做 `@path` 导入展开、不做 cwd 之外注入、不读 `settings.json` 配置项（v1 无开关）
 - **不要与同类扩展同装** —— [`pi-subdir-context`](https://github.com/ruttybob/pi-subdir-context)、[`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) 与本扩展都在 `read` 路径注入，同装会让同一份 AGENTS.md 进两次上下文（功能不冲突，只是浪费 token）；那两家只钩 `read`，本扩展多覆盖 `write`/`edit`/`ls`/bash
 
 ```bash
-cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 97 个测试
+cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 116 个测试
 ```
 
 ---

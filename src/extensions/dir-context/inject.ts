@@ -16,14 +16,20 @@ export const MAX_TOTAL_BYTES = 128 * 1024;
 
 export interface ContextFileContent {
   absolutePath: string;
-  /** 展示用相对路径（正斜杠）。 */
+  /** `Loaded <…>` 行的展示名：本地是相对 cwd 的路径，远端是 `<host>:<远端绝对路径>`。 */
   relativePath: string;
+  /** `<dir-context path="…">` 里的路径；省略 = 用 `relativePath`（本地）。远端块给远端绝对路径（不带 host）。 */
+  sourcePath?: string | undefined;
+  /** 远端来源的 ssh 目标（含 `user@`）；本地文件不设（块头据此自报来源）。 */
+  remote?: string | undefined;
   content: string;
 }
 
 export interface InjectedFile {
   absolutePath: string;
   relativePath: string;
+  sourcePath?: string | undefined;
+  remote?: string | undefined;
   content: string;
   truncated: boolean;
   bytes: number;
@@ -65,16 +71,41 @@ export function buildInjection(files: ContextFileContent[]): Injection {
     const bytes = Buffer.byteLength(text, "utf8");
     remaining -= bytes;
 
-    injected.push({ absolutePath: file.absolutePath, relativePath: file.relativePath, content: text, truncated, bytes });
-    blocks.push(renderBlock(file.relativePath, text, truncated, bytes, originalBytes));
+    injected.push({
+      absolutePath: file.absolutePath,
+      relativePath: file.relativePath,
+      sourcePath: file.sourcePath,
+      remote: file.remote,
+      content: text,
+      truncated,
+      bytes,
+    });
+    blocks.push(
+      renderBlock({ relativePath: file.relativePath, sourcePath: file.sourcePath, remote: file.remote, content: text, truncated, bytes, originalBytes }),
+    );
   }
 
   if (skipped.length > 0) blocks.push(`[skipped (injection budget exhausted): ${skipped.join(", ")}]`);
   return { text: blocks.join("\n"), injected };
 }
 
-function renderBlock(relativePath: string, content: string, truncated: boolean, bytes: number, originalBytes: number): string {
-  const lines = [`Loaded ${relativePath}`, `<dir-context path="${relativePath}">`, content];
+interface BlockOptions {
+  relativePath: string;
+  /** 块头 `path=` 的值；省略 = `relativePath`。 */
+  sourcePath?: string | undefined;
+  /** 有值 = 远端块：`Loaded <host>:<路径>` + `<dir-context remote="<host>" path="<远端绝对路径>">`（用户要求标来源）。 */
+  remote?: string | undefined;
+  content: string;
+  truncated: boolean;
+  bytes: number;
+  originalBytes: number;
+}
+
+function renderBlock(options: BlockOptions): string {
+  const { relativePath, sourcePath, remote, content, truncated, bytes, originalBytes } = options;
+  const tagPath = sourcePath ?? relativePath;
+  const tag = remote === undefined ? `<dir-context path="${tagPath}">` : `<dir-context remote="${remote}" path="${tagPath}">`;
+  const lines = [`Loaded ${relativePath}`, tag, content];
   if (truncated) lines.push(`[truncated to ${bytes} bytes of ${originalBytes} bytes]`);
   lines.push("</dir-context>");
   return lines.join("\n");

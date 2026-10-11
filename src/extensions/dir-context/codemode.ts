@@ -18,6 +18,7 @@
  */
 import type { CodemodeToolDetails } from "@earendil-works/pi-coding-agent";
 import { isRemoteCall } from "./remote.ts";
+import type { RemoteContextRequest } from "./remote-context.ts";
 import { detectTouch, type Touch } from "./touch.ts";
 
 /** 宿主内置 codemode 的工具名（宿主常量 `CODEMODE_TOOL_NAME`）。 */
@@ -87,6 +88,8 @@ export interface NestedTouches {
   touches: Touch[];
   /** 该组里出现过**远端**调用：远端路径不进 `touches`，只留这个记号供顶层结果给一次提示。 */
   remote: boolean;
+  /** 该组里要取远端上下文的触碰（仅触发面上的工具；远端路径已不在 `touches` 里）。 */
+  remoteRequests: RemoteContextRequest[];
 }
 
 export function createNestedTouchBuffer() {
@@ -100,7 +103,7 @@ export function createNestedTouchBuffer() {
       const oldest = groups.keys().next();
       if (!oldest.done) groups.delete(oldest.value);
     }
-    const created: NestedTouches = { touches: [], remote: false };
+    const created: NestedTouches = { touches: [], remote: false, remoteRequests: [] };
     groups.set(parentCallId, created);
     return created;
   };
@@ -116,9 +119,15 @@ export function createNestedTouchBuffer() {
       groupOf(parentCallId).remote = true;
     },
 
+    /** 记下「这条远端触碰要去取远端上下文」，供顶层 codemode 结果代偿。 */
+    recordRemoteRequest(parentCallId: string, request: RemoteContextRequest): void {
+      const group = groupOf(parentCallId);
+      if (group.remoteRequests.length < MAX_NESTED_TOUCHES_PER_CALL) group.remoteRequests.push(request);
+    },
+
     take(parentCallId: string): NestedTouches {
       const recorded = groups.get(parentCallId);
-      if (recorded === undefined) return { touches: [], remote: false };
+      if (recorded === undefined) return { touches: [], remote: false, remoteRequests: [] };
       groups.delete(parentCallId);
       return recorded;
     },
