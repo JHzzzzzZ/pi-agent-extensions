@@ -119,6 +119,10 @@ test("NUL 分帧解析：路径/内容成对，空内容与尾部空段都处理
 test("远端命令：用 -r 而不是 -f 判读得出，读不出时发 SOH 标记帧", () => {
   const command = buildContextCommand(["/home/u"]);
   assert.ok(command.includes('[ -r "$f" ]'), "先判存在、再判读得出");
+  assert.ok(
+    command.includes('if [ -f "$f" ]; then if [ -r "$f" ]'),
+    "分支顺序必须是「先 -f 再 -r」——反了会让可读文件的 cat 失败变成空帧（老 bug 换形态回归）",
+  );
   assert.ok(command.includes(`printf '\\001%s\\000' "$f"`), "读不出时发带 SOH 前缀的标记帧");
 });
 

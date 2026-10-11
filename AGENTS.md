@@ -84,7 +84,7 @@ cd src/extensions/opencode-bridge && npm install && npm test && npm run typechec
 cd agent-manager && npm install && npm test && npm run typecheck   # 另 npm run test:e2e opt-in（需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
 cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck   # 50 个（含宿主事件路径：真实加载 + ExtensionRunner）
-# 117 个（含本地保真对照
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 117 个（含本地保真对照、Windows 路径往返、标记根结构性断言、输入护栏、采样器噪声、缺省值字面量、图片嗅探、ls/find 目录探针、远端超时托管、跨扩展组合、远端上下文能力（祖先链/一趟 ssh/NUL 分帧/形状守卫/降级/读不出 ≠ 不存在））+ 9 个真机 opt-in
 cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 116 个（含真实 ExtensionRunner 宿主事件路径：触发面/去重/compact 重载/cwd 边界 fail-closed/codemode 嵌套事件主来源代偿/远端调用零注入/远端目录自动注入与降级/预算丢弃不标记）
 ```
 
@@ -144,4 +144,4 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **测试数：** 唯一来源是根 `README.md`（AGENTS.md 不再复制数字，防过期）。
 
 - **组合矩阵（新扩展必过）：** 接触面清单 `docs/cross/composition-surfaces.md` 是「谁占了哪个槽」的唯一去处，由 `root:composition` 套件（L1 单装 + L2 配对）与 `node tools/composition-surfaces.mjs` 双重把关：新增插件漏声明、声明的键与源码分叉、共享同一槽却未在 `独占声明`/`共享槽` 里裁决，都会红。清单细节见 `docs/tools/composition-surfaces.md`。
-- **覆盖缺口：** 全库无 TODO/only 标记；条件跳过只有两种合法形态——平台/凭据不满足（`agent-manager/e2e.test.ts` 的真机 e2e、`dir-context` 的文件符号链接用例）与 opt-in 真机目标未设（`remote-tools` 7 个），且必须 `skip` 而非静默绿。
+- **覆盖缺口：** 全库无 TODO/only 标记；条件跳过只有两种合法形态——平台/凭据不满足（`agent-manager/e2e.test.ts` 的真机 e2e、`dir-context` 的文件符号链接用例）与 opt-in 真机目标未设（`remote-tools` 9 个），且必须 `skip` 而非静默绿。
