@@ -106,7 +106,7 @@
       "id": 6,
       "globalId": 376,
       "text": "远端目录的上下文自动注入（用户 2026-10-11 提出，dir-context#4 的「范围外」项转正式需求）——现在带 remote 的调用只给一行提示、模型要自己 read 远端 AGENTS.md，用户要的是自动注入。为什么 #4 当时排除了它：dir-context 不会 ssh、也解不了远端路径（这正是 #4 的根因），要自动注入必须有「远端取文件」的通道，且不能造出第二套去重/预算实现。候选方案（待对齐定档）：A 数据信道（推荐）——remote-tools 在自己那次远端调用的 results.details 上挂 { remoteContext: { path, content }[] }（它已有 ssh 与已解析的远端绝对路径，且本来就是「一次调用一趟 ssh」，祖先链可在同一条远端命令里取完），dir-context 读该字段、复用自己那套发现/去重/预算/格式化去注入；无该字段 ⇒ 退化成今天的一行提示，两个插件仍可各自独立安装。B 能力协商（pi.events，对齐 docs/cross/shell-tool-capability.md 的 shell 先例）——dir-context 广播请求、remote-tools 提供 fetchRemoteContext(target, dir) 函数。C remote-tools 侧随行注入——传输与注入同一处，但会把「Loaded <路径>」格式与去重/预算规则复制进第二个插件（#4 已因此排除）。共同待定项：远端祖先链的终点与深度上限（远端没有 cwd 概念，只有解析基准 remote $HOME 或 /）、每级一次 ssh 还是合成一条远端命令、失败/超时如何降级、远端内容是否要标注「来自远端」以免与本机约定混淆、现有那行提示的去留。验收草案：远端相对路径与绝对路径都能自动拿到该目录祖先链的 AGENTS.override.md/AGENTS.md/CLAUDE.md（由外向内、会话内去重、码点截断、预算与本地共用）；remote-tools 未装或未提供通道时行为与今天逐字一致（一行提示）；真机 A/B（真实 ssh 到可连主机）+ 宿主级用例 + 跨厂商评审。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/dir-context-remote-context",
       "tags": [
         "enhancement",
@@ -114,10 +114,12 @@
       ],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "完成 2026-10-11 @ merge f491f42 之后（分支 feat/dir-context-remote-context；dir-context 1.4.0 / remote-tools 1.4.0 / 根 2.69.0）：方案 B（宿主 pi.events 能力协商，与 shell 能力同构）。提供方 remote-tools/context.ts 只负责取——祖先链走到远端 $HOME（相对/省略）或 /（绝对）为止、每目录按优先级取一个、由外向内、深度上限 16、逃出基准即空链，全部候选合成**一条** ssh 的 NUL 分帧命令；消费方 dir-context/remote-context.ts 只负责注入——握手（session_start 广播盒子、同步填槽、先到先得）、请求/结果双向形状守卫、60 秒消费方超时，去重/码点截断/双层预算/块格式全走既有 inject.ts（规则只有一份）；块头标来源 Loaded <host>:<远端绝对路径> + <dir-context remote=\"…\">。三态：injected（注入且不再提示）/ nothing（已注入过或远端没有约定文件，不提示）/ unavailable（没装对端或取失败 ⇒ 退回 #4 那行提示）。顶层调用与 codemode 脚本里的远端触碰两条路都覆盖（嵌套缓冲加 remoteRequests 位、顶层结果代偿）。测试 dir-context 97→116、remote-tools 100→123；跨厂商评审 4 轮（kimi-coding/k3-256k，与 DeepSeek 系不同厂商）：第 1 轮 1 P1+6 P2 → e090c60，第 2 轮 1 P2 → 55ef944，第 3 轮（默认上限轮）3 P2 → 91c735f 并按护栏停下报告，经用户明确批准加跑第 4 轮 ⇒ 1 条数字级 P2（2728167）+ 对前两条的实测确认（变异验证：拿掉 anchorDir 归一 ⇒ 用例变红）。真机验收（真实 pi + 真实 remote-tools + 真实 ssh 到本机 WSL，远端用其自带的 ~/.hermes 多层真实 AGENTS.md、未在远端写任何文件）：v1.3 对照零注入+提示行；v1.4 自动注入两条由外向内的远端块、无提示、无本地同名诱饵泄漏；同文件第二次纯透传。全仓 test:all 唯一失败是既有 todo-cli#21（Windows 并发 rename EPERM，本分支未触碰）。"
+      ],
       "createdAt": "2026-10-11T06:42:04.424Z",
       "claimedAt": "2026-10-11T06:49:11.634Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T08:10:15.713Z",
       "alignedAt": "2026-10-11T06:56:25.146Z"
     }
   ]
