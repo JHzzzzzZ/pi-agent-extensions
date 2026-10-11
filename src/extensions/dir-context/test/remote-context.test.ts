@@ -11,6 +11,7 @@ import { createEventBus } from "@earendil-works/pi-coding-agent";
 import {
   collectRemoteContext,
   REMOTE_CONTEXT_CHANNEL,
+  REMOTE_CONTEXT_TIMEOUT_MS,
   toContextFiles,
   type RemoteContextCapability,
   type RemoteContextOutcome,
@@ -81,6 +82,19 @@ test("结果守卫：实现对端抛错 / 返回垃圾 ⇒ 收敛成 ok:false（
     const outcome = await junkOffer.capability!.fetchRemoteContext({ remote: "prod", kind: "file" });
     assert.equal(outcome.ok, false, JSON.stringify(junk));
   }
+});
+
+test("结果守卫：对端永不 settle ⇒ 60 秒超时收敛成 ok:false（不卡住工具结果的合并）", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const offer = handshake((box) => {
+    box.remoteContext = { fetchRemoteContext: () => new Promise(() => {}) };
+  });
+
+  const pending = offer.capability!.fetchRemoteContext({ remote: "prod", kind: "file" });
+  t.mock.timers.tick(REMOTE_CONTEXT_TIMEOUT_MS);
+  const outcome = await pending;
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.ok === false ? outcome.message : "", /60 秒/);
 });
 
 test("结果守卫：files 里的垃圾条目被逐条过滤，好条目照收", async () => {

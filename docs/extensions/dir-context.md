@@ -60,7 +60,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 
 ## 测试与验证
 
-（113 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 9 / 宿主事件路径 43）
+（116 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 10 / 宿主事件路径 45）
 - 宿主事件路径测试走**真实 `discoverAndLoadExtensions`（jiti 走 index.ts）+ 真实 `ExtensionRunner.emitToolResult`**，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）；文件系统是真实临时目录树（realpath 与包含校验正是被测对象）。
 - **远端零注入的真机/真实函数 A/B（v1.3）**：同一条事件 `read { path: "src/components/Button.tsx", remote: "prod" }`（本机**确实存在** `src/components/AGENTS.md`）——修复前（HEAD）注入 `Loaded src/AGENTS.md`，修复后零注入 + 一行提示；A/B 脚本把两个版本各加载一次（`git show HEAD:<file>` 取出旧源码到临时目录）后在真实 `ExtensionRunner` 上跑同一条事件。
 - **远端自动注入的真机 A/B（v1.4）**：真实 `pi` + 真实 remote-tools + 真实 ssh 到本机 WSL（远端用其自带的 `~/.hermes/hermes-agent/` 多层真实 `AGENTS.md`，**不在远端写任何文件**），本地另造同名目录 + 诱饵 `AGENTS.md`——v1.3 对照：零注入 + 一行提示；v1.4：注入两条由外向内的远端块（带 `user@localhost:` 来源）、无提示、本地诱饵零泄漏；同文件连读两次：第二次纯透传。

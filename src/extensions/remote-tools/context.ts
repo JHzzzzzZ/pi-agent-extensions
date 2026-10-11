@@ -99,18 +99,30 @@ export function contextChainDirs(anchorDir: string, baseDir: string): string[] {
 export function buildContextCommand(dirs: readonly string[]): string {
 	const names = CONTEXT_FILE_NAMES.join(" ");
 	return dirs
-		.map((dir) => `for n in ${names}; do f=${shellQuote(dir)}/$n; if [ -f "$f" ]; then printf '%s\\000' "$f"; cat "$f"; printf '\\000'; break; fi; done`)
+		.map((dir) => `for n in ${names}; do f=${quoteDir(dir)}/$n; if [ -f "$f" ]; then printf '%s\\000' "$f"; cat "$f"; printf '\\000'; break; fi; done`)
 		.join("; ");
 }
 
-/** NUL 分帧的输出 → 文件列表（奇数项是路径、偶数项是内容；尾部空段丢弃）。 */
+/** 拼目录时不把根写成 `'/'`：否则得到 `//AGENTS.md`，而 POSIX 对 `//` 前缀是实现自定义（Cygwin 会当 UNC）。 */
+function quoteDir(dir: string): string {
+	return dir === "/" ? "''" : shellQuote(dir);
+}
+
+/**
+ * NUL 分帧的输出 → 文件列表（奇数项是路径、偶数项是内容；尾部空段丢弃）。
+ *
+ * 路径帧必须长得像绝对 POSIX 路径且不含换行：远端登录 rc/banner 往 stdout 吐的东西会被扇进
+ * 首帧，不做校验就会以垃圾标题注入（内容不可信，不往上下文里编）。
+ */
 export function parseContextFiles(stdout: Buffer): RemoteContextFile[] {
 	const parts = stdout.toString("utf8").split("\u0000");
 	const files: RemoteContextFile[] = [];
 	for (let index = 0; index + 1 < parts.length; index += 2) {
 		const path = parts[index];
 		const content = parts[index + 1];
-		if (path !== undefined && path.length > 0 && content !== undefined) files.push({ path, content });
+		if (path === undefined || content === undefined) continue;
+		if (!path.startsWith("/") || /[\r\n]/.test(path)) continue;
+		files.push({ path, content });
 	}
 	return files;
 }
@@ -208,7 +220,3 @@ export function offerRemoteContextCapability(events: EventBus | undefined, capab
 	}
 }
 
-/** 供测试与调用方构造一个「什么都不给」的空结果。 */
-export function emptyOutcome(dir: string): RemoteContextOutcome {
-	return { ok: true, dir, files: [] };
-}

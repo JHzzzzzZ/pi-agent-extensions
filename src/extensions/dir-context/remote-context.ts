@@ -12,10 +12,20 @@
 
 import type { EventBus } from "@earendil-works/pi-coding-agent";
 
+import { ErrorCodes } from "./errors.ts";
 import type { ContextFileContent } from "./inject.ts";
 
 /** 收集频道（跨扩展契约；升级形状用新频道 v2，不做版本字段）。 */
 export const REMOTE_CONTEXT_CHANNEL = "pi-extensions:dir-context-remote-context:v1";
+
+/**
+ * 单次能力调用的消费方超时（毫秒）。
+ *
+ * 为何要自己兜一层：频道是公开的，填槽的是**别人的扩展**；宿主 `tool_result` 合并是
+ * `await handler(...)`，对端 Promise 永不 settle 就会卡住每个远端工具结果的合并。
+ * 提供方自己的 ssh 有 30 秒丹底，但契约不能只靠对方自觉。
+ */
+export const REMOTE_CONTEXT_TIMEOUT_MS = 60_000;
 
 /** 远端取回的单个上下文文件。 */
 export interface RemoteContextFile {
@@ -69,9 +79,31 @@ export function collectRemoteContext(events: EventBus | undefined): RemoteContex
   return { capability, warning: null };
 }
 
+/** 统一失败结果：本层错误码已登记（`errors.ts`），消息为静态模板。 */
+function unusable(message: string): RemoteContextOutcome {
+  return { ok: false, code: ErrorCodes.remoteContextUnusable, message };
+}
+
+/** 超时哨兵（与任何对端返回值都不可能相等）。 */
+const TIMED_OUT = Symbol("dir-context-remote-context-timeout");
+
+async function withTimeout(promise: Promise<unknown>): Promise<unknown | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), REMOTE_CONTEXT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /**
- * 载荷只保留契约字段，函数用薄包装隔离：调用一律包 try/catch 并把结果收敛成带 `ok` 标签的形状
- * —— 对端抛错/返回垃圾都只导致「本次不注入 + 一行提示」，绝不打断工具结果。
+ * 载荷只保留契约字段，函数用薄包装隔离：调用一律包 try/catch + 超时并把结果收敛成带 `ok` 标签的形状
+ * —— 对端抛错/超时/返回垃圾都只导致「本次不注入 + 一行提示」，绝不打断工具结果、更不卡住会话。
  */
 function toCapability(value: unknown): RemoteContextCapability | null {
   if (typeof value !== "object" || value === null) return null;
@@ -79,14 +111,16 @@ function toCapability(value: unknown): RemoteContextCapability | null {
   if (typeof fetchRemoteContext !== "function") return null;
   return {
     async fetchRemoteContext(request) {
+      let raw: unknown | typeof TIMED_OUT;
       try {
-        const outcome: unknown = await fetchRemoteContext(request);
-        const parsed = toOutcome(outcome);
-        if (parsed !== null) return parsed;
+        raw = await withTimeout(Promise.resolve(fetchRemoteContext(request)));
       } catch {
-        /* 落到下面的统一失败 */
+        return unusable("远端上下文：能力调用失败，本次跳过。");
       }
-      return { ok: false, code: "REMOTE_CONTEXT_UNUSABLE", message: "远端上下文：能力返回了不符合契约的结果，本次跳过。" };
+      if (raw === TIMED_OUT) {
+        return unusable(`远端上下文：对端超过 ${REMOTE_CONTEXT_TIMEOUT_MS / 1000} 秒未返回，本次跳过。`);
+      }
+      return toOutcome(raw) ?? unusable("远端上下文：能力返回了不符合契约的结果，本次跳过。");
     },
   };
 }

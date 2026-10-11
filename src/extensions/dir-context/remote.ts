@@ -38,4 +38,4 @@ export function isRemoteCall(input: Record<string, unknown>): boolean {
  * 远端内容都不取，只是告诉模型「远端约定不会自动到，需要就自己读」。
  */
 export const REMOTE_NOTICE =
-  "[dir-context] 远端调用：远端目录的 AGENTS.md / CLAUDE.md 约定这次没有自动注入（对端未提供或本次未取到）——需要时请自行 read（带 remote 参数）该远端目录下的同名文件。";
+  "[dir-context] 远端调用：远端目录的 AGENTS.md / CLAUDE.md 约定这次没有自动注入——需要时请自行 read（带 remote 参数）该远端目录下的同名文件。";

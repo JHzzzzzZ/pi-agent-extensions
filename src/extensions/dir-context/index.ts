@@ -175,7 +175,8 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
    * - `injected`：真的注入了（追加文本，**不再**给提示——用户决定：注入成功就删掉提示）；
    * - `nothing`：取到了但没有可注入的**新**内容（已经注入过 / 远端那个目录根本没有约定文件）
    *   —— 不是失败，也不给提示（重复调用同一目录不应被当成出错）；
-   * - `unavailable`：**取不到**（没装 remote-tools / 对端出错 / ssh 失败）—— 退回那行提示。
+   * - `unavailable`：**取不到**（没装 remote-tools / 对端出错 / ssh 失败 / 其中任何一个请求失败且这次
+   *   什么都没注成）—— 退回那行提示（取不到就说取不到，不猜成「远端没有约定文件」）。
    *
    * 去重键与本地共用一个集合但**前缀不同**（`remote:<host>\0<路径>`）：同一台机的远端路径与
    * 本机路径在字符串上可能一模一样。预算/截断/块格式全走 `inject.ts`，规则只有一份。
@@ -190,10 +191,8 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     if (!event.content.some((block) => block.type === "text")) return { kind: "nothing" };
 
     const contents: ContextFileContent[] = [];
-    let attempted = 0;
     let failed = 0;
     for (const request of dedupeRemoteRequests(requests)) {
-      attempted += 1;
       const outcome = await remoteContext.fetchRemoteContext(request);
       if (!outcome.ok) {
         failed += 1;
@@ -203,7 +202,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
         if (!injected.has(file.absolutePath)) contents.push(file);
       }
     }
-    if (contents.length === 0) return attempted > 0 && failed === attempted ? { kind: "unavailable" } : { kind: "nothing" };
+    if (contents.length === 0) return failed > 0 ? { kind: "unavailable" } : { kind: "nothing" };
 
     // 与本地同一条口径：「已注入」只标记真正进了文本的文件（被预算丢弃的下次还能重试）。
     const injection = buildInjection(contents);

@@ -78,6 +78,25 @@ test("远端命令：目录名里的单引号被正确转义（不产生注入�
   assert.ok(command.includes("'/home/u/it'\\''s'"), command);
 });
 
+test("远端命令：根目录不产出 `//` 前缀（POSIX 对 `//` 是实现自定义，Cygwin 会当 UNC）", () => {
+  const command = buildContextCommand(["/", "/srv"]);
+  assert.ok(command.includes("f=''/$n"), command.slice(0, 120));
+  assert.equal(command.includes("f='/'/$n"), false);
+});
+
+test("NUL 分帧解析：路径帧要像绝对路径且不含换行（远端 banner/rc 吐的东西不被当文件名）", () => {
+  assert.deepEqual(
+    parseContextFiles(Buffer.from("Welcome to Ubuntu!\u0000/real/AGENTS.md\u0000ok\u0000", "utf8")),
+    [],
+    "脏首帧把分帧错位了 ⇒ 成对的两帧都不像路径（一个含空格一个不以 / 开头）⇒ 全部丢弃、不注入垃圾标题",
+  );
+  // banner 直接粘在第一帧路径前面（无 NUL 分隔）：该帧被丢，后面的内容帧也不再配对得上
+  assert.deepEqual(parseContextFiles(Buffer.from("Welcome!\n/real/AGENTS.md\u0000real content\u0000", "utf8")), []);
+  for (const bad of ["relative/AGENTS.md", "/with\nnewline/AGENTS.md", "", "/with\rcr/AGENTS.md"]) {
+    assert.deepEqual(parseContextFiles(Buffer.from(`${bad}\u0000content\u0000`, "utf8")), [], JSON.stringify(bad));
+  }
+});
+
 test("NUL 分帧解析：路径/内容成对，空内容与尾部空段都处理正确", () => {
   assert.deepEqual(parseContextFiles(framed([["/a/AGENTS.md", "A"], ["/b/AGENTS.md", ""]])), [
     { path: "/a/AGENTS.md", content: "A" },
@@ -86,9 +105,9 @@ test("NUL 分帧解析：路径/内容成对，空内容与尾部空段都处理
   assert.deepEqual(parseContextFiles(Buffer.alloc(0)), []);
   assert.deepEqual(parseContextFiles(Buffer.from("\u0000", "utf8")), [], "只有分帧符 = 没有文件");
   assert.deepEqual(
-    parseContextFiles(Buffer.from("孤儿路径\u0000", "utf8")),
-    [{ path: "孤儿路径", content: "" }],
-    "只有路径没有内容 ⇒ 当一个空文件（真实命令里 cat 与终止符总是成对出现，这只会出现在传输被截断时）",
+    parseContextFiles(Buffer.from("/孤儿路径\u0000", "utf8")),
+    [{ path: "/孤儿路径", content: "" }],
+    "路径后被截断 ⇒ 与「内容为空文件」的帧完全同形（分帧本身区分不了），当一个空文件（无害）",
   );
 });
 

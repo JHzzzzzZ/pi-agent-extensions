@@ -679,6 +679,64 @@ test("codemode 脚本里的远端触碰：在**顶层**结果注入（脚本内�
   assert.doesNotMatch(text, /远端调用/, "注入成功就不再有提示");
 });
 
+test("远端请求去重与 kind 传递：同一脚本重复碰同目录只问一次，ls 传 directory", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/docs/AGENTS.md", "远端 docs 约定"]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  // 同一脚本里两次碰**同一个**远端文件（路径 + kind 全同）⇒ 去重成一次请求。
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" }, parentToolCallId: "call-d", index: 1 }),
+  );
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" }, parentToolCallId: "call-d", index: 2 }),
+  );
+  await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-d", details: codemodeDetails([]) }),
+  );
+  assert.deepEqual(provider.calls, [{ remote: "prod", path: "docs/x.md", kind: "file" }], "同路径同 kind 只问一次");
+
+  // `ls` 带 remote ⇒ kind 必须传 directory（提供方据此把该目录**自身**当锚点）。
+  const ls = remoteProvider([["/home/u/docs/AGENTS.md", "远端 docs 约定"]]);
+  const h2 = await startHarness(t, project.cwd, ls.offer);
+  assert.match(
+    injectedText(await h2.runner.emitToolResult(toolResult({ toolName: "ls", toolInput: { path: "docs", remote: "prod" } }))),
+    /Loaded prod:/,
+  );
+  assert.deepEqual(ls.calls, [{ remote: "prod", path: "docs", kind: "directory" }]);
+});
+
+test("部分失败：只要有请求取不到且这次什么都没注成 ⇒ 退回提示行（不猜成「远端没有约定文件」）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const calls: Array<Record<string, unknown>> = [];
+  const h = await startHarness(t, project.cwd, (box) => {
+    box.remoteContext = {
+      fetchRemoteContext: async (request: Record<string, unknown>) => {
+        calls.push(request);
+        return request.path === "docs/a.md"
+          ? { ok: false, code: "BOOM", message: "这一条 ssh 挂了" }
+          : { ok: true, dir: "/home/u/docs", files: [] };
+      },
+    };
+  });
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/a.md", remote: "prod" }, parentToolCallId: "call-p", index: 1 }),
+  );
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "docs/b.md", remote: "prod" }, parentToolCallId: "call-p", index: 2 }),
+  );
+  const top = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-p", details: codemodeDetails([]) }),
+  );
+  assert.equal(calls.length, 2, "两个不同路径各问一次");
+  const text = injectedText(top);
+  assert.doesNotMatch(text, /Loaded/);
+  assert.match(text, /远端调用/, "取不到就说取不到");
+});
+
 test("远端注入与本地共用预算：超 32 KiB 按同一口径码点截断", async (t) => {
   const project = makeProject();
   t.after(project.cleanup);

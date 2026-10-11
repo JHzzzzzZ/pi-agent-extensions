@@ -39,7 +39,7 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 11. **远端目录自动注入（v1.4）**：见 `docs/cross/remote-context-capability.md`。消费方在 `session_start` 广播盒子收能力；命中触发面的远端触碰把**原始** `path`（+`kind`）交给对端解析（本侧不猜远端路径），拿回由外向内的文件列表后走 `inject.ts` 的既有去重/截断/预算；块头带 `remote="<host>"` 与 `Loaded <host>:<路径>`；三态 `injected`/`nothing`/`unavailable` 决定是否退回那行提示。codemode 路径把请求同样缓冲进嵌套分组、在顶层 codemode 结果代偿。
 ## 测试决策
 
-- 框架 `node:test` + `node:assert/strict`；113 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 9 / 宿主事件路径 43）。
+- 框架 `node:test` + `node:assert/strict`；116 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 10 / 宿主事件路径 45）。
 - **宿主事件路径测试接真实实现**：`discoverAndLoadExtensions`（jiti 走真实 `index.ts`）+ 真实 `ExtensionRunner.emitToolResult`，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）。风险点在宿主接缝上，纸面替身抓不到。
 - 文件系统用**真实临时目录树**（realpath、链接、大小写不敏感正是被测对象），不用路径字符串替身。
 - **跨厂商评审一条 P2 已就地修复**（kimi-coding/k3-256k）：预算丢弃的文件曾被误标「已注入」而永不重试——修法是把 `injected` 标记移到 `buildInjection` 之后、只认 `injection.injected`，并用「五级目录 × 32 KiB（>128 KiB 上限）→ 最后一份被丢弃 → 下次触碰补上」的宿主用例锁定。
