@@ -500,6 +500,23 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 31,
+      "globalId": 373,
+      "text": "清理 TDD 残余字样（承接 2b2379f「红线 5 改为实现 + 测试」，用户 2026-10-11 要求）：红线 5 已改口径，但仓库内仍有 4 处活文档/注释写着 TDD 或先红后绿，与新口径不一致：① src/extensions/pwr/docs/tui-sync.md:53「执行 A1–A4 时遵守：TDD 先行」；② src/extensions/agent-team/docs/tui-sync.md:76「后续所有 TDD 测试的期望值从此表抄录」；③ agent-manager/agent-runner.test.ts:2 与 server.test.ts:2 文件头「（TDD：先红后绿）」。todos/ 与 todos/align/ 中的历史提及属 append-only 台账，不改写。验收：4 处改为「实现 + 测试」口径的表述、grep -rn TDD 在活文件（排除 todos/、history/、.worktrees/）零命中、全量测试与 typecheck 不回归（纯文档/注释改动）、跨厂商评审无新意见。",
+      "status": "done",
+      "branch": "docs/tdd-leftover-cleanup",
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "完成 2026-10-11 @ merge 5cb6a3b（feat 57c5c9b，docs/tdd-leftover-cleanup）。7 处活文档/注释与新口径对齐：pwr/docs/tui-sync.md:53、agent-team/docs/tui-sync.md:76、agent-manager/agent-runner.test.ts:2 与 server.test.ts:2（原 4 处）＋评审补充的 remote-tools/test/ssh.test.ts:2、ops.test.ts:2、docs/extensions/agent-team.md:114、docs/tools/todo-cli.md:145（原 4+1=5 处，共 8 文件 +8/-8）。跨厂商评审 kimi-coding/k3-256k 三轮：第 1 轮 OK with notes（3 条全采纳）、第 2 轮 BLOCK 1 条（todo-cli.md:145「先补测试再实现」，采纳）、第 3 轮 No issues found / OK；驳回 1 条（jev-safe-gate.md:44「红→绿证据」为既往变异测试事实记录）。自测：test:all 22/22 套件 2348 用例绿（主干复跑同样绿）、pwr typecheck 零错误、todo lint 通过、活文件 grep TDD/先写测试/测试先行/先红后绿 零命中（todos/**、docs/specs/**、history/** 历史记录保留）。无版本 bump（无行为变化）、README 测试数不变。另记：test:todo 并发写用例偶发失败（未改动的 dev-laptop 上同样偶发）= 既有 todo-cli#18 锁 TOCTOU，与本次无关。"
+      ],
+      "createdAt": "2026-10-11T05:49:33.345Z",
+      "claimedAt": "2026-10-11T05:49:33.581Z",
+      "completedAt": "2026-10-11T06:10:28.450Z",
+      "alignedAt": "2026-10-11T05:49:53.763Z"
     }
   ]
 }
