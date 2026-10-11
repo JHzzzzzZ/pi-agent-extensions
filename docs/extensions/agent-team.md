@@ -111,7 +111,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 - 改动 viewer 正文块 / 转录 kind / viewer 发消息链路：除单测外必跑 `test/viewer-user-host.test.ts`（真实 TuiMainScreen + 样式追踪 VT 仿真屏：背景分类/连续等宽）与 `test/viewer-chat-host.test.ts`（真实入口 + 真实转录文件；含对话线 3 轮往返的宿主级用例）；只改对话线前文注入/用量口径时必跑 `test/dialogue.test.ts`（真实 ChatCoordinator + 真实转录读写）。
 - 真实 pi 宿主契约（opt-in，不调模型）：`node test/resume-host-smoke.mjs` —— 写 fixture 会话后 `pi --mode rpc --session <file>`，断言 `get_state` 的 `messageCount` 保留且 `sessionFile` 指向该文件，stdin 结束后干净退出（续跑功能的宿主前提）。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。
-- TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来（红→绿），改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
+- TUI 行为改动：**先读 `docs/tui-sync.md` 矩阵**，期望值从矩阵来，改动与锁定测试同变更落地，改完在矩阵 §5 登记新版本号；除单测外必须跑 `viewer-host.test.ts`，最好真机 `/reload` 后目检一次。
 - fake 模式：fake spawn 手写（`makeFakeSpawn` 式）；宿主交互测试实例化真实组件、只 fake 终端。
 - 涉及团队文件格式：同步 `types.ts` + `examples/` + README。
 - 改 viewer/widget/cockpit 外观或文档截图：跑 `node tools/capture-screens.mjs` 重生成 `docs/assets/agent-team-viewer.svg`、`docs/assets/agent-team-widget.svg`（亮块展开态；帧锚点自检失败即报错，说明渲染路径已变）。同一命令也重生成 `docs/assets/pwr-viewer.svg`（pwr `RunViewer` 场景，同一 VT/SVG 管线）。长提问走查产物另走显式子命令：`node tools/capture-screens.mjs ask <outDir>`（对 80/60/40 逐档出 5 帧 SVG + 帧文本，产物落 run 资产目录、不进 `docs/assets/`；结论见 `history/team-runs/run-20260917-agentteam70/30-walkthrough-notes.md`，真机结论见同目录 `60-real-machine-result.md`）。

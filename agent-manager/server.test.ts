@@ -1,5 +1,5 @@
 /**
- * agent-manager W3 — HTTP server 测试（TDD：先红后绿）。
+ * agent-manager W3 — HTTP server 测试（实现与锁定测试同一变更内落地）。
  *
  * 边界与手法：
  * - 全部走真实 node:http server（端口 0 随机、仅 127.0.0.1）+ 真实 fetch / http.request；
