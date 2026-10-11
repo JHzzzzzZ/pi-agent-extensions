@@ -33,7 +33,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 
 - `docs/` — agent 知识库，入口是 [`docs/INDEX.md`](docs/INDEX.md) 路由表：`extensions/<插件名>.md` 每插件一卡、`cross/` 横切契约、`tools/<工具名>.md` 仓库工具卡、`adr/` 决策记录、`specs/` 规格（红线 3）、`incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；每卡 ≤100 行、头部带 `last verified @ <commit>`，改代码须同步对应卡片与该行。
 - `test/` — 仓库根自检（状态条契约 / 安装冒烟纯逻辑）；todo CLI 的测试随工具住在 `.agents/skills/todo-cli/todo-cli/test/`，由根脚本 `npm run test:todo` 指向该 glob（命令见下节）。
-- `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 15 扩展加载）。用法见脚本头与 `docs/tools/`。
+- `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 15 扩展加载）、`composition-surfaces.mjs`（接触面清单校验 + 组合配对生成，`general-todo#32`）。用法见脚本头与 `docs/tools/`。
 - `.agents/skills/todo-cli/` — 仓库内项目级 skill：`SKILL.md`（命令参考卡）+ `scripts/todo.sh` 包装器 + `todo-cli/`（todo CLI 入口与实现同居，任意 git 仓库任意 cwd 可用；仓库根解析 = `--root` > `git rev-parse --show-toplevel`，见 `docs/tools/todo-cli.md`）。
 - `src/extensions/<插件名>/` — 17 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
 - `agent-manager/` — 独立 Node 工具，**非扩展**：不 import 宿主 SDK、不注册 pi 扩展点、已从根 `pi.extensions` 注销，仅 listen `127.0.0.1`；边界与数据流见 `docs/tools/agent-manager.md`。
@@ -55,7 +55,8 @@ node --test runtime/test/scheduler.test.ts
 仓库根（无任何依赖）：
 
 ```bash
-npm run test:all        # 全仓 22 套件一条命令（逐条计时/失败聚合；--jobs N 调并发；见 docs/tools/test-all.md）
+npm run test:all        # 全仓 23 套件一条命令（逐条计时/失败聚合；--jobs N 调并发；见 docs/tools/test-all.md）
+node tools/composition-surfaces.mjs                    # 插件接触面清单校验 + L2 组合配对生成（general-todo#32）
 npm run test:contract   # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke      # 安装冒烟工具的纯逻辑单测
 npm run test:todo       # todo CLI 单测（随工具住在 .agents/skills/todo-cli/todo-cli/test/，含进程边界 E2E）
@@ -142,4 +143,5 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **性能门：** `src/extensions/pwr/test/perf.test.ts`——约 1500-agent / ~64KB 脚本的 `validateScript` 必须在 300ms（墙钟）内完成。
 - **测试数：** 唯一来源是根 `README.md`（AGENTS.md 不再复制数字，防过期）。
 
+- **组合矩阵（新扩展必过）：** 接触面清单 `docs/cross/composition-surfaces.md` 是「谁占了哪个槽」的唯一去处，由 `root:composition` 套件（L1 单装 + L2 配对）与 `node tools/composition-surfaces.mjs` 双重把关：新增插件漏声明、声明的键与源码分叉、共享同一槽却未在 `独占声明`/`共享槽` 里裁决，都会红。清单细节见 `docs/tools/composition-surfaces.md`。
 - **覆盖缺口：** 全库无 TODO/only 标记；条件跳过只有两种合法形态——平台/凭据不满足（`agent-manager/e2e.test.ts` 的真机 e2e、`dir-context` 的文件符号链接用例）与 opt-in 真机目标未设（`remote-tools` 7 个），且必须 `skip` 而非静默绿。
