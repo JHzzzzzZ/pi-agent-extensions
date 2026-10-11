@@ -139,6 +139,23 @@
       "claimedAt": "2026-10-11T08:32:34.384Z",
       "completedAt": null,
       "alignedAt": "2026-10-11T08:34:55.955Z"
+    },
+    {
+      "id": 8,
+      "globalId": 379,
+      "text": "远端上下文「读不出（权限）」的诊断到不了使用者（dir-context#7 评审第 1 轮 P2，kimi-coding/k3-256k 2026-10-11，建议记录为后续条目）：提供方已经能区分「读不出」与「不存在」（ok:false + 专属 message），但消费方把它们统一收敛成同一条通用 REMOTE_NOTICE（且每会话只一次）⇒ 「没装 remote-tools」与「远端权限事故」对使用者同形，看到提示的人不知道该去修权限。要求：消费方对可分类的 ok:false 给一条不同的静态提示（例如「远端约定文件存在但读不出（权限）」），或把首次提示里带上原因摘要；保持静态模板、不插值远端内容。验收：remote-tools 未装 / ssh 失败 / 读不出 三种 unavailable 在真实会话里能被使用者区分；宿主级用例锁定；契约卡与卡片同步。相关：#7 本体已修（不再注入空块 + 出提示 + 不标记已注入），本条只补「提示说得更准」。",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "enhancement"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T08:53:06.109Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
