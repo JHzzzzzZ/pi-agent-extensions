@@ -30,6 +30,10 @@ export const ErrorCodes = {
 	REMOTE_COMMAND_FAILED: "REMOTE_COMMAND_FAILED",
 	/** 标记根锚定的文件缺失或被替换（本地路径信道的前提被破坏）⇒ 远端调用 fail-closed。 */
 	HOST_MARKER_CONFLICT: "HOST_MARKER_CONFLICT",
+	/** job 托管端口不符合跨扩展契约（形状或返回值非法，见 docs/cross/shell-tool-capability.md）。 */
+	REMOTE_JOB_PORT_INVALID: "REMOTE_JOB_PORT_INVALID",
+	/** 远端超时转后台失败（登记 job 时端口抛错）：已断开本地 ssh，远端命令可能仍在运行。 */
+	REMOTE_BACKGROUND_FAILED: "REMOTE_BACKGROUND_FAILED",
 } as const;
 
 export type RemoteToolsErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

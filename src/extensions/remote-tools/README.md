@@ -36,6 +36,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 - **可选端口要补齐**：宿主的 Operations 接缝里有可选端口（如 `ReadOperations.detectImageMimeType`），不实现它宿主就静默走另一条分支（远端 PNG 会被当文本读）——远端 read 的图片嗅探样本搭 `access` 的顺风车（`head -c 8192 | base64`，零额外往返），判定交回宿主同一份检测实现。
 - **ls / find 的错误自己拦**：远端 ls/find 在进宿主校验前先做一次 fail-closed 目录探针（不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒ `REMOTE_NOT_DIRECTORY`），否则宿主会用它自己的模板把内部标记路径（`C:\…\pi-remote\…`）写进错误消息回灌给模型；探针答案顺带缓存，ls 的往返数从 3 降到 2。
 - **与 timeout-bg 共存**：两个扩展都覆盖 `bash` 这个名字，而宿主对同名工具按扩展加载顺序 first-wins、无法包裹下层。本扩展在加载期把远端 bash 能力放进 timeout-bg 的 `pi.events` 收集盒子（`capability.ts`），由它合并参数并按参数分派——两个功能都保留；分派口径与加载顺序要求见 [`docs/cross/shell-tool-capability.md`](../../../docs/cross/shell-tool-capability.md)。
+- **远端超时转后台**：装上 timeout-bg 后，本扩展经 `pi.events` 的 **job 托管频道**（`pi-extensions:shell-job-host:v1`，与上方能力频道方向相反：由本侧索取、owner 填盒子）懒索取一次并缓存端口（`claimRemoteJobHost`，拿不到 = 没装 ⇒ 行为与今天逐字一致）。托管路径下远端 `bash` **不再把超时交给传输层**：自己计时、输出全程落本地 job 日志（`/bg` 里能看到）、命中超时交给 timeout-bg 登记；`/bg:kill` 先按命令前缀写在远端 `/tmp/pi-remote-job-<uuid>.pid` 的 pid 尽力杀远端进程组（TERM → KILL），再断开本地 ssh。
 - **安全不变量**：只转发白名单会话变量（`PI_SESSION_ID` / `PI_SESSION_FILE` / `PI_PROVIDER` / `PI_MODEL` / `PI_REASONING_LEVEL`），其它 `PI_*`（例如宿主自己的 `PI_WEB_TOKEN`）绝不送远端；不存任何凭据；错误消息全是静态模板，不把远端输出回灌进上下文。
 - 同目标（host:port）共享一个 session：远端 `$HOME` 只解析一次；绝对路径的调用完全不为此多发一次 ssh。
 
@@ -44,7 +45,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 - 不做整树同步 / 镜像，不做本地↔远端路径映射（远端路径由模型每次显式给出）。
 - 不做只读开关（远端写权限由远端账号决定），不做主机白名单（`remote` 自由填写）。
 - 不覆盖 `powershell` 工具。
-- 远端 `bash` 的中断只 kill 本地 ssh 进程，远端命令可能继续跑。
+- 远端 `bash` 的 Esc/Ctrl-C 中断只 kill 本地 ssh 进程，远端命令可能继续跑；远端进程组清理只对「超时转后台的 job」（`/bg:kill`）尽力做，且需要装 timeout-bg。
 
 ## 测试
 
@@ -52,12 +53,14 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-79 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（10，宿主路径往返、标记根的结构性断言与守卫）、
+91 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（10，宿主路径往返、标记根的结构性断言与守卫）、
 `test/ops.test.ts`（20，发给 ssh 的命令构造、错误映射、图片嗅探、ls/find 目录探针与缓存）、`test/grep.test.ts`（13，rg 事件解析/降级/限流）、
 `test/tools.test.ts`（20，注册覆盖、本地保真对照、远端分派、ls/find 结构化错误与往返数、图片端到端、session 缓存）、
-`test/capability.test.ts`（3，跨扩展能力载荷与订阅）、`test/shell-composition.test.ts`（2，真实加载 remote-tools + timeout-bg 的组合与反向顺序冲突可见）；`test/fixtures.ts` 提供真 PNG 等样本。
+`test/capability.test.ts`（5，跨扩展能力载荷与订阅、job 托管端口索取与形状守卫）、
+`test/bash-timeout.test.ts`（9，托管路径的进程边界：不断连 + 日志 + settle、terminate 杀远端并断 ssh、无端口时的旧行为）、
+`test/shell-composition.test.ts`（3，真实加载 remote-tools + timeout-bg：能力合并、job 托管频道、反向顺序冲突可见）；`test/fixtures.ts` 提供真 PNG 等样本。
 
-另有一个**真机 opt-in** 文件 `test/remote-live.test.ts`（8 个，默认跳过，接真实 ssh 进程）：
+另有一个**真机 opt-in** 文件 `test/remote-live.test.ts`（9 个，默认跳过，接真实 ssh 进程）：
 
 ```bash
 # Git Bash 下必须加 MSYS2_ENV_CONV_EXCL='*'，否则 /home/… 会被改写成 C:/Program Files/Git/home/…
@@ -68,3 +71,8 @@ MSYS2_ENV_CONV_EXCL='*' PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 \
 
 2026-10-10 在本机 WSL Ubuntu（`user@127.0.0.1`）跑通 8/8（含远端 PNG 走图片管线、远端 bash 真在远端跑 + ls/find 结构化错误），并拓出两个只有真机才能发现的问题
 （UNC 宿主形态让 write/edit 的本地 realpath 报 UNKNOWN；`test -r -w <path>` 非法表达式）——均已修 + 加回归测试。
+
+2026-10-11 同一目标跑通 9/9：新增「远端超时不断连 + `/bg:kill` 杀远端进程组」——`sleep 3; printf DONE > marker` 配
+`timeout: 1` ⇒ 本地 ssh 活着、3 秒后 `marker` 真的出现；长任务 terminate 后远端 `pgrep` 归零且标记文件不再生成。
+这条用例拓出一个假 ssh 测不出的问题：pid 文件的 `TERM` trap 不显式 `exit` 时，远端 shell 会**吞掉信号继续跑下一条命令**
+（`sleep N; printf ALIVE > marker` 在 kill 之后仍写出了标记）——已改为 `trap '…; exit 143' TERM` 并补单测断言。

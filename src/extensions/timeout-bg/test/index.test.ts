@@ -14,8 +14,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { EventBus, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
-import { createTimeoutBgExtension } from "../index.ts";
+import { STATUS_KEY, createTimeoutBgExtension } from "../index.ts";
 import { SHELL_CAPABILITY_CHANNEL } from "../shell-capability.ts";
+import { SHELL_JOB_HOST_CHANNEL, type RemoteJobPort } from "../shell-job-host.ts";
 import type { SpawnedProcess } from "../shell-ops.ts";
 
 class FakeChild extends EventEmitter {
@@ -73,7 +74,14 @@ function makeFakePi(activeTools: string[], seed: FakePiSeed = {}) {
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const sent: SentMessage[] = [];
   const notices: string[] = [];
-  const ctx = { hasUI: true, ui: { notify: (text: string) => notices.push(text) } };
+  const statuses: Array<{ key: string; text: string | undefined }> = [];
+  const ctx = {
+    hasUI: true,
+    ui: {
+      notify: (text: string) => notices.push(text),
+      setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
+    },
+  };
 
   const api = {
     on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
@@ -120,7 +128,7 @@ function makeFakePi(activeTools: string[], seed: FakePiSeed = {}) {
     assert.ok(command, `命令未注册：${name}`);
     await command.handler(args, ctx);
   };
-  return { api, fire, run, tools, commands, sent, notices, uiCtx: ctx };
+  return { api, fire, run, tools, commands, sent, notices, statuses, uiCtx: ctx };
 }
 
 function makeExtension(activeTools: string[], env: Record<string, string> = {}, child = new FakeChild(), seed: FakePiSeed = {}) {
@@ -428,4 +436,94 @@ test("冲突可见：未知扩展接管 bash（注册前）与注册被加载顺
   await lateOwner.fire("session_start");
   assert.equal(lateOwner.notices.length, 1, lateOwner.notices.join("|"));
   assert.match(lateOwner.notices[0]!, /加载顺序更早/);
+});
+
+/** 记录远端参数的假能力（验证 owner 转交前套用的超时策略）。 */
+function recordingCapability(seen: Array<Record<string, unknown>>) {
+  return {
+    parameters: { remote: { type: "string" } },
+    isRemoteCall: (params: unknown) => typeof (params as { remote?: unknown }).remote === "string",
+    executeRemote: async (_id: unknown, params: unknown) => {
+      seen.push(params as Record<string, unknown>);
+      return { content: [{ type: "text", text: "remote-ok" }] };
+    },
+    guideline: "远端 bash 指南",
+  };
+}
+
+test("组合：远端套用本扩展默认超时（remote-tools#12 的「只记一个数字」）；显式值透传、0 = 不施加", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const run = async (env: Record<string, string>, params: Record<string, unknown>): Promise<void> => {
+    const ext = makeExtension(["bash"], env, new FakeChild(), { events: busWithCapability(recordingCapability(seen)) });
+    await ext.fire("session_start");
+    await ext.tools.get("bash")!.execute("call-1", params, undefined, undefined, toolCtx(ext.dir));
+  };
+
+  await run({}, { command: "uname -s", remote: "deploy@host" });
+  assert.equal(seen.at(-1)?.timeout, 300, "未显式给 timeout 时远端与本地同一个默认值");
+
+  await run({}, { command: "uname -s", remote: "deploy@host", timeout: 5 });
+  assert.equal(seen.at(-1)?.timeout, 5, "模型显式给的值原样透传");
+
+  // 本地调用不得进能力分支：走 timeout-bg 自己的 ops（fake child 退出后 tool call 才结束）。
+  const local = makeExtension(["bash"], {}, new FakeChild(), { events: busWithCapability(recordingCapability(seen)) });
+  await local.fire("session_start");
+  const pending = local.tools.get("bash")!.execute("call-1", { command: "uname -s" }, undefined, undefined, toolCtx(local.dir));
+  local.child.exit(0);
+  await pending;
+  assert.equal(seen.length, 2, "本地调用不得进能力分支");
+
+  await run({ PI_TIMEOUT_BG_DEFAULT: "0" }, { command: "uname -s", remote: "deploy@host" });
+  assert.equal(seen.at(-1)?.timeout, undefined, "关闭默认超时时不得凭空给远端加超时");
+});
+
+test("远端 job 托管端口（timeout-bg#4）：注册的远端 job 进 /bg 与状态条段，settle 触发同格式 followUp", async () => {
+  const bus = createEventBus();
+  const ext = makeExtension(["bash"], {}, new FakeChild(), { events: bus });
+  await ext.fire("session_start");
+
+  const box: { host?: unknown } = {};
+  bus.emit(SHELL_JOB_HOST_CHANNEL, box);
+  const host = box.host as RemoteJobPort | undefined;
+  assert.ok(host !== undefined, "会话开始后提供方应能在托管频道上拿到端口（同步填充）");
+
+  const ticket = host.allocate();
+  const text = host.register({
+    id: ticket.id,
+    logPath: ticket.logPath,
+    command: "sleep 15",
+    target: "deploy@host",
+    timeoutSeconds: 3,
+    tail: "partial-output",
+    terminate: () => {},
+  });
+  assert.match(text, /命令超时（3 秒）/);
+  assert.match(text, /remote deploy@host/, "远端 job 的展示位置是目标主机");
+  assert.deepEqual(ext.statuses.at(-1), { key: STATUS_KEY, text: "⏱ 1 bg" }, "运行中的 job 计入状态条段");
+
+  await ext.run("bg");
+  assert.match(ext.notices.at(-1)!, new RegExp(ticket.id));
+  assert.match(ext.notices.at(-1)!, /remote deploy@host/);
+
+  // /bg:kill 的文案对远端 job 也要说真话（没有本地 pid，杀的是远端进程组）。
+  const killTicket = host.allocate();
+  host.register({
+    id: killTicket.id,
+    logPath: killTicket.logPath,
+    command: "sleep 400",
+    target: "deploy@host",
+    timeoutSeconds: 3,
+    tail: "",
+    terminate: () => {},
+  });
+  await ext.run("bg:kill", killTicket.id);
+  assert.match(ext.notices.at(-1)!, /已停止/);
+  assert.match(ext.notices.at(-1)!, /remote deploy@host/);
+  assert.doesNotMatch(ext.notices.at(-1)!, /pid \?/);
+
+  host.settle(ticket.id, 0);
+  await wait(20);
+  assert.equal(ext.sent.length, 1, "结束通知走与本地同一条 followUp 通路");
+  assert.match(String(ext.sent[0]!.message.content), /退出码 0/);
+  assert.deepEqual(ext.statuses.at(-1), { key: STATUS_KEY, text: undefined }, "两条 job 都结束后清段");
 });

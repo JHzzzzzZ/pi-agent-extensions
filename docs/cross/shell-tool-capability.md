@@ -1,6 +1,6 @@
 # 跨扩展横切契约：shell 工具能力协商（bash）
 
-> last verified @ 846213e
+> last verified @ f53c85a
 >
 > 背景：`bash` 是两个扩展共享的名字——timeout-bg 在 `session_start` 重注册它（默认超时 + 超时转后台），
 > remote-tools 在加载期重注册它（远端 ssh 后端）。宿主 `pi.registerTool` 对同名工具是
@@ -48,14 +48,58 @@
   bash 生效、timeout-bg 语义不生效——此时注册后自检会提示。这是有意接受的上游限制（`general-todo#30`），
   不是本契约要求用户手工保证的隐式前提：**错了会响**。
 
+## 远端超时与 job 托管（v1 频道 `pi-extensions:shell-job-host:v1`）
+
+远端 bash 命中超时后要与本地同语义：**不杀 ssh**、输出继续写 job 日志、进统一 job 面（`/bg`、`/bg:kill`、
+`/bg:clear`、footer 状态条段），跑完发与本地同格式的完成通知。执行在 remote-tools、job 注册表在 timeout-bg，
+所以再开一条频道传「托管端口」——方向与上方能力频道**相反**：**索取方 emit 空盒子，owner 在同步回调里填
+`box.host`**（盒子先到先得、形状守卫各自实现）。提供方在首次需要托管时索取一次并缓存；拿不到 = 没装
+timeout-bg ⇒ 远端超时沿用宿主 kill 语义，行为与今天逐字一致。
+
+| 方法 | 语义 |
+| --- | --- |
+| `allocate()` | 命令**开始前**发号 + 给本地日志路径（远端要先把 pid 写进文件供 `/bg:kill` 用、输出要全量落盘）；只有真的超时才 `register` |
+| `register(job)` | 登记为运行中的 job（`id` / `logPath` / 命令 / `target` 展示 / `terminate` 钩子），**返回本次 tool call 应抛出的超时结果文本**——模板由 owner 单源持有，提供方不自己拼一份 |
+| `settle(id, exitCode)` | 命令自然结束：更新退出码并触发完成通知；已被 `/bg:kill` 或未登记的 id 忽略（幂等，不报错） |
+
+双方义务：
+
+- **owner 的超时策略在同一数字下转交**：远端调用未显式给 `timeout` 时，owner 在把参数交给远端分支**之前**填上默认秒数
+  （`PI_TIMEOUT_BG_DEFAULT`，默认 300；`0` = 不施加）；显式值原样透传（非法值由远端按宿主同一句文案拒绝）。
+- **订阅生命周期**：owner 在 `session_start` 登记这个频道的应答、在 `session_shutdown` 退订（`offerRemoteJobPort` 返回退订函数）——
+  盒子是**先到先得**，退订可以避免 `/reload` 后旧实例的回调把提供方的索取填成旧注册表里的死端口。
+- **owner 侧（timeout-bg）**：`register` 前清洗跨扩展载荷（`command` 剔控制字符后取首行 400 字符、`target` 剔控制字符、
+  `tail` 剔控制字符 + 尾部限长 2000 字符——与本地 job 进 `/bg` 的口径一致）；发给模型的超时文本与本地同源；
+  `terminate` 不是函数就当没有；远端 job 在列表/通知里用 `remote <target>` 展示（没有本地 pid）；
+  footer 段 `80:timeout-bg` 由注册表变化驱动，只在运行中的任务数 > 0 时出现。
+- **提供方侧（remote-tools）**：`allocate` 后自己开日志写盘（`<logRoot>/<pi pid>/<id>.log`，与本地 job 同布局）；
+  托管路径**不把超时交给传输层**（那会杀 ssh），本地自己计时；转后台后输出只进日志（不再回灌已结束的 tool call）；
+  `terminate` = 先发一条 ssh 按 pid 文件**尽力杀远端进程组**（TERM → KILL），随后断开本地 ssh（失败退化路径）。
+- **远端进程怎么被定位**：命令前缀把登录 shell 的 `$$` 写进远端 `/tmp/pi-remote-job-<uuid>.pid`
+  （随机名：不需解析远端 `$HOME`、也无法被预置符号链接命中），并挂 `EXIT` / `TERM` / `HUP` trap 自清理。
+  **TERM/HUP 的 trap 必须显式 `exit`**——只挂清理 trap 会让 shell 吞掉信号、继续跑下一条命令
+  （真机验收抓到过：`sleep N; printf ALIVE > marker` 在 `/bg:kill` 之后仍写出了标记文件）。
+- **失败口径**：端口畸形/缺席 ⇒ 当「没有 owner」按原路径工作；`allocate` 返回畸形句柄或 `register` 抛错 ⇒
+  提供方断开本地 ssh 并按结构化错误结束（绝不静默当作「已杀」）；日志文件建不出来 ⇒ 当场回退旧路径（远端命令照跑）。
+
 ## 谁在哪实现（改任一侧先读本卡）
 
-- 提供方：`src/extensions/remote-tools/capability.ts` — `SHELL_CAPABILITY_CHANNEL` / `RemoteBashCapability` /
+- 提供方（能力载荷）：`src/extensions/remote-tools/capability.ts` — `SHELL_CAPABILITY_CHANNEL` / `RemoteBashCapability` /
   `isRemoteBashCall` / `offerBashCapability`
-- owner：`src/extensions/timeout-bg/shell-capability.ts` — `collectBashCapability` / `mergeBashParameters` /
-  `createBashDispatch` / `describeForeignBash` / `describeLostBashRegistration`
-- 测试：`src/extensions/remote-tools/test/capability.test.ts`（载荷与订阅，真 event bus）、
+- 提供方（job 托管）：同一文件 — `SHELL_JOB_HOST_CHANNEL` / `RemoteJobPort` / `claimRemoteJobHost`；
+  `src/extensions/remote-tools/ops.ts` — `createRemoteBashOps(session, { jobHost, notify })` 的托管路径、
+  `buildRemotePidFilePrologue` / `buildRemoteKillCommand`
+- owner（能力收集）：`src/extensions/timeout-bg/shell-capability.ts` — `collectBashCapability` / `mergeBashParameters` /
+  `createBashDispatch`（含默认超时注入）/ `describeForeignBash` / `describeLostBashRegistration`
+- owner（job 托管）：`src/extensions/timeout-bg/shell-job-host.ts` — `SHELL_JOB_HOST_CHANNEL` / `RemoteJobPort` /
+  `createRemoteJobPort` / `offerRemoteJobPort`；注册表侧的 `terminate`/`target` 在 `jobs.ts`，展示文本在 `text.ts`
+- 测试：`src/extensions/remote-tools/test/capability.test.ts`（载荷、订阅与托管端口索取，真 event bus）、
   `src/extensions/timeout-bg/test/shell-capability.test.ts`（收集/守卫/合并/冲突描述）、
-  `src/extensions/timeout-bg/test/index.test.ts`（真实注册的 bash：合并 schema、分派、回退与可见性）、
+  `src/extensions/timeout-bg/test/shell-job-host.test.ts`（托管端口：发号/登记/完成/畸形载荷守卫）、
+  `src/extensions/timeout-bg/test/index.test.ts`（真实注册的 bash：合并 schema、分派、默认超时注入、
+  job 托管与状态条段、回退与可见性）、
+  `src/extensions/remote-tools/test/bash-timeout.test.ts`（托管路径的进程边界：不断连、日志、settle、
+  terminate 杀远端 + 断 ssh、无端口时的旧行为）、
   `src/extensions/remote-tools/test/shell-composition.test.ts`（**真实加载两个扩展 + 真实 event bus +
-  真实 ExtensionRunner**，覆盖正常顺序与反向顺序两种加载）
+  真实 ExtensionRunner**，覆盖正常顺序、job 托管频道与反向顺序两种加载）、
+  `src/extensions/remote-tools/test/remote-live.test.ts`（opt-in 真机：超时不断连 + 远端进程组真的被杀）

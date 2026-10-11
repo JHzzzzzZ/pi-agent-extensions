@@ -22,6 +22,11 @@ export function stripControlChars(text: string): string {
   return text.replace(CONTROL_CHARS, "");
 }
 
+/** 日志路径的唯一算法：`<logRoot>/<pi pid>/<jobId>.log`（本地 job 与远端 job 同布局）。 */
+export function resolveJobLogPath(logRoot: string, jobId: string): string {
+  return path.join(logRoot, String(process.pid), `${jobId}.log`);
+}
+
 /** 读文件尾部最多 maxBytes 字节，剔除控制字符、丢掉可能被截断的首行。 */
 export function tailFileSync(filePath: string, maxBytes: number): string {
   let size: number;

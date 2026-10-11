@@ -59,3 +59,23 @@
 - 宿主 `registerTool` 组合 API 的上游诉求（另立 `general-todo#30`），本变更仍走仓库内组合方案。
 - 模型面 `bash` 参数任何变化（仍是 `command`/`timeout` + `remote`/`remotePort`/`remoteCwd` 的并集）。
 - 远端超时的"自动重试""自动降级到远端 nohup"等未讨论的行为。
+
+## 实现注记（2026-10-11，分支 `feat/remote-timeout-bg`，实现提交 `7de0a44`，评审修复 `ccb6e44` / `e77c448`）
+
+实现与上文措辞的偏离与补充（红线 3：偏离要写清）：
+
+- **job 托管端口的形状定为 `allocate` / `register` / `settle`**（不是三条独立的 register/kill/clear 命令）：
+  `allocate` 在命令**开始前**发号 + 给本地日志路径（远端要先把 pid 写进文件供 kill 用、输出要全量落盘，只有真的超时才登记）；
+  `kill` 不另开端口——提供方 `register` 时带上自己的 `terminate` 钩子（杀远端进程组 + 断本地 ssh），`/bg:kill` 与会话关闭
+  都走它（优先于本地 `killTree(pid)`）；`clear` 用既有的 `/bg:clear`（同一个注册表，没有第二套列表）。
+- **默认超时在 owner 侧转交**：`createBashDispatch` 在把参数交给远端分支**之前**把缺省的 `timeout` 填成 300s
+  （`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 不施加）；远端分支不自己知道默认值，避免两处口径。
+- **超时结果文本由 owner 单源提供**：`register` 的返回值就是要抛出的 tool error 文本（模板在 timeout-bg 的 `text.ts`），
+  提供方不复制一份中文文案；跨扩展载荷进文本前剔控制字符 + 尾部限长 2000 字符。
+- **远端进程定位用 /tmp 随机名 pid 文件**（不是「远端 nohup + 轮询远端日志」）：不需要解析远端 `$HOME`，
+  也避免可预测路径的符号链接风险；`EXIT` / `TERM` / `HUP` trap 自清理，且 **TERM/HUP 显式 `exit`**
+  （真机抓到过：只挂清理 trap 会让 shell 吞信号后继续跑下一条命令）。
+- **状态条段**：`80:timeout-bg` 的 `⏱ <N> bg`（运行中任务数，本地 + 远端同一注册表），只在 N > 0 时出现；
+  `docs/cross/status-bar.md` 的带表与格式表已同步。
+- **测试数**：timeout-bg 53、remote-tools 91 本地 + 9 真机 opt-in；跨扩展组合测试真加载两个扩展
+  （能力频道 + job 托管频道 + 反向加载顺序），真机用例覆盖「超时不断连」与「kill 后远端进程组消失」。

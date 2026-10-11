@@ -29,6 +29,7 @@ import {
   discoverAndLoadExtensions,
 } from "@earendil-works/pi-coding-agent";
 
+import { type RemoteJobPort, SHELL_JOB_HOST_CHANNEL } from "../capability.ts";
 import { ErrorCodes } from "../errors.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -49,7 +50,8 @@ async function startHarness(t: TestContext, order: "timeout-bg-first" | "remote-
   });
 
   const paths = order === "timeout-bg-first" ? [TIMEOUT_BG_DIR, REMOTE_TOOLS_DIR] : [REMOTE_TOOLS_DIR, TIMEOUT_BG_DIR];
-  const loaded = await discoverAndLoadExtensions(paths, cwd, agentDir, createEventBus());
+  const bus = createEventBus();
+  const loaded = await discoverAndLoadExtensions(paths, cwd, agentDir, bus);
   assert.deepEqual(loaded.errors, [], "两个扩展都必须加载成功（jiti 走真实 index.ts）");
   assert.equal(loaded.extensions.length, 2);
 
@@ -86,9 +88,16 @@ async function startHarness(t: TestContext, order: "timeout-bg-first" | "remote-
   runner = new ExtensionRunner(loaded.extensions, loaded.runtime, cwd, {} as SessionManager, {} as ModelRegistry);
   runner.bindCore(actions, contextActions);
   const notifies: string[] = [];
-  runner.setUIContext({ notify: (message: string) => notifies.push(message) } as unknown as ExtensionUIContext, "tui");
+  const statuses: Array<{ key: string; text: string | undefined }> = [];
+  runner.setUIContext(
+    {
+      notify: (message: string) => notifies.push(message),
+      setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
+    } as unknown as ExtensionUIContext,
+    "tui",
+  );
   await runner.emit({ type: "session_start", reason: "startup" });
-  return { runner, notifies, cwd };
+  return { runner, bus, notifies, statuses, cwd };
 }
 
 /** 工具执行用的最小 ctx（宿主 shell 工具读它注入 PI_* 环境变量）。 */
@@ -130,6 +139,40 @@ test("组合后生效的 bash = 合并版：远端三参数 + timeout-bg 的语�
 
   const localError = await failureOf(() => bash.execute("call-2", { command: "echo hi", timeout: -1 }, undefined, undefined, ctx));
   assert.match(localError, /Invalid timeout/, "本地调用必须进 timeout-bg 的 ops（解析先于 spawn ⇒ 零 spawn）");
+});
+
+test("跨扩展 job 托管（timeout-bg#4）：真加载两扩展就能索取到端口，注册的远端 job 进 /bg 与状态条段", async (t) => {
+  const { runner, bus, statuses } = await startHarness(t, "timeout-bg-first");
+
+  // 提供方（remote-tools）的索取路径：同步 emit 空盒子，owner（timeout-bg）在回调里填好。
+  const box: { host?: unknown } = {};
+  bus.emit(SHELL_JOB_HOST_CHANNEL, box);
+  const host = box.host as RemoteJobPort | undefined;
+  assert.ok(host !== undefined, "timeout-bg 必须在托管频道上应答（两个真实扩展 + 真实事件总线）");
+
+  const ticket = host.allocate();
+  const text = host.register({
+    id: ticket.id,
+    logPath: ticket.logPath,
+    command: "sleep 15; echo MARK",
+    target: "deploy@host",
+    timeoutSeconds: 3,
+    tail: "partial-output",
+    terminate: () => {},
+  });
+  assert.match(text, /命令超时（3 秒）/, "超时文本由 owner 单源提供");
+  assert.match(text, /remote deploy@host/);
+  assert.deepEqual(statuses.at(-1), { key: "80:timeout-bg", text: "⏱ 1 bg" }, "远端 job 计入状态条段");
+
+  const command = runner.getCommand("bg");
+  assert.ok(command !== undefined, "/bg 命令面必须注册");
+  const notices: string[] = [];
+  await command.handler("", { hasUI: true, ui: { notify: (message: string) => notices.push(message) } } as never);
+  assert.match(notices[0] ?? "", new RegExp(ticket.id), "远端 job 进统一列表");
+  assert.match(notices[0] ?? "", /remote deploy@host/);
+
+  host.settle(ticket.id, 0);
+  assert.deepEqual(statuses.at(-1), { key: "80:timeout-bg", text: undefined }, "任务结束后清段");
 });
 
 test("加载顺序相反时：宿主 first-wins 让 remote-tools 的 bash 生效（timeout-bg 语义丢失），且 timeout-bg 提示冲突而不是静默", async (t) => {

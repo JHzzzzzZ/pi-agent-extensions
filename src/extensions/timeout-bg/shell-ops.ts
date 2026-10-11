@@ -15,7 +15,7 @@ import * as path from "node:path";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { resolveTimeoutMs } from "./config.ts";
 import type { JobRegistry } from "./jobs.ts";
-import { stripControlChars } from "./logs.ts";
+import { resolveJobLogPath, stripControlChars } from "./logs.ts";
 import { firstLine, timeoutResultText } from "./text.ts";
 
 /** 与宿主 `ShellConfig` 同形（自带定义，避免依赖宿主内部模块路径）。 */
@@ -45,12 +45,14 @@ export interface SpawnedProcess {
 
 export type SpawnLike = (file: string, args: readonly string[], options: SpawnOptions) => SpawnedProcess;
 
-/** 进后台注册表所需的最小信息。 */
+/** 进后台注册表所需的最小信息（本地 job 只填前四项；远端 job 另有目标主机与终止钩子）。 */
 export interface BackgroundJob {
   id: string;
   pid: number | null;
   command: string;
   logPath: string;
+  target?: string | undefined;
+  terminate?: (() => void) | undefined;
 }
 
 export interface TimeoutOpsDeps {
@@ -82,10 +84,11 @@ export function createTimeoutOps(deps: TimeoutOpsDeps): BashOperations {
 
     const shell = deps.shellConfig();
     const jobId = deps.newJobId();
-    const logDir = path.join(deps.logRoot, String(process.pid));
-    fs.mkdirSync(logDir, { recursive: true });
-    const logPath = path.join(logDir, `${jobId}.log`);
+    const logPath = resolveJobLogPath(deps.logRoot, jobId);
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
+    // 写盘失败（磁盘满 / 权限）只让日志变不完整，绝不能变成未捕获的 'error' 事件把会话炸掉。
+    logStream.on("error", () => {});
 
     const fromStdin = shell.commandTransport === "stdin";
     let child: SpawnedProcess;

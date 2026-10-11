@@ -34,11 +34,16 @@ export function timeoutParamDescription(defaultSeconds: number | undefined): str
   return `Timeout in seconds (optional, ${suffix}). On timeout the command is moved to the background instead of being killed.`;
 }
 
+/** job 的位置描述：本地给 pid，远端给目标主机（远端 job 没有本地 pid）。 */
+export function jobPlace(job: JobRecord): string {
+  return job.target === undefined ? `pid ${job.pid ?? "未知"}` : `remote ${job.target}`;
+}
+
 /** 命中超时时替换宿主结果的文本（作为 tool error 呈现，附带最近输出）。 */
 export function timeoutResultText(seconds: number, job: JobRecord, tail: string): string {
   const head = [
     `⏱ 命令超时（${seconds} 秒）：未杀死，已转入后台继续运行。`,
-    `job: ${job.id}（pid ${job.pid ?? "未知"}）`,
+    `job: ${job.id}（${jobPlace(job)}）`,
     `日志: ${job.logPath}`,
     `进程仍在后台写日志；结束时会给会话发一条通知。不要重跑同一命令，需要中间结果就读日志。`,
   ].join("\n");
@@ -65,11 +70,17 @@ function statusLabel(job: JobRecord): string {
 export function formatJobLine(job: JobRecord, nowMs: number): string {
   const end = job.endedAtMs ?? nowMs;
   const seconds = Math.max(0, Math.round((end - job.startedAtMs) / 1000));
-  return `${statusLabel(job)}  ${job.id}  ${seconds}s  pid ${job.pid ?? "?"}  ${firstLine(job.command)}\n    日志: ${job.logPath}`;
+  const place = job.target === undefined ? `pid ${job.pid ?? "?"}` : `remote ${job.target}`;
+  return `${statusLabel(job)}  ${job.id}  ${seconds}s  ${place}  ${firstLine(job.command)}\n    日志: ${job.logPath}`;
 }
 
 /** `/bg` 列表文本。 */
 export function formatJobList(jobs: JobRecord[], nowMs: number): string {
   if (jobs.length === 0) return "没有后台任务。（命中超时转入后台的命令会出现在这里）";
   return [`后台任务 ${jobs.length} 个：`, ...jobs.map((job) => formatJobLine(job, nowMs))].join("\n");
+}
+
+/** 状态条段文本（本地 + 远端后台任务的运行中数量）；没有运行中的任务时本段不显示。 */
+export function statusBandText(runningCount: number): string | undefined {
+  return runningCount > 0 ? `⏱ ${runningCount} bg` : undefined;
 }

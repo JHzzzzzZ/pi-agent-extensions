@@ -13,15 +13,21 @@ import type { BackgroundJob } from "./shell-ops.ts";
 /** 注册表条目：后台命令的可查询状态。 */
 export interface JobRecord {
   id: string;
-  /** 子进程 pid（spawn 失败时为 null）。 */
+  /** 子进程 pid（spawn 失败时为 null）；远端 job 为 null（本地只有 ssh 进程，见 terminate）。 */
   pid: number | null;
   /** 命令首行（人类可读，列表用）。 */
   command: string;
   logPath: string;
+  /** 远端 job 的目标主机（展示用；本地 job 为 undefined）。 */
+  target?: string | undefined;
   startedAtMs: number;
   endedAtMs: number | null;
   exitCode: number | null;
   status: "running" | "exited" | "killed";
+  /**
+   * 远端 job 的终止钩子（由提供方自带：尽力杀远端进程组 + 断开本地 ssh）。
+   * 本地 job 为 undefined ⇒ 走 `killTree(pid)`。 */
+  terminate?: (() => void) | undefined;
 }
 
 export interface JobRegistryDeps {
@@ -29,6 +35,8 @@ export interface JobRegistryDeps {
   killTree: (pid: number) => void;
   /** 自然结束（非用户 kill）时回调一次。 */
   onExit: (job: JobRecord) => void;
+  /** 状态发生变化（新增/结束/被杀/清理）时回调，供状态条段等观察者刷新。 */
+  onChange?: (() => void) | undefined;
 }
 
 export interface JobRegistry {
@@ -47,6 +55,28 @@ export interface JobRegistry {
 export function createJobRegistry(deps: JobRegistryDeps): JobRegistry {
   const jobs = new Map<string, JobRecord>();
 
+  const notifyChanged = (): void => {
+    if (deps.onChange === undefined) return;
+    try {
+      deps.onChange();
+    } catch {
+      /* 观察者异常不影响注册表本身（UI 隔离） */
+    }
+  };
+
+  /** 终止一个运行中的 job：远端 job 走自带钩子（尽力杀远端 + 断开 ssh），本地 job 走 killTree。 */
+  const terminateJob = (job: JobRecord): void => {
+    if (job.terminate !== undefined) {
+      try {
+        job.terminate();
+      } catch {
+        /* 尽力而为：终止失败不能破坏命令面 */
+      }
+      return;
+    }
+    if (job.pid !== null) deps.killTree(job.pid);
+  };
+
   const registry: JobRegistry = {
     background(input) {
       const record: JobRecord = {
@@ -54,12 +84,15 @@ export function createJobRegistry(deps: JobRegistryDeps): JobRegistry {
         pid: input.pid,
         command: input.command,
         logPath: input.logPath,
+        target: input.target,
         startedAtMs: deps.now(),
         endedAtMs: null,
         exitCode: null,
         status: "running",
+        terminate: input.terminate,
       };
       jobs.set(record.id, record);
+      notifyChanged();
       return record;
     },
     markExited(id, exitCode) {
@@ -68,6 +101,7 @@ export function createJobRegistry(deps: JobRegistryDeps): JobRegistry {
       job.status = "exited";
       job.exitCode = exitCode;
       job.endedAtMs = deps.now();
+      notifyChanged();
       deps.onExit(job);
     },
     markKilled(id) {
@@ -75,11 +109,12 @@ export function createJobRegistry(deps: JobRegistryDeps): JobRegistry {
       if (!job || job.status !== "running") return;
       job.status = "killed";
       job.endedAtMs = deps.now();
+      notifyChanged();
     },
     kill(id) {
       const job = jobs.get(id);
       if (!job || job.status !== "running") return false;
-      if (job.pid !== null) deps.killTree(job.pid);
+      terminateJob(job);
       registry.markKilled(id);
       return true;
     },
@@ -87,7 +122,7 @@ export function createJobRegistry(deps: JobRegistryDeps): JobRegistry {
       let killed = 0;
       for (const job of jobs.values()) {
         if (job.status === "running") {
-          if (job.pid !== null) deps.killTree(job.pid);
+          terminateJob(job);
           registry.markKilled(job.id);
           killed += 1;
         }
@@ -105,6 +140,7 @@ export function createJobRegistry(deps: JobRegistryDeps): JobRegistry {
           removed += 1;
         }
       }
+      if (removed > 0) notifyChanged();
       return removed;
     },
   };
