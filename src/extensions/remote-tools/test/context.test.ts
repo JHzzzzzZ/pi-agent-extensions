@@ -17,10 +17,15 @@ import {
   offerRemoteContextCapability,
   parseContextFiles,
   REMOTE_CONTEXT_CHANNEL,
+  UNREADABLE_FRAME_PREFIX,
+  type RemoteContextFile,
   type RemoteContextRequest,
   type RemoteContextTarget,
 } from "../context.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
+
+/** 大部分用例只关心文件列表；`unreadable` 由专门的用例直接断言。 */
+const filesOf = (stdout: Buffer): RemoteContextFile[] => parseContextFiles(stdout).files;
 
 const TARGET: RemoteContextTarget = { remotePath: "/home/u/docs/x.md", baseDir: "/home/u", target: { host: "prod", user: undefined, port: undefined } };
 
@@ -86,29 +91,61 @@ test("远端命令：根目录不产出 `//` 前缀（POSIX 对 `//` 是实现�
 
 test("NUL 分帧解析：路径帧要像绝对路径且不含换行（远端 banner/rc 吐的东西不被当文件名）", () => {
   assert.deepEqual(
-    parseContextFiles(Buffer.from("Welcome to Ubuntu!\u0000/real/AGENTS.md\u0000ok\u0000", "utf8")),
+    filesOf(Buffer.from("Welcome to Ubuntu!\u0000/real/AGENTS.md\u0000ok\u0000", "utf8")),
     [],
     "脏首帧把分帧错位了 ⇒ 成对的两帧都不像路径（一个含空格一个不以 / 开头）⇒ 全部丢弃、不注入垃圾标题",
   );
   // banner 直接粘在第一帧路径前面（无 NUL 分隔）：该帧被丢，后面的内容帧也不再配对得上
-  assert.deepEqual(parseContextFiles(Buffer.from("Welcome!\n/real/AGENTS.md\u0000real content\u0000", "utf8")), []);
+  assert.deepEqual(filesOf(Buffer.from("Welcome!\n/real/AGENTS.md\u0000real content\u0000", "utf8")), []);
   for (const bad of ["relative/AGENTS.md", "/with\nnewline/AGENTS.md", "", "/with\rcr/AGENTS.md"]) {
-    assert.deepEqual(parseContextFiles(Buffer.from(`${bad}\u0000content\u0000`, "utf8")), [], JSON.stringify(bad));
+    assert.deepEqual(filesOf(Buffer.from(`${bad}\u0000content\u0000`, "utf8")), [], JSON.stringify(bad));
   }
 });
 
 test("NUL 分帧解析：路径/内容成对，空内容与尾部空段都处理正确", () => {
-  assert.deepEqual(parseContextFiles(framed([["/a/AGENTS.md", "A"], ["/b/AGENTS.md", ""]])), [
+  assert.deepEqual(filesOf(framed([["/a/AGENTS.md", "A"], ["/b/AGENTS.md", ""]])), [
     { path: "/a/AGENTS.md", content: "A" },
     { path: "/b/AGENTS.md", content: "" },
   ]);
-  assert.deepEqual(parseContextFiles(Buffer.alloc(0)), []);
-  assert.deepEqual(parseContextFiles(Buffer.from("\u0000", "utf8")), [], "只有分帧符 = 没有文件");
+  assert.deepEqual(filesOf(Buffer.alloc(0)), []);
+  assert.deepEqual(filesOf(Buffer.from("\u0000", "utf8")), [], "只有分帧符 = 没有文件");
   assert.deepEqual(
-    parseContextFiles(Buffer.from("/孤儿路径\u0000", "utf8")),
+    filesOf(Buffer.from("/孤儿路径\u0000", "utf8")),
     [{ path: "/孤儿路径", content: "" }],
     "路径后被截断 ⇒ 与「内容为空文件」的帧完全同形（分帧本身区分不了），当一个空文件（无害）",
   );
+});
+
+test("远端命令：用 -r 而不是 -f 判读得出，读不出时发 SOH 标记帧", () => {
+  const command = buildContextCommand(["/home/u"]);
+  assert.ok(command.includes('[ -r "$f" ]'), "先判存在、再判读得出");
+  assert.ok(
+    command.includes('if [ -f "$f" ]; then if [ -r "$f" ]'),
+    "分支顺序必须是「先 -f 再 -r」——反了会让可读文件的 cat 失败变成空帧（老 bug 换形态回归）",
+  );
+  assert.ok(command.includes(`printf '\\001%s\\000' "$f"`), "读不出时发带 SOH 前缀的标记帧");
+});
+
+test("NUL 分帧解析：SOH 标记帧进 unreadable、不进 files（与「真·空文件」可区分）", () => {
+  const unreadable = `${UNREADABLE_FRAME_PREFIX}/home/u/AGENTS.md\u0000\u0000`;
+  assert.deepEqual(parseContextFiles(Buffer.from(unreadable, "utf8")), { files: [], unreadable: ["/home/u/AGENTS.md"] });
+  // 空的真文件仍然是合法文件（既有语义不变）
+  assert.deepEqual(parseContextFiles(Buffer.from("/home/u/AGENTS.md\u0000\u0000", "utf8")), {
+    files: [{ path: "/home/u/AGENTS.md", content: "" }],
+    unreadable: [],
+  });
+  // 脏路径帧既不当文件也不当 unreadable
+  assert.deepEqual(parseContextFiles(Buffer.from(`${UNREADABLE_FRAME_PREFIX}relative/x\u0000\u0000`, "utf8")), { files: [], unreadable: [] });
+});
+
+test("取上下文：链上有候选读不出 ⇒ 整条请求 ok:false（fail-closed，绝不静默少注入）", async () => {
+  const { exec } = makeExec(() => ({
+    stdout: Buffer.from(`${framed([["/home/u/AGENTS.md", "home 约定"]]).toString("utf8")}${UNREADABLE_FRAME_PREFIX}/home/u/docs/AGENTS.md\u0000\u0000`, "utf8"),
+  }));
+  const capability = createRemoteContextCapability({ resolve: async () => TARGET, exec });
+  const outcome = await capability.fetchRemoteContext(REQUEST);
+  assert.equal(outcome.ok, false, "外层可读也不交付：读不出的那份才是最该生效的约定");
+  assert.match(outcome.ok === false ? outcome.message : "", /读不出/);
 });
 
 test("取上下文：成功路径——一趟 ssh，头部层级在前（由外向内）", async () => {

@@ -19,7 +19,7 @@
 | [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭）；bash 与 remote-tools 经 `pi.events` 组合（能力协商，两个功能都保留），**远端 bash 超时同样不杀 ssh、转后台并进统一 job 面**（`/bg`、`/bg:kill`、底部状态条段），`/bg:kill` 尽力杀远端进程组 | 53 个（node:test） |
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
-| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链） | 114 个（+9 真机 opt-in） |
+| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链） | 117 个（+9 真机 opt-in） |
 | [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；codemode 走「顶层结果代偿」（主来源 = 嵌套事件的完整入参、`details.calls` 截断预览降级兜底）；带 `remote` 的调用**默认零注入**（只读入参字段，绝不按本地 cwd 解远端路径），装了 remote-tools 时经 `pi.events` 协商**自动注入远端那条祖先链**（块头标来源，取不到才退回一行提示）；会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次） | 116 个（node:test） |
 
 ## 安装
@@ -649,7 +649,7 @@ ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write /
 - **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`
 
 ```bash
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 114 个（+9 真机 opt-in；含远端上下文能力：祖先链/一趟 ssh/NUL 分帧/形状守卫/降级）
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 117 个（+9 真机 opt-in；含远端上下文能力：祖先链/一趟 ssh/NUL 分帧/形状守卫/降级/读不出 ≠ 不存在）
 ```
 
 ---

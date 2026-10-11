@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 91c735f
+> last verified @ 884f503
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
@@ -92,6 +92,7 @@
 
 ## 文件地图
 - `context.ts` — 跨扩展能力「取远端目录上下文」的提供方：祖先链计算（到 `$HOME` 或 `/` 为止、深度有上限、逃逸即空链）、一条 ssh 的 NUL 分帧命令、请求形状守卫、失败一律收敛成 `ok:false`；由 `tools.ts` 在 `registerRemoteTools` 里订阅收集频道填槽（复用同一个 `planSession` 与 session 缓存）
+  读不出 ≠ 不存在：`[ -f ]`（存在）与 `[ -r ]`（读得出）分开判，读不出时发 SOH 前缀标记帧 ⇒ 只要链上出现任一个读不出的候选就整条回 `ok: false`——静默少注入比不注入更危险（`dir-context-todo#7`）。
 
 - `index.ts` — 扩展入口：`registerRemoteTools(pi, { exec: createSpawnExec(), cwd: process.cwd() })`
 - `capability.ts` — 跨扩展能力载荷：频道名、`RemoteBashCapability` 形状、`isRemoteBashCall`（远端意图判定，噪声容错、形态非法也算远端）、
@@ -112,7 +113,7 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
-- `test/` — 123 个：114 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `context.test.ts`(23，远端上下文能力：祖先链/命令拼装/NUL 分帧/形状守卫/降级) / `bash-timeout.test.ts`(9，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
+- `test/` — 126 个：117 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/NUL 分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 
