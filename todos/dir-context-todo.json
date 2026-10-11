@@ -158,6 +158,21 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 9,
+      "globalId": 382,
+      "text": "远端上下文：0 字节可读的约定文件 → 注入空块，且该路径被标记「已注入」（用户 2026-10-11 真机实测，是 #7「读不出→空块」的同类未修完的一半）。复现：远端 /tmp/dcC/AGENTS.md 为 0 字节（可读）、同目录 x.txt；read x.txt（带 remote）→ 注入 Loaded user@localhost:/tmp/dcC/AGENTS.md + 一个空内容的 <dir-context> 块；同一会话第二次 read 同一文件不再注入（说明已被标记已注入）⇒ 该文件后来有内容，本会话也拿不到（与 #7 修掉的坑同构）。根因：提供方按「空的真文件也算」（parseContextFiles 注释明示区分空与读不出），消费方照常标记已注入、照常渲染块。修法：消费方 content 为空 ⇒ 归入 nothing（不注入空块、不标记、不提示）；若判断更适合放在提供方过滤（把空内容按 nothing 上报），在实现前先定一侧，避免两边都改。验收：真正空的约定文件不产生空块、不标记已注入；随后写入内容后同会话触碰即拿到；宿主级用例锁定。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T12:16:28.800Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

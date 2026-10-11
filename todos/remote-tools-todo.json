@@ -235,6 +235,36 @@
       "claimedAt": "2026-10-11T05:41:22.605Z",
       "completedAt": "2026-10-11T06:45:42.305Z",
       "alignedAt": "2026-10-11T05:41:22.836Z"
+    },
+    {
+      "id": 13,
+      "globalId": 380,
+      "text": "远端上下文：内容含 NUL 字节的约定文件能伪造出假路径块（用户 2026-10-11 真机实测，dir-context#7 复验时发现）。复现：远端 /tmp/dcA/AGENTS.md 内容为 FIRST\\0/evil\\0SECOND（含 NUL），read /tmp/dcA/sub/x.txt（带 remote）→ 注入三个块，其中一块是 Loaded user@localhost:/evil + <dir-context remote=\"user@localhost\" path=\"/evil\">SECOND——/evil 这个文件不存在；真内容被劈成两半错配（FIRST 归 AGENTS.md、SECOND 归 /evil）。根因：context.ts 的分帧契约注释写着「NUL 不可能出现在文本内容里 ⇒ 不需要转义」，而 parseContextFiles 只校验路径帧以 / 开头就收，于是文件内容可以自己造出「路径」帧。修法（都便宜）：(a) shell 侧含 NUL 的文件按 \\001「读不出」帧上报（复用 #7 刚落地的通道，零新机制）；(b) parseContextFiles 收期望的祖先链目录白名单，路径帧不在链内即丢帧——(b) 还能挡住任何未来的分帧漂移。验收：含 NUL 的约定文件不产出非链内路径块、内容不错配；单测 + 真机用例锁定。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T12:16:22.130Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 14,
+      "globalId": 381,
+      "text": "远端上下文：同一文件经 . / .. 别名重复注入，且块标题未归一化（用户 2026-10-11 真机实测）。复现：read /tmp/dcB/x.txt（正常注入 /tmp/dcB/AGENTS.md）之后，read /tmp/dcB/../dcB/x.txt → 同一份 AGENTS.md 再注入一次，标题为 Loaded user@localhost:/tmp/dcB/../dcB/AGENTS.md。根因：远端上下文去重键与块标题用的是解析后但未归一化的路径字符串（'.' / '..' 一变即新键）⇒ 上下文重复注入 + 展示路径不真实。模型与 codemode 写带 .. 的路径很常见。修法：resolve 之后统一 posix.normalize 再用作键与展示（~ 开头的路径已 fail-closed 报 REMOTE_PATH_NOT_ABSOLUTE，不涉及）。验收：同一文件的别名路径不再重复注入、块标题为归一化路径；单测 + 真机用例锁定。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T12:16:22.309Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
