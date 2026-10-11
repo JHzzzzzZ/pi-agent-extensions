@@ -90,7 +90,7 @@
   shell-ops(8) / shell-capability(4) / index 接线(10)，其中 2 条锁 codemode 视角的结构化结果、3 条锁跨扩展组合
   （合并 schema + 分派、畸形/抛错回退可见、未知接管与顺序覆盖 notify））
 - 进程边界测试只 fake `spawn` 与 `killTree`，真实读写临时目录日志、真实毫秒级计时器；工具本体用宿主真实 `createBashTool`。
-- **评审记录（`#3`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 5 备注，两份扩展卡共用）：涉及本卡的 ① `negotiateBash` 的 `base` 死参数（已删）、② `last verified` 指向（驳回，理由=仓库惯例指向被验证的代码提交；本轮统一为 `846213e`）。组合的四条安全断言（`pi.events` 同步填充、载荷撞名拒绝、两条失败路径不落本机、宿主 first-wins 顺序）在宿主 dist 源码层面逐条核实通过。第 2 轮 = 待补（复核完成后回填）。
+- **评审记录（`#3`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 5 备注，两份扩展卡共用）：涉及本卡的 ① `negotiateBash` 的 `base` 死参数（已删）、② `last verified` 指向（驳回，理由=仓库惯例指向被验证的代码提交；本轮统一为 `846213e`）。组合的四条安全断言（`pi.events` 同步填充、载荷撞名拒绝、两条失败路径不落本机、宿主 first-wins 顺序）在宿主 dist 源码层面逐条核实通过。第 2 轮 = OK with notes（0 阻断；①④⑤ 确认修复，②③ 驳回成立）→ 第 3 轮（终轮）= OK with notes（0 阻断，唯一新意见是 ADR 注记的写法，已收口）。三轮无 P0/P1。
 - 真机验证（2026-09-22，Windows + Node 24）：真实 spawn + 真实计时器跑 `for i in 1..6; do echo tick-$i; sleep 1; done`，
   `timeout: 2` → 2.3s 转后台、进程存活且日志持续增长 → 7.3s 自然结束，注册表转 `exited(0)` 且 `onExit` 恰好一次。
 - 真机验证 codemode 契约（2026-10-04，Windows + pi 1.0.1）：见上节差异表；模型侧 2000 行 / 50 KB 口径与超时转后台路径均无回归。
