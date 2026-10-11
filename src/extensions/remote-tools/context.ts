@@ -94,12 +94,19 @@ export function contextChainDirs(anchorDir: string, baseDir: string): string[] {
 /**
  * 一趟 ssh 的远端命令：逐级、逐候选名探一个存在的文件，命中即把「路径 + 内容」以 **NUL 分帧**吐出来
  * （NUL 不可能出现在文本内容里 ⇒ 不需要转义、不会与内容撞车）。
- * `-f` 而不是 `-e`：目录也叫 AGENTS.md 时不当文件读。
+ *
+ * `-f` 判存在、`-r` 判**读得出**：只看 `-f` 会踩下面这个坑——文件被 `chmod 000` 时 `-f` 仍为真，
+ * 而 `cat` 失败只写 stderr，stdout 上照样是 `path\0\0`（内容帧为空）⇒ 调用方把「读不出」当成
+ * 「真的空文件」，于是注入一个空块、抑制提示、还把它标成已注入（下次触碰不再重试）。
+ * 所以读不出时改发一个带 **SOH（`\x01`）前缀**的标记帧：真实路径帧恒以 `/` 开头，撞不了车。
  */
 export function buildContextCommand(dirs: readonly string[]): string {
 	const names = CONTEXT_FILE_NAMES.join(" ");
 	return dirs
-		.map((dir) => `for n in ${names}; do f=${quoteDir(dir)}/$n; if [ -f "$f" ]; then printf '%s\\000' "$f"; cat "$f"; printf '\\000'; break; fi; done`)
+		.map((dir) => {
+			const base = quoteDir(dir);
+			return `for n in ${names}; do f=${base}/$n; if [ -f "$f" ]; then if [ -r "$f" ]; then printf '%s\\000' "$f"; cat "$f"; else printf '\\001%s\\000' "$f"; fi; printf '\\000'; break; fi; done`;
+		})
 		.join("; ");
 }
 
@@ -108,23 +115,43 @@ function quoteDir(dir: string): string {
 	return dir === "/" ? "''" : shellQuote(dir);
 }
 
+/** 不可读候选帧的路径前缀（SOH）：真实路径帧恒以 `/` 开头，故不会撞车。 */
+export const UNREADABLE_FRAME_PREFIX = "\u0001";
+
+export interface ParsedContextOutput {
+	/** 真的取到的约定文件（**空的真文件也算**）。 */
+	files: RemoteContextFile[];
+	/**
+	 * 存在但**读不出**的候选（权限）。
+	 * 与「不存在」必须可区分：否则调用方会把「权限坏了」当成「远端那个目录没有约定文件」，
+	 * 静默地不给任何提示。
+	 */
+	unreadable: string[];
+}
+
 /**
- * NUL 分帧的输出 → 文件列表（奇数项是路径、偶数项是内容；尾部空段丢弃）。
+ * NUL 分帧的输出 → { 文件, 读不出的候选 }（奇数项是路径、偶数项是内容；尾部空段丢弃）。
  *
  * 路径帧必须长得像绝对 POSIX 路径且不含换行：远端登录 rc/banner 往 stdout 吐的东西会被扇进
  * 首帧，不做校验就会以垃圾标题注入（内容不可信，不往上下文里编）。
  */
-export function parseContextFiles(stdout: Buffer): RemoteContextFile[] {
+export function parseContextFiles(stdout: Buffer): ParsedContextOutput {
 	const parts = stdout.toString("utf8").split("\u0000");
 	const files: RemoteContextFile[] = [];
+	const unreadable: string[] = [];
 	for (let index = 0; index + 1 < parts.length; index += 2) {
 		const path = parts[index];
 		const content = parts[index + 1];
 		if (path === undefined || content === undefined) continue;
+		if (path.startsWith(UNREADABLE_FRAME_PREFIX)) {
+			const real = path.slice(UNREADABLE_FRAME_PREFIX.length);
+			if (real.startsWith("/") && !/[\r\n]/.test(real)) unreadable.push(real);
+			continue;
+		}
 		if (!path.startsWith("/") || /[\r\n]/.test(path)) continue;
 		files.push({ path, content });
 	}
-	return files;
+	return { files, unreadable };
 }
 
 export interface RemoteContextDeps {
@@ -166,7 +193,13 @@ export function createRemoteContextCapability(deps: RemoteContextDeps): RemoteCo
 			if (result.exitCode !== 0) {
 				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_FAILED, message: "远端上下文：远端命令非零退出，本次跳过。" };
 			}
-			return { ok: true, dir: anchorDir, files: parseContextFiles(result.stdout) };
+			const parsed = parseContextFiles(result.stdout);
+			// 链上只要有一个候选存在却读不出 ⇒ 整条请求算失败（fail-closed）：
+			// 静默少注入比不注入更危险——那个读不出的正是最该生效的那份约定。
+			if (parsed.unreadable.length > 0) {
+				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_FAILED, message: "远端上下文：约定文件存在但读不出（权限），本次跳过。" };
+			}
+			return { ok: true, dir: anchorDir, files: parsed.files };
 		},
 	};
 }
