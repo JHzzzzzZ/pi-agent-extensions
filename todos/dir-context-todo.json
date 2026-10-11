@@ -26,19 +26,59 @@
       "id": 2,
       "globalId": 361,
       "text": "dir-context v1.1：codemode 支持——脚本内通过 tools.read/write/edit/ls/bash 触碰目录时不触发注入（嵌套调用结果只回到脚本、不进 transcript，v1.0.0 有意跳过），导致模型用 codemode 读写深层文件时拿不到该目录的局部约定。方案 A（推荐）：在 codemode 自身的顶层 tool_result 上读 details.calls（CodemodeNestedCall[]：name + args 紧凑 JSON + status），复用现成 touch/anchor/discover/inject 提取触碰目录并集注入一次；备选 B 扫脚本源码字符串（模糊，否）、C 放开嵌套注入（会污染脚本返回值，否）、D 维持现状",
-      "status": "aligned",
-      "branch": null,
+      "status": "done",
+      "branch": "feat/dir-context-codemode",
       "tags": [
         "enhancement",
         "codemode"
       ],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "完成 2026-10-11 @ merge 4dc5fa4（feat/dir-context-codemode / dir-context 1.1.0 / 根 2.65.0）：codemode 脚本触碰目录改走「顶层结果代偿」——在顶层 codemode 结果的 details.calls（宿主记好的嵌套调用明细）上翻译回同一套触碰语义（read/write/edit/ls + bash 单文件读白名单）、多触碰取目录链并集（同一文件一次、仍由外向内）、与顶层共用同一份会话去重缓存与预算；status=error/cancelled 照算，args 截断/非法 JSON、非触碰工具、isError 的 codemode 结果一律跳过（少注入不误注入）。新增 codemode.ts（纯逻辑）+ discover.ts 的 discoverContextFilesForAnchors + index.ts 的 collectTouches；测试 46→64（codemode 明细 10 / 发现并集 3 / 宿主事件路径 5），typecheck 0，主干 test:all 22/22（2299 pass）。真机验收：临时 agent 目录 + 真实 pi --mode json -p --tools +codemode（opencode-go/deepseek-v4-flash）→ codemode 结果尾部出现 Loaded src/AGENTS.md 与 Loaded src/components/AGENTS.md，模型答出只写在嵌套 AGENTS.md 里的暗号。跨厂商评审 3 轮（kimi-coding/k3-256k）：第 1 轮 1 条 P2（injected.add 在 buildInjection 之前 ⇒ 预算丢弃的文件被误标已注入、永不重试）已修 + 宿主用例锁定，第 2 轮 1 条 P2（卡片 last verified bump）+ 1 可选（补清单计数断言）已处理，第 3 轮无新意见。落地偏差（已记入 ADR-0012/卡片/规格）：宿主 isCodemodeTool 不在公开导出面（pi 1.1.0 包入口只导出 CodemodeToolDetails 类型）⇒ 改用「工具名 codemode + details.calls 是数组」结构守卫；details.calls[].args 是宿主 200 字符截断预览 ⇒ codemode 路径对 write/edit 这类自带大载荷的调用覆盖弱于顶层（已知边界，待宿主开完整入参口）。"
+      ],
       "createdAt": "2026-10-10T19:06:05.062Z",
       "claimedAt": "2026-10-10T19:06:05.252Z",
-      "completedAt": null,
+      "completedAt": "2026-10-10T19:33:20.159Z",
       "alignedAt": "2026-10-10T19:10:50.803Z"
+    },
+    {
+      "id": 3,
+      "globalId": 362,
+      "text": "closes#2 遗留：codemode 里 write/edit 大载荷漏判——details.calls[].args 是宿主 200 字符截断预览，JSON.parse 整串即失败 ⇒ 该条被跳过。改进：改用**嵌套 tool_result 事件**（parentToolCallId 非空）的**完整 input** 记下触碰，顶层 codemode 结果到达时再注入（details.calls 解析降级为兜底）；截断问题随之消失，不改宿主、不猜 JSON。",
+      "status": "done",
+      "branch": "feat/dir-context-nested-touches",
+      "tags": [
+        "codemode",
+        "enhancement"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [
+        "完成 2026-10-11 @ merge 0a7ec67（feat/dir-context-nested-touches / dir-context 1.2.0 / 根 2.66.0）：codemode 触碰的主来源从 details.calls[].args（宿主 200 字符截断预览）换成**嵌套 tool_result 事件的完整 input**——嵌套事件（parentToolCallId 非空）用完整 event.input 跑 detectTouch、按顶层调用 id 缓冲（不看 isError），顶层 codemode 结果到达时取走并与 details.calls 解析取并集去重，复用同一套锚点/发现/去重/预算。缓冲有界：单组 64 条、最多 8 组（淘汰最旧）、取走即删、session_start/compact/shutdown 清空；消费判据只看工具名 codemode（与 details 形状解耦——首轮评审指出的真缺陷：无 details 时该组既不消费、缓冲触碰又被丢掉）。文档三面同步（卡片含两类新坑、规格决策 9、ADR-0012 v1.2 补充）；测试 64→79（纯逻辑 +6、宿主路径 +9），typecheck 0，主干 test:all 22/22（2322 pass；两次并发负载抖动 loop/root:todo 单跑均绿）。真机 A/B 决定性证据：脚本 tools.write 写 300 字符（args 必被截断）——v1.2 注入且模型答出嵌套 AGENTS.md 暗号；v1.1 对照组零注入、模型答「看不到任何相关内容」。跨厂商评审 3 轮（kimi-coding/k3-256k）：首轮 1 真缺陷 + 2 建议全部处理，二三两轮无新意见。"
+      ],
+      "createdAt": "2026-10-11T02:50:15.623Z",
+      "claimedAt": "2026-10-11T02:50:43.731Z",
+      "completedAt": "2026-10-11T03:22:45.600Z",
+      "alignedAt": "2026-10-11T03:00:25.070Z"
+    },
+    {
+      "id": 4,
+      "globalId": 370,
+      "text": "closes#3 遗留：远端调用的锚点错判。现状（实机+真实函数验证）：remote-tools 的调用入参带 remote 字段，而 dir-context 只看 path 按本地 cwd 解析——① 远端绝对路径（/srv/app/x.md）落在 cwd 之外 ⇒ 零注入（静默）；② **远端相对路径（docs/x.md，remote-tools 按远端 $HOME 解析）被当成本地路径 ⇒ 注入本地 docs/AGENTS.md（错注入，比不注入更危险）**。要求：① 远端判据 = 工具入参 remote 字段存在且非空字符串且非缺省值字面量（与 remote-tools 同口径），命中即一律零注入（fail-closed，不看 path，绝不按本地 cwd 解析）；② **不得依赖 remote-tools 插件**——只读入参字段，不 import 其内部（resolveToolPath/createSessionCache 是内部面），remote-tools 未安装 / 工具无 remote 参数 / 字段缺失或为空 ⇒ 完全维持现状（本地路径照常注入），静默无异常；③ 首次远端触碰时在结果里追加一行提示（会话内一次；不含远端内容），告知模型可自行 read remote=<host> path=<远端>/AGENTS.md；④ 文档：dir-context 卡片/README 写契约，remote-tools 卡片交叉引用一句。范围外：remote-tools 侧随行注入远端上下文（留待真机案例驱动）、dir-context 自己 ssh、远端 grep/find。",
+      "status": "processing",
+      "branch": "feat/dir-context-remote-calls",
+      "tags": [
+        "enhancement",
+        "remote-tools"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T04:48:33.956Z",
+      "claimedAt": "2026-10-11T04:48:34.254Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-11T05:36:00.209Z"
     }
   ]
 }
