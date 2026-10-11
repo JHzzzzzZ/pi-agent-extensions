@@ -150,7 +150,10 @@ export function createRemoteContextCapability(deps: RemoteContextDeps): RemoteCo
 			if (resolved === null) {
 				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_FAILED, message: "远端上下文：目标不可用，本次跳过。" };
 			}
-			const anchorDir = request.kind === "directory" ? resolved.remotePath : posix.dirname(resolved.remotePath);
+			const rawAnchor = request.kind === "directory" ? resolved.remotePath : posix.dirname(resolved.remotePath);
+			// 尾斜杠归一：相对路径经 `posix.join` 会**保留**尾斜杠（绝对路径那条已被 resolveRemoteSearchPath 剥掉），
+			// 不归一的话块头会显示双斜杠、去重键也会与不带尾斜杠的触碰不一致（同一份内容注两次）。
+			const anchorDir = rawAnchor.replace(/\/+$/, "") || "/";
 			const dirs = contextChainDirs(anchorDir, resolved.baseDir);
 			if (dirs.length === 0) return { ok: true, dir: anchorDir, files: [] };
 

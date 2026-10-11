@@ -143,6 +143,17 @@ test("取上下文：目录类触碰把该路径自身当锚点（ls 不丢自�
   assert.ok((calls[0]?.args.at(-1) ?? "").includes("f='/home/u/docs'/$n"), "目录自身那一级在命令里");
 });
 
+test("取上下文：目录锚点的尾斜杠被归一（否则块头双斜杠 + 去重键与不带斜杠的触碰不一致）", async () => {
+  const { exec, calls } = makeExec(() => ({ stdout: framed([["/home/u/docs/AGENTS.md", "docs"]]) }));
+  const capability = createRemoteContextCapability({
+    resolve: async () => ({ remotePath: "/home/u/docs/", baseDir: "/home/u", target: TARGET.target }),
+    exec,
+  });
+  const outcome = await capability.fetchRemoteContext({ remote: "prod", path: "docs/", kind: "directory" });
+  assert.equal(outcome.ok && outcome.dir, "/home/u/docs", "锚点不带尾斜杠");
+  assert.equal((calls[0]?.args.at(-1) ?? "").includes("//AGENTS"), false, "命令里不出现双斜杠");
+});
+
 test("取上下文：解析失败 / 解析抛错 ⇒ ok:false（不抛，消费方据此退回提示）", async () => {
   const { exec } = makeExec();
   const thrown = createRemoteContextCapability({
