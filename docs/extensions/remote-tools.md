@@ -111,7 +111,7 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
-- `test/` — 99 个：90 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `bash-timeout.test.ts`(8，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
+- `test/` — 100 个：91 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `bash-timeout.test.ts`(9，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 
@@ -199,8 +199,9 @@ pi --print --no-session --no-extensions -e <本目录>/index.ts -e <timeout-bg �
 - **评审记录（`#9`/`#10`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 5 备注）：① `negotiateBash` 的 `base` 死参数——已删（`846213e`）；② timeout-bg 卡 `last verified` 与共享文档不同——**驳回**（惯例是「指向被验证的**代码**提交」，见上面 `#6` 那条；本轮已按最后一次动代码的提交统一为 `846213e`）；③ 两份 align 文档的「抛错回退原路径」与实现的安全口径冲突——**驳回**（对齐文档是开工前的人工确认记录，事后回写会让对齐门失去意义；偏离与理由已按红线 3 记在 `docs/specs/shell-tool-composition.md`，并在 `complete` 备注重申）；④ 模型面文案仍写「path 必须是远端绝对 POSIX 路径」——已改为「相对路径/省略按远端 $HOME」（`846213e`：`REMOTE_GUIDELINE` + 7 处参数/工具说明 + README）；⑤ `remote-live.test.ts` 一处排版——已修（`846213e`）。第 2 轮（复核 ①④⑤）= 见下条。
 - **评审记录（第 2 轮）**：kimi-coding/k3-256k = OK with notes（0 阻断 / 3 条文案 P2）：①②③⑤ 全部确认已解决（② 驳回成立：仓库惯例=指向被验证的代码提交；③ 驳回成立：规格已承接偏离、对齐文档是开工前的人工确认记录）；新发现 3 处「绝对 POSIX」漏网措辞（根 README 的自相矛盾句、`index.ts` 文件头、ADR-0010）——已修（`52c10d9`）。
 - **评审记录（第 3 轮，终轮）**：同款 reviewer = OK with notes（0 阻断）：①② 确认修复且与 `resolveToolPath` 逐点一致；③ 指出注记把原文改写了、自指失效——已按推荐修法恢复原文 `path（远端绝对 POSIX）`、注记改为「决策当日口径 + 当前口径」两句，并覆盖决策 2 正文里同源的旧表述（ADR 只加注记、不改写正文）。三轮上限到：全轮无 P0/P1，终轮唯一一条纯文档 P2 已收口（不再派第 4 轮，红线 11 的最大轮数护栏）。
-- **评审记录（`#12`/`#4`，2026-10-11）**：第 2 轮（复核第 1 轮 5 条修复）= OK with notes（0 阻断 / 2 新建议 P2 / 3 备注）：5 条全部核实为已修（恢复的不变量、命令/目标清洗、README 频道措辞、`jobPlace` 文案、错误码与两条进程边界测试）；建议 ①（三张卡的 `last verified` 指向动过代码的修复提交）与 ②（契约卡补「订阅生命周期」与 `settle` 幂等口径）都已处理；备注中 `register` 失败路径不再对未登记 id settle、端口错误码保留已实现（并加断言），`formatJobLine`/`jobPlace` 的重复记录不改。
 - **评审记录（`#12`/`#4`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 5 建议 / 6 备注）：
+- **评审记录（`#12`/`#4`，2026-10-11）**：第 2 轮（复核第 1 轮 5 条修复）= OK with notes（0 阻断 / 2 新建议 P2 / 3 备注）：5 条全部核实为已修（恢复的不变量、命令/目标清洗、README 频道措辞、`jobPlace` 文案、错误码与两条进程边界测试）；建议 ①（三张卡的 `last verified` 指向动过代码的修复提交）与 ②（契约卡补「订阅生命周期」与 `settle` 幂等口径）都已处理；备注中 `register` 失败路径不再对未登记 id settle、端口错误码保留已实现（并加断言），`formatJobLine`/`jobPlace` 的重复记录不改。
+- **评审记录（`#12`/`#4`，2026-10-11）**：第 3 轮（终轮，复核第 2 轮处理 + merge `dev-laptop` 的自洽性）= **无新意见**（0 阻断 / 0 建议 / 1 非阻断备注）：第 2 轮的 2 建议 + 3 备注全部复核通过；唯一备注是「`REMOTE_JOB_PORT_INVALID` 原样透传分支没有测试锁定」——已补用例（`bash-timeout.test.ts` 的「register 抛端口契约错误」）。按红线 11 的 3 轮上限，本轮即终轮（补测试后不再开第 4 轮；该改动仅测试与文档，无行为变更）。
   涉及本卡的建议 ①（不变量节误删「远端 `$HOME` 缓存失败不毒化」）已恢复；③（README 写「同一条 `pi.events` 通道」失实——托管端口是另一条频道、方向相反）已改；
   ⑤（`allocate`/`register` 的守卫错误与转后台失败是裸 `Error`）已登记错误码 `REMOTE_JOB_PORT_INVALID` / `REMOTE_BACKGROUND_FAILED`，
   并补两条进程边界测试（端口抛错 ⇒ 断 ssh + 带码报错 + notify；日志建不出来 ⇒ 当场回退旧路径）。

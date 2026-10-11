@@ -210,6 +210,27 @@ test("register 抛错（端口异常）：断开本地 ssh + 带错误码的结�
 	assert.deepEqual(settledIds, []);
 });
 
+test("register 抛端口契约错误：错误码原样透传（不把归因吞成转后台失败）", async () => {
+	const h = makeHarness();
+	const portFailure = `${ErrorCodes.REMOTE_JOB_PORT_INVALID}: job 托管端口未返回超时结果文本。`;
+	const brokenHost: RemoteJobPort = {
+		allocate: () => ({ id: "bg-9", logPath: path.join(h.logDir, "bg-9.log") }),
+		register: () => {
+			throw new Error(portFailure);
+		},
+		settle: () => {},
+	};
+	const ops = createRemoteBashOps(h.session, { jobHost: () => brokenHost });
+	const message = await ops
+		.exec("sleep 400", HOME, { onData: () => {}, timeout: 0.05, env: {} })
+		.then(
+			() => "",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+	assert.equal(message, portFailure, "端口自己的错误码不能洗掉（排障要知道是端口不合契约）");
+	assert.equal(h.ssh.main.signal?.aborted, true, "仍然要断开本地 ssh");
+});
+
 test("日志建不出来：回退旧路径（远端命令照跑）+ notify 一次", async () => {
 	const h = makeHarness();
 	const blocker = path.join(h.logDir, "not-a-dir");
