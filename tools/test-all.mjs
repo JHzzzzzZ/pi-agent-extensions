@@ -133,10 +133,24 @@ export const DEFAULT_SUITES = [
     install: true,
     cmd: ["node", "--experimental-strip-types", "--test", "core.test.ts", "agent-runner.test.ts", "server.test.ts"],
   },
-  { ...strip, name: "root:contract", cwd: ".", cmd: ["node", "--test", "test/status-bar-contract.test.ts"] },
-  { ...strip, name: "root:smoke", cwd: ".", cmd: ["node", "--test", "test/install-smoke.test.ts"] },
+  { ...strip, name: "root:contract", cwd: ".", cmd: ["node", "--test", "test/status-bar-contract.test.ts"] },  { ...strip, name: "root:smoke", cwd: ".", cmd: ["node", "--test", "test/install-smoke.test.ts"] },
   { ...strip, name: "root:test-all", cwd: ".", cmd: ["node", "--test", "test/test-all.test.ts"] },
   { ...strip, name: "root:todo", cwd: ".", serial: true, cmd: ["node", "--test", ".agents/skills/todo-cli/todo-cli/test/*.test.ts"] },
+  {
+    ...strip,
+    // 组合矩阵：L1 单装 + L2 配对 + 清单校验器（general-todo#32）。
+    // --test-force-exit：扩展会留下真实定时器/子进程句柄，测试本身全绿也不退出。
+    name: "root:composition",
+    cwd: ".",
+    cmd: [
+      "node",
+      "--test",
+      "--test-force-exit",
+      "test/composition-surfaces.test.ts",
+      "test/composition-standalone.test.ts",
+      "test/composition-pairs.test.ts",
+    ],
+  },
 ];
 
 const VALUE_FLAGS = new Set(["--jobs", "--only", "--registry", "--timeout"]);
