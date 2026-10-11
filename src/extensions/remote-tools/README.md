@@ -57,11 +57,11 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-113 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（10，宿主路径往返、标记根的结构性断言与守卫）、
+114 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（10，宿主路径往返、标记根的结构性断言与守卫）、
 `test/ops.test.ts`（20，发给 ssh 的命令构造、错误映射、图片嗅探、ls/find 目录探针与缓存）、`test/grep.test.ts`（13，rg 事件解析/降级/限流）、
 `test/tools.test.ts`（20，注册覆盖、本地保真对照、远端分派、ls/find 结构化错误与往返数、图片端到端、session 缓存）、
 `test/capability.test.ts`（5，跨扩展能力载荷与订阅、job 托管端口索取与形状守卫）、
-`test/context.test.ts`（22，远端上下文能力：祖先链终点与深度上限、一趟 ssh 的命令拼装与 NUL 分帧、
+`test/context.test.ts`（23，远端上下文能力：祖先链终点与深度上限、一趟 ssh 的命令拼装与 NUL 分帧、
 锚点/基准归一、请求与结果双向形状守卫、失败收敛与握手先到先得）、
 `test/bash-timeout.test.ts`（9，托管路径的进程边界：不断连 + 日志 + settle、terminate 杀远端并断 ssh、无端口时的旧行为）、
 `test/shell-composition.test.ts`（3，真实加载 remote-tools + timeout-bg：能力合并、job 托管频道、反向顺序冲突可见）；`test/fixtures.ts` 提供真 PNG 等样本。
