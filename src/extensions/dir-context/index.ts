@@ -13,14 +13,14 @@
  * - 会话内每绝对路径只注入一次；`session_compact` 后清空（compact 会把之前的注入
  *   从上下文里抹掉，必须允许按需重载，否则那段上下文永久丢失）。
  * - cwd 之外的触碰、失败结果、嵌套工具调用一律零注入（fail-open 降级，绝不改坏
- *   原结果）。嵌套调用（codemode 脚本发起）的补偿路径：**顶层** codemode 结果带
- *   `details.calls`（每个嵌套调用的 name/args/status），据此提取触碰并复用同一套
- *   发现/去重/预算（ADR-0012）。
+ *   原结果）。嵌套调用（codemode 脚本发起）的补偿路径：**嵌套事件带完整入参**，按顶层调用 id
+ *   缓冲，等**顶层** codemode 结果到达时与 `details.calls`（截断预览，兜底）取并集，再复用同一套
+ *   发现/去重/预算（ADR-0012 及其 v1.2 补充 / 工单 dir-context-todo#3）。
  */
 import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { resolveAnchor } from "./anchor.ts";
-import { detectCodemodeTouches } from "./codemode.ts";
+import { createNestedTouchBuffer, dedupeTouches, detectCodemodeTouches, type NestedTouchBuffer } from "./codemode.ts";
 import { discoverContextFilesForAnchors } from "./discover.ts";
 import { ErrorCodes, type DirContextError } from "./errors.ts";
 import { buildInjection, type ContextFileContent } from "./inject.ts";
@@ -42,6 +42,8 @@ interface LoadedFile {
 export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   /** 本会话已注入过的绝对路径（compact/shutdown 时清空）。 */
   const injected = new Set<string>();
+  /** codemode 的嵌套触碰缓冲（顶层结果到达即取走；reset 时清空）。 */
+  const nestedTouches = createNestedTouchBuffer();
   const loaded: LoadedFile[] = [];
   let readFailureReported = false;
 
@@ -57,6 +59,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
 
   const reset = (ctx: ExtensionContext): void => {
     injected.clear();
+    nestedTouches.clear();
     loaded.length = 0;
     readFailureReported = false;
     renderStatus(ctx);
@@ -77,6 +80,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   pi.on("session_compact", (_event, ctx) => reset(ctx));
   pi.on("session_shutdown", (_event, ctx) => {
     injected.clear();
+    nestedTouches.clear();
     loaded.length = 0;
     if (!ctx.hasUI) return;
     try {
@@ -87,7 +91,16 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    const touches = collectTouches(event);
+    // 嵌套调用（codemode 脚本的 tools.*）：结果只回到调用方工具、不进 transcript，往这里注入没意义；
+    // 但它的 `input` 是**完整入参**（宿主不截断），记下来供发起它的那次**顶层** codemode 结果使用。
+    // 不看 `isError`：文件可能已被读写，注入与这次嵌套调用的成败无关（对齐决策 1）。
+    if (event.parentToolCallId) {
+      const touch = detectTouch(event.toolName, event.input);
+      if (touch) nestedTouches.record(event.parentToolCallId, touch);
+      return undefined;
+    }
+
+    const touches = collectTouches(event, nestedTouches);
     if (touches.length === 0) return undefined;
 
     const anchorDirs: string[] = [];
@@ -158,20 +171,20 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
 }
 
 /**
- * 一次工具结果 → 被触碰的路径（可能多个）。两类路径：
- * - 普通工具：入参即触碰（真实入参，完整）。
- * - codemode：顶层结果带 `details.calls`，把脚本里的嵌套调用翻译回同一套触碰语义（ADR-0012）。
+ * 一次顶层工具结果 → 被触碰的路径（可能多个）。三类路径：
+ * - 普通工具：入参即触碰（完整入参）。
+ * - codemode：嵌套调用的**完整入参**（从缓冲取走）+ `details.calls`（截断预览，兜底）取并集。
  *
- * 三类一律零注入：嵌套调用自身的`tool_result`（结果不进 transcript，注入无意义——codemode 由
- * 它的顶层结果代偿）、失败结果（尾部追加指令只会污染错误诊断）、无文本内容的结果（纯图片等，
- * 追加元信息没有落点）。
+ * 两类一律零注入：失败结果（尾部追加指令只会污染错误诊断）、无文本内容的结果（纯图片等，
+ * 追加元信息没有落点）。嵌套调用自身在 handler 入口就分流了（不注入，只记触碰）。
  */
-function collectTouches(event: ToolResultEvent): Touch[] {
-  if (event.isError || event.parentToolCallId) return [];
+function collectTouches(event: ToolResultEvent, nestedTouches: NestedTouchBuffer): Touch[] {
+  // 先判是不是 codemode：是的话无论接下来是否注入，都要把该组的缓冲取走（不跨结果残留）。
+  const fromDetails = detectCodemodeTouches(event.toolName, event.details);
+  const buffered = fromDetails === null ? [] : nestedTouches.take(event.toolCallId);
+  if (event.isError) return [];
   if (!event.content.some((block) => block.type === "text")) return [];
-
-  const nested = detectCodemodeTouches(event.toolName, event.details);
-  if (nested !== null) return nested;
+  if (fromDetails !== null) return dedupeTouches([...buffered, ...fromDetails]);
 
   const touch = detectTouch(event.toolName, event.input);
   return touch ? [touch] : [];

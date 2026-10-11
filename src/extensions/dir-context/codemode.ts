@@ -9,8 +9,8 @@
  *
  * 降级口径（认不出就少注入，绝不误注入）：
  * - `args` 是宿主的**截断预览**（`previewArgs` 上限 200 字符、超出加 `...` 尾），截断后不是合法
- *   JSON ⇒ 该条跳过。代价：`write` / `edit` 这类自带大载荷的调用在脚本里常见截断，codemode
- *   路径对它们的覆盖弱于顶层（顶层拿到的是完整入参）——见卡片「已知缺口」。
+ *   JSON ⇒ 该条跳过。因此 `details.calls` 在本扩展里只是**兜底**来源：主来源是嵌套 `tool_result`
+ *   事件的**完整 `input`**（见下方缓冲与 docs/adr/0012 的 v1.2 补充）。
  * - 工具名不认识（`grep` / `find` / `models.*` 的 `chat` 等）⇒ 跳过（`detectTouch` 返回 null）。
  * - `status` 为 `error` / `cancelled` **照算**：文件可能已经被读过或写过，注入与脚本成败无关。
  */
@@ -37,17 +37,70 @@ export function detectCodemodeTouches(toolName: string, details: unknown): Touch
   if (calls === null) return null;
 
   const touches: Touch[] = [];
-  const seen = new Set<string>();
   for (const call of calls) {
     const touch = readCallTouch(call);
-    if (!touch) continue;
+    if (touch) touches.push(touch);
+  }
+  return dedupeTouches(touches);
+}
+
+/** 按 `kind + rawPath` 去重且保序（同路径不同 kind 算两条）——缓冲与详情两个来源合并时用。 */
+export function dedupeTouches(touches: readonly Touch[]): Touch[] {
+  const seen = new Set<string>();
+  const kept: Touch[] = [];
+  for (const touch of touches) {
     const key = `${touch.kind}\u0000${touch.rawPath}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    touches.push(touch);
+    kept.push(touch);
   }
-  return touches;
+  return kept;
 }
+
+/* ————— 嵌套触碰缓冲（dir-context-todo#3） ————— */
+
+/** 单次顶层 codemode 调用最多记多少条触碰（超出丢弃后续：少记，不误记）。 */
+export const MAX_NESTED_TOUCHES_PER_CALL = 64;
+/** 同时保留多少个顶层调用的分组（内存有界；超出淘汰最旧的组）。 */
+export const MAX_NESTED_CALL_GROUPS = 8;
+
+/**
+ * 嵌套调用缓冲：按发起它的**顶层**调用 id 归组——嵌套 `tool_result` 事件的 `input` 是完整入参，
+ * 比 `details.calls[].args`（200 字符截断预览）可靠，所以它当主来源、`details.calls` 当兜底。
+ * 归组键：嵌套事件的 `parentToolCallId` == 顶层事件的 `toolCallId`（宿主事实：嵌套调用 id 形如
+ * `<顶层 id>/<n>`）。取走（`take`）即删组，会话 reset 时 `clear` 全部。
+ */
+export function createNestedTouchBuffer() {
+  const groups = new Map<string, Touch[]>();
+
+  return {
+    record(parentCallId: string, touch: Touch): void {
+      const existing = groups.get(parentCallId);
+      if (existing === undefined) {
+        if (groups.size >= MAX_NESTED_CALL_GROUPS) {
+          const oldest = groups.keys().next();
+          if (!oldest.done) groups.delete(oldest.value);
+        }
+        groups.set(parentCallId, [touch]);
+        return;
+      }
+      if (existing.length < MAX_NESTED_TOUCHES_PER_CALL) existing.push(touch);
+    },
+
+    take(parentCallId: string): Touch[] {
+      const recorded = groups.get(parentCallId);
+      if (recorded === undefined) return [];
+      groups.delete(parentCallId);
+      return recorded;
+    },
+
+    clear(): void {
+      groups.clear();
+    },
+  };
+}
+
+export type NestedTouchBuffer = ReturnType<typeof createNestedTouchBuffer>;
 
 /** `details.calls` 是数组即认为「这是 codemode 结果」；形状不符的条目被过滤掉。 */
 function readCalls(details: unknown): CodemodeToolDetails["calls"] | null {

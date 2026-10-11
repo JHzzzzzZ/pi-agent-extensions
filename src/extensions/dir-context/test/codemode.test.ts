@@ -10,7 +10,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { detectCodemodeTouches } from "../codemode.ts";
+import { createNestedTouchBuffer, dedupeTouches, detectCodemodeTouches, MAX_NESTED_CALL_GROUPS, MAX_NESTED_TOUCHES_PER_CALL } from "../codemode.ts";
 import type { Touch } from "../touch.ts";
 
 /** 真实 CodemodeNestedCall 形状（id/name/args/status）；args 默认按宿主的紧凑 JSON 生成。 */
@@ -114,4 +114,63 @@ test("不是 codemode 顶层结果：返回 null（调用方走普通触碰路�
 test("是 codemode 但没有可认的触碰：返回空数组（与「不是 codemode」区分）", () => {
   assert.deepEqual(detectCodemodeTouches("codemode", { calls: [] }), []);
   assert.deepEqual(detectCodemodeTouches("codemode", { calls: [null, "x", { name: "read" }, { args: "{}" }], fullOutputPath: "C:/tmp/x" }), []);
+});
+
+// —— 嵌套触碰缓冲（dir-context-todo#3）：嵌套 tool_result 事件的**完整 input** 是主来源，
+// `details.calls` 的截断 args 降级为兜底。
+
+test("dedupeTouches：按 kind + rawPath 去重且保序（并集用）", () => {
+  assert.deepEqual(
+    dedupeTouches([
+      { rawPath: "src/a.ts", kind: "file" },
+      { rawPath: "src", kind: "directory" },
+      { rawPath: "src/a.ts", kind: "file" },
+      { rawPath: "src/a.ts", kind: "directory" },
+    ]),
+    [
+      { rawPath: "src/a.ts", kind: "file" },
+      { rawPath: "src", kind: "directory" },
+      { rawPath: "src/a.ts", kind: "directory" },
+    ],
+    "同路径不同 kind 是两条；同 kind 同路径只留首次出现",
+  );
+});
+
+test("嵌套缓冲：按父调用归组，take 取走即清（同一组不会被消费两次）", () => {
+  const buffer = createNestedTouchBuffer();
+  buffer.record("call-A", { rawPath: "src/a.ts", kind: "file" });
+  buffer.record("call-B", { rawPath: "src/b.ts", kind: "file" });
+
+  assert.deepEqual(buffer.take("call-A"), [{ rawPath: "src/a.ts", kind: "file" }]);
+  assert.deepEqual(buffer.take("call-A"), [], "已取走的组不再返回");
+  assert.deepEqual(buffer.take("call-B"), [{ rawPath: "src/b.ts", kind: "file" }], "其他组不受影响");
+  assert.deepEqual(buffer.take("call-C"), [], "未知组返回空数组");
+});
+
+test("嵌套缓冲：单组超过上限的后续触碰丢弃（少记，不误记）", () => {
+  const buffer = createNestedTouchBuffer();
+  for (let index = 0; index < MAX_NESTED_TOUCHES_PER_CALL + 5; index += 1) {
+    buffer.record("call-A", { rawPath: `src/f${index}.ts`, kind: "file" });
+  }
+  const taken = buffer.take("call-A");
+  assert.equal(taken.length, MAX_NESTED_TOUCHES_PER_CALL);
+  assert.equal(taken[0]?.rawPath, "src/f0.ts", "先记的保留");
+  assert.equal(taken.at(-1)?.rawPath, `src/f${MAX_NESTED_TOUCHES_PER_CALL - 1}.ts`);
+});
+
+test("嵌套缓冲：组数超过上限时淘汰最旧的组（内存有界）", () => {
+  const buffer = createNestedTouchBuffer();
+  for (let index = 0; index < MAX_NESTED_CALL_GROUPS + 2; index += 1) {
+    buffer.record(`call-${index}`, { rawPath: `src/g${index}.ts`, kind: "file" });
+  }
+  assert.deepEqual(buffer.take("call-0"), [], "最旧的组已被淘汰");
+  assert.deepEqual(buffer.take("call-1"), []);
+  assert.equal(buffer.take(`call-${MAX_NESTED_CALL_GROUPS + 1}`).length, 1, "最新的组在");
+});
+
+test("嵌套缓冲：clear 清空全部组", () => {
+  const buffer = createNestedTouchBuffer();
+  buffer.record("call-A", { rawPath: "src/a.ts", kind: "file" });
+  buffer.clear();
+  assert.deepEqual(buffer.take("call-A"), []);
 });
