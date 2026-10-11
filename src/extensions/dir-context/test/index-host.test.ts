@@ -607,3 +607,38 @@ test("session_compact 清空缓冲：compact 后再来的顶层结果不再兑�
     "compact 已清缓冲，且注入缓存也清了但这里没有触碰可注",
   );
 });
+
+test("顶层结果没有 details（形状漂移）时：缓冲照样消费，且缓冲触碰仍生效", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "write", toolInput: { path: "src/components/New.tsx", content: "x".repeat(300) }, parentToolCallId: "call-1" }),
+  );
+  // details 缺失：主来源（缓冲）必须仍然生效——判「是不是 codemode」只能看工具名，不能看 details 形状。
+  const result = await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" } }));
+  assert.match(injectedText(result), /Loaded src\/components\/AGENTS\.md/);
+
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" } })),
+    undefined,
+    "该组已在上面那次结果处消费，不跨结果残留",
+  );
+});
+
+test("session_start 也清空缓冲（与 compact 共用 reset）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-1" }),
+  );
+  await h.runner.emit({ type: "session_start", reason: "new" });
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] } })),
+    undefined,
+    "session_start 已清缓冲",
+  );
+});

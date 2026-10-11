@@ -10,7 +10,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createNestedTouchBuffer, dedupeTouches, detectCodemodeTouches, MAX_NESTED_CALL_GROUPS, MAX_NESTED_TOUCHES_PER_CALL } from "../codemode.ts";
+import { createNestedTouchBuffer, dedupeTouches, detectCodemodeTouches, isCodemodeResult, MAX_NESTED_CALL_GROUPS, MAX_NESTED_TOUCHES_PER_CALL } from "../codemode.ts";
 import type { Touch } from "../touch.ts";
 
 /** 真实 CodemodeNestedCall 形状（id/name/args/status）；args 默认按宿主的紧凑 JSON 生成。 */
@@ -173,4 +173,11 @@ test("嵌套缓冲：clear 清空全部组", () => {
   buffer.record("call-A", { rawPath: "src/a.ts", kind: "file" });
   buffer.clear();
   assert.deepEqual(buffer.take("call-A"), []);
+});
+
+test("isCodemodeResult：只认工具名，与 details 形状解耦（消费缓冲的判据）", () => {
+  assert.equal(isCodemodeResult("codemode"), true);
+  assert.equal(isCodemodeResult("read"), false);
+  assert.equal(isCodemodeResult("my-codemode"), false, "只认内置工具名，不认前缀/近似名");
+  assert.deepEqual(detectCodemodeTouches("codemode", undefined), null, "details 形状不对只是解析不出触碰，不影响「是不是 codemode」");
 });

@@ -32,7 +32,7 @@ const CODEMODE_TOOL_NAME = "codemode";
  * 而内置 codemode 的工具名是固定字面量。
  */
 export function detectCodemodeTouches(toolName: string, details: unknown): Touch[] | null {
-  if (toolName !== CODEMODE_TOOL_NAME) return null;
+  if (!isCodemodeResult(toolName)) return null;
   const calls = readCalls(details);
   if (calls === null) return null;
 
@@ -42,6 +42,15 @@ export function detectCodemodeTouches(toolName: string, details: unknown): Touch
     if (touch) touches.push(touch);
   }
   return dedupeTouches(touches);
+}
+
+/**
+ * 这次顶层结果是否属于内置 codemode：**只认工具名**，与 `details` 的形状解耦。
+ * 消费嵌套缓冲必须用它——若按 `details.calls` 是否可解析来判，形状漂移（或缺 `details`）时
+ * 那组缓冲就永远不会被取走，而缓冲里的触碰也会被白白丢掉。
+ */
+export function isCodemodeResult(toolName: string): boolean {
+  return toolName === CODEMODE_TOOL_NAME;
 }
 
 /** 按 `kind + rawPath` 去重且保序（同路径不同 kind 算两条）——缓冲与详情两个来源合并时用。 */

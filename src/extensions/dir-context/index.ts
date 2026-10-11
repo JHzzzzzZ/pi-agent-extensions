@@ -20,7 +20,7 @@
 import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { resolveAnchor } from "./anchor.ts";
-import { createNestedTouchBuffer, dedupeTouches, detectCodemodeTouches, type NestedTouchBuffer } from "./codemode.ts";
+import { createNestedTouchBuffer, dedupeTouches, detectCodemodeTouches, isCodemodeResult, type NestedTouchBuffer } from "./codemode.ts";
 import { discoverContextFilesForAnchors } from "./discover.ts";
 import { ErrorCodes, type DirContextError } from "./errors.ts";
 import { buildInjection, type ContextFileContent } from "./inject.ts";
@@ -179,13 +179,17 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
  * 追加元信息没有落点）。嵌套调用自身在 handler 入口就分流了（不注入，只记触碰）。
  */
 function collectTouches(event: ToolResultEvent, nestedTouches: NestedTouchBuffer): Touch[] {
-  // 先判是不是 codemode：是的话无论接下来是否注入，都要把该组的缓冲取走（不跨结果残留）。
-  const fromDetails = detectCodemodeTouches(event.toolName, event.details);
-  const buffered = fromDetails === null ? [] : nestedTouches.take(event.toolCallId);
+  // 判「是不是 codemode」只认工具名（与 details 形状解耦）：无论 details 长什么样，该组缓冲都要在
+  // 这次结果处取走，也都要给缓冲触碰一个上场的时机（details 不可用时它就是唯一来源）。
+  if (isCodemodeResult(event.toolName)) {
+    const buffered = nestedTouches.take(event.toolCallId);
+    if (event.isError) return [];
+    if (!event.content.some((block) => block.type === "text")) return [];
+    return dedupeTouches([...buffered, ...(detectCodemodeTouches(event.toolName, event.details) ?? [])]);
+  }
+
   if (event.isError) return [];
   if (!event.content.some((block) => block.type === "text")) return [];
-  if (fromDetails !== null) return dedupeTouches([...buffered, ...fromDetails]);
-
   const touch = detectTouch(event.toolName, event.input);
   return touch ? [touch] : [];
 }
