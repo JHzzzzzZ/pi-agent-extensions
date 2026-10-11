@@ -11,6 +11,7 @@
     "test:all": "node tools/test-all.mjs",
     "test:contract": "node --test test/status-bar-contract.test.ts",
     "test:smoke": "node --test test/install-smoke.test.ts",
+    "test:lock": "node --test test/package-lock-drift.test.ts",
     "test:todo": "node --test \".agents/skills/todo-cli/todo-cli/test/*.test.ts\"",
     "smoke": "node tools/install-smoke.mjs"
   },
