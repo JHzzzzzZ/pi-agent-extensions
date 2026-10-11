@@ -309,7 +309,7 @@ events 订阅: -
 无注册面: -
 
 ### timeout-bg
-状态键: -
+状态键: `80:timeout-bg`
 widget: -
 工具: -
 工具面: replace:bash, replace:powershell
@@ -322,7 +322,7 @@ events 订阅: pi-extensions:shell-capability:v1
 独占声明: replace:bash, replace:powershell
 共享槽: pi-extensions:shell-capability:v1（能力协商发起方 = bash 的 owner，见 shell-tool-capability.md）
 模式: -
-会话生命周期: `session_start` 逐个重注册 active shell 工具并做一次能力协商；`session_shutdown` `killAll()` 杀全部后台任务。另经 `pi.sendMessage`（deliverAs followUp）回送后台完成消息
+会话生命周期: `session_start` 逐个重注册 active shell 工具并做一次能力协商（含后台任务状态段的清理）；`session_shutdown` `killAll()` 杀全部后台任务并清状态段。另经 `pi.sendMessage`（deliverAs followUp）回送后台完成消息
 无注册面: -
 
 ### virtual-model-router
