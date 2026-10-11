@@ -217,7 +217,7 @@
       "id": 12,
       "globalId": 371,
       "text": "远端 bash 超时语义与本地对齐（用户 2026-10-11 实测）：本地超时=不杀进程+转后台+日志+结束通知（bg-8 闭环）；远端超时=宿主原生消息「Command timed out after N seconds」+ 本地 ssh 被杀，但**远端命令继续孤儿运行**（实测 sleep 15 超时后仍写出标记文件），无 job、无日志、无通知，文案还误导为「已结束」。用户选定方案 B：远端超时也走 timeout-bg 的转后台语义——ssh 不被 kill、输出继续落盘、给出可查询 job、结束时通知。契约 docs/cross/shell-tool-capability.md 补「远端超时」一节（现无任何描述），并加集成测试（现无任何断言）。跨扩展边界待对齐：timeout-bg 的 job 注册/通知能力如何被远端分支复用（禁跨扩展 import）",
-      "status": "processing",
+      "status": "aligned",
       "branch": "feat/remote-timeout-bg",
       "tags": [
         "超时",
@@ -227,12 +227,13 @@
       "priority": 5,
       "dependsOn": [],
       "notes": [
-        "5 条设计决策经用户逐条 yes 确认（见对齐文档）"
+        "5 条设计决策经用户逐条 yes 确认（见对齐文档）",
+        "撤销 2026-10-11：从 processing 回到未领取；交接：实现由用户执行，退回待领取（aligned 交付）"
       ],
       "createdAt": "2026-10-11T05:37:06.449Z",
-      "claimedAt": "2026-10-11T05:37:06.721Z",
+      "claimedAt": "2026-10-11T05:41:22.605Z",
       "completedAt": null,
-      "alignedAt": "2026-10-11T05:39:08.312Z"
+      "alignedAt": "2026-10-11T05:41:22.836Z"
     }
   ]
 }
