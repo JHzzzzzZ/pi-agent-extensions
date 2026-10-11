@@ -15,6 +15,7 @@
 
 import type {
 	AgentToolResult,
+	AgentToolUpdateCallback,
 	BashToolDetails,
 	BashToolInput,
 	EditToolDetails,
@@ -41,6 +42,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import {
+	BASH_REMOTE_GUIDELINE,
+	type RemoteBashCapability,
+	isRemoteBashCall,
+	offerBashCapability,
+} from "./capability.ts";
+import { ErrorCodes } from "./errors.ts";
 import { executeRemoteGrep, remoteGrepSchema, resolveRemoteSearchPath } from "./grep.ts";
 import {
 	type RemoteSession,
@@ -56,7 +64,7 @@ import { assertMarkerRootUsable, assertModelPathInput, toHostPath } from "./path
 import { type SshExec, type SshTarget, formatTarget, parseTarget, validateRemotePath } from "./ssh.ts";
 
 const REMOTE_GUIDELINE =
-	"远端工具（remote-tools）：给 read/write/edit/bash/grep/find/ls 传 remote=\"[user@]host\"（可选 remotePort）即在远端主机执行，此时 path 必须是远端绝对 POSIX 路径；remote 省略或留空表示本机执行。";
+	"远端工具（remote-tools）：给 read/write/edit/bash/grep/find/ls 传 remote=\"[user@]host\"（可选 remotePort）即在远端主机执行，此时 path 在远端主机解析（省略或相对路径按远端 $HOME，绝对 POSIX 路径直接用）；remote 省略或留空表示本机执行。";
 
 export interface RemoteToolsDeps {
 	/** 进程边界端口：生产用 createSpawnExec，测试注入手写 fake。 */
@@ -80,10 +88,16 @@ type SessionPlan = { kind: "local" } | ({ kind: "remote" } & RemotePlan);
 const remoteTargetProperties = {
 	remote: Type.Optional(
 		Type.String({
-			description: '远端 SSH 目标 "[user@]host"（可选 remotePort）；省略或留空 = 在本机执行。给值时 path 必须是远端绝对 POSIX 路径。',
+			description: '远端 SSH 目标 "[user@]host"（可选 remotePort）；省略或留空 = 在本机执行。给值时 path 在远端主机解析（相对路径按远端 $HOME）。',
 		}),
 	),
 	remotePort: Type.Optional(Type.Number({ description: "远端 SSH 端口（1-65535，省略用 ssh 默认或 ~/.ssh/config）" })),
+};
+
+/** bash 的远端参数片段：自己的注册与跨扩展能力载荷共用同一份 schema（不许两份）。 */
+const remoteBashProperties = {
+	remoteCwd: Type.Optional(Type.String({ description: "远端工作目录（省略或相对路径 = 远端 $HOME）" })),
+	...remoteTargetProperties,
 };
 
 /** 同名同端口共享一个 session：远端 $HOME 只解析一次，不给每次调用都加一轮 ssh。 */
@@ -178,7 +192,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const readBase = createReadToolDefinition(deps.cwd);
 	pi.registerTool({
 		...readBase,
-		description: `${readBase.description} 传 remote 时改在远端主机读取（path 为远端绝对 POSIX 路径）。`,
+		description: `${readBase.description} 传 remote 时改在远端主机读取（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(readBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...readBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<ReadToolDetails | undefined>> {
@@ -197,7 +211,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const writeBase = createWriteToolDefinition(deps.cwd);
 	pi.registerTool({
 		...writeBase,
-		description: `${writeBase.description} 传 remote 时改在远端主机写入（path 为远端绝对 POSIX 路径）。`,
+		description: `${writeBase.description} 传 remote 时改在远端主机写入（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(writeBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...writeBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<undefined>> {
@@ -216,7 +230,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const editBase = createEditToolDefinition(deps.cwd);
 	pi.registerTool({
 		...editBase,
-		description: `${editBase.description} 传 remote 时改在远端主机编辑（path 为远端绝对 POSIX 路径）。`,
+		description: `${editBase.description} 传 remote 时改在远端主机编辑（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(editBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...editBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<EditToolDetails | undefined>> {
@@ -235,7 +249,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const lsBase = createLsToolDefinition(deps.cwd);
 	pi.registerTool({
 		...lsBase,
-		description: `${lsBase.description} 传 remote 时改列远端主机目录（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）。`,
+		description: `${lsBase.description} 传 remote 时改列远端主机目录（path 省略或相对路径 = 远端 $HOME）。`,
 		promptGuidelines: [...(lsBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...lsBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<LsToolDetails | undefined>> {
@@ -245,7 +259,11 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 				return createLsToolDefinition(ctx?.cwd ?? deps.cwd).execute(id, rest, signal, onUpdate, ctx);
 			}
 			const path = await resolveToolPath(plan, rest.path);
-			const definition = createLsToolDefinition(toHostPath(path.baseDir), { operations: createRemoteLsOps(plan.session) });
+			const rich = createRemoteLsOps(plan.session);
+			// fail-closed 目录探针：宿主 ls 自己的错误模板会把宿主标记形态的路径插进消息（remote-tools#10）。
+			// 探针答案缓存进同一个 ops 实例 ⇒ 宿主随后的 exists/stat 不再触网。
+			await rich.probeDirectory(path.remotePath);
+			const definition = createLsToolDefinition(toHostPath(path.baseDir), { operations: rich });
 			return definition.execute(id, { ...rest, path: toHostPath(path.remotePath) }, signal, onUpdate, remoteContext(ctx, path.baseDir));
 		},
 	});
@@ -254,7 +272,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const findBase = createFindToolDefinition(deps.cwd);
 	pi.registerTool({
 		...findBase,
-		description: `${findBase.description} 传 remote 时改在远端主机搜索（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）。`,
+		description: `${findBase.description} 传 remote 时改在远端主机搜索（path 省略或相对路径 = 远端 $HOME）。`,
 		promptGuidelines: [...(findBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...findBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<FindToolDetails | undefined>> {
@@ -265,6 +283,8 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 			}
 			const path = await resolveToolPath(plan, rest.path);
 			const rich = createRemoteFindOps(plan.session);
+			// 同 ls：宿主 find 的「Path not found」也会回灌宿主标记路径，探针顺带把 exists 缓存掉。
+			await rich.probeDirectory(path.remotePath);
 			const sink = { degraded: false };
 			const definition = createFindToolDefinition(toHostPath(path.baseDir), {
 				operations: {
@@ -285,24 +305,45 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 
 	// ── bash ────────────────────────────────────────────────────────────────
 	const bashBase = createBashToolDefinition(deps.cwd);
+
+	/** 远端分支的**单一实现**：本扩展自己的 bash 与跨扩展能力载荷共用它（不允许两份）。 */
+	async function executeRemoteBash(
+		id: string,
+		params: BashToolInput & RemoteTargetParams & { remoteCwd?: string | undefined },
+		signal: AbortSignal | undefined,
+		onUpdate: AgentToolUpdateCallback<BashToolDetails | undefined> | undefined,
+		ctx: ExtensionToolContext | undefined,
+	): Promise<AgentToolResult<BashToolDetails | undefined>> {
+		const plan = await planSession(params);
+		if (plan.kind === "local") {
+			// 调用方（跨扩展 owner）只在 isRemoteCall 为真时才进这里；走到本支说明分派契约被违反。
+			throw new Error(`${ErrorCodes.INVALID_REMOTE_TARGET}: 参数未表达远端意图，却被当作远端调用。`);
+		}
+		const rest = stripRemoteFields(params);
+		const cwd = await resolveToolPath(plan, params.remoteCwd);
+		const definition = createBashToolDefinition(toHostPath(cwd.remotePath), { operations: createRemoteBashOps(plan.session) });
+		return definition.execute(id, rest, signal, onUpdate, remoteContext(ctx, cwd.remotePath));
+	}
+
+	// 跨扩展能力协商（remote-tools-todo#9）：timeout-bg 若在 session_start 重注册 bash，会把这份能力并进去。
+	offerBashCapability(pi.events, {
+		parameters: remoteBashProperties,
+		isRemoteCall: isRemoteBashCall,
+		executeRemote: executeRemoteBash,
+		guideline: BASH_REMOTE_GUIDELINE,
+	});
+
 	pi.registerTool({
 		...bashBase,
 		description: `${bashBase.description} 传 remote 时改在远端主机执行（cwd = remoteCwd 或远端 $HOME）。`,
 		promptGuidelines: [...(bashBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
-		parameters: Type.Object({
-			...bashBase.parameters.properties,
-			remoteCwd: Type.Optional(Type.String({ description: "远端工作目录（绝对 POSIX 路径）；省略 = 远端 $HOME" })),
-			...remoteTargetProperties,
-		}),
+		parameters: Type.Object({ ...bashBase.parameters.properties, ...remoteBashProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<BashToolDetails | undefined>> {
-			const plan = await planSession(params);
 			const rest = stripRemoteFields<BashToolInput & RemoteTargetParams & { remoteCwd?: string | undefined }>(params);
-			if (plan.kind === "local") {
+			if (!isRemoteBashCall(params)) {
 				return createBashToolDefinition(ctx?.cwd ?? deps.cwd).execute(id, rest, signal, onUpdate, ctx);
 			}
-			const cwd = await resolveToolPath(plan, params.remoteCwd);
-			const definition = createBashToolDefinition(toHostPath(cwd.remotePath), { operations: createRemoteBashOps(plan.session) });
-			return definition.execute(id, rest, signal, onUpdate, remoteContext(ctx, cwd.remotePath));
+			return executeRemoteBash(id, params, signal, onUpdate, ctx);
 		},
 	});
 
@@ -311,7 +352,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		name: "grep",
 		label: "grep",
 		description:
-			"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars. 传 remote 时改在远端主机搜索（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）；远端缺 ripgrep 时回退 GNU grep 并在结果里标注降级。",
+			"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars. 传 remote 时改在远端主机搜索（path 省略或相对路径 = 远端 $HOME）；远端缺 ripgrep 时回退 GNU grep 并在结果里标注降级。",
 		promptSnippet: "Search file contents for patterns (respects .gitignore)",
 		promptGuidelines: [REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...remoteGrepSchema.properties, ...remoteTargetProperties }),

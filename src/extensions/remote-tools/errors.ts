@@ -18,6 +18,8 @@ export const ErrorCodes = {
 	SSH_TIMEOUT: "SSH_TIMEOUT",
 	/** 远端路径不存在。 */
 	REMOTE_NOT_FOUND: "REMOTE_NOT_FOUND",
+	/** 远端路径存在但不是目录（ls/find 的目录探针；read 的「是目录」仍报 REMOTE_NOT_READABLE）。 */
+	REMOTE_NOT_DIRECTORY: "REMOTE_NOT_DIRECTORY",
 	/** 远端路径不可读。 */
 	REMOTE_NOT_READABLE: "REMOTE_NOT_READABLE",
 	/** 远端路径不可写。 */

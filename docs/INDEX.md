@@ -1,6 +1,6 @@
 # docs/ 知识库索引（agent 入口）
 
-> last verified @ 730202f
+> last verified @ 846213e
 >
 > 用途：开发前两跳到达答案——先按"问题类型"查本表，再读对应卡片。
 > 硬原则：卡片只写**代码读不出来**的知识（决策原因 / 不变量 / 契约 / 坑），不抄 API。
@@ -21,6 +21,7 @@
 | 模型选择（虚拟模型按请求 reason 路由到物理模型）与注册位置约束 | `extensions/virtual-model-router.md` + `virtual-model-router-checklist.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |
 | shell 工具超时语义（超时转后台 / 默认超时 / 后台任务注册表与日志） | `extensions/timeout-bg.md` |
+| shell 工具跨扩展组合（bash 归属：能力协商频道/载荷/分派安全口径/加载顺序与冲突可见） | `cross/shell-tool-capability.md` + `specs/shell-tool-composition.md` + `extensions/timeout-bg.md` + `extensions/remote-tools.md` |
 | tool_call 前置的 Jev 风险判断门（候选筛 / 分类器判定 / fail-open 可观测 / solo 豁免）与真机验收步骤 | `extensions/jev-safe-gate.md` + `jev-safe-gate-checklist.md` |
 | 把内置工具（read/write/edit/bash/grep/find/ls）改道到远端主机（remote/remotePort/remoteCwd 参数、Operations 接缝覆盖、Windows 路径空间换算、rg 降级） | `extensions/remote-tools.md` |
 | 远端工具的架构决策：为什么复用宿主定义只换 Operations（grep 例外）、为什么把远端路径编码进本地路径命名空间当信道、该信道的根因与硬化取舍 | `adr/0010-remote-tools-host-operations-seam.md` + `extensions/remote-tools.md` |

@@ -163,6 +163,48 @@ test("ls 后端：stat 对不存在的路径抛 REMOTE_NOT_FOUND；exists 返回
 	assert.match(await failureOf(ops.stat("/srv/nope")), new RegExp(`^${ErrorCodes.REMOTE_NOT_FOUND}`));
 });
 
+test("目录探针（remote-tools#10）：一次 ssh 同时拿到「在不在/是不是目录」，答案缓存给宿主 exists/stat", async () => {
+	const session = makeSession((request) => ((request.args.at(-1) ?? "").startsWith("if [ -d ") ? { stdout: Buffer.from("d") } : {}));
+	const ops = createRemoteLsOps(session);
+
+	await ops.probeDirectory("/srv/app");
+	assert.equal(session.calls.length, 1, "探针只发一条 ssh");
+	assert.equal(await ops.exists("/srv/app"), true);
+	assert.equal((await ops.stat("/srv/app")).isDirectory(), true);
+	assert.equal(session.calls.length, 1, "宿主随后调用的 exists/stat 命中探针缓存，零额外 ssh");
+
+	const missing = makeSession(() => ({ exitCode: 3 }));
+	assert.match(await failureOf(createRemoteLsOps(missing).probeDirectory("/srv/nope")), new RegExp(`^${ErrorCodes.REMOTE_NOT_FOUND}`));
+	assert.equal(missing.calls.length, 1, "不存在在探针就 fail-closed，不再进宿主的错误模板");
+
+	const file = makeSession(() => ({ stdout: Buffer.from("f") }));
+	assert.match(
+		await failureOf(createRemoteLsOps(file).probeDirectory("/srv/app/README.md")),
+		new RegExp(`^${ErrorCodes.REMOTE_NOT_DIRECTORY}`),
+	);
+	assert.equal(file.calls.length, 1);
+});
+
+test("目录探针：find 的 exists 命中缓存 ⇒ 探针 + glob 共 2 条 ssh；传文件同样报 REMOTE_NOT_DIRECTORY", async () => {
+	const session = makeSession((request) => {
+		const command = request.args.at(-1) ?? "";
+		if (command.startsWith("if [ -d ")) return { stdout: Buffer.from("d") };
+		return { stdout: Buffer.from("/srv/app/a.ts\n") };
+	});
+	const ops = createRemoteFindOps(session);
+
+	await ops.probeDirectory("/srv/app");
+	assert.equal(await ops.exists("/srv/app"), true);
+	await ops.glob("**/*.ts", "/srv/app", { ignore: [], limit: 50 });
+	assert.equal(session.calls.length, 2, "探针 1 + glob 1");
+
+	const file = makeSession(() => ({ stdout: Buffer.from("f") }));
+	assert.match(
+		await failureOf(createRemoteFindOps(file).probeDirectory("/srv/app/a.ts")),
+		new RegExp(`^${ErrorCodes.REMOTE_NOT_DIRECTORY}`),
+	);
+});
+
 test("find 后端：优先远端 rg --files，带 glob/ignore/limit；缺 rg 时回退 find 并标记降级", async () => {
 	const session = makeSession(() => ({ stdout: Buffer.from("/srv/app/a.ts\n/srv/app/b.ts\n") }));
 	const ops = createRemoteFindOps(session);

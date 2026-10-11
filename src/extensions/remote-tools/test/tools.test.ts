@@ -76,6 +76,24 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 /** readFile 的远端命令特征：目录分支排在 -e 之前，所以不能再用 `if [ -e ` 当特征（评审备注 1 的分支重排）。 */
 const isRemoteReadFile = (command: string): boolean => command.includes("; then LC_ALL=C cat ");
 
+/** ls/find 在进宿主校验之前的目录探针（remote-tools#10；答案会被缓存）。 */
+const isDirectoryProbe = (command: string): boolean => command.startsWith("if [ -d ");
+
+/** 探针一律答「是目录」（工具层其它断言不关心探针，只关心探针之后的命令）。 */
+function probeAware(inner: (request: SshExecRequest) => Partial<SshExecResult>) {
+	return (request: SshExecRequest): Partial<SshExecResult> => {
+		if (isDirectoryProbe(request.args.at(-1) ?? "")) return { stdout: Buffer.from("d") };
+		return inner(request);
+	};
+}
+
+function failureOf(run: () => Promise<unknown>): Promise<string> {
+	return run().then(
+		() => "",
+		(error: unknown) => (error instanceof Error ? error.message : String(error)),
+	);
+}
+
 /** 宿主的远端路径探测/读取都回答「存在且是目录」或给定内容。 */
 function homeProbeAware(inner: (request: SshExecRequest) => Partial<SshExecResult>) {
 	return (request: SshExecRequest): Partial<SshExecResult> => {
@@ -233,11 +251,13 @@ test("远端分派：bash 用 remoteCwd（缺省远端 $HOME），命令经 onDa
 
 test("远端 find：结果必须是**相对搜索目录**的路径（宿主用本机 path.relative 算，未标记的绝对路径会变 ../../../srv/… 乱码）", async () => {
 	const recorder = recordTools(
-		homeProbeAware((request) => {
-			const command = request.args.at(-1) ?? "";
-			if (command.startsWith("test -e")) return {};
-			return { stdout: Buffer.from("/srv/app/a.ts\n/srv/app/src/b.ts\n") };
-		}),
+		probeAware(
+			homeProbeAware((request) => {
+				const command = request.args.at(-1) ?? "";
+				if (command.startsWith("test -e")) return {};
+				return { stdout: Buffer.from("/srv/app/a.ts\n/srv/app/src/b.ts\n") };
+			}),
+		),
 	);
 
 	const result = await recorder.tools.get("find")?.execute(
@@ -252,11 +272,13 @@ test("远端 find：结果必须是**相对搜索目录**的路径（宿主用�
 
 test("远端 find 降级：远端缺 ripgrep 时结果里带降级标注", async () => {
 	const recorder = recordTools(
-		homeProbeAware((request) => {
-			const command = request.args.at(-1) ?? "";
-			if (command.startsWith("test -e")) return {};
-			return { stdout: Buffer.from("/srv/app/a.ts\n"), stderr: `${DEGRADED_MARKER}\n` };
-		}),
+		probeAware(
+			homeProbeAware((request) => {
+				const command = request.args.at(-1) ?? "";
+				if (command.startsWith("test -e")) return {};
+				return { stdout: Buffer.from("/srv/app/a.ts\n"), stderr: `${DEGRADED_MARKER}\n` };
+			}),
+		),
 	);
 
 	const result = await recorder.tools.get("find")?.execute(
@@ -269,6 +291,50 @@ test("远端 find 降级：远端缺 ripgrep 时结果里带降级标注", async
 	const text = textOf(result as never);
 	assert.match(text, /a\.ts/);
 	assert.match(text, /远端缺少 ripgrep，已回退 POSIX find/);
+});
+
+test("远端 ls/find 的结构化错误（remote-tools#10）：不存在 ⇒ REMOTE_NOT_FOUND，传文件 ⇒ REMOTE_NOT_DIRECTORY，消息里没有宿主标记路径", async () => {
+	const missing = recordTools(() => ({ exitCode: 3 }));
+	for (const [name, params] of [
+		["ls", { path: "/srv/nope" }],
+		["find", { path: "/srv/nope", pattern: "**/*.ts" }],
+	] as Array<[string, Record<string, unknown>]>) {
+		const message = await failureOf(() => missing.tools.get(name)!.execute(ID, { ...params, remote: REMOTE }, undefined, undefined, ctxFor(process.cwd())));
+		assert.match(message, new RegExp(`^${ErrorCodes.REMOTE_NOT_FOUND}`), `${name}: ${message}`);
+		assert.equal(message.includes("pi-remote"), false, `${name} 错误消息不得回灌宿主标记路径：${message}`);
+		assert.equal(message.includes("Path not found"), false, `${name} 不得落到宿主错误模板：${message}`);
+	}
+	assert.equal(missing.calls.length, 2, "每种探针只发一次 ssh，不进宿主校验");
+
+	const file = recordTools(() => ({ stdout: Buffer.from("f") }));
+	for (const [name, params] of [
+		["ls", { path: "/srv/app/README.md" }],
+		["find", { path: "/srv/app/README.md", pattern: "**/*.ts" }],
+	] as Array<[string, Record<string, unknown>]>) {
+		const message = await failureOf(() => file.tools.get(name)!.execute(ID, { ...params, remote: REMOTE }, undefined, undefined, ctxFor(process.cwd())));
+		assert.match(message, new RegExp(`^${ErrorCodes.REMOTE_NOT_DIRECTORY}`), `${name}: ${message}`);
+		assert.equal(message.includes("Not a directory"), false, `${name} 不得落到宿主错误模板：${message}`);
+		assert.equal(/[A-Za-z]:[\\/]/.test(message), false, `${name} 消息里不得出现盘符形态路径：${message}`);
+	}
+});
+
+test("远端 ls/find 往返数：探针 + readdir/glob = 2 次 ssh（宿主自己的 exists/stat 全部命中探针缓存）", async () => {
+	const ls = recordTools((request) => {
+		const command = request.args.at(-1) ?? "";
+		if (isDirectoryProbe(command)) return { stdout: Buffer.from("d") };
+		if (command.startsWith("ls -A1p")) return { stdout: Buffer.from("src/\nREADME.md\n") };
+		return {};
+	});
+	const listed = await ls.tools.get("ls")!.execute(ID, { path: "/srv/app", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd()));
+	assert.match(textOf(listed as never), /src\//);
+	assert.equal(ls.calls.length, 2, "探针 1 + readdir 1（宿主未再发 exists/stat）");
+
+	const find = recordTools(
+		probeAware((request) => ((request.args.at(-1) ?? "").startsWith("test -e") ? {} : { stdout: Buffer.from("/srv/app/a.ts\n") })),
+	);
+	const found = await find.tools.get("find")!.execute(ID, { path: "/srv/app", pattern: "**/*.ts", remote: REMOTE }, undefined, undefined, ctxFor(process.cwd()));
+	assert.match(textOf(found as never), /a\.ts/);
+	assert.equal(find.calls.length, 2, "探针 1 + glob 1（宿主未再发 exists）");
 });
 test("标记根守卫：锚文件缺失时远端调用 fail-closed（专码 + 零 ssh），本地调用不受影响", async () => {
 	const bogusAnchor = path.join(tmpdir(), `pi-remote-no-anchor-${Date.now()}`, "index.ts");

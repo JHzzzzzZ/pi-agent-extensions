@@ -177,6 +177,18 @@ _Avoid_: 空值、nil 值、默认值（它表达的是「这个参数没给」�
 且降级标记在同一次 ssh 往返里用 stderr 上的 `PI_REMOTE_TOOLS_DEGRADED` 回传（不额外探测一轮）。与「连接失败」区分：降级是成功的搜索，只是语义弱化。
 _Avoid_: 失败、回退模式（它不是错误路径）
 
+**目录探针（directory probe）**:
+远端 `ls`/`find` 在进宿主校验**之前**的一次 fail-closed 判定：不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒ `REMOTE_NOT_DIRECTORY`；
+答案缓存进同一个 ops 实例供宿主随后调用的 `exists`/`stat` 命中（ls 往返 3 → 2），目的是不让宿主自己的错误模板把宿主标记路径回灌给模型。
+_Avoid_: 预检、校验（探针特指「进宿主校验之前的目录类型判定 + 缓存」）
+
+**shell 能力协商（shell capability negotiation）**:
+两个扩展都要占用 `bash` 这个名字时用宿主官方 `pi.events` 做的一次**同步**协商：shell 工具 owner（timeout-bg）在注册**前**广播一个可变盒子
+`{ bash?: ShellCapability }`，提供方（remote-tools）在同步回调里放入远端能力（参数片段 + `isRemoteCall` + `executeRemote` + 指南），
+owner 合并参数并按参数分派（本地走自己的超时→后台 ops，远端转交能力）——两个功能都保留，不用跨扩展 import。
+没有提供方（没装 remote-tools / 没有事件总线）⇒ 行为与各自单装时逐字一致。契约与双方义务见 `docs/cross/shell-tool-capability.md`。
+_Avoid_: 插件桥、全局槽、覆盖链（都表达不了「两个功能都保留 + 没有对端时行为不变」）
+
 ### 状态条与 widget 契约（跨插件）
 
 **widget 排序带（widget band）**:

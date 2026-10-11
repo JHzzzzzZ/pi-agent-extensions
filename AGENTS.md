@@ -83,8 +83,8 @@ cd src/extensions/opencode-bridge && npm install && npm test && npm run typechec
 cd agent-manager && npm install && npm test && npm run typecheck   # 另 npm run test:e2e opt-in（需 AGENT_MANAGER_E2E_MODEL + 鉴权 + 网络）
 cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck   # 50 个（含宿主事件路径：真实加载 + ExtensionRunner）
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 70 个（含本地保真对照、Windows 路径往返、标记根结构性断言、输入护栏、采样器噪声、缺省值字面量、图片嗅探）+ 7 个真机 opt-in
-# 79 个（含真实 ExtensionRunner
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 79 个（含本地保真对照、Windows 路径往返、标记根结构性断言、输入护栏、采样器噪声、缺省值字面量、图片嗅探、ls/find 目录探针、跨扩展组合）+ 8 个真机 opt-in
+cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 79 个（含真实 ExtensionRunner 宿主事件路径：触发面/去重/compact 重载/cwd 边界 fail-closed/codemode 嵌套事件主来源代偿/预算丢弃不标记）
 ```
 
 ## 代码约定与常见模式
@@ -128,7 +128,7 @@ tsconfig（`src/extensions/pwr/tsconfig.json`）强制承载性规则——违�
 - **Node ≥ 22.18**（原生 type-stripping——`.ts` 直接运行；已在 Node 22.23.1 / Windows 验证）。不用 Bun、无构建步骤、无 bundler。
 - **npm**（package-lock v3）。包管理器不是 Bun/pnpm。
 - TypeScript ^5.8（解析为 5.9.3）；`@earendil-works/pi-*` 仅作 devDependencies——宿主 Pi 环境在运行时解析它们。用到 pi 1.0 工具面 API（`exposure`/`outputSchema`/`annotations`/`namespace`）的扩展锁 `^1.0.0`+：pwr / agent-team / loop / timeout-bg；virtual-model-router 同样锁 `^1.0.0`（`pi.registerVirtualModel` 是 1.0 起的 API）；remote-tools 也锁 `^1.0.0`（内置工具的 `createXxxToolDefinition` + Operations 接缝与 `ToolDefinition` 是 1.0 面）；其余仍 `^0.85.1`（deep-init / opencode-bridge，统一口径见 `todos/general-todo.json` 的「统一 devDependencies 宿主版本口径」条目）。
-- 工作区使用的 Pi 扩展 API 面：`pi.on`（`session_start`、`agent_start`、`agent_settled`、`turn_start/end`、`model_select`、`message_start/update/end`、`input`、`before_agent_start`、`tool_call`、`tool_result`）、`pi.registerCommand`、`pi.registerTool`、`pi.registerProvider`、`pi.registerVirtualModel`、`pi.registerShortcut`、`pi.registerEntryRenderer`、`pi.appendEntry`、`pi.sendMessage`、`ctx.ui.setStatus/setWidget/notify`、`ctx.sessionManager.getEntries`。
+- 工作区使用的 Pi 扩展 API 面：`pi.on`（`session_start`、`agent_start`、`agent_settled`、`turn_start/end`、`model_select`、`message_start/update/end`、`input`、`before_agent_start`、`tool_call`、`tool_result`）、`pi.registerCommand`、`pi.registerTool`、`pi.registerProvider`、`pi.registerVirtualModel`、`pi.registerShortcut`、`pi.registerEntryRenderer`、`pi.appendEntry`、`pi.sendMessage`、`pi.events`（跨扩展能力协商，见 `docs/cross/shell-tool-capability.md`）、`ctx.ui.setStatus/setWidget/notify`、`ctx.sessionManager.getEntries`。
 - 配置经环境变量（`CHATANYWHERE_API_KEY`、`CHATANYWHERE_BASE_URL`）或 `~/.pi/agent/auth.json` 按 provider id 键（provider-quota——明确不用环境变量）。
 - 安装形态：所有扩展都是带 `index.ts` 入口的目录（chatanywhere-provider 另在 package.json 声明 `pi.extensions: ["./index.ts"]`）；目录复制进 `extensions/` 后 pi 自动加载。
   - **package 形态（本项目实际用法）**：`~/.pi/agent/settings.json` 的 `packages` 里是本仓库 git 源（`git:github.com/JHzzzzzZ/pi-agent-extensions@dev-laptop`），pi 加载的是**包缓存 clone**（`~/.pi/agent/git/github.com/<owner>/<repo>`），**不是**当前工作仓库。因此「本地 commit 了但 pi 里还是旧行为」是常态：改动要生效必须 ① push 到该源分支，再 ② 让 pi 刷新缓存（`pi update` / 重启会话）。2026-09-15 真机教训：按此口径，未 push 的本地 commit 做出的「修复后」验收会跑到修复前的代码上（反向也是礼物——它天然给出修复前的对照组）。

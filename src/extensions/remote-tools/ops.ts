@@ -173,6 +173,15 @@ async function testAccess(session: RemoteSession, hostPath: string, testFlags: s
 	if (result.exitCode !== 0) fail(code, message);
 }
 
+/** 一次往返判定远端路径形态（目录/文件）；不存在返回 null。ls/find 的探针与 stat 共用。 */
+async function probePathKind(session: RemoteSession, remotePath: string): Promise<"directory" | "file" | null> {
+	const quoted = shellQuote(remotePath);
+	const result = await runChecked(session, `if [ -d ${quoted} ]; then printf 'd'; elif [ -e ${quoted} ]; then printf 'f'; else exit ${EXIT_NOT_FOUND}; fi`);
+	if (result.exitCode === EXIT_NOT_FOUND) return null;
+	if (result.exitCode !== 0) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端路径不可访问（权限不足）。");
+	return result.stdout.toString("utf8").startsWith("d") ? "directory" : "file";
+}
+
 export function createRemoteReadOps(session: RemoteSession): ReadOperations {
 	/** 本次 read 的嗅探样本：access 顺带取回、detectImageMimeType 消费（一次 read 只针对一个路径）。 */
 	let sample: { remotePath: string; bytes: Buffer } | undefined;
@@ -246,27 +255,45 @@ export function createRemoteEditOps(session: RemoteSession): EditOperations {
 	};
 }
 
-export function createRemoteLsOps(session: RemoteSession): LsOperations {
+export interface RemoteLsOperations extends LsOperations {
+	/**
+	 * fail-closed 目录探针（remote-tools#10）：远端 ls 在**进宿主校验之前**调用。
+	 * 不存在报 REMOTE_NOT_FOUND、存在但不是目录报 REMOTE_NOT_DIRECTORY，错误消息全静态
+	 * （宿主自己的 ls.js 会把宿主标记路径插进错误文本回灌给模型）。答案同时缓存给随后的
+	 * `exists`/`stat` ⇒ 宿主三次调用变一次 ssh（探针 1 次 + readdir 1 次）。
+	 */
+	probeDirectory(absolutePath: string): Promise<void>;
+}
+
+export function createRemoteLsOps(session: RemoteSession): RemoteLsOperations {
 	// 宿主 ls 会先 readdir、再对**每一条** entry 调 stat（dist/core/tools/ls.js），
 	// 直接实现 stat 就是 N+1 次 ssh 往返（无 ControlMaster 时每轮都是完整握手）。
 	// 所以 readdir 用 `ls -A1p`（目录带尾斜杠）一次性把类型拿回来，缓存给随后的 stat 用，0 额外往返。
 	const entryTypes = new Map<string, boolean>();
+	// 目录探针答过的路径：宿主随后的 exists/stat 直接命中，不额外 ssh（探针只缓存「是目录」这一种答案）。
+	const probedDirectories = new Set<string>();
 	return {
+		async probeDirectory(absolutePath: string): Promise<void> {
+			const remotePath = requireRemotePath(absolutePath);
+			const kind = await probePathKind(session, remotePath);
+			if (kind === null) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
+			if (kind === "file") fail(ErrorCodes.REMOTE_NOT_DIRECTORY, "远端路径存在但不是目录。");
+			probedDirectories.add(remotePath);
+		},
 		async exists(absolutePath: string): Promise<boolean> {
 			const remotePath = requireRemotePath(absolutePath);
+			if (probedDirectories.has(remotePath)) return true;
 			const result = await runChecked(session, `test -e ${shellQuote(remotePath)}`);
 			return result.exitCode === 0;
 		},
 		async stat(absolutePath: string): Promise<{ isDirectory: () => boolean }> {
 			const remotePath = requireRemotePath(absolutePath);
+			if (probedDirectories.has(remotePath)) return { isDirectory: () => true };
 			const cached = entryTypes.get(remotePath);
 			if (cached !== undefined) return { isDirectory: () => cached };
-			const quoted = shellQuote(remotePath);
-			const result = await runChecked(session, `if [ -d ${quoted} ]; then printf 'd'; elif [ -e ${quoted} ]; then printf 'f'; else exit ${EXIT_NOT_FOUND}; fi`);
-			if (result.exitCode === EXIT_NOT_FOUND) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
-			if (result.exitCode !== 0) fail(ErrorCodes.REMOTE_NOT_READABLE, "远端路径不可访问（权限不足）。");
-			const isDirectory = result.stdout.toString("utf8").startsWith("d");
-			return { isDirectory: () => isDirectory };
+			const kind = await probePathKind(session, remotePath);
+			if (kind === null) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
+			return { isDirectory: () => kind === "directory" };
 		},
 		async readdir(absolutePath: string): Promise<string[]> {
 			const remotePath = requireRemotePath(absolutePath);
@@ -331,12 +358,23 @@ function buildRipgrepFilesCommand(pattern: string, cwd: string, options: RemoteG
 export interface RemoteFindOperations {
 	exists(absolutePath: string): Promise<boolean>;
 	glob(pattern: string, cwd: string, options: RemoteGlobOptions): Promise<RemoteGlobResult>;
+	/** 同 ls：进宿主校验前的 fail-closed 目录探针，答案缓存给宿主随后的 exists（find 只查 exists）。 */
+	probeDirectory(absolutePath: string): Promise<void>;
 }
 
 export function createRemoteFindOps(session: RemoteSession): RemoteFindOperations {
+	const probedDirectories = new Set<string>();
 	return {
+		async probeDirectory(absolutePath: string): Promise<void> {
+			const remotePath = requireRemotePath(absolutePath);
+			const kind = await probePathKind(session, remotePath);
+			if (kind === null) fail(ErrorCodes.REMOTE_NOT_FOUND, "远端路径不存在。");
+			if (kind === "file") fail(ErrorCodes.REMOTE_NOT_DIRECTORY, "远端路径存在但不是目录。");
+			probedDirectories.add(remotePath);
+		},
 		async exists(absolutePath: string): Promise<boolean> {
 			const remotePath = requireRemotePath(absolutePath);
+			if (probedDirectories.has(remotePath)) return true;
 			const result = await runChecked(session, `test -e ${shellQuote(remotePath)}`);
 			return result.exitCode === 0;
 		},
