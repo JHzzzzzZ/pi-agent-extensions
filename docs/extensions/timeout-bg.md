@@ -1,6 +1,6 @@
 # timeout-bg — shell 工具超时转后台 + 默认超时
 
-> last verified @ 846213e
+> last verified @ 7de0a44
 
 一句话：覆盖内置 `bash` / `powershell` 工具，把「超时即 `killProcessTree` 整树杀」改成「超时转后台继续跑」，
 并在未显式传 `timeout` 时施加默认 300 秒（`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 关闭）。
@@ -43,6 +43,17 @@
     **绝不回退到本机执行**（远端意图的命令在本机跑是安全事故）。
   - **没有对端 / 没有事件总线 / 载荷畸形 ⇒ 行为与今天逐字一致**（畸形载荷额外 notify 一次）；注册前发现 bash 不是内置实现
     且确定没有提供方 ⇒ notify 一次（未知接管者可见）。
+- **远端 job 托管（timeout-bg#4）**：远端 bash 超时后也要「不断连 + 输出落盘 + 进统一 job 面」，而远端执行在 remote-tools
+  手里——本扩展在 `pi.events` 的**托管频道上应答索取**（`shell-job-host.ts` 的 `createRemoteJobPort`/`offerRemoteJobPort`，
+  频道与端口形状见契约卡）。
+  - 号段与本地 job 共用（`bg-N` 连续）；`register` 返回的**超时结果文本由本扩展单源持有**（提供方不自己拼一份），
+    跨扩展载荷先剔控制字符 + 尾部限长 2000 字符。
+  - 远端 job 在 `/bg` 与通知里用 `remote <host>` 展示（没有本地 pid）；`terminate` 钩子（提供方自带：杀远端进程组 + 断 ssh）
+    优先于 `killTree(pid)`；`settle` 幂等（已被 `/bg:kill` 的忽略）。
+  - **默认超时在同一数字下转交**：分派转发参数前把缺省的 `timeout` 填成 `PI_TIMEOUT_BG_DEFAULT`（默认 300）——用户只记一个数字；
+    `0` = 不施加（显式值原样透传）。
+  - footer 状态条段 `80:timeout-bg`（`⏱ <N> bg`，只在有运行中的任务时出现）由注册表 `onChange` 驱动；`session_shutdown` 清段登记。
+  - 远端超时不断连/落盘/杀远端进程组都在 remote-tools 侧实现（含远端 pid 文件与 kill 脚本）；本扩展只负责登记、展示与通知。
 
 ## codemode 结构化结果（timeout-bg#2 实测，pi 1.0.1）
 
@@ -68,7 +79,9 @@
   `mergeBashParameters`（只能新增参数，撞名整份拒绝）、`createBashDispatch`（按参数分派 + 两条安全口径 + notify）、
   `describeForeignBash`/`describeLostBashRegistration`（归属冲突可见性）
 - `shell-ops.ts` — `BashOperations.exec` 实现：spawn → 计时 → 输出落盘 → 退出/超时/abort 分流
-- `jobs.ts` — 后台任务注册表（`running` → `exited` / `killed`，注入 `now` / `killTree` / `onExit`）
+- `shell-job-host.ts` — 远端 job 托管端口（频道常量、`allocate/register/settle`、应答索取与形状守卫）
+- `status-band.ts` — footer 段前缀协调（跨插件契约的本地拷贝；本扩展那份不跨插件 import）
+- `jobs.ts` — 后台任务注册表（`running` → `exited` / `killed`，注入 `now` / `killTree` / `onExit` / `onChange`；远端 job 另有 `target` 与 `terminate`）
 - `logs.ts` — 日志尾部读取、控制字符剔除、保留策略（7 天 / 50 个）
 - `config.ts` — 默认超时解析（env）与 timeout 毫秒校验（非法文案与宿主逐字一致）
 - `text.ts` — 面向模型/人的静态文本模板（超时结果 / followUp / `/bg` 列表）
@@ -86,10 +99,12 @@
 
 ## 测试与验证
 
-- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（40 个：config(6) / jobs(6) / logs(6) /
-  shell-ops(8) / shell-capability(4) / index 接线(10)，其中 2 条锁 codemode 视角的结构化结果、3 条锁跨扩展组合
-  （合并 schema + 分派、畸形/抛错回退可见、未知接管与顺序覆盖 notify））
+- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（53 个：config(6) / jobs(8) / logs(6) /
+  shell-ops(8) / shell-capability(4) / shell-job-host(9) / index 接线(12)，其中 2 条锁 codemode 视角的结构化结果、
+  3 条锁跨扩展组合（合并 schema + 分派、畸形/抛错回退可见、未知接管与顺序覆盖 notify）、2 条锁远端侧
+  （默认超时注入、托管端口 → /bg + 状态条段 + followUp）、7 条锁托管端口与注册表语义（发号/登记/完成/畸形载荷/terminate/onChange））
 - 进程边界测试只 fake `spawn` 与 `killTree`，真实读写临时目录日志、真实毫秒级计时器；工具本体用宿主真实 `createBashTool`。
+- **评审记录（`#4`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 5 建议 / 6 备注）：涉及本卡的建议 ②（`shell-job-host.ts` 注释与契约都声称 register 前清洗 command，实现只洗了 tail）已修——现在 `command` 经 `firstLine(stripControlChars(...), 400)`、`target` 也剔控制字符（与本地 job 进 `/bg` 的口径一致），并补了单测；建议 ④（`/bg:kill` 对远端 job 打印 `pid ?`）已改为按 `jobPlace` 展示 `remote <host>`（与 `/bg` 列表、通知同源）。备注（记录不改）与 remote-tools 卡同轮：旧实例订阅残留（已用会话级登记/退订缓解）、`terminate` 缺失、未超时也烧号落盘、异步建不出日志、shutdown 的 terminate fire-and-forget。
 - **评审记录（`#3`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 5 备注，两份扩展卡共用）：涉及本卡的 ① `negotiateBash` 的 `base` 死参数（已删）、② `last verified` 指向（驳回，理由=仓库惯例指向被验证的代码提交；本轮统一为 `846213e`）。组合的四条安全断言（`pi.events` 同步填充、载荷撞名拒绝、两条失败路径不落本机、宿主 first-wins 顺序）在宿主 dist 源码层面逐条核实通过。第 2 轮 = OK with notes（0 阻断；①④⑤ 确认修复，②③ 驳回成立）→ 第 3 轮（终轮）= OK with notes（0 阻断，唯一新意见是 ADR 注记的写法，已收口）。三轮无 P0/P1。
 - 真机验证（2026-09-22，Windows + Node 24）：真实 spawn + 真实计时器跑 `for i in 1..6; do echo tick-$i; sleep 1; done`，
   `timeout: 2` → 2.3s 转后台、进程存活且日志持续增长 → 7.3s 自然结束，注册表转 `exited(0)` 且 `onExit` 恰好一次。

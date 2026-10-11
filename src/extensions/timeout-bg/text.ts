@@ -35,7 +35,7 @@ export function timeoutParamDescription(defaultSeconds: number | undefined): str
 }
 
 /** job 的位置描述：本地给 pid，远端给目标主机（远端 job 没有本地 pid）。 */
-function jobPlace(job: JobRecord): string {
+export function jobPlace(job: JobRecord): string {
   return job.target === undefined ? `pid ${job.pid ?? "未知"}` : `remote ${job.target}`;
 }
 

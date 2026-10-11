@@ -87,6 +87,8 @@ export function createTimeoutOps(deps: TimeoutOpsDeps): BashOperations {
     const logPath = resolveJobLogPath(deps.logRoot, jobId);
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
+    // 写盘失败（磁盘满 / 权限）只让日志变不完整，绝不能变成未捕获的 'error' 事件把会话炸掉。
+    logStream.on("error", () => {});
 
     const fromStdin = shell.commandTransport === "stdin";
     let child: SpawnedProcess;

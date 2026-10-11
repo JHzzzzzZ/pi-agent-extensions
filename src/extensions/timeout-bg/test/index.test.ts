@@ -505,9 +505,25 @@ test("远端 job 托管端口（timeout-bg#4）：注册的远端 job 进 /bg �
   assert.match(ext.notices.at(-1)!, new RegExp(ticket.id));
   assert.match(ext.notices.at(-1)!, /remote deploy@host/);
 
+  // /bg:kill 的文案对远端 job 也要说真话（没有本地 pid，杀的是远端进程组）。
+  const killTicket = host.allocate();
+  host.register({
+    id: killTicket.id,
+    logPath: killTicket.logPath,
+    command: "sleep 400",
+    target: "deploy@host",
+    timeoutSeconds: 3,
+    tail: "",
+    terminate: () => {},
+  });
+  await ext.run("bg:kill", killTicket.id);
+  assert.match(ext.notices.at(-1)!, /已停止/);
+  assert.match(ext.notices.at(-1)!, /remote deploy@host/);
+  assert.doesNotMatch(ext.notices.at(-1)!, /pid \?/);
+
   host.settle(ticket.id, 0);
   await wait(20);
   assert.equal(ext.sent.length, 1, "结束通知走与本地同一条 followUp 通路");
   assert.match(String(ext.sent[0]!.message.content), /退出码 0/);
-  assert.deepEqual(ext.statuses.at(-1), { key: STATUS_KEY, text: undefined }, "没有运行中的任务时清段");
+  assert.deepEqual(ext.statuses.at(-1), { key: STATUS_KEY, text: undefined }, "两条 job 都结束后清段");
 });

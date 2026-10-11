@@ -46,6 +46,7 @@ import { writeBand } from "./status-band.ts";
 import {
   followUpText,
   formatJobList,
+  jobPlace,
   shellToolDescription,
   statusBandText,
   TIMEOUT_BG_CUSTOM_TYPE,
@@ -164,15 +165,14 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
 
     // 远端 bash 的 job 托管端口（timeout-bg#4）：提供方（remote-tools）需要时同步索取，
     // 本扩展在回调里把端口放进盒子；没装对端时这个端口永远没人拿，行为与今天逐字一致。
-    offerRemoteJobPort(
-      pi.events,
-      createRemoteJobPort({
-        newJobId,
-        logPathFor: (id) => resolveJobLogPath(deps.logRoot, id),
-        registry,
-        timeoutText: timeoutResultText,
-      }),
-    );
+    // 订阅随会话生命周期登记/退订（盒子先到先得：`/reload` 后旧实例的回调不能占着槽位）。
+    const jobPort = createRemoteJobPort({
+      newJobId,
+      logPathFor: (id) => resolveJobLogPath(deps.logRoot, id),
+      registry,
+      timeoutText: timeoutResultText,
+    });
+    let detachJobPortOffer: () => void = () => undefined;
 
     interface BashOverrides {
       parameters: unknown;
@@ -263,6 +263,8 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
       }
       uiContext = ctx.hasUI ? ctx.ui : undefined;
       refreshStatusBand();
+      detachJobPortOffer();
+      detachJobPortOffer = offerRemoteJobPort(pi.events, jobPort);
       let active: string[] = [];
       try {
         active = pi.getActiveTools();
@@ -281,6 +283,8 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
       } catch {
         /* 清理失败不破坏收尾 */
       }
+      detachJobPortOffer();
+      detachJobPortOffer = () => undefined;
       // 清段登记：否则 /reload / 会话切换后残留文本会干扰其它扩展的首段判定。
       const ui = uiContext;
       uiContext = undefined;
@@ -312,7 +316,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
           return;
         }
         registry.kill(id);
-        notify(ctx, `已停止 ${id}（pid ${job.pid ?? "?"}）及其子进程`);
+        notify(ctx, `已停止 ${id}（${jobPlace(job)}）及其子进程`);
       },
     });
 

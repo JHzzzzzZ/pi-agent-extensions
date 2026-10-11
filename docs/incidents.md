@@ -199,3 +199,10 @@
 - 根因：两个扩展都靠「`pi.registerTool` 覆盖同名工具」实现，而宿主对同名工具是**按扩展加载顺序 first-wins**（`ExtensionRunner.getAllRegisteredTools()` 先到先得，agent-session 再用它覆盖内置），且**没有取回下层定义再包裹的 API**（`getAllTools()` 只给 schema 与 `sourceInfo`，没有 `execute`）；timeout-bg 在 `session_start` 重注册 bash（时点晚于加载期注册，但顺序由扩展加载顺序决定），于是必有一方被丢掉且不可见。
 - 处置：仓库内用宿主官方 `pi.events` 做能力协商（契约 `docs/cross/shell-tool-capability.md`，规格 `docs/specs/shell-tool-composition.md`）——timeout-bg 注册前广播可变盒子收集「shell 能力」，remote-tools 同步放入远端 bash 能力，owner 合并参数并按参数分派；没有对端时行为与今天逐字一致。冲突可见性兜底（未知接管者 notify、注册后自检生效版本）与两条安全口径（判定抛错 fail-closed、执行失败绝不回退本机）一并落地。上游 API 缺口另立 `general-todo#30`（请 `registerTool` 对齐自家 `registerMcpServer` 的冲突报错与 `registerToolRenderer` 的链式组合）。
 - 教训：① **覆盖同名工具是跨扩展的隐式契约**——本仓任何两个扩展共用工具名（今天只有 bash）都必须显式约定归属，并让冲突可见；宿主 API 的「静默 last-write-wins」在插件生态里等于「功能随机消失」。② 修这类 bug 不能只看「谁后注册」：判定顺序的是**加载顺序 + first-wins**，且实测证据（`getAllTools()` 的生效版本）比推理可靠——注册后自检就是这个证据的自动化版本。③ 「回退到原行为」这句话在跨扩展分派里要加安全前置：远端意图的命令**绝不**因为远端路径失败而在本机重跑。
+
+## 远端 kill 的清理 trap 吞掉 TERM：/bg:kill 之后远端命令仍跑到结束（remote-tools #12，2026-10-11）
+
+- 症状：/bg:kill（托管端口的 `terminate`）之后，远端 `pgrep` 已经查不到进程、本地 ssh 也已断开，但**命令的后续语句仍然执行**——`sleep 987654; printf 'ALIVE' > marker` 在 kill 之后写出了 `marker`；只有真机用例（真 ssh + 真远端 shell）拓得出来，假 ssh 的单测全绿。
+- 根因：为了让远端 pid 文件自清理，命令前缀挂了 `trap 'rm -f "$pidfile"' EXIT HUP INT TERM`。**带 trap 的 shell 收到 TERM 不会死**：它执行 trap（删文件）后继续往下跑命令列表，于是 `sleep`（被进程组 TERM 杀掉）后面的 `printf` 照常执行；KILL 兜底（`sleep 1` 之后）来得太晚。
+- 处置：TERM/HUP 的 trap 改为显式退出（`trap '…; exit 143' TERM`、`trap '…; exit 129' HUP`），单测锁定该文本；真机用例从「超时不断连」扩到「kill 后远端进程组归零 + 标记文件不再生成」。
+- 教训：① **清理用的 trap ≠ 信号处理**：`trap … TERM` 的语义是「捕获并继续」，要终止必须显式 `exit`——写「顺手挂个清理 trap」之前先问「这改掉了哪些信号的默认语义」。② **进程边界的行为只能拿真进程验**：假 ssh 能验协议、时序与分支，验不了远端 shell 的信号/退出语义；需求一旦涉及信号、退出码、孤儿进程，opt-in 真机用例不是可选项。③ 真机用例的检查手段也会自欺：`pgrep -f 'sleep 987654' | wc -l` 永远 ≥ 1——**管道让 shell 无法做 exec 优化**，检查命令自己的命令行就含那个字面串；改成字符类写法（`sleep 98765[4]`）避免自匹配。

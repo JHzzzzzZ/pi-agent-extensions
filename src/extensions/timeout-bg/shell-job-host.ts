@@ -21,6 +21,7 @@
 import type { EventBus } from "@earendil-works/pi-coding-agent";
 import type { JobRecord, JobRegistry } from "./jobs.ts";
 import { stripControlChars } from "./logs.ts";
+import { firstLine } from "./text.ts";
 
 /** 索取频道（跨扩展契约；形状升级开新频道 `…:v2`，不做版本字段）。 */
 export const SHELL_JOB_HOST_CHANNEL = "pi-extensions:shell-job-host:v1";
@@ -73,14 +74,15 @@ export function createRemoteJobPort(deps: RemoteJobPortDeps): RemoteJobPort {
       return { id, logPath: deps.logPathFor(id) };
     },
     register(job) {
-      // 入参跨扩展而来：只信形状，不信任类型（terminate 不是函数就当没有，宁可不杀不抛错）。
+      // 入参跨扩展而来：只信形状，不信任类型（terminate 不是函数就当没有，宁可不杀不抛错）；
+      // 进 /bg 列表与通知的文字先剔控制字符（与本地 job 的 command 截断口径一致）。
       const terminate = typeof job.terminate === "function" ? job.terminate : undefined;
       const record = deps.registry.background({
         id: job.id,
         pid: null,
-        command: job.command,
+        command: firstLine(stripControlChars(job.command), 400),
         logPath: job.logPath,
-        target: job.target,
+        target: stripControlChars(job.target),
         terminate,
       });
       const tail = stripControlChars(job.tail).slice(-REMOTE_TAIL_MAX_CHARS).trimEnd();
@@ -95,11 +97,15 @@ export function createRemoteJobPort(deps: RemoteJobPortDeps): RemoteJobPort {
 /**
  * 应答托管端口索取。提供方（remote-tools）在需要 job 托管时同步 emit 一个空盒子，
  * 本扩展在回调里填入端口；槽位已有主不覆盖，盒子/总线异常一律静默（当作没提供）。
+ *
+ * 返回退订函数：会话启动时登记、会话关闭时退订（见 index.ts）。不这么做的话，`/reload` 后
+ * 旧实例的回调可能还挂在总线上，而盒子是**先到先得**——新提供方会拿到旧注册表里的死端口
+ * （job 不进 /bg、不发通知），比「没有托管」更难查。
  */
-export function offerRemoteJobPort(events: EventBus | undefined, port: RemoteJobPort): void {
-  if (events === undefined) return;
+export function offerRemoteJobPort(events: EventBus | undefined, port: RemoteJobPort): () => void {
+  if (events === undefined) return () => undefined;
   try {
-    events.on(SHELL_JOB_HOST_CHANNEL, (box) => {
+    return events.on(SHELL_JOB_HOST_CHANNEL, (box) => {
       try {
         if (typeof box !== "object" || box === null) return;
         const slot = box as { host?: unknown };
@@ -110,6 +116,7 @@ export function offerRemoteJobPort(events: EventBus | undefined, port: RemoteJob
       }
     });
   } catch {
-    /* 没有事件总线：托管不可用，提供方按原行为工作 */
+    // 没有事件总线：托管不可用，提供方按原行为工作。
+    return () => undefined;
   }
 }

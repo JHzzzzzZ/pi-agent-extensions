@@ -452,7 +452,7 @@ export const REMOTE_PID_FILE_PREFIX = "/tmp/pi-remote-job-";
 /** /bg:kill 的远端终止命令超时（尽力而为，不阻断命令面交互）。 */
 export const REMOTE_KILL_TIMEOUT_MS = 15_000;
 
-/** 转后台失败的静态文案（tool error 与 notify 共用）。 */
+/** 转后台失败的静态文案（notify 用；tool error 另加错误码前缀）。 */
 export const REMOTE_BACKGROUND_FAILED = "远端超时转后台失败：已断开本地 ssh（远端命令可能仍在运行）。";
 
 /**
@@ -508,7 +508,10 @@ export function buildRemoteKillCommand(pidFile: string): string {
 function openJobLog(logPath: string): WriteStream | null {
 	try {
 		mkdirSync(dirname(logPath), { recursive: true });
-		return createWriteStream(logPath, { flags: "a" });
+		const stream = createWriteStream(logPath, { flags: "a" });
+		// 写盘失败（磁盘满 / 权限）只让日志变不完整，绝不能变成未捕获的 'error' 事件把会话炸掉。
+		stream.on("error", () => undefined);
+		return stream;
 	} catch {
 		return null;
 	}
@@ -578,6 +581,11 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 
 		const controller = new AbortController();
 		const onAbort = () => controller.abort();
+		// 开日志流是有开销的：期间被 abort 就不要再 spawn（abort 后再挂监听器不会再触发）。
+		if (signal?.aborted === true) {
+			logStream.end();
+			throw new Error("aborted");
+		}
 		signal?.addEventListener("abort", onAbort, { once: true });
 		const detachAbort = () => signal?.removeEventListener("abort", onAbort);
 
@@ -628,10 +636,11 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 							if (result.exitCode === EXIT_CWD_MISSING) {
 								return settleOnce(() => reject(new Error(`${ErrorCodes.REMOTE_NOT_FOUND}: 不存在的远端目录：请先确认远端工作目录路径。`)));
 							}
-							if (result.exitCode === null) {
+							const exitCode = result.exitCode;
+							if (exitCode === null) {
 								return settleOnce(() => reject(new Error(`${ErrorCodes.SSH_CONNECT_FAILED}: ssh 连接在命令执行期间中断。`)));
 							}
-							settleOnce(() => resolve({ exitCode: result.exitCode as number }));
+							settleOnce(() => resolve({ exitCode }));
 						} catch {
 							/* 收尾观察者异常不破坏会话 */
 						}
@@ -667,7 +676,7 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 					} catch {
 						controller.abort();
 						jobDeps?.notify?.(REMOTE_BACKGROUND_FAILED);
-						return settleOnce(() => reject(new Error(REMOTE_BACKGROUND_FAILED)));
+						return settleOnce(() => reject(new Error(`${ErrorCodes.REMOTE_BACKGROUND_FAILED}: ${REMOTE_BACKGROUND_FAILED}`)));
 					}
 					settleOnce(() => reject(new Error(text)));
 				}, timeoutMs);

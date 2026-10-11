@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 846213e
+> last verified @ 7de0a44
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
@@ -72,21 +72,36 @@
   无法包裹下层实现，所以本扩展在加载期把远端 bash 能力放进 timeout-bg 的收集盒子（`capability.ts`），
   由它合并 schema 并按参数分派；远端分支只有 `executeRemoteBash` 一份实现（本扩展自己的 bash 与能力载荷共用）。
   频道/载荷/分派安全口径/加载顺序见 `docs/cross/shell-tool-capability.md`，本侧锁在 `test/capability.test.ts`
-  与跨扩展组合测试里。
+  与跨扩展组合测试里（含反向加载顺序）。
 - **远端 $HOME 缓存失败不毒化**：session 按目标永久缓存，所以 `home()` 失败时清缓存、下次重试（瞬时网络抖动
   不能让该目标所有相对路径调用挂到 `/reload`）。
+- **远端 bash 超时转后台（`#12`，与 timeout-bg 组合时）**：托管端口从 `pi.events` 的
+  `pi-extensions:shell-job-host:v1` 频道**懒索取一次并缓存**（拿不到 = 没装 timeout-bg ⇒ 行为与今天逐字一致：
+  传输层 timeout + `timeout:<秒>`）。拿到端口后：
+  - 自己计时，**不把 `timeout` 交给传输层**（那会杀 ssh）；命令前缀把登录 shell 的 `$$` 写进
+    `/tmp/pi-remote-job-<uuid>.pid` 供 `/bg:kill` 定位进程组（随机名，无法被预置符号链接命中；`EXIT`/`TERM`/`HUP`
+    trap 自清理——**TERM/HUP 必须显式 `exit`**，否则 shell 吞掉信号继续跑下一条命令）；
+  - 输出全程落 `<logRoot>/<pi pid>/<id>.log`（`allocate()` 给的路径，与本地 job 同布局），超时后只进日志；
+  - 命中超时时 `register`（命令/目标/秒数/尾部输出/`terminate`），本次 tool call 以 owner 返回的文本结束；
+  - `terminate` = 发一条 ssh 按 pid 文件尽力杀远端进程组（TERM → KILL），**再**断开本地 ssh；
+  - 命令自然结束时 `settle(id, 退出码)`（传输层中断记 `null`，不把 ssh 的 255 当命令退出码）。
+  频道的形状/义务/失败口径见 `docs/cross/shell-tool-capability.md`。“不断连”的真机取证（标记文件在超时后
+  仍写出）在 `test/remote-live.test.ts`。
 
 ## 文件地图
 
 - `index.ts` — 扩展入口：`registerRemoteTools(pi, { exec: createSpawnExec(), cwd: process.cwd() })`
 - `capability.ts` — 跨扩展能力载荷：频道名、`RemoteBashCapability` 形状、`isRemoteBashCall`（远端意图判定，噪声容错、形态非法也算远端）、
-  `offerBashCapability`（订阅收集频道、同步填盒子、形状守卫与异常隔离）
+  `offerBashCapability`（订阅收集频道、同步填盒子、形状守卫与异常隔离）、
+  `claimRemoteJobHost`（job 托管端口的索取与形状守卫）
 - `tools.ts` — 7 个同名覆盖的接线：schema 拼接（内置参数 + remote 三件套）、本地/远端分派、
   `resolveToolPath`（校验 + $HOME 懒解析）、`remoteContext`（把内置定义的 `ctx.cwd` 换成远端基准）、
   session 缓存（同目标共享、`$HOME` 只解析一次）、`executeRemoteBash`（远端分支单一实现，供自身注册与能力载荷共用）
 - `ops.ts` — 远端 Operations 后端：read/write/edit/ls/find/bash 的远端原语（**目录分支在前**的 `if/elif` 一次往返区分
   「不存在/是目录/正常」——`-e` 对目录同样成立，顺序写反会把「是目录」误报成「不可读」；read 的 `access` 顺带取回图片嗅探样本，`detectImageMimeType` 消费）、
-  `createRemoteSession`、ls/find 的 `probeDirectory` 探针（fail-closed 目录校验 + 答案缓存）、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单
+  `createRemoteSession`、ls/find 的 `probeDirectory` 探针（fail-closed 目录校验 + 答案缓存）、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单、
+  `createRemoteBashOps(session, jobDeps?)` 的两条路径（旧路径：传输层超时；托管路径：自计时/落盘/登记/杀远端进程组）、
+  `buildRemotePidFilePrologue` / `buildRemoteKillCommand`
 - `grep.ts` — 整份重写的远程 grep：`rg --json` 解析 + 与内置同形的输出/限流/截断，rg 缺失时 GNU grep 回退
 - `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`HOST_PATH_ROOT`/`toHostPath`/`toRemotePath`/`stripHostMarker`）
   + 标记根守卫（`assertMarkerRootUsable`：锚文件必须是普通文件）
@@ -94,11 +109,11 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
-- `test/` — 87 个：79 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(3) / `shell-composition.test.ts`(2，真实加载 remote-tools + timeout-bg)）+ 8 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
+- `test/` — 99 个：90 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `bash-timeout.test.ts`(8，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 
-目标：本机 WSL Ubuntu（`user@127.0.0.1:22`，Linux 内核 + 已装 ripgrep），Windows 侧跑测试。8 个用例**全绿**：
+目标：本机 WSL Ubuntu（`user@127.0.0.1:22`，Linux 内核 + 已装 ripgrep），Windows 侧跑测试。9 个用例**全绿**：
 
 ```bash
 MSYS2_ENV_CONV_EXCL='*' PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
@@ -110,6 +125,12 @@ MSYS2_ENV_CONV_EXCL='*' PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOO
 远端 write/read/ls/grep（真 rg）/find/bash）、远端不存在/无权限的结构化错误码、不可达主机 fail-closed、
 以及 `#9`/`#10` 新增的一条：带 `remote` 的 bash 真在远端跑（`uname -s` = `Linux`）与 ls/find 的不存在/传文件结构化错误
 （消息里既没有 `pi-remote` 也没有宿主模板字样）。
+
+`#12` 又加一条（2026-10-11）：**远端超时不断连 + `/bg:kill` 真杀远端进程组**——`sleep 3; printf DONE > marker`
+配 `timeout: 1` ⇒ 工具调用以 job 文本结束、本地 ssh 活着、`marker` 3 秒后真的出现；长任务配 `timeout: 1` ⇒
+`terminate()` 后远端 `pgrep` 归零且标记文件不再生成。这条真机用例拓到一个假 ssh 测不出的 bug：
+pid 文件的 `TERM` trap 若不显式 `exit`，命令 shell 会**吞掉信号继续跑下一条命令**
+（`sleep N; printf ALIVE > marker` 在 kill 之后仍写出了标记）——已改为 `trap '…; exit 143' TERM` 并补单测断言。
 
 组合的端到端另有一次真实 pi 会话验收（不推包，直接 `-e` 两个扩展的最小链路）：
 
@@ -154,7 +175,8 @@ pi --print --no-session --no-extensions -e <本目录>/index.ts -e <timeout-bg �
   探本地变体（NFD / 弯引号）——所以宿主形态必须让本地 path/fs 给 missing-path 错误。旧形态 `C:\pi-remote\…`
   靠「本机恰好不存在」维持这条前提（本地真有该目录时变体探测会静默读错文件，用户 2026-10-10 复现）；现在
   标记根锚在自带普通文件下 ⇒ 本地**建不出**该目录，前提成了结构事实（详见 ADR-0010 决策 3）。
-- **远端 `bash` 的中断只 kill 本地 ssh**：远端命令可能继续跑（v1 已记录，未做远端进程组清理）。
+- **远端 `bash` 的 Ctrl-C/Esc 中断仍只 kill 本地 ssh**：远端命令可能继续跑；远端进程组清理只对「超时转后台的 job」
+  尽力做（`/bg:kill` → pid 文件 → TERM/KILL），且需要装 timeout-bg。
 - **不启用 `ControlMaster`**：Windows OpenSSH 不支持连接复用，复用交给用户自己的 `~/.ssh/config`；
   因此把「N 次往返」压到关键路径上——`ls` 的 readdir 用 `ls -A1p` 一次拿回 entry 类型并缓存，随后的逐条 `stat` 零 ssh。
 - **`ls -A1p` 的尾斜杠语义与它的一处分叉**：目录项带尾斜杠（节省 N 次 ssh，见下）；但 GNU `ls -p` **不跟随符号链接**，
@@ -175,4 +197,11 @@ pi --print --no-session --no-extensions -e <本目录>/index.ts -e <timeout-bg �
 - **评审记录（`#9`/`#10`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 5 备注）：① `negotiateBash` 的 `base` 死参数——已删（`846213e`）；② timeout-bg 卡 `last verified` 与共享文档不同——**驳回**（惯例是「指向被验证的**代码**提交」，见上面 `#6` 那条；本轮已按最后一次动代码的提交统一为 `846213e`）；③ 两份 align 文档的「抛错回退原路径」与实现的安全口径冲突——**驳回**（对齐文档是开工前的人工确认记录，事后回写会让对齐门失去意义；偏离与理由已按红线 3 记在 `docs/specs/shell-tool-composition.md`，并在 `complete` 备注重申）；④ 模型面文案仍写「path 必须是远端绝对 POSIX 路径」——已改为「相对路径/省略按远端 $HOME」（`846213e`：`REMOTE_GUIDELINE` + 7 处参数/工具说明 + README）；⑤ `remote-live.test.ts` 一处排版——已修（`846213e`）。第 2 轮（复核 ①④⑤）= 见下条。
 - **评审记录（第 2 轮）**：kimi-coding/k3-256k = OK with notes（0 阻断 / 3 条文案 P2）：①②③⑤ 全部确认已解决（② 驳回成立：仓库惯例=指向被验证的代码提交；③ 驳回成立：规格已承接偏离、对齐文档是开工前的人工确认记录）；新发现 3 处「绝对 POSIX」漏网措辞（根 README 的自相矛盾句、`index.ts` 文件头、ADR-0010）——已修（`52c10d9`）。
 - **评审记录（第 3 轮，终轮）**：同款 reviewer = OK with notes（0 阻断）：①② 确认修复且与 `resolveToolPath` 逐点一致；③ 指出注记把原文改写了、自指失效——已按推荐修法恢复原文 `path（远端绝对 POSIX）`、注记改为「决策当日口径 + 当前口径」两句，并覆盖决策 2 正文里同源的旧表述（ADR 只加注记、不改写正文）。三轮上限到：全轮无 P0/P1，终轮唯一一条纯文档 P2 已收口（不再派第 4 轮，红线 11 的最大轮数护栏）。
+- **评审记录（`#12`/`#4`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 5 建议 / 6 备注）：
+  涉及本卡的建议 ①（不变量节误删「远端 `$HOME` 缓存失败不毒化」）已恢复；③（README 写「同一条 `pi.events` 通道」失实——托管端口是另一条频道、方向相反）已改；
+  ⑤（`allocate`/`register` 的守卫错误与转后台失败是裸 `Error`）已登记错误码 `REMOTE_JOB_PORT_INVALID` / `REMOTE_BACKGROUND_FAILED`，
+  并补两条进程边界测试（端口抛错 ⇒ 断 ssh + 带码报错 + notify；日志建不出来 ⇒ 当场回退旧路径）。
+  备注（记录不改）：`/reload` 后旧实例的订阅残留可能让**先到先得**的槽位被死端口占住——已用「会话启动登记 / 关闭退订」（`offerRemoteJobPort` 返回退订函数）缓解，
+  宿主是否清监听器本仓无法核实；`terminate` 缺失时 `/bg:kill` 只报「已停止」（契约明确当没有钩子）；未超时的远端调用也烧号 + 落盘（见「坑」节的有意取舍）；
+  日志异步建不出来时不会「当场回退旧路径」（契约字面只覆盖同步失败，有 `error` 兜底不炸会话）；`session_shutdown` 的 terminate 是 fire-and-forget（Q3 已接受「尽力而为」）。
 - **坑（评审备注记录的边缘场景）**：若扩展目录路径**本身**含 U+00A0 之类的 unicode 空格，宿主的 `normalizePath` 会把它改写成普通空格 ⇒ 标记根前缀失配 ⇒ 远端调用 fail-closed 报 `REMOTE_PATH_NOT_ABSOLUTE`（是误报，不是静默放行；概率极低，记录不改）。

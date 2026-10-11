@@ -18,6 +18,7 @@ import { test } from "node:test";
 import { type ExtensionAPI, type ExtensionToolContext, type ToolDefinition, createEventBus } from "@earendil-works/pi-coding-agent";
 
 import { type RemoteJobPort, SHELL_JOB_HOST_CHANNEL } from "../capability.ts";
+import { ErrorCodes } from "../errors.ts";
 import { createRemoteBashOps, createRemoteSession, type RemoteSession } from "../ops.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
@@ -186,6 +187,41 @@ test("未超时：正常回退出码、不登记 job；日志仍然全量落盘"
 	assert.deepEqual(h.owner.registrations, [], "只有真的超时才进 job 面");
 	const logPath = path.join(h.logDir, "bg-7.log");
 	assert.equal(fs.readFileSync(logPath, "utf8"), "hi\n");
+});
+
+test("register 抛错（端口异常）：断开本地 ssh + 带错误码的结构化错误 + notify，不静默当作已杀", async () => {
+	const h = makeHarness();
+	const notified: string[] = [];
+	const brokenHost: RemoteJobPort = {
+		allocate: () => ({ id: "bg-9", logPath: path.join(h.logDir, "bg-9.log") }),
+		register: () => {
+			throw new Error("port boom");
+		},
+		settle: () => {},
+	};
+	const ops = createRemoteBashOps(h.session, { jobHost: () => brokenHost, notify: (message) => notified.push(message) });
+	const pending = ops.exec("sleep 400", HOME, { onData: () => {}, timeout: 0.05, env: {} });
+	await assert.rejects(() => pending, new RegExp(ErrorCodes.REMOTE_BACKGROUND_FAILED));
+	assert.equal(h.ssh.main.signal?.aborted, true, "转后台失败必须断开本地 ssh（不能留下看不见的孤儿）");
+	assert.equal(notified.length, 1, "失败要可见（notify 一次）");
+});
+
+test("日志建不出来：回退旧路径（远端命令照跑）+ notify 一次", async () => {
+	const h = makeHarness();
+	const blocker = path.join(h.logDir, "not-a-dir");
+	fs.writeFileSync(blocker, "x");
+	const notified: string[] = [];
+	const host: RemoteJobPort = {
+		allocate: () => ({ id: "bg-9", logPath: path.join(blocker, "bg-9.log") }),
+		register: () => "text",
+		settle: () => {},
+	};
+	const ops = createRemoteBashOps(h.session, { jobHost: () => host, notify: (message) => notified.push(message) });
+	const pending = ops.exec("sleep 400", HOME, { onData: () => {}, timeout: 0.05, env: {} });
+	assert.equal(h.ssh.main.timeoutMs, 50, "回退到旧路径后超时交给传输层");
+	h.ssh.finish({ timedOut: true });
+	await assert.rejects(() => pending, /^Error: timeout:0\.05$/);
+	assert.equal(notified.length, 1);
 });
 
 test("显式 timeout 非法：fail-closed，不 spawn、不占号（与宿主同一句文案）", async () => {

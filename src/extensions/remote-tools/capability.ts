@@ -23,6 +23,7 @@ import type {
 	ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { ErrorCodes } from "./errors.ts";
 import { type TargetInput, parseTarget } from "./ssh.ts";
 
 /** 收集频道（跨扩展契约；升级形状用新频道 v2，不做版本字段）。 */
@@ -107,13 +108,13 @@ function toRemoteJobPort(value: unknown): RemoteJobPort | null {
 		allocate: () => {
 			const ticket = allocate() as { id?: unknown; logPath?: unknown } | null | undefined;
 			if (typeof ticket !== "object" || ticket === null || typeof ticket.id !== "string" || typeof ticket.logPath !== "string") {
-				throw new Error("job 托管端口返回了非法 job 句柄");
+				throw new Error(`${ErrorCodes.REMOTE_JOB_PORT_INVALID}: job 托管端口返回了非法 job 句柄。`);
 			}
 			return { id: ticket.id, logPath: ticket.logPath };
 		},
 		register: (job) => {
 			const text = register(job);
-			if (typeof text !== "string") throw new Error("job 托管端口未返回超时结果文本");
+			if (typeof text !== "string") throw new Error(`${ErrorCodes.REMOTE_JOB_PORT_INVALID}: job 托管端口未返回超时结果文本。`);
 			return text;
 		},
 		settle: (id, exitCode) => {

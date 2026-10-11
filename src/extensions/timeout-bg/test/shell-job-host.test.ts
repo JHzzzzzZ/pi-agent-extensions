@@ -83,6 +83,25 @@ test("register：登记 running job 并返回本地同格式的超时结果文�
   assert.doesNotMatch(list, /pid \?/, "远端 job 不该显示未知 pid");
 });
 
+test("register：命令与目标也按本地口径清洗（首行 400 字符、剔控制字符）", () => {
+  const { port, registry } = makePort();
+  const ticket = port.allocate();
+  port.register({
+    id: ticket.id,
+    logPath: ticket.logPath,
+    command: `\u001b[31mecho hi\u0007\nsecond line ${"x".repeat(500)}`,
+    target: "deploy@host\u0007",
+    timeoutSeconds: 1,
+    tail: "",
+    terminate: () => {},
+  });
+  const job = registry.get(ticket.id)!;
+  assert.doesNotMatch(job.command, /\u001b|\u0007/, "/bg 列表是对着终端渲染的，控制字符不得漏进去");
+  assert.ok(job.command.length <= 400, "命令只取首行且限长（与本地 job 同口径）");
+  assert.doesNotMatch(job.command, /second line/);
+  assert.equal(job.target, "deploy@host");
+});
+
 test("register：尾部输出过控制字符 + 限长（载荷跨扩展而来，渲染前一律清洗）", () => {
   const { port } = makePort();
   const ticket = port.allocate();
@@ -167,6 +186,16 @@ test("offerRemoteJobPort：索取能拿到端口；槽位先到先得；畸形�
     assert.doesNotThrow(() => bus.emit(SHELL_JOB_HOST_CHANNEL, box));
   }
   assert.doesNotThrow(() => offerRemoteJobPort(undefined, port), "没有事件总线（旧宿主）也不得抛");
+});
+
+test("offerRemoteJobPort：退订后不再应答（/reload 后旧实例不能占着先到先得的槽位）", () => {
+  const { port } = makePort();
+  const bus = createEventBus();
+  const detach = offerRemoteJobPort(bus, port);
+  assert.equal(claim(bus), port);
+  detach();
+  assert.equal(claim(bus), undefined, "退订后提供方拿不到端口（按无托管回退旧路径）");
+  assert.doesNotThrow(() => detach(), "退订幂等");
 });
 
 test("offerRemoteJobPort：总线订阅本身抛错时静默降级（托管不可用，不破坏加载）", () => {
