@@ -356,6 +356,21 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 21,
+      "globalId": 368,
+      "text": "并发原子写在 Windows 上偶发 EPERM rename（#13 关闭后的新证据，2026-10-11）：concurrency.test.ts 的『6 个真实子进程同时 add』与『3+3 跨文件 add』用例下，子进程以 exit 1 退出，stderr=Error: EPERM: operation not permitted, rename '<tmp>/todos/.todo-cli/tmp/general-todo.json.<pid>.<rand>'（失败现场落在系统临时目录 todo-cli-failure-scenes/）。证据：基线 commit 8f1ed7f 上连跑 8 次并发用例失败 7 次（当时机器有并行负载）；本仓 shell-tool-composition worktree 上 4 次里 1 次失败——不是测试自身竞态，是产品在 Windows 并发下真的会失败（CLI 非零退出 + 条目可能未落盘）。与 #13 的关系：#13 只记录『负载下偶发』，本次给出确定的用例名/错误码/复现率与基线数据，判定应从『测试预算问题』升级为产品缺陷。与 #20 的关系：#20 是锁 TOCTOU（其 N2 已提『临界区里 spawn git rev-parse 拉长窗口』），本条是 rename 本身的 EPERM。要求：定位原子写 rename 的 EPERM 来源（目标被并发打开/杀毒/索引占用？临时名冲突？），补最小可定点复现的测试（可注入 rename 失败一次），修到并发用例连续 N 次稳定绿；若确认是环境因素（杀毒）也必须在用例里给出可判定证据与降级说明，不留『偶发绿』。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T03:43:56.567Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
