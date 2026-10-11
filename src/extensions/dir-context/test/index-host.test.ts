@@ -9,6 +9,9 @@
  *
  * 边界 fake：`sessionManager` / `modelRegistry` / actions（本扩展不读它们，用结构
  * fake）；文件系统是真实的临时目录树（路径与 realpath 语义正是被测对象）。
+ *
+ * 远端调用（入参带 `remote`）也走这套真实路径：判据只看字段，但「命中后到底还注不注入」
+ * 必须在真实 runner 上锁——纸面单测盖不住 handler 的分流。
  */
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -26,6 +29,7 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { STATUS_KEY } from "../index.ts";
+import { REMOTE_NOTICE } from "../remote.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT_DIR = path.resolve(HERE, "..");
@@ -52,16 +56,19 @@ function makeUi(): { ui: ExtensionUIContext; seen: Seen } {
   return { ui, seen };
 }
 
-/** 一棵真实的小项目树：src/AGENTS.md + src/components/{AGENTS.md,Button.tsx}。 */
+/** 一棵真实的小项目树：src/AGENTS.md + src/components/{AGENTS.md,Button.tsx} + docs/AGENTS.md。 */
 function makeProject(): { cwd: string; cleanup: () => void } {
   // realpath 归一：与 canonicalize 同一坐标系（Windows 临时目录大小写差异会造成假红）。
   const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "dir-context-host-")));
   fs.mkdirSync(path.join(cwd, "src", "components"), { recursive: true });
+  // docs/ 是给「远端触碰不得泄进注入」那组用例的诱饵：它不在任何本地触碰的目录链上。
+  fs.mkdirSync(path.join(cwd, "docs"), { recursive: true });
   fs.writeFileSync(path.join(cwd, "AGENTS.md"), "根约定（pi 已加载，插件不得重复注入）");
   fs.writeFileSync(path.join(cwd, "src", "AGENTS.md"), "src 约定");
   fs.writeFileSync(path.join(cwd, "src", "components", "AGENTS.md"), "组件约定");
   fs.writeFileSync(path.join(cwd, "src", "components", "Button.tsx"), "export const Button = 1;\n");
   fs.writeFileSync(path.join(cwd, "src", "index.ts"), "export {};\n");
+  fs.writeFileSync(path.join(cwd, "docs", "AGENTS.md"), "docs 约定（只在被本地触碰时该出现）");
   return { cwd, cleanup: () => fs.rmSync(cwd, { recursive: true, force: true }) };
 }
 
@@ -315,6 +322,253 @@ test("无文本内容的结果（纯图片）：不注入", async (t) => {
       toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, hasText: false }),
     ),
     undefined,
+  );
+});
+
+const COMPACT_EVENT = {
+  type: "session_compact",
+  compactionEntry: {} as never,
+  fromExtension: false,
+  reason: "manual",
+  willRetry: false,
+} as const;
+
+test("远端相对路径：零注入本机上下文 + 一行提示（dir-context-todo#4 核心回归）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  // 本机**确实存在** src/components/AGENTS.md：修复前这条远端调用会按本地 cwd 解析
+  // 并把它注入进去（把本机约定当远端目录的约定喂给模型）。
+  const structured = { file: { path: "src/components/Button.tsx" } };
+  const result = await h.runner.emitToolResult(
+    toolResult({
+      toolName: "read",
+      toolInput: { path: "src/components/Button.tsx", remote: "prod" },
+      text: "远端文件内容",
+      structuredContent: structured,
+    }),
+  );
+
+  const blocks = (result?.content ?? []) as Array<{ type: string; text: string }>;
+  assert.equal(blocks.length, 2, "只追加一个 text block");
+  assert.equal(blocks[0]?.text, "远端文件内容", "原结果必须是第一个块且逐字未改");
+  assert.match(blocks[1]?.text ?? "", /远端调用/, "首次远端触碰给一行提示");
+  assert.doesNotMatch(blocks[1]?.text ?? "", /Loaded|dir-context path=/, "远端路径不得按本机 cwd 注入");
+  assert.deepEqual(result?.structuredContent, structured, "structuredContent 必须逐字保留");
+  assert.deepEqual(h.seen.statuses.filter((text) => text !== undefined), [], "远端调用不写注入状态");
+});
+
+test("远端绝对路径：同样零注入（同样不看 path）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  const result = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "/srv/app/docs/x.md", remote: "prod" } }),
+  );
+  const text = injectedText(result);
+  assert.doesNotMatch(text, /Loaded/, "远端绝对路径本就不该注入");
+  assert.match(text, /远端调用/);
+});
+
+test("本地调用逐字不变：字段缺失 / 空串 / 纯空白 / 缺省值字面量 / 非字符串都照常注入", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  const variants: Array<Record<string, unknown>> = [
+    { path: "src/components/Button.tsx" }, // 没装 remote-tools 时的形状（字段根本不存在）
+    { path: "src/components/Button.tsx", remote: "" },
+    { path: "src/components/Button.tsx", remote: "   " },
+    { path: "src/components/Button.tsx", remote: "null" },
+    { path: "src/components/Button.tsx", remote: "None" },
+    { path: "src/components/Button.tsx", remote: 42 },
+  ];
+  for (const toolInput of variants) {
+    // compact 只为清空「已注入」缓存，让每个变体都真的走一次注入路径（与本用例无关的提示同时重置）。
+    await h.runner.emit(COMPACT_EVENT);
+    const text = injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput })));
+    assert.match(text, /Loaded src\/components\/AGENTS\.md/, JSON.stringify(toolInput));
+    assert.doesNotMatch(text, /远端调用/, `本地调用不得出现远端提示：${JSON.stringify(toolInput)}`);
+  }
+});
+
+test("远端提示：会话内只给一次（compact 后可再来一次）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "a.md", remote: "prod" } }))),
+    /远端调用/,
+  );
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "b.md", remote: "prod" } })),
+    undefined,
+    "第二次远端调用：纯透传（不再提示、也不注入）",
+  );
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "ls", toolInput: { path: "src", remote: "prod" } })),
+    undefined,
+    "ls 与 read 同一视同仁（判据覆盖全部触发工具）",
+  );
+
+  await h.runner.emit(COMPACT_EVENT);
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "c.md", remote: "prod" } }))),
+    /远端调用/,
+    "compact 会把之前的注入从上下文里抹掉，提示同理要能重放",
+  );
+});
+
+test("远端提示不污染失败结果与纯图片结果，也不消耗「首次」配额", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({ toolName: "read", toolInput: { path: "a.md", remote: "prod" }, isError: true }),
+    ),
+    undefined,
+    "isError：尾部追加只会污染错误诊断",
+  );
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({ toolName: "read", toolInput: { path: "b.md", remote: "prod" }, hasText: false }),
+    ),
+    undefined,
+    "无文本内容：追加没有落点",
+  );
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "c.md", remote: "prod" } }))),
+    /远端调用/,
+    "前两次没消耗配额：第一个可用结果仍能提示",
+  );
+});
+
+test("codemode 脚本里的远端调用：不注入本机同名路径，提示落到顶层结果", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  // 宿主真实形状：嵌套 tool_result 先到（input 是完整入参），顶层 codemode 结果后到。
+  await h.runner.emitToolResult(
+    nestedCall({
+      toolName: "read",
+      toolInput: { path: "src/components/Button.tsx", remote: "prod" },
+      parentToolCallId: "call-9",
+    }),
+  );
+  const top = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-9", details: codemodeDetails([]) }),
+  );
+  const text = injectedText(top);
+  assert.doesNotMatch(text, /Loaded/, "嵌套的远端触碰不得在顶层结果里注入本机上下文");
+  assert.match(text, /远端调用/, "脚本内的结果模型看不到，提示必须落到顶层结果");
+
+  // details 是独立于嵌套事件的第二条来源，同样要拦。
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({
+        toolName: "codemode",
+        toolInput: { code: "export default 1" },
+        toolCallId: "call-10",
+        details: codemodeDetails([{ name: "read", args: { path: "src/index.ts", remote: "prod" } }]),
+      }),
+    ),
+    undefined,
+    "details 里的远端调用不注入（提示已发过 ⇒ 纯透传）",
+  );
+});
+
+test("远端调用不限定工具：顶层 remote bash 与 grep 同样零注入、同样只给一次提示", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  // grep 不在触发面上（恒零注入）；带 remote 时它照样吃那行提示（附着面按字段，不按工具）。
+  const grep = await h.runner.emitToolResult(
+    toolResult({ toolName: "grep", toolInput: { pattern: "x", path: "src", remote: "prod" } }),
+  );
+  const grepText = injectedText(grep);
+  assert.doesNotMatch(grepText, /Loaded/, "grep 本就不在触发面上");
+  assert.match(grepText, /远端调用/, "带 remote 的 grep 结果同样吃那行提示（附着面按字段）");
+
+  // bash 在触发面上但命中远端 ⇒ 零注入；提示已用掉 ⇒ 纯透传。
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "bash", toolInput: { command: "cat src/index.ts", remote: "prod" } })),
+    undefined,
+    "远端 bash：既不注入、也不再重复提示",
+  );
+});
+
+test("codemode 混合：本地触碰照注入、远端触碰对注入内容零贡献（只多一行提示）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+
+  /**
+   * 同一棵树跑两次：一次只有本地嵌套读，一次再叠一条远端嵌套读。
+   *
+   * 远端那条必须挑一个**不在本地触碰目录链上**的路径（docs/），否则「既记又标」（嵌套分支漏
+   * `return`：远端触碰既 markRemote 又 record）这种错误会被去重抹平，等式照样成立——断言就形同
+   * 虚设（评审 round 2 的 P2-3）。
+   */
+  const run = async (withRemote: boolean): Promise<string> => {
+    const h = await startHarness(t, project.cwd);
+    await h.runner.emitToolResult(
+      nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-m", index: 1 }),
+    );
+    if (withRemote) {
+      await h.runner.emitToolResult(
+        nestedCall({ toolName: "read", toolInput: { path: "docs/remote-only.ts", remote: "prod" }, parentToolCallId: "call-m", index: 2 }),
+      );
+    }
+    const top = await h.runner.emitToolResult(
+      toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-m", details: codemodeDetails([]) }),
+    );
+    return injectedText(top);
+  };
+
+  const localOnly = await run(false);
+  const mixed = await run(true);
+  assert.match(localOnly, /Loaded src\/AGENTS\.md/);
+  assert.match(localOnly, /Loaded src\/components\/AGENTS\.md/);
+  assert.doesNotMatch(localOnly, /docs\/AGENTS\.md/, "对照组里 docs/ 不该出现（它只被远端触碰过）");
+  assert.equal(mixed, `${localOnly}\n${REMOTE_NOTICE}`, "远端触碰对注入内容零贡献：只在末尾多一行提示");
+});
+
+test("codemode 顶层结果失败：组照旧消费（不跨结果残留），远端提示的配额不消耗", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({
+      toolName: "read",
+      toolInput: { path: "src/components/Button.tsx", remote: "prod" },
+      parentToolCallId: "call-f",
+    }),
+  );
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-f", isError: true, details: codemodeDetails([]) }),
+    ),
+    undefined,
+    "失败的顶层结果不追加任何文本",
+  );
+  // 同一组已被取走：即使该次结果失败，下一条本地触碰也不会平白多出注入。
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/index.ts" } }))),
+    /Loaded src\/AGENTS\.md/,
+    "组已消费（不残留）+ 本地正常注入（src/components 尚未注过）",
+  );
+  // 配额未消耗：后面真正的远端调用仍能拿到提示。
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "a.md", remote: "prod" } }))),
+    /远端调用/,
+    "失败结果不消耗「首次」配额",
   );
 });
 

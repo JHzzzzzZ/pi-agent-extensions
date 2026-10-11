@@ -58,6 +58,25 @@ test("非触碰工具与 models.* 明细：零触碰", () => {
   );
 });
 
+test("远端调用的明细：零触碰——远端路径按本机 cwd 解就是错注入（dir-context-todo#4）", () => {
+  assert.deepEqual(
+    touchesOf([
+      call("read", { path: "docs/x.md", remote: "prod" }),
+      call("write", { path: "docs/y.md", remote: "user@10.0.0.1", content: "x" }),
+      call("ls", { path: "docs", remote: "prod" }),
+      call("bash", { command: "cat docs/z.md", remote: "prod" }),
+    ]),
+    [],
+  );
+  // 同一次脚本里本地与远端混着来：只留本地那条。
+  assert.deepEqual(touchesOf([call("read", { path: "src/a.ts" }), call("read", { path: "src/b.ts", remote: "prod" })]), [
+    { rawPath: "src/a.ts", kind: "file" },
+  ]);
+  // 缺省值字面量 / 空串 = 没给 remote ⇒ 仍是本地触碰（与 remote.ts 同口径）。
+  assert.deepEqual(touchesOf([call("read", { path: "src/a.ts", remote: "null" })]), [{ rawPath: "src/a.ts", kind: "file" }]);
+  assert.deepEqual(touchesOf([call("read", { path: "src/a.ts", remote: "  " })]), [{ rawPath: "src/a.ts", kind: "file" }]);
+});
+
 test("bash 只认单文件读白名单：重定向 / 变量 / 多文件一律「拿不准」⇒ 零触碰", () => {
   assert.deepEqual(
     touchesOf([call("bash", { command: "cat a.ts b.ts" }), call("bash", { command: "cat $FILE" }), call("bash", { command: "cat x.ts > y.ts" })]),
@@ -141,10 +160,34 @@ test("嵌套缓冲：按父调用归组，take 取走即清（同一组不会被
   buffer.record("call-A", { rawPath: "src/a.ts", kind: "file" });
   buffer.record("call-B", { rawPath: "src/b.ts", kind: "file" });
 
-  assert.deepEqual(buffer.take("call-A"), [{ rawPath: "src/a.ts", kind: "file" }]);
-  assert.deepEqual(buffer.take("call-A"), [], "已取走的组不再返回");
-  assert.deepEqual(buffer.take("call-B"), [{ rawPath: "src/b.ts", kind: "file" }], "其他组不受影响");
-  assert.deepEqual(buffer.take("call-C"), [], "未知组返回空数组");
+  assert.deepEqual(buffer.take("call-A").touches, [{ rawPath: "src/a.ts", kind: "file" }]);
+  assert.deepEqual(buffer.take("call-A").touches, [], "已取走的组不再返回");
+  assert.deepEqual(buffer.take("call-B").touches, [{ rawPath: "src/b.ts", kind: "file" }], "其他组不受影响");
+  assert.deepEqual(buffer.take("call-C"), { touches: [], remote: false }, "未知组返回空组");
+});
+
+test("嵌套缓冲：远端记号与触碰是两个维度，互不干扰", () => {
+  const buffer = createNestedTouchBuffer();
+  buffer.markRemote("call-A");
+  buffer.record("call-B", { rawPath: "src/b.ts", kind: "file" });
+
+  const remoteOnly = buffer.take("call-A");
+  assert.deepEqual(remoteOnly.touches, [], "远端调用不产生本地触碰（路径在远端解析）");
+  assert.equal(remoteOnly.remote, true);
+  assert.equal(buffer.take("call-B").remote, false, "没标过的组 remote 恒 false");
+
+  // 同一组里远端与本地混着来：本地的照记，记号也留着（顶层既注入又提示）。
+  const mixed = createNestedTouchBuffer();
+  mixed.record("call-C", { rawPath: "src/a.ts", kind: "file" });
+  mixed.markRemote("call-C");
+  mixed.record("call-C", { rawPath: "src/c.ts", kind: "file" });
+  assert.deepEqual(mixed.take("call-C"), {
+    touches: [
+      { rawPath: "src/a.ts", kind: "file" },
+      { rawPath: "src/c.ts", kind: "file" },
+    ],
+    remote: true,
+  });
 });
 
 test("嵌套缓冲：单组超过上限的后续触碰丢弃（少记，不误记）", () => {
@@ -152,7 +195,7 @@ test("嵌套缓冲：单组超过上限的后续触碰丢弃（少记，不误�
   for (let index = 0; index < MAX_NESTED_TOUCHES_PER_CALL + 5; index += 1) {
     buffer.record("call-A", { rawPath: `src/f${index}.ts`, kind: "file" });
   }
-  const taken = buffer.take("call-A");
+  const taken = buffer.take("call-A").touches;
   assert.equal(taken.length, MAX_NESTED_TOUCHES_PER_CALL);
   assert.equal(taken[0]?.rawPath, "src/f0.ts", "先记的保留");
   assert.equal(taken.at(-1)?.rawPath, `src/f${MAX_NESTED_TOUCHES_PER_CALL - 1}.ts`);
@@ -163,16 +206,16 @@ test("嵌套缓冲：组数超过上限时淘汰最旧的组（内存有界）",
   for (let index = 0; index < MAX_NESTED_CALL_GROUPS + 2; index += 1) {
     buffer.record(`call-${index}`, { rawPath: `src/g${index}.ts`, kind: "file" });
   }
-  assert.deepEqual(buffer.take("call-0"), [], "最旧的组已被淘汰");
-  assert.deepEqual(buffer.take("call-1"), []);
-  assert.equal(buffer.take(`call-${MAX_NESTED_CALL_GROUPS + 1}`).length, 1, "最新的组在");
+  assert.deepEqual(buffer.take("call-0").touches, [], "最旧的组已被淘汰");
+  assert.deepEqual(buffer.take("call-1").touches, []);
+  assert.equal(buffer.take(`call-${MAX_NESTED_CALL_GROUPS + 1}`).touches.length, 1, "最新的组在");
 });
 
 test("嵌套缓冲：clear 清空全部组", () => {
   const buffer = createNestedTouchBuffer();
   buffer.record("call-A", { rawPath: "src/a.ts", kind: "file" });
   buffer.clear();
-  assert.deepEqual(buffer.take("call-A"), []);
+  assert.deepEqual(buffer.take("call-A").touches, []);
 });
 
 test("isCodemodeResult：只认工具名，与 details 形状解耦（消费缓冲的判据）", () => {
