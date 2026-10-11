@@ -60,12 +60,14 @@ timeout-bg ⇒ 远端超时沿用宿主 kill 语义，行为与今天逐字一�
 | --- | --- |
 | `allocate()` | 命令**开始前**发号 + 给本地日志路径（远端要先把 pid 写进文件供 `/bg:kill` 用、输出要全量落盘）；只有真的超时才 `register` |
 | `register(job)` | 登记为运行中的 job（`id` / `logPath` / 命令 / `target` 展示 / `terminate` 钩子），**返回本次 tool call 应抛出的超时结果文本**——模板由 owner 单源持有，提供方不自己拼一份 |
-| `settle(id, exitCode)` | 命令自然结束：更新退出码并触发完成通知；已被 `/bg:kill` 的忽略（幂等） |
+| `settle(id, exitCode)` | 命令自然结束：更新退出码并触发完成通知；已被 `/bg:kill` 或未登记的 id 忽略（幂等，不报错） |
 
 双方义务：
 
 - **owner 的超时策略在同一数字下转交**：远端调用未显式给 `timeout` 时，owner 在把参数交给远端分支**之前**填上默认秒数
   （`PI_TIMEOUT_BG_DEFAULT`，默认 300；`0` = 不施加）；显式值原样透传（非法值由远端按宿主同一句文案拒绝）。
+- **订阅生命周期**：owner 在 `session_start` 登记这个频道的应答、在 `session_shutdown` 退订（`offerRemoteJobPort` 返回退订函数）——
+  盒子是**先到先得**，退订可以避免 `/reload` 后旧实例的回调把提供方的索取填成旧注册表里的死端口。
 - **owner 侧（timeout-bg）**：`register` 前清洗跨扩展载荷（`command` 剔控制字符后取首行 400 字符、`target` 剔控制字符、
   `tail` 剔控制字符 + 尾部限长 2000 字符——与本地 job 进 `/bg` 的口径一致）；发给模型的超时文本与本地同源；
   `terminate` 不是函数就当没有；远端 job 在列表/通知里用 `remote <target>` 展示（没有本地 pid）；

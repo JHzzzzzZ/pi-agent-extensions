@@ -192,18 +192,22 @@ test("未超时：正常回退出码、不登记 job；日志仍然全量落盘"
 test("register 抛错（端口异常）：断开本地 ssh + 带错误码的结构化错误 + notify，不静默当作已杀", async () => {
 	const h = makeHarness();
 	const notified: string[] = [];
+	const settledIds: string[] = [];
 	const brokenHost: RemoteJobPort = {
 		allocate: () => ({ id: "bg-9", logPath: path.join(h.logDir, "bg-9.log") }),
 		register: () => {
 			throw new Error("port boom");
 		},
-		settle: () => {},
+		settle: (id) => settledIds.push(id),
 	};
 	const ops = createRemoteBashOps(h.session, { jobHost: () => brokenHost, notify: (message) => notified.push(message) });
 	const pending = ops.exec("sleep 400", HOME, { onData: () => {}, timeout: 0.05, env: {} });
 	await assert.rejects(() => pending, new RegExp(ErrorCodes.REMOTE_BACKGROUND_FAILED));
 	assert.equal(h.ssh.main.signal?.aborted, true, "转后台失败必须断开本地 ssh（不能留下看不见的孤儿）");
 	assert.equal(notified.length, 1, "失败要可见（notify 一次）");
+	// 登记没成功 ⇒ 绝不能对未登记的 id 调 settle（契约只保证「kill 过的忽略」，不保证「未登记的忽略」）。
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.deepEqual(settledIds, []);
 });
 
 test("日志建不出来：回退旧路径（远端命令照跑）+ notify 一次", async () => {

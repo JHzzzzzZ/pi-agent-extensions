@@ -673,10 +673,17 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 								controller.abort();
 							},
 						});
-					} catch {
+					} catch (error) {
+						// 登记失败：本次 tool call 已结束（backgrounded 复位，ssh 退出时不再对未登记的 id settle）。
+						backgrounded = false;
 						controller.abort();
 						jobDeps?.notify?.(REMOTE_BACKGROUND_FAILED);
-						return settleOnce(() => reject(new Error(`${ErrorCodes.REMOTE_BACKGROUND_FAILED}: ${REMOTE_BACKGROUND_FAILED}`)));
+						// 端口守卫自己带了错误码（REMOTE_JOB_PORT_INVALID）时原样保留，不把归因吞掉。
+						const message =
+							error instanceof Error && error.message.includes(ErrorCodes.REMOTE_JOB_PORT_INVALID)
+								? error.message
+								: `${ErrorCodes.REMOTE_BACKGROUND_FAILED}: ${REMOTE_BACKGROUND_FAILED}`;
+						return settleOnce(() => reject(new Error(message)));
 					}
 					settleOnce(() => reject(new Error(text)));
 				}, timeoutMs);
