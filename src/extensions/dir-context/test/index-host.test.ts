@@ -29,6 +29,7 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { STATUS_KEY } from "../index.ts";
+import { REMOTE_NOTICE } from "../remote.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT_DIR = path.resolve(HERE, "..");
@@ -476,6 +477,94 @@ test("codemode 脚本里的远端调用：不注入本机同名路径，提示�
     ),
     undefined,
     "details 里的远端调用不注入（提示已发过 ⇒ 纯透传）",
+  );
+});
+
+test("远端调用不限定工具：顶层 remote bash 与 grep 同样零注入、同样只给一次提示", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  // bash 在本插件触发面上（单文件读白名单），带 remote ⇒ 不认那个本地目标。
+  const bash = await h.runner.emitToolResult(
+    toolResult({ toolName: "bash", toolInput: { command: "cat src/index.ts", remote: "prod" } }),
+  );
+  const bashText = injectedText(bash);
+  assert.doesNotMatch(bashText, /Loaded/, "远端 bash 不得注入本机上下文");
+  assert.match(bashText, /远端调用/, "首个远端结果要给提示");
+
+  // grep 本就不在触发面上（恒零注入）；它带 remote 时同样吃那行提示（附着面按字段，不按工具）。
+  const grep = await h.runner.emitToolResult(
+    toolResult({ toolName: "grep", toolInput: { pattern: "x", path: "src", remote: "prod" } }),
+  );
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "grep", toolInput: { pattern: "x", path: "src", remote: "prod" } })),
+    undefined,
+    "提示已给过 + 恒零注入 ⇒ 纯透传",
+  );
+  assert.equal(grep, undefined, "同上（第一次调用时提示已在上一条 bash 结果上用掉）");
+});
+
+test("codemode 混合：本地触碰照注入、远端触碰对注入内容零贡献（只多一行提示）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+
+  /** 同一棵树跑两次：一次只有本地嵌套读，一次再叠一条远端嵌套读。 */
+  const run = async (withRemote: boolean): Promise<string> => {
+    const h = await startHarness(t, project.cwd);
+    await h.runner.emitToolResult(
+      nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-m", index: 1 }),
+    );
+    if (withRemote) {
+      await h.runner.emitToolResult(
+        nestedCall({ toolName: "read", toolInput: { path: "src/index.ts", remote: "prod" }, parentToolCallId: "call-m", index: 2 }),
+      );
+    }
+    const top = await h.runner.emitToolResult(
+      toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-m", details: codemodeDetails([]) }),
+    );
+    return injectedText(top);
+  };
+
+  const localOnly = await run(false);
+  const mixed = await run(true);
+  // 远端那条 src/index.ts 与本地那条同目录链：若它参与了注入，无论多注（两份 src 链）还是少注
+  // （只认后面那条）都会与这个等式不等。
+  assert.match(localOnly, /Loaded src\/AGENTS\.md/);
+  assert.match(localOnly, /Loaded src\/components\/AGENTS\.md/);
+  assert.equal(mixed, `${localOnly}\n${REMOTE_NOTICE}`, "远端触碰对注入内容零贡献：只在末尾多一行提示");
+});
+
+test("codemode 顶层结果失败：组照旧消费（不跨结果残留），远端提示的配额不消耗", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({
+      toolName: "read",
+      toolInput: { path: "src/components/Button.tsx", remote: "prod" },
+      parentToolCallId: "call-f",
+    }),
+  );
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({ toolName: "codemode", toolInput: { code: "export default 1" }, toolCallId: "call-f", isError: true, details: codemodeDetails([]) }),
+    ),
+    undefined,
+    "失败的顶层结果不追加任何文本",
+  );
+  // 同一组已被取走：即使该次结果失败，下一条本地触碰也不会平白多出注入。
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/index.ts" } }))),
+    /Loaded src\/AGENTS\.md/,
+    "组已消费（不残留）+ 本地正常注入（src/components 尚未注过）",
+  );
+  // 配额未消耗：后面真正的远端调用仍能拿到提示。
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "a.md", remote: "prod" } }))),
+    /远端调用/,
+    "失败结果不消耗「首次」配额",
   );
 });
 

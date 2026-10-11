@@ -168,7 +168,9 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     // 远端调用（`remote` 字段来自 remote-tools 一类插件，判据见 remote.ts）：`path` 在**远端**解析、
     // 与本地 cwd 无关 ⇒ 本机上下文一律不参与（fail-closed）。判据只看入参字段：不 import 任何插件、
     // 不共享代码；没装 remote-tools 时这个字段根本不存在，行为与今天逐字一致。
-    // 注：内置 codemode 的入参只有 `code`，不会带 `remote`，两条分支互斥。
+    // 注：内置 codemode 的入参只有 `code`，不会带 `remote`，两条分支互斥。假设破裂（第三方同名工具
+    // 带 remote）的后果只是该组缓冲不被 take——驻留到 8 组上限被淘汰，方向仍是少注入。
+    // 提示按入参字段附着，不限定工具：带 remote 的 grep/find（不在触发面上）结果也会拿到那行提示。
     const remoteCall = isRemoteCall(event.input);
     const collected = remoteCall ? { touches: [] as Touch[], remote: true } : collectTouches(event, nestedTouches);
 

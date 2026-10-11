@@ -41,7 +41,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 - **预算**：单文件 32 KiB / 单次 128 KiB，按 UTF-8 码点边界截断并留标记。
 - **降级**：失败的结果、纯图片结果、嵌套工具调用本身不注入；读不出上下文文件时只跳过（不标记已注入，下次还能重试）。
 - **codemode（v1.1 起）**：脚本里的 `tools.read/write/edit/ls/bash` 是嵌套调用（结果只回到脚本、不进 transcript），本扩展把它们的**完整入参**（嵌套 `tool_result` 事件，宿主不截断）按顶层调用 id 缓冲，等 codemode **顶层**结果到达时合并 `details.calls`（宿主 200 字符截断预览，兜底）并注入一次——与顶层共用同一份去重/预算。嵌套调用报错（`isError`/cancelled）照算（文件可能已被读写）；顶层结果失败、非触碰工具不注入。缓冲有界：单组 64 条、最多 8 组、取走即删。
-- **远端调用零注入（v1.3）**：入参带非空 `remote`（如 `read path="docs/x.md" remote="prod"`）时，该次调用的 `path` 按**远端**规则解析，与本机 cwd 无关 —— 本扩展直接跳过锚点解析、不碰本地文件系统，也不注入任何本机上下文；会话内首次远端触碰时在结果末尾追加**一行**静态提示（告诉模型远端约定不会自动注入、需要就自己 `read` 那份 `remote` 目录下的文件）。字段缺失 / 空串 / 纯空白 / 缺省值字面量（`null`/`undefined`/`nil`/`none`/`n/a`，大小写与 trim 无关）一律当**本地**处理 —— 没装 remote-tools 时字段根本不存在，行为与今天逐字一致。本扩展**不 import remote-tools 任何模块**（两个插件各自独立安装/升级），判定只看入参字段。
+- **远端调用零注入（v1.3）**：入参带非空 `remote`（如 `read path="docs/x.md" remote="prod"`）时，该次调用的 `path` 按**远端**规则解析，与本机 cwd 无关 —— 本扩展直接跳过锚点解析、不碰本地文件系统，也不注入任何本机上下文；会话内首次远端触碰时在结果末尾追加**一行**静态提示（告诉模型远端约定不会自动注入、需要就自己 `read` 那份 `remote` 目录下的文件）。字段缺失 / 空串 / 纯空白 / 缺省值字面量（`null`/`undefined`/`nil`/`none`/`n/a`/`na`，大小写与 trim 无关）一律当**本地**处理 —— 没装 remote-tools 时字段根本不存在，行为与今天逐字一致。本扩展**不 import remote-tools 任何模块**（两个插件各自独立安装/升级），判定只看入参字段。
 - **结构化结果**：原样回传 `structuredContent`（宿主契约：替换 `content` 而不回传它就等于丢掉结构化结果）。
 - **链接**：指向 cwd 之外的上下文文件整个跳过（fail-closed，既不注入外部内容也不把外部路径展示出来）。
 
@@ -52,7 +52,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 ## 开发
 
 ```bash
-npm install && npm test && npm run typecheck   # 94 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
+npm install && npm test && npm run typecheck   # 97 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
 ```
 
 设计决策与不变量见仓库 `docs/extensions/dir-context.md`、`docs/adr/0011-dir-context-scoped-injection.md` 与 `docs/adr/0012-dir-context-codemode.md`。

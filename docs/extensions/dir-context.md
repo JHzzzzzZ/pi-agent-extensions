@@ -21,7 +21,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 - **嵌套工具调用（`event.parentToolCallId`）不注入**：这类结果只回到调用方工具（如 codemode 脚本），不进 transcript，注入没有意义。
 - **codemode 走「顶层结果代偿」（v1.1 起）**：脚本里的 `tools.read/write/edit/ls/bash` 不直接注入，改在读它**顶层** codemode 结果的触碰；多个触碰取目录链**并集**（同一文件一次、整体仍由外向内），与顶层共用同一份会话缓存与预算。**主来源 = 嵌套 `tool_result` 事件的完整 `input`**（v1.2，宿主不截断）：按发起它的顶层调用 id 缓冲，顶层结果到达时取走；`details.calls[].args`（宿主 200 字符截断预览）降级为**兜底**，两源并集去重。`status` 为 `error`/`cancelled` 的嵌套调用**照算**（缓冲不看 `isError`：文件可能已被读写）；非触碰工具、顶层 `isError` 的 codemode 结果一律跳过。
 - **嵌套触碰缓冲有界**（v1.2）：按顶层调用 id 分组（`parentToolCallId` == 顶层 `toolCallId`）；**取走判据 = 工具名 `codemode`**（与 `details` 形状解耦——形状漂移或缺 `details` 时该组照样消费、且缓冲触碰照旧生效）；单组 64 条（超出丢后续：少记不误记）、同时最多 8 组（超出淘汰最旧的组）；顶层结果到达**取走即删**（失败的顶层结果也消费该组，不跨结果残留）；`session_start` / `session_compact` / `session_shutdown` 清空。
-- **远端调用零注入（v1.3）**：入参带非空 `remote`（来自 remote-tools 一类插件）时，`path` 在**远端**解析，本机 cwd 与之无关 ⇒ 直接跳过触碰解析（不看 `path`、不做锚点解析、不碰文件系统），改追加一行提示。判据只看**入参字段**（`remote` 是非空字符串且不是缺省值字面量，trim + 大小写无关），**不 import remote-tools 任何模块、不共享代码**；字段缺失／空串／纯空白／缺省值字面量／非字符串 ⇒ 本地行为逐字不变（没装 remote-tools 时字段根本不存在）。三条通路各自独立拦截：顶层调用、嵌套 `tool_result` 事件、`details.calls` 兜底——后两条互不依赖，漏一条就是错注入。提示文案静态（不插值 host 等模型输入）、会话内一次、`session_start` / `session_compact` 后重置。
+- **远端调用零注入（v1.3）**：入参带非空 `remote`（来自 remote-tools 一类插件）时，`path` 在**远端**解析，本机 cwd 与之无关 ⇒ 直接跳过触碰解析（不看 `path`、不做锚点解析、不碰文件系统），改追加一行提示。判据只看**入参字段**（`remote` 是非空字符串且不是缺省值字面量，trim + 大小写无关），**不 import remote-tools 任何模块、不共享代码**；字段缺失／空串／纯空白／缺省值字面量／非字符串 ⇒ 本地行为逐字不变（没装 remote-tools 时字段根本不存在）。三条通路各自独立拦截：顶层调用、嵌套 `tool_result` 事件、`details.calls` 兜底——后两条互不依赖，漏一条就是错注入。提示文案静态（不插值 host 等模型输入）、会话内一次、`session_start` / `session_compact` 后重置。提示**按入参字段附着，不限定工具**：带 `remote` 的 `grep` / `find`（本就不在触发面上、恒零注入）结果也会拿到那行提示，嵌套分支同理——附着面比「触发工具」宽一档，方向安全、会话内一次。
 - **`isError` 结果不注入**：失败结果里追加指令只会污染错误诊断。注意与「嵌套调用 `isError` 照算」分开读：前者管**正在注入的那次结果**，后者管**被缓冲的触碰**。
 - **bash 是保守白名单**：只认整条命令里**恰好一个** `cat` / `head` / `tail` 的单文件目标；带重定向（`>`/`<`）、变量展开（`$`/反引号）、多文件、非白名单命令一律「拿不准」⇒ 零注入。漏判只是少注入，误判最多多注入一个目录。
 - **预算是硬上限**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 **码点**边界截断（绝不劈开多字节字符/代理对），被截断/被丢弃都在块内留标记。**「已注入」只标记真正进了文本的文件**：被预算丢弃的不算（否则后续触碰永久拿不到那份上下文——与读取失败的重试语义自相矛盾）；目录链并集让一次注入覆盖多个文件后，这条路径是常态（外部评审 P2）。
@@ -59,7 +59,7 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 
 ## 测试与验证
 
-- `cd src/extensions/dir-context && npm install && npm test && npm run typecheck`（94 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 宿主事件路径 33）
+- `cd src/extensions/dir-context && npm install && npm test && npm run typecheck`（97 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 8 / codemode 明细与缓冲 18 / 远端判据 7 / 宿主事件路径 36）
 - 宿主事件路径测试走**真实 `discoverAndLoadExtensions`（jiti 走 index.ts）+ 真实 `ExtensionRunner.emitToolResult`**，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）；文件系统是真实临时目录树（realpath 与包含校验正是被测对象）。
 - **远端零注入的真机/真实函数 A/B（v1.3）**：同一条事件 `read { path: "src/components/Button.tsx", remote: "prod" }`（本机**确实存在** `src/components/AGENTS.md`）——修复前（HEAD）注入 `Loaded src/AGENTS.md`，修复后零注入 + 一行提示；A/B 脚本把两个版本各加载一次（`git show HEAD:<file>` 取出旧源码到临时目录）后在真实 `ExtensionRunner` 上跑同一条事件。
 - **2 个平台条件跳过**：创建文件符号链接需要权限（Windows 需管理员/开发者模式），建不出来时 `t.skip` 而非静默绿（Linux/macOS 上会真跑）。
