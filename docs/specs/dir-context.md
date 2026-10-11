@@ -31,10 +31,11 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 5. **去重与重载**：会话内每绝对路径一次；`session_start` / `session_compact` 清空缓存（compact 后上下文已不在窗口里，必须允许按需重载）。
 6. **预算**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 码点边界截断；截断与丢弃都在块内留标记。**「已注入」只标记真正进了文本的文件**：被预算丢弃的不算（否则后续触碰永久拿不到那份上下文，与读取失败的重试语义自相矛盾）；目录链并集让一次注入覆盖多个文件后，这条路径是常态。
 7. **降级**：`isError` 结果、无文本内容的结果、嵌套工具调用（`parentToolCallId`）、无候选目录、读取失败（只报一次告警，不标记已注入以便重试）——一律返回 `undefined` 透传原结果。
-8. **codemode 补偿路径（v1.1）**：嵌套调用自身不注入；改在读它**顶层** codemode 结果的 `details.calls`（`{ name, args, status }`，`args` 是宿主的紧凑 JSON 截断预览），把每个条目翻译回第 1 条的触碰语义（`read`/`write`/`edit`/`ls` + bash 单文件读白名单）。多条触碰取目录链**并集**（同一文件一次、整体仍由外向内，`discoverContextFilesForAnchors`），与顶层共用同一份会话去重缓存与预算。`status` 为 `error`/`cancelled` **照算**（文件可能已被读写，注入与脚本成败无关）；非触碰工具、`args` 截断或非法 JSON、`isError` 的 codemode 结果一律跳过（少注入，不误注入）。判真伪用「工具名 `codemode` + `details.calls` 是数组」双重结构守卫——宿主的 `isCodemodeTool` 不在公开导出面（见 ADR-0012 的落地偏差）。
+8. **codemode 补偿路径（v1.1）**：嵌套调用自身不注入；改在读它**顶层** codemode 结果的触碰，把每个条目翻译回第 1 条的触碰语义（`read`/`write`/`edit`/`ls` + bash 单文件读白名单）。多条触碰取目录链**并集**（同一文件一次、整体仍由外向内），与顶层共用同一份会话去重缓存与预算。`status` 为 `error`/`cancelled` **照算**；非触碰工具、顶层 `isError` 的 codemode 结果一律跳过。判真伪用「工具名 `codemode` + `details.calls` 是数组」双重结构守卫——宿主的 `isCodemodeTool` 不在公开导出面（见 ADR-0012 的落地偏差）。
+9. **主来源 = 嵌套事件的完整入参（v1.2）**：`details.calls[].args` 是宿主的 200 字符截断预览，带大载荷的 `tools.write` / `tools.edit` 必然解析失败。改为在嵌套 `tool_result` 事件（`parentToolCallId` 非空）上取**完整 `event.input`**，按发起它的顶层调用 id 缓冲，顶层 codemode 结果到达时取走；`details.calls` 解析降级为**兜底**，两源并集去重。缓冲有界（单组 64 条、最多 8 组、取走即删、会话 reset 清空），且**不看嵌套调用的 `isError`**（文件可能已被读写）。**取走判据只看工具名 `codemode`**（与 `details` 形状解耦：形状漂移或缺 `details` 时缓冲照样消费、缓冲触碰照样生效）——否则那组缓冲会永久残留、里面的触碰被白白丢掉（首轮评审发现）。真机探针证据（`pi --mode json -p --tools +codemode` + 只记日志的临时扩展）：嵌套 `write` 事件 `inputKeys=["path","content"]`、`path` 完整、`content` 长度 300，而同一调用的 `details.calls[].args` 长度恰为 200 且以 `...` 结尾。
 ## 测试决策
 
-- 框架 `node:test` + `node:assert/strict`；64 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细 10 / 宿主事件路径 18）。
+- 框架 `node:test` + `node:assert/strict`；79 个（触碰识别 6 / 锚点解析 9 / 发现 13 / 注入与截断 8 / codemode 明细与缓冲 16 / 宿主事件路径 27）。
 - **宿主事件路径测试接真实实现**：`discoverAndLoadExtensions`（jiti 走真实 `index.ts`）+ 真实 `ExtensionRunner.emitToolResult`，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）。风险点在宿主接缝上，纸面替身抓不到。
 - 文件系统用**真实临时目录树**（realpath、链接、大小写不敏感正是被测对象），不用路径字符串替身。
 - **跨厂商评审一条 P2 已就地修复**（kimi-coding/k3-256k）：预算丢弃的文件曾被误标「已注入」而永不重试——修法是把 `injected` 标记移到 `buildInjection` 之后、只认 `injection.injected`，并用「五级目录 × 32 KiB（>128 KiB 上限）→ 最后一份被丢弃 → 下次触碰补上」的宿主用例锁定。
@@ -45,7 +46,7 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 
 ## 已知边界
 
-- **codemode 路径对自带大载荷的工具覆盖弱于顶层**：`details.calls[].args` 是宿主的**截断预览**（`previewArgs` 上限 200 字符、超出加 `...` 尾），截断后不是合法 JSON ⇒ 该条跳过。`tools.read` / `tools.ls` / `tools.bash` 通常够短能解析，而 `tools.write`（带 `content`）与 `tools.edit`（带 `edits`）很容易超限 ⇒ **脚本里新建/编辑深层文件时可能拿不到局部约定**（顶层直接调用不受影响）。取舍是既定口径「少注入不误注入」；真要覆盖得向宿主动要完整入参（同期不做）。
+- **`details.calls[].args` 的截断预览只是兜底**（v1.2 起）：主来源换成嵌套事件的完整 `input` 之后，`tools.write` / `tools.edit` 大载荷不再漏判（真机 A/B 已验：v1.2 注入、v1.1 零注入）。仍存在的边界是「宿主某个版本不发嵌套 `tool_result` 事件」——那时退回兜底，截断条目仍会被跳过（少注入，不误注入）。
 - **判 codemode 依赖工具名字面量 `codemode`**：工具被改名/包装时补偿路径静默失效（顶层行为不受影响）。宿主的 `isCodemodeTool` 不在公开导出面，结构守卫已是当前可用的最紧判据。
 
 ## 范围外
