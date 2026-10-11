@@ -27,8 +27,8 @@ import { discoverContextFilesForAnchors } from "./discover.ts";
 import { ErrorCodes, type DirContextError } from "./errors.ts";
 import { buildInjection, type ContextFileContent } from "./inject.ts";
 import { canonicalize, toDisplayPath } from "./paths.ts";
-import { collectRemoteContext, toContextFiles, type RemoteContextCapability, type RemoteContextRequest } from "./remote-context.ts";
-import { isRemoteCall, REMOTE_NOTICE } from "./remote.ts";
+import { collectRemoteContext, toContextFiles, REMOTE_CONTEXT_UNREADABLE_CODE, type RemoteContextCapability, type RemoteContextRequest } from "./remote-context.ts";
+import { isRemoteCall, REMOTE_NOTICE, REMOTE_UNREADABLE_NOTICE } from "./remote.ts";
 import { writeBand } from "./status-band.ts";
 import { detectTouch, type Touch } from "./touch.ts";
 
@@ -50,8 +50,13 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   const nestedTouches = createNestedTouchBuffer();
   const loaded: LoadedFile[] = [];
   let readFailureReported = false;
-  /** 远端提示是否已给过（会话内一次，见 remote.ts 的 REMOTE_NOTICE）。 */
-  let remoteNoticeShown = false;
+  /**
+   * 已给过的远端提示种类（会话内每种一次，见 remote.ts 的两个常量）。
+   *
+   * 按**原因**分开记（`dir-context-todo#8`）：通用提示与权限提示的下一步动作不同，
+   * 一种原因出现过不该把另一种挡掉（也仍不成刷屏——每种原因只一次）。
+   */
+  const remoteNoticesShown = new Set<RemoteNoticeReason>();
   /** 远端取文件能力（`session_start` 协商一次；没有提供方就是 null ⇒ 行为退回「一行提示」）。 */
   let remoteContext: RemoteContextCapability | null = null;
 
@@ -70,7 +75,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     nestedTouches.clear();
     loaded.length = 0;
     readFailureReported = false;
-    remoteNoticeShown = false;
+    remoteNoticesShown.clear();
     renderStatus(ctx);
   };
 
@@ -109,7 +114,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     injected.clear();
     nestedTouches.clear();
     loaded.length = 0;
-    remoteNoticeShown = false;
+    remoteNoticesShown.clear();
     if (!ctx.hasUI) return;
     try {
       writeBand(STATUS_KEY, undefined, (rendered) => ctx.ui.setStatus(STATUS_KEY, rendered));
@@ -163,11 +168,11 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
    * 远端提示（会话内一次）。只在有文本内容的非错误结果上追加——与注入同一条口径：
    * 失败结果（尾部追加指令只会污染错误诊断）与纯图片结果没有落点。
    */
-  const takeRemoteNotice = (event: ToolResultEvent): string | undefined => {
-    if (remoteNoticeShown || event.isError) return undefined;
+  const takeRemoteNotice = (event: ToolResultEvent, reason: RemoteNoticeReason): string | undefined => {
+    if (remoteNoticesShown.has(reason) || event.isError) return undefined;
     if (!event.content.some((block) => block.type === "text")) return undefined;
-    remoteNoticeShown = true;
-    return REMOTE_NOTICE;
+    remoteNoticesShown.add(reason);
+    return reason === "unreadable" ? REMOTE_UNREADABLE_NOTICE : REMOTE_NOTICE;
   };
 
   /**
@@ -176,7 +181,11 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
    * - `nothing`：取到了但没有可注入的**新**内容（已经注入过 / 远端那个目录根本没有约定文件）
    *   —— 不是失败，也不给提示（重复调用同一目录不应被当成出错）；
    * - `unavailable`：**取不到**（没装 remote-tools / 对端出错 / ssh 失败 / 其中任何一个请求失败且这次
-   *   什么都没注成）—— 退回那行提示（取不到就说取不到，不猜成「远端没有约定文件」）。
+   *   什么都没注成）—— 退回一行提示（取不到就说取不到，不猜成「远端没有约定文件」）。
+   *   带 `reason`：`unreadable` 走专属提示（说得清是权限），其余走通用提示（dir-context#8）。
+   *
+   * 空内容归 `nothing`（`dir-context-todo#9`）：0 字节的约定文件注入一个空块是纯噪声，
+   * 而且它会被标成已注入 ⇒ 后来写入内容时同一会话也拿不到。提供方仍照实上报（「取」与「判」分工不变）。
    *
    * 去重键与本地共用一个集合但**前缀不同**（`remote:<host>\0<路径>`）：同一台机的远端路径与
    * 本机路径在字符串上可能一模一样。预算/截断/块格式全走 `inject.ts`，规则只有一份。
@@ -186,23 +195,30 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     event: ToolResultEvent,
     ctx: ExtensionContext,
   ): Promise<RemoteInjection> => {
-    if (remoteContext === null) return { kind: "unavailable" };
+    if (remoteContext === null) return { kind: "unavailable", reason: "other" };
     if (event.isError) return { kind: "nothing" };
     if (!event.content.some((block) => block.type === "text")) return { kind: "nothing" };
 
     const contents: ContextFileContent[] = [];
     let failed = 0;
+    let unreadable = false;
     for (const request of dedupeRemoteRequests(requests)) {
       const outcome = await remoteContext.fetchRemoteContext(request);
       if (!outcome.ok) {
         failed += 1;
+        // 按**码**判，不摘要 message（契约固定这个值，见 remote-context.ts）。
+        if (outcome.code === REMOTE_CONTEXT_UNREADABLE_CODE) unreadable = true;
         continue;
       }
       for (const file of toContextFiles(request.remote, outcome.files)) {
+        if (file.content.length === 0) continue;
         if (!injected.has(file.absolutePath)) contents.push(file);
       }
     }
-    if (contents.length === 0) return failed > 0 ? { kind: "unavailable" } : { kind: "nothing" };
+    if (contents.length === 0) {
+      if (failed === 0) return { kind: "nothing" };
+      return { kind: "unavailable", reason: unreadable ? "unreadable" : "other" };
+    }
 
     // 与本地同一条口径：「已注入」只标记真正进了文本的文件（被预算丢弃的下次还能重试）。
     const injection = buildInjection(contents);
@@ -248,10 +264,11 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     // 没有可取上下文的触碰（`grep`/`find` 这类不在触发面上的工具带 remote）⇒ 按「取不到」处理，保留提示。
     const remote =
       collected.remoteRequests.length === 0
-        ? { kind: "unavailable" as const }
+        ? ({ kind: "unavailable", reason: "other" } as const)
         : await injectRemoteContext(collected.remoteRequests, event, ctx);
     // 提示只在**取不到**远端上下文时出现（注入成功不必说；没东西可注也不必说）。
-    const notice = remote.kind === "unavailable" && collected.remote ? takeRemoteNotice(event) : undefined;
+    const notice =
+      remote.kind === "unavailable" && collected.remote ? takeRemoteNotice(event, remote.reason) : undefined;
 
     // 只追加 text block：原内容逐字保留在前，注入内容与提示在后（模型读到的顺序即此）。
     // 宿主契约：替换 `content` 而不回传 `structuredContent` 会**丢掉**结构化结果
@@ -291,8 +308,14 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   };
 }
 
+/** 远端提示的种类（每种会话内一次）：`unreadable` = 约定文件存在但读不出（权限），其余见 remote.ts。 */
+type RemoteNoticeReason = "unreadable" | "other";
+
 /** 远端注入的三态（见 `injectRemoteContext`）：只有 `unavailable` 才退回提示行。 */
-type RemoteInjection = { kind: "injected"; text: string } | { kind: "nothing" } | { kind: "unavailable" };
+type RemoteInjection =
+  | { kind: "injected"; text: string }
+  | { kind: "nothing" }
+  | { kind: "unavailable"; reason: RemoteNoticeReason };
 
 interface CollectedTouches {
   touches: Touch[];

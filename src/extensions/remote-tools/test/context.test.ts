@@ -16,8 +16,8 @@ import {
   MAX_CONTEXT_CHAIN_DEPTH,
   offerRemoteContextCapability,
   parseContextFiles,
+  FRAME_MARK,
   REMOTE_CONTEXT_CHANNEL,
-  UNREADABLE_FRAME_PREFIX,
   type RemoteContextFile,
   type RemoteContextRequest,
   type RemoteContextTarget,
@@ -38,9 +38,18 @@ function makeExec(handler: (request: SshExecRequest) => Partial<SshExecResult> =
   return { exec, calls };
 }
 
-/** 用 NUL 分帧造一段真实形态的 stdout。 */
+/** 造一段 v2 形态的 stdout（标记 + 路径 + base64 载荷），与 `buildContextCommand` 的输出同构。 */
 function framed(files: Array<[string, string]>): Buffer {
-  return Buffer.concat(files.flatMap(([path, content]) => [Buffer.from(`${path}\u0000`, "utf8"), Buffer.from(`${content}\u0000`, "utf8")]));
+  return Buffer.concat(
+    files.flatMap(([path, content]) => [
+      Buffer.from(`${FRAME_MARK.readable}${path}\u0000${Buffer.from(content, "utf8").toString("base64")}\u0000`, "utf8"),
+    ]),
+  );
+}
+
+/** 造一个「存在但读不出」的帧（v2 的 `\x02` 分支，载荷恒空）。 */
+function framedUnreadable(path: string): string {
+  return `${FRAME_MARK.unreadable}${path}\u0000\u0000`;
 }
 
 const REQUEST: RemoteContextRequest = { remote: "prod", path: "docs/x.md", kind: "file" };
@@ -89,20 +98,22 @@ test("远端命令：根目录不产出 `//` 前缀（POSIX 对 `//` 是实现�
   assert.equal(command.includes("f='/'/$n"), false);
 });
 
-test("NUL 分帧解析：路径帧要像绝对路径且不含换行（远端 banner/rc 吐的东西不被当文件名）", () => {
+test("分帧解析：帧头标记不对、或路径不像绝对路径 ⇒ 整帧丢弃（远端 banner/rc 吐的东西不被当文件名）", () => {
+  // banner 占位首段：没有标记 ⇒ 丢；它把分帧错位后，后面成对的两段也过不了路径校验
   assert.deepEqual(
-    filesOf(Buffer.from("Welcome to Ubuntu!\u0000/real/AGENTS.md\u0000ok\u0000", "utf8")),
+    filesOf(Buffer.from("Welcome to Ubuntu!\u0000${FRAME_MARK.readable}/real/AGENTS.md\u0000b2s=\u0000", "utf8")),
     [],
-    "脏首帧把分帧错位了 ⇒ 成对的两帧都不像路径（一个含空格一个不以 / 开头）⇒ 全部丢弃、不注入垃圾标题",
+    "脏首帧把分帧错位 ⇒ 不注入垃圾标题",
   );
-  // banner 直接粘在第一帧路径前面（无 NUL 分隔）：该帧被丢，后面的内容帧也不再配对得上
-  assert.deepEqual(filesOf(Buffer.from("Welcome!\n/real/AGENTS.md\u0000real content\u0000", "utf8")), []);
   for (const bad of ["relative/AGENTS.md", "/with\nnewline/AGENTS.md", "", "/with\rcr/AGENTS.md"]) {
-    assert.deepEqual(filesOf(Buffer.from(`${bad}\u0000content\u0000`, "utf8")), [], JSON.stringify(bad));
+    assert.deepEqual(filesOf(Buffer.from(`${FRAME_MARK.readable}${bad}\u0000b2s=\u0000`, "utf8")), [], JSON.stringify(bad));
+    assert.deepEqual(filesOf(Buffer.from(`${FRAME_MARK.unreadable}${bad}\u0000\u0000`, "utf8")), [], `unreadable ${JSON.stringify(bad)}`);
   }
+  // 没有标记的裸路径（v1 形态）不再被认成文件：新旧版本靠通道名分开，解析器这一层也守住
+  assert.deepEqual(filesOf(Buffer.from("/real/AGENTS.md\u0000b2s=\u0000", "utf8")), [], "v1 裸帧不认");
 });
 
-test("NUL 分帧解析：路径/内容成对，空内容与尾部空段都处理正确", () => {
+test("分帧解析：帧头与载荷成对，空内容、空 stdout、尾部空段都处理正确", () => {
   assert.deepEqual(filesOf(framed([["/a/AGENTS.md", "A"], ["/b/AGENTS.md", ""]])), [
     { path: "/a/AGENTS.md", content: "A" },
     { path: "/b/AGENTS.md", content: "" },
@@ -110,41 +121,50 @@ test("NUL 分帧解析：路径/内容成对，空内容与尾部空段都处理
   assert.deepEqual(filesOf(Buffer.alloc(0)), []);
   assert.deepEqual(filesOf(Buffer.from("\u0000", "utf8")), [], "只有分帧符 = 没有文件");
   assert.deepEqual(
-    filesOf(Buffer.from("/孤儿路径\u0000", "utf8")),
+    filesOf(Buffer.from(`${FRAME_MARK.readable}/孤儿路径\u0000`, "utf8")),
     [{ path: "/孤儿路径", content: "" }],
-    "路径后被截断 ⇒ 与「内容为空文件」的帧完全同形（分帧本身区分不了），当一个空文件（无害）",
+    "载荷被截断 ⇒ 与「内容为空文件」同形（分帧本身区分不了）——空内容由消费方判成 nothing，无害",
   );
 });
 
-test("远端命令：用 -r 而不是 -f 判读得出，读不出时发 SOH 标记帧", () => {
+test("远端命令：用 -r 而不是 -f 判读得出；每帧带标记、内容走 base64（协议 v2）", () => {
   const command = buildContextCommand(["/home/u"]);
   assert.ok(command.includes('[ -r "$f" ]'), "先判存在、再判读得出");
   assert.ok(
     command.includes('if [ -f "$f" ]; then if [ -r "$f" ]'),
     "分支顺序必须是「先 -f 再 -r」——反了会让可读文件的 cat 失败变成空帧（老 bug 换形态回归）",
   );
-  assert.ok(command.includes(`printf '\\001%s\\000' "$f"`), "读不出时发带 SOH 前缀的标记帧");
+  assert.ok(command.includes(`printf '\\001%s\\000' "$f"`), "读得出：标记 + 路径帧");
+  assert.ok(command.includes(`printf '\\002%s\\000' "$f"`), "读不出：另一个标记（与「不存在」「空文件」都可区分）");
+  assert.ok(command.startsWith("command -v base64"), "先探 base64：缺失时发 \\003，不能静默当成空文件");
+  assert.ok(command.includes("base64 < \"$f\""), "内容经 base64 ⇒ 字母表不含 NUL，内容无法伪造帧边界");
+  assert.ok(!command.includes('cat "$f"'), "不再直接 cat（那正是 v1 能被 NUL 伪造的原因）");
 });
 
-test("NUL 分帧解析：SOH 标记帧进 unreadable、不进 files（与「真·空文件」可区分）", () => {
-  const unreadable = `${UNREADABLE_FRAME_PREFIX}/home/u/AGENTS.md\u0000\u0000`;
-  assert.deepEqual(parseContextFiles(Buffer.from(unreadable, "utf8")), { files: [], unreadable: ["/home/u/AGENTS.md"] });
-  // 空的真文件仍然是合法文件（既有语义不变）
-  assert.deepEqual(parseContextFiles(Buffer.from("/home/u/AGENTS.md\u0000\u0000", "utf8")), {
+test("分帧解析：`\\x02` 帧进 unreadable、不进 files（与「真·空文件」可区分）", () => {
+  assert.deepEqual(parseContextFiles(Buffer.from(framedUnreadable("/home/u/AGENTS.md"), "utf8")), {
+    files: [],
+    unreadable: ["/home/u/AGENTS.md"],
+    unsupported: false,
+  });
+  // 空的真文件仍是合法文件（提供方照实上报；注不注入由消费方判）
+  assert.deepEqual(parseContextFiles(Buffer.from(`${FRAME_MARK.readable}/home/u/AGENTS.md\u0000\u0000`, "utf8")), {
     files: [{ path: "/home/u/AGENTS.md", content: "" }],
     unreadable: [],
+    unsupported: false,
   });
   // 脏路径帧既不当文件也不当 unreadable
-  assert.deepEqual(parseContextFiles(Buffer.from(`${UNREADABLE_FRAME_PREFIX}relative/x\u0000\u0000`, "utf8")), { files: [], unreadable: [] });
+  assert.deepEqual(parseContextFiles(Buffer.from(framedUnreadable("relative/x"), "utf8")), { files: [], unreadable: [], unsupported: false });
 });
 
 test("取上下文：链上有候选读不出 ⇒ 整条请求 ok:false（fail-closed，绝不静默少注入）", async () => {
   const { exec } = makeExec(() => ({
-    stdout: Buffer.from(`${framed([["/home/u/AGENTS.md", "home 约定"]]).toString("utf8")}${UNREADABLE_FRAME_PREFIX}/home/u/docs/AGENTS.md\u0000\u0000`, "utf8"),
+    stdout: Buffer.from(`${framed([["/home/u/AGENTS.md", "home 约定"]]).toString("utf8")}${framedUnreadable("/home/u/docs/AGENTS.md")}`, "utf8"),
   }));
   const capability = createRemoteContextCapability({ resolve: async () => TARGET, exec });
   const outcome = await capability.fetchRemoteContext(REQUEST);
   assert.equal(outcome.ok, false, "外层可读也不交付：读不出的那份才是最该生效的约定");
+  assert.equal(outcome.ok === false ? outcome.code : "", "REMOTE_CONTEXT_UNREADABLE", "专属错误码：消费方据此给一条说得清原因的提示（dir-context#8）");
   assert.match(outcome.ok === false ? outcome.message : "", /读不出/);
 });
 

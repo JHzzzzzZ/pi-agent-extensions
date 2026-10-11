@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 884f503
+> last verified @ 1c7c6d7
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
@@ -112,8 +112,8 @@
   + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
-- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
-- `test/` — 126 个：117 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/NUL 分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT` / `REMOTE_CONTEXT_FAILED` / `REMOTE_CONTEXT_UNREADABLE`（后两个是远端上下文能力的：通用失败 / 链上候选存在但读不出））
+- `test/` — 132 个：123 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 

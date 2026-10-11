@@ -39,3 +39,14 @@ export function isRemoteCall(input: Record<string, unknown>): boolean {
  */
 export const REMOTE_NOTICE =
   "[dir-context] 远端调用：远端目录的 AGENTS.md / CLAUDE.md 约定这次没有自动注入——需要时请自行 read（带 remote 参数）该远端目录下的同名文件。";
+
+/**
+ * 「约定文件存在但读不出（权限）」时的那行提示（`dir-context-todo#8`）。
+ *
+ * 与通用提示分开的理由：两者的**下一步动作不同**——通用提示是「你自己去读」，这条是「去修权限」。
+ * 同名同参数、同一条通路，使用者原本无法区分「没装 remote-tools」与「远端权限事故」。
+ *
+ * 同样是静态文案：不插值 host 与路径（都是模型输入）。
+ */
+export const REMOTE_UNREADABLE_NOTICE =
+  "[dir-context] 远端调用：远端目录的 AGENTS.md / CLAUDE.md 存在但**读不出**（权限）——本会话不会再自动重试，请先修权限（如 chmod）再重试该远端触碰。";

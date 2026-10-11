@@ -28,8 +28,14 @@ export const ErrorCodes = {
 	REMOTE_WRITE_FAILED: "REMOTE_WRITE_FAILED",
 	/** 远端命令非零退出（bash 透传退出码，此处用于内部工具调用）。 */
 	REMOTE_COMMAND_FAILED: "REMOTE_COMMAND_FAILED",
-	/** 远端目录上下文（dir-context 的自动注入）取回失败：解析/ssh/非零退出，或链上候选存在但读不出（权限，`dir-context-todo#7`）。消费方据此退回一行提示。 */
+	/** 远端目录上下文（dir-context 的自动注入）取回失败：解析/ssh/非零退出/远端缺 `base64`（协议 v2）。消费方据此退回一行提示。 */
 	REMOTE_CONTEXT_FAILED: "REMOTE_CONTEXT_FAILED",
+	/**
+	 * 同上，但原因是**链上候选存在却读不出**（权限，`dir-context-todo#7`/`#8`）。
+	 * 单独一个码的理由：消费方的下一步动作与通用失败不同（去修权限，而不是自己去 read）；
+	 * 消息文本不参与判定，此值由契约 `docs/cross/remote-context-capability.md` 固定。
+	 */
+	REMOTE_CONTEXT_UNREADABLE: "REMOTE_CONTEXT_UNREADABLE",
 	/** 标记根锚定的文件缺失或被替换（本地路径信道的前提被破坏）⇒ 远端调用 fail-closed。 */
 	HOST_MARKER_CONFLICT: "HOST_MARKER_CONFLICT",
 	/** job 托管端口不符合跨扩展契约（形状或返回值非法，见 docs/cross/shell-tool-capability.md）。 */

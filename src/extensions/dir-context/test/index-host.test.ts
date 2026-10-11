@@ -1088,3 +1088,90 @@ test("session_start 也清空缓冲（与 compact 共用 reset）", async (t) =>
     "session_start 已清缓冲",
   );
 });
+
+
+// ---------- 协议 v2 的消费侧：空内容归 nothing（dir-context-todo#9）+ 按码分流提示（#8） ----------
+
+test("空内容的约定文件：不注入空块、不出提示、不进「已注入」（随后写入内容时同会话能拿到）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const provider = remoteProvider([["/home/u/docs/AGENTS.md", ""]]);
+  const h = await startHarness(t, project.cwd, provider.offer);
+
+  // 0 字节的约定文件：注入一个空块是纯噪声，而且会被标成已注入 ⇒ 后来写入内容本会话也拿不到。
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+    undefined,
+    "空内容 ⇒ nothing：连块都不追加（不是追加一个空块）",
+  );
+  assert.deepEqual(h.seen.statuses.filter((status) => status !== undefined), [], "没注入就不该写状态段");
+  assert.equal(provider.calls.length, 1, "仍然照常问了一次（提供方照实上报空文件）");
+
+  // 同一会话里文件后来有内容了：因为上次没标记「已注入」，这次应当真的注入。
+  const later = remoteProvider([["/home/u/docs/AGENTS.md", "终于有内容了"]]);
+  const h2 = await startHarness(t, project.cwd, later.offer);
+  const text = injectedText(
+    await h2.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+  );
+  assert.match(text, /Loaded prod:\/home\/u\/docs\/AGENTS\.md/, "文件有内容后同会话即可拿到（证明上一次没被误标记）");
+  assert.match(text, /终于有内容了/);
+});
+
+test("提示按码分流：读不出走专属文案，未知码回落通用文案（不摘要对端 message）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+
+  const unreadable = await startHarness(t, project.cwd, (box) => {
+    box.remoteContext = {
+      fetchRemoteContext: async () => ({ ok: false, code: "REMOTE_CONTEXT_UNREADABLE", message: "对端随手写的文案" }),
+    };
+  });
+  const asked = injectedText(
+    await unreadable.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+  );
+  assert.match(asked, /读不出/, "专属文案");
+  assert.match(asked, /权限/, "说清是权限问题（使用者的下一步动作不同）");
+  assert.doesNotMatch(asked, /对端随手写的文案/, "按码不按文案：对端 message 不进提示");
+  assert.doesNotMatch(asked, /自行 read/, "不能与「没装 remote-tools」那条通用提示同形");
+
+  const unknown = await startHarness(t, project.cwd, (box) => {
+    box.remoteContext = {
+      fetchRemoteContext: async () => ({ ok: false, code: "SOME_FUTURE_CODE", message: "未来新增的失败因" }),
+    };
+  });
+  const generic = injectedText(
+    await unknown.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+  );
+  assert.match(generic, /自行 read/, "未知码回落通用提示（前向兼容：新码不会让使用者什么都看不到）");
+  assert.doesNotMatch(generic, /权限/, "未知码不得冒充「权限」");
+});
+
+test("提示按原因各记一次：权限提示出现过，不妨碍之后的通用失败仍给一次提示", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  let mode: "unreadable" | "boom" = "unreadable";
+  const h = await startHarness(t, project.cwd, (box) => {
+    box.remoteContext = {
+      fetchRemoteContext: async () =>
+        mode === "unreadable"
+          ? { ok: false, code: "REMOTE_CONTEXT_UNREADABLE", message: "读不出" }
+          : { ok: false, code: "BOOM", message: "ssh 挂了" },
+    };
+  });
+
+  const first = injectedText(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/x.md", remote: "prod" } })),
+  );
+  assert.match(first, /权限/);
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/y.md", remote: "prod" } })),
+    undefined,
+    "同一种原因只给一次：第二次连 content 都不替换",
+  );
+
+  mode = "boom";
+  const other = injectedText(
+    await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/z.md", remote: "prod" } })),
+  );
+  assert.match(other, /自行 read/, "换了原因要给一次通用提示（不被前一条挡掉）");
+});
