@@ -64,7 +64,7 @@ import { assertMarkerRootUsable, assertModelPathInput, toHostPath } from "./path
 import { type SshExec, type SshTarget, formatTarget, parseTarget, validateRemotePath } from "./ssh.ts";
 
 const REMOTE_GUIDELINE =
-	"远端工具（remote-tools）：给 read/write/edit/bash/grep/find/ls 传 remote=\"[user@]host\"（可选 remotePort）即在远端主机执行，此时 path 必须是远端绝对 POSIX 路径；remote 省略或留空表示本机执行。";
+	"远端工具（remote-tools）：给 read/write/edit/bash/grep/find/ls 传 remote=\"[user@]host\"（可选 remotePort）即在远端主机执行，此时 path 在远端主机解析（省略或相对路径按远端 $HOME，绝对 POSIX 路径直接用）；remote 省略或留空表示本机执行。";
 
 export interface RemoteToolsDeps {
 	/** 进程边界端口：生产用 createSpawnExec，测试注入手写 fake。 */
@@ -88,7 +88,7 @@ type SessionPlan = { kind: "local" } | ({ kind: "remote" } & RemotePlan);
 const remoteTargetProperties = {
 	remote: Type.Optional(
 		Type.String({
-			description: '远端 SSH 目标 "[user@]host"（可选 remotePort）；省略或留空 = 在本机执行。给值时 path 必须是远端绝对 POSIX 路径。',
+			description: '远端 SSH 目标 "[user@]host"（可选 remotePort）；省略或留空 = 在本机执行。给值时 path 在远端主机解析（相对路径按远端 $HOME）。',
 		}),
 	),
 	remotePort: Type.Optional(Type.Number({ description: "远端 SSH 端口（1-65535，省略用 ssh 默认或 ~/.ssh/config）" })),
@@ -96,7 +96,7 @@ const remoteTargetProperties = {
 
 /** bash 的远端参数片段：自己的注册与跨扩展能力载荷共用同一份 schema（不许两份）。 */
 const remoteBashProperties = {
-	remoteCwd: Type.Optional(Type.String({ description: "远端工作目录（绝对 POSIX 路径）；省略 = 远端 $HOME" })),
+	remoteCwd: Type.Optional(Type.String({ description: "远端工作目录（省略或相对路径 = 远端 $HOME）" })),
 	...remoteTargetProperties,
 };
 
@@ -192,7 +192,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const readBase = createReadToolDefinition(deps.cwd);
 	pi.registerTool({
 		...readBase,
-		description: `${readBase.description} 传 remote 时改在远端主机读取（path 为远端绝对 POSIX 路径）。`,
+		description: `${readBase.description} 传 remote 时改在远端主机读取（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(readBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...readBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<ReadToolDetails | undefined>> {
@@ -211,7 +211,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const writeBase = createWriteToolDefinition(deps.cwd);
 	pi.registerTool({
 		...writeBase,
-		description: `${writeBase.description} 传 remote 时改在远端主机写入（path 为远端绝对 POSIX 路径）。`,
+		description: `${writeBase.description} 传 remote 时改在远端主机写入（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(writeBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...writeBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<undefined>> {
@@ -230,7 +230,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const editBase = createEditToolDefinition(deps.cwd);
 	pi.registerTool({
 		...editBase,
-		description: `${editBase.description} 传 remote 时改在远端主机编辑（path 为远端绝对 POSIX 路径）。`,
+		description: `${editBase.description} 传 remote 时改在远端主机编辑（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(editBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...editBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<EditToolDetails | undefined>> {
@@ -249,7 +249,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const lsBase = createLsToolDefinition(deps.cwd);
 	pi.registerTool({
 		...lsBase,
-		description: `${lsBase.description} 传 remote 时改列远端主机目录（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）。`,
+		description: `${lsBase.description} 传 remote 时改列远端主机目录（path 省略或相对路径 = 远端 $HOME）。`,
 		promptGuidelines: [...(lsBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...lsBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<LsToolDetails | undefined>> {
@@ -272,7 +272,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	const findBase = createFindToolDefinition(deps.cwd);
 	pi.registerTool({
 		...findBase,
-		description: `${findBase.description} 传 remote 时改在远端主机搜索（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）。`,
+		description: `${findBase.description} 传 remote 时改在远端主机搜索（path 省略或相对路径 = 远端 $HOME）。`,
 		promptGuidelines: [...(findBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...findBase.parameters.properties, ...remoteTargetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<FindToolDetails | undefined>> {
@@ -352,7 +352,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		name: "grep",
 		label: "grep",
 		description:
-			"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars. 传 remote 时改在远端主机搜索（path 为远端绝对 POSIX 路径，省略 = 远端 $HOME）；远端缺 ripgrep 时回退 GNU grep 并在结果里标注降级。",
+			"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars. 传 remote 时改在远端主机搜索（path 省略或相对路径 = 远端 $HOME）；远端缺 ripgrep 时回退 GNU grep 并在结果里标注降级。",
 		promptSnippet: "Search file contents for patterns (respects .gitignore)",
 		promptGuidelines: [REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...remoteGrepSchema.properties, ...remoteTargetProperties }),

@@ -20,7 +20,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 | `remotePort` | 全部 7 个 | 远端 SSH 端口 1-65535；省略用 `~/.ssh/config` / ssh 默认。**噪声容错**：`null`/非数字/`0`/负数一律当作未指定，不会报错 |
 | `remoteCwd` | 仅 `bash` | 远端工作目录；省略 = 远端 `$HOME` |
 
-远端路径规则：`path` 必须是**远端绝对 POSIX 路径**（`/srv/app/src/a.ts`）。省略 `path`（`ls`/`find`/`grep`）或不给 `remoteCwd` 时用远端 `$HOME`；相对路径按远端 `$HOME` 解析。Windows 盘符路径（`C:/…`）会被拒绝。
+远端路径规则：绝对 POSIX 路径（`/srv/app/src/a.ts`）直接用；省略 `path`（`ls`/`find`/`grep`）或不给 `remoteCwd` 时用远端 `$HOME`，**相对路径同样按远端 `$HOME` 解析**。Windows 盘符路径（`C:/…`）与 `~` 开头会被拒绝。
 
 ## 前提
 

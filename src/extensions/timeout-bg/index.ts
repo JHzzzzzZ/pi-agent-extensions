@@ -146,7 +146,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
     }
 
     /** 收集远端 bash 能力并合并参数/分派/指南；没有可用能力时原样返回自己的配置。 */
-    const negotiateBash = (base: ToolDefinition, ctx: ExtensionContext, own: BashOverrides): BashOverrides => {
+    const negotiateBash = (ctx: ExtensionContext, own: BashOverrides): BashOverrides => {
       const offered = collectBashCapability(pi.events);
       if (offered.warning !== null) notify(ctx, offered.warning);
       if (offered.capability === null) {
@@ -197,7 +197,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
         ],
       };
       // shell 能力协商（timeout-bg-todo#3）：只有 bash 是两扩展共享的名字。
-      const negotiated = kind === "bash" ? negotiateBash(base as ToolDefinition, ctx, own) : own;
+      const negotiated = kind === "bash" ? negotiateBash(ctx, own) : own;
 
       pi.registerTool({
         ...base,

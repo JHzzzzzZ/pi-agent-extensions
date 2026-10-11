@@ -225,7 +225,8 @@ test("真机：远端不存在 / 无权限报结构化错误码（不是未捕�
 	);
 });
 
-test("真机：不可达/未知主机 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {	const exec = createSpawnExec();
+test("真机：不可达/未知主机 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {
+	const exec = createSpawnExec();
 	const bogus = { host: "pi-remote-tools.invalid", user: "nobody", port: undefined };
 	assert.equal(buildSshArgs(bogus, "true").includes("-o"), true);
 
