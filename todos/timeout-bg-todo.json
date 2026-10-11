@@ -54,6 +54,25 @@
       "claimedAt": "2026-10-11T03:09:44.391Z",
       "completedAt": "2026-10-11T04:23:16.076Z",
       "alignedAt": "2026-10-11T03:10:55.471Z"
+    },
+    {
+      "id": 4,
+      "globalId": 372,
+      "text": "与 remote-tools 组合：为远端 bash 超时提供 job 托管能力（配套 remote-tools#12，同一变更交付，不设 dep）。需求：① 契约 docs/cross/shell-tool-capability.md 增「远端超时与 job 托管」一节 + 新能力频道；② timeout-bg 作为 job owner 暴露 register/kill 端口（经 pi.events，禁跨扩展 import），远端 job 出现在 /bg 列表与 /bg:kill、/bg:clear、状态条段；③ 远端 job 与本地 job 同格式通知（job id、退出码、耗时、日志路径、末尾输出）；④ 本地语义零回归；⑤ 跨扩展组合集成测试 + opt-in 真机用例（远端超时后命令不被杀、kill 生效）",
+      "status": "processing",
+      "branch": "feat/remote-timeout-bg",
+      "tags": [
+        "组合",
+        "契约",
+        "超时"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T05:39:08.114Z",
+      "claimedAt": "2026-10-11T05:39:28.320Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-11T05:39:28.533Z"
     }
   ]
 }
