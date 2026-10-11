@@ -104,12 +104,14 @@ function toolResult(input: {
   structuredContent?: unknown;
   /** 扩展工具的 details（如 codemode 的嵌套调用明细）。 */
   details?: unknown;
+  /** 顶层调用 id（默认 call-1）；嵌套事件的 `parentToolCallId` 要指向它才能归到同一组。 */
+  toolCallId?: string;
   /** false = 无文本内容（纯图片结果），用于验证不注入。 */
   hasText?: boolean;
 }): ToolResultEvent {
   return {
     type: "tool_result",
-    toolCallId: "call-1",
+    toolCallId: input.toolCallId ?? "call-1",
     toolName: input.toolName,
     input: input.toolInput,
     content:
@@ -135,6 +137,29 @@ function toolResult(input: {
       status: call.status ?? "ok",
     })),
   };
+}
+
+/**
+ * 真实嵌套调用的 tool_result 事件形状（宿主 `_afterToolCall(…, parentToolCallId)`）：
+ * `input` 是**完整**入参，`toolCallId` 形如 `<顶层 id>/<n>`，`parentToolCallId` = 顶层 id。
+ */
+function nestedCall(input: {
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  parentToolCallId: string;
+  index?: number;
+  isError?: boolean;
+}): ToolResultEvent {
+  return {
+    type: "tool_result",
+    toolCallId: `${input.parentToolCallId}/${input.index ?? 1}`,
+    toolName: input.toolName,
+    input: input.toolInput,
+    content: [{ type: "text" as const, text: "工具原始输出" }],
+    isError: input.isError ?? false,
+    details: undefined,
+    parentToolCallId: input.parentToolCallId,
+  } as ToolResultEvent;
 }
 
 function injectedText(result: { content?: unknown } | undefined): string {
@@ -450,4 +475,170 @@ test("codemode 里触碰 cwd 之外 / 已注入过的组合：只注入未注入
   const text = injectedText(result);
   assert.match(text, /Loaded src\/components\/AGENTS\.md/);
   assert.doesNotMatch(text, /outside/, "cwd 之外的触碰不产生注入");
+});
+
+// —— 嵌套触碰缓冲（v1.2 / dir-context-todo#3）：主来源是嵌套 tool_result 事件的**完整 input**，
+// `details.calls` 的截断预览降级为兜底。
+
+test("嵌套调用的完整 input 是主来源：details.calls 为空（等价于 args 被截断）也照注入", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  // 脚本里的 tools.write 带 300 字符 content ⇒ 宿主的 previewArgs 截到 200 字符、不是合法 JSON；
+  // 这里直接把 details.calls 喂空，模拟「预览不可用」——修复前必然零注入。
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "write", toolInput: { path: "src/components/New.tsx", content: "x".repeat(300) }, parentToolCallId: "call-1" }),
+  );
+  const result = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] } }),
+  );
+  const text = injectedText(result);
+  assert.match(text, /Loaded src\/AGENTS\.md/);
+  assert.match(text, /Loaded src\/components\/AGENTS\.md/);
+});
+
+test("嵌套调用自身零注入（结果只回脚本），其触碰被缓冲到顶层结果", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  assert.equal(
+    await h.runner.emitToolResult(
+      nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-1" }),
+    ),
+    undefined,
+    "嵌套调用不改自己的结果",
+  );
+  assert.ok(
+    (await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] } })))?.content,
+    "缓冲在顶层结果上兑现",
+  );
+});
+
+test("两个来源取并集：details 的 read 路径 + 嵌套事件的 write 路径都算，同路径只注入一次", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "write", toolInput: { path: "src/components/New.tsx", content: "x".repeat(300) }, parentToolCallId: "call-1" }),
+  );
+  const result = await h.runner.emitToolResult(
+    toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: codemodeDetails([{ name: "read", args: { path: "src/index.ts" } }]) }),
+  );
+  const text = injectedText(result);
+  assert.match(text, /Loaded src\/AGENTS\.md/);
+  assert.match(text, /Loaded src\/components\/AGENTS\.md/);
+  assert.equal(text.split("Loaded src/AGENTS.md").length - 1, 1, "两个触碰共享的祖先只注入一次");
+});
+
+test("归组隔离：另一个顶层调用的缓冲不串味（嵌套事件只归到自己的 parentToolCallId）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-A" }),
+  );
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] }, toolCallId: "call-B" }),
+    ),
+    undefined,
+    "call-B 的顶层结果不得拿到 call-A 的缓冲",
+  );
+  assert.ok(
+    (await h.runner.emitToolResult(
+      toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] }, toolCallId: "call-A" }),
+    ))?.content,
+    "call-A 自己的顶层结果仍能兑现",
+  );
+});
+
+test("缓冲在顶层结果处取走即清：失败的顶层结果也消费掉该组（不跨结果残留）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-1" }),
+  );
+  assert.equal(
+    await h.runner.emitToolResult(
+      toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] }, isError: true }),
+    ),
+    undefined,
+    "脚本失败（isError）不注入",
+  );
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] } })),
+    undefined,
+    "该组已在上一次结果处消费，不再重复兑现",
+  );
+});
+
+test("嵌套调用失败（isError）照算其触碰：文件可能已被读写", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "edit", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-1", isError: true }),
+  );
+  assert.match(
+    injectedText(await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] } }))),
+    /Loaded src\/components\/AGENTS\.md/,
+  );
+});
+
+test("session_compact 清空缓冲：compact 后再来的顶层结果不再兑现旧触碰", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-1" }),
+  );
+  await h.runner.emit({ type: "session_compact", compactionEntry: {} as never, fromExtension: false, reason: "manual", willRetry: false });
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] } })),
+    undefined,
+    "compact 已清缓冲，且注入缓存也清了但这里没有触碰可注",
+  );
+});
+
+test("顶层结果没有 details（形状漂移）时：缓冲照样消费，且缓冲触碰仍生效", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "write", toolInput: { path: "src/components/New.tsx", content: "x".repeat(300) }, parentToolCallId: "call-1" }),
+  );
+  // details 缺失：主来源（缓冲）必须仍然生效——判「是不是 codemode」只能看工具名，不能看 details 形状。
+  const result = await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" } }));
+  assert.match(injectedText(result), /Loaded src\/components\/AGENTS\.md/);
+
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" } })),
+    undefined,
+    "该组已在上面那次结果处消费，不跨结果残留",
+  );
+});
+
+test("session_start 也清空缓冲（与 compact 共用 reset）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  await h.runner.emitToolResult(
+    nestedCall({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, parentToolCallId: "call-1" }),
+  );
+  await h.runner.emit({ type: "session_start", reason: "new" });
+  assert.equal(
+    await h.runner.emitToolResult(toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: { calls: [] } })),
+    undefined,
+    "session_start 已清缓冲",
+  );
 });
