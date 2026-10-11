@@ -62,6 +62,7 @@ import {
 	createRemoteSession,
 	createRemoteWriteOps,
 } from "./ops.ts";
+import { createRemoteContextCapability, offerRemoteContextCapability } from "./context.ts";
 import { assertMarkerRootUsable, assertModelPathInput, toHostPath } from "./paths.ts";
 import { type SshExec, type SshTarget, formatTarget, parseTarget, validateRemotePath } from "./ssh.ts";
 
@@ -356,6 +357,21 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		executeRemote: executeRemoteBash,
 		guideline: BASH_REMOTE_GUIDELINE,
 	});
+
+	// 跨扩展能力协商（dir-context-todo#6）：dir-context 自动注入远端目录上下文时要取文件，
+	// 而 ssh 只在这一侧 —— 把「取」的能力放上收集频道，注入规则（去重/预算/块格式）仍全在 dir-context。
+	offerRemoteContextCapability(
+		pi.events,
+		createRemoteContextCapability({
+			resolve: async (request) => {
+				const plan = await planSession({ remote: request.remote, remotePort: request.remotePort });
+				if (plan.kind === "local") return null;
+				const path = await resolveToolPath(plan, request.path);
+				return { remotePath: path.remotePath, baseDir: path.baseDir, target: plan.session.target };
+			},
+			exec: deps.exec,
+		}),
+	);
 
 	pi.registerTool({
 		...bashBase,
