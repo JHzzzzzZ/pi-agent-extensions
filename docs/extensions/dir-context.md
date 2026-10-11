@@ -1,6 +1,6 @@
 # dir-context — 目录作用域上下文注入（嵌套 AGENTS.md on-demand）
 
-> last verified @ 8ee5f5c
+> last verified @ e090c60
 
 追加到当次工具结果里；带 `remote` 的调用**默认零注入**（远端路径不可与本机路径混解），装了 remote-tools 时改走能力协商**自动注入远端那条祖先链**。
 
