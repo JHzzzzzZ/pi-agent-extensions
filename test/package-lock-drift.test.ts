@@ -40,7 +40,8 @@ function findLockfiles(root) {
 
 /**
  * 读一个 lock 的漂移情况。返回按字段拆开的差异列表；无同级 package.json（纯 lock 形态）
- * 或读不出 JSON 时返回空数组——「不知道」不等于「漂移」，宁可不报也不误报。
+ * 时返回空数组——「不知道」不等于「漂移」，宁可不报也不误报。lock/package.json 的 JSON
+ * 损坏则让 JSON.parse 抛出去（整个套件红）：损坏的 lock 是真问题，不该静默跳过。
  */
 function readDrift(lockPath) {
   const manifestPath = path.join(path.dirname(lockPath), "package.json");
