@@ -34,6 +34,13 @@ import { resolveDefaultTimeout } from "./config.ts";
 import { createJobRegistry, type JobRecord } from "./jobs.ts";
 import { pruneJobLogs, tailFileSync } from "./logs.ts";
 import { createTimeoutOps, type ShellConfig, type SpawnLike } from "./shell-ops.ts";
+import {
+  collectBashCapability,
+  createBashDispatch,
+  describeForeignBash,
+  describeLostBashRegistration,
+  mergeBashParameters,
+} from "./shell-capability.ts";
 import { followUpText, formatJobList, shellToolDescription, TIMEOUT_BG_CUSTOM_TYPE, timeoutParamDescription } from "./text.ts";
 
 /** 日志根目录覆盖环境变量（测试隔离 / 多实例隔离）。 */
@@ -105,6 +112,14 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
     const defaultTimeout = resolveDefaultTimeout(deps.env);
     let jobSeq = 0;
     const registered = new Set<ShellKind>();
+    /** bash 归属冲突（未知接管者 / 本次注册被加载顺序丢掉）一次会话只提示一次。 */
+    let bashConflictNotified = false;
+
+    const notifyBashConflict = (ctx: ExtensionContext, message: string): void => {
+      if (bashConflictNotified) return;
+      bashConflictNotified = true;
+      notify(ctx, message);
+    };
 
     const deliverExit = (job: JobRecord): void => {
       try {
@@ -124,7 +139,37 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
 
     const registry = createJobRegistry({ now, killTree: deps.killTree, onExit: deliverExit });
 
-    const registerShellTool = (kind: ShellKind): void => {
+    interface BashOverrides {
+      parameters: unknown;
+      execute: ToolDefinition["execute"];
+      guidelines: string[];
+    }
+
+    /** 收集远端 bash 能力并合并参数/分派/指南；没有可用能力时原样返回自己的配置。 */
+    const negotiateBash = (base: ToolDefinition, ctx: ExtensionContext, own: BashOverrides): BashOverrides => {
+      const offered = collectBashCapability(pi.events);
+      if (offered.warning !== null) notify(ctx, offered.warning);
+      if (offered.capability === null) {
+        // 只有「确定没有提供方」时才做未知接管检查：收到过载荷（哪怕畸形）说明对端在场，
+        // 再说「别的扩展接管」会误导（畸形载荷自己已经有提示）。
+        const foreign = offered.warning === null ? describeForeignBash(pi) : null;
+        if (foreign !== null) notifyBashConflict(ctx, foreign);
+        return own;
+      }
+      const parameters = mergeBashParameters(own.parameters, offered.capability.parameters);
+      if (parameters === null) {
+        notify(ctx, "shell 能力载荷与 bash 自身参数冲突，已忽略该载荷（按本扩展原行为注册）。");
+        return own;
+      }
+      const guideline = offered.capability.guideline;
+      return {
+        parameters,
+        execute: createBashDispatch({ local: own.execute, capability: offered.capability, notify }),
+        guidelines: guideline === undefined ? own.guidelines : [...own.guidelines, guideline],
+      };
+    };
+
+    const registerShellTool = (kind: ShellKind, ctx: ExtensionContext): void => {
       if (registered.has(kind)) return;
       registered.add(kind);
       const operations = createTimeoutOps({
@@ -142,16 +187,31 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
         kind === "bash"
           ? createBashTool(process.cwd(), { operations })
           : createPowerShellTool(process.cwd(), { operations });
-      const baseGuidelines = (base as { promptGuidelines?: string[] }).promptGuidelines ?? [];
-      pi.registerTool({
-        ...base,
-        description: shellToolDescription(kind, defaultTimeout.seconds),
+      const description = shellToolDescription(kind, defaultTimeout.seconds);
+      const own: BashOverrides = {
         parameters: withTimeoutParamDescription(base.parameters, defaultTimeout.seconds),
-        promptGuidelines: [
-          ...baseGuidelines,
+        execute: base.execute,
+        guidelines: [
+          ...((base as { promptGuidelines?: string[] }).promptGuidelines ?? []),
           `Use ${kind} with an explicit timeout for long commands: on timeout the command is moved to the background (log path in the result) instead of being killed.`,
         ],
+      };
+      // shell 能力协商（timeout-bg-todo#3）：只有 bash 是两扩展共享的名字。
+      const negotiated = kind === "bash" ? negotiateBash(base as ToolDefinition, ctx, own) : own;
+
+      pi.registerTool({
+        ...base,
+        description,
+        parameters: negotiated.parameters,
+        promptGuidelines: negotiated.guidelines,
+        execute: negotiated.execute,
       } as unknown as ToolDefinition);
+
+      // 注册后自检：宿主对同名工具按扩展加载顺序 first-wins，顺序不对时刚注册的这份不会被采用。
+      if (kind === "bash") {
+        const lost = describeLostBashRegistration(pi, description);
+        if (lost !== null) notifyBashConflict(ctx, lost);
+      }
     };
 
     pi.on("session_start", (_event, ctx) => {
@@ -167,7 +227,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
         /* 拿不到 active 列表时不覆盖任何工具（fail-closed，不凭空加工具） */
       }
       for (const kind of SHELL_KINDS) {
-        if (active.includes(kind)) registerShellTool(kind);
+        if (active.includes(kind)) registerShellTool(kind, ctx);
       }
       if (defaultTimeout.warning !== null) notify(ctx, defaultTimeout.warning);
     });

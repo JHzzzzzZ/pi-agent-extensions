@@ -12,8 +12,10 @@ import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { EventBus, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
 import { createTimeoutBgExtension } from "../index.ts";
+import { SHELL_CAPABILITY_CHANNEL } from "../shell-capability.ts";
 import type { SpawnedProcess } from "../shell-ops.ts";
 
 class FakeChild extends EventEmitter {
@@ -43,13 +45,31 @@ interface ToolResult {
 }
 
 interface RegisteredTool {
+  description?: string;
+  promptGuidelines?: string[];
+  parameters?: { properties?: Record<string, unknown> };
   outputSchema?: { properties?: Record<string, unknown> };
   execute: (...args: unknown[]) => Promise<unknown>;
 }
 
-function makeFakePi(activeTools: string[]) {
+/** 预置在 `getAllTools()` 里的工具（模拟别的扩展已注册 / 加载顺序更早）。 */
+interface SeededTool {
+  name: string;
+  description?: string;
+  path?: string;
+}
+
+interface FakePiSeed {
+  tools?: SeededTool[];
+  /** true = 预置工具在宿主 first-wins 语义下赢（预置名字的注册被丢弃）。 */
+  foreignWins?: boolean;
+  events?: EventBus;
+}
+
+function makeFakePi(activeTools: string[], seed: FakePiSeed = {}) {
   const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
   const tools = new Map<string, RegisteredTool>();
+  const seeded = new Map((seed.tools ?? []).map((tool) => [tool.name, tool]));
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const sent: SentMessage[] = [];
   const notices: string[] = [];
@@ -62,12 +82,31 @@ function makeFakePi(activeTools: string[]) {
       handlers.set(event, list);
     },
     registerTool: (tool: RegisteredTool & { name: string }) => {
+      if (seed.foreignWins === true && seeded.has(tool.name)) return;
       tools.set(tool.name, tool);
     },
     registerCommand: (name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
       commands.set(name, options);
     },
     getActiveTools: () => [...activeTools],
+    /** 模拟宿主 `getAllTools()` 的**有效注册表**（同名先注册者胜）。 */
+    getAllTools: () => [
+      ...[...seeded.values()].map((tool) => ({
+        name: tool.name,
+        description: tool.description ?? "",
+        parameters: {},
+        promptGuidelines: [],
+        sourceInfo: { path: tool.path ?? "<seeded:test>" },
+      })),
+      ...[...tools.entries()].map(([name, tool]) => ({
+        name,
+        description: tool.description ?? "",
+        parameters: {},
+        promptGuidelines: [],
+        sourceInfo: { path: "<test:registered>" },
+      })),
+    ],
+    events: seed.events,
     sendMessage: (message: SentMessage["message"], options?: SentMessage["options"]) => {
       sent.push({ message, options });
     },
@@ -81,16 +120,18 @@ function makeFakePi(activeTools: string[]) {
     assert.ok(command, `命令未注册：${name}`);
     await command.handler(args, ctx);
   };
-  return { api, fire, run, tools, commands, sent, notices };
+  return { api, fire, run, tools, commands, sent, notices, uiCtx: ctx };
 }
 
-function makeExtension(activeTools: string[], env: Record<string, string> = {}, child = new FakeChild()) {
+function makeExtension(activeTools: string[], env: Record<string, string> = {}, child = new FakeChild(), seed: FakePiSeed = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "timeout-bg-idx-"));
   const killCalls: number[] = [];
-  const fakePi = makeFakePi(activeTools);
+  let spawnCalls = 0;
+  const fakePi = makeFakePi(activeTools, seed);
   const factory = createTimeoutBgExtension({
     env,
     spawn: ((file: string, args: readonly string[]) => {
+      spawnCalls += 1;
       assert.equal(file, "bash");
       assert.equal(args[0], "-lc");
       return child as unknown as SpawnedProcess;
@@ -101,15 +142,17 @@ function makeExtension(activeTools: string[], env: Record<string, string> = {}, 
     shellConfig: () => ({ shell: "bash", args: ["-lc"] }),
   });
   factory(fakePi.api);
-  return { ...fakePi, dir, killCalls, child };
+  return { ...fakePi, dir, killCalls, child, spawnCalls: () => spawnCalls };
 }
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 宿主工具读 ctx.sessionManager / ctx.model 注入 PI_* 环境变量，fake ctx 必须给全这几项。 */
-function toolCtx(cwd: string): never {
+function toolCtx(cwd: string, uiCtx?: { hasUI: boolean; ui: { notify: (text: string) => void } }): never {
   return {
     cwd,
+    hasUI: uiCtx?.hasUI ?? false,
+    ui: uiCtx?.ui,
     model: { provider: "fake-provider", id: "fake-model" },
     thinkingLevel: "medium",
     sessionManager: { getSessionId: () => "session-1", getSessionFile: () => null },
@@ -265,4 +308,124 @@ test("codemode 视角：>1MiB 输出保首尾两半 + truncated/full_output_path
   assert.ok(modelText.length < 60 * 1024, `模型侧仍是 50KB 口径，实际 ${modelText.length} 字节`);
   assert.match(modelText, /\[Showing lines \d+-\d+ of 4000/);
   assert.ok(!modelText.includes("line-1 "), "模型侧只看到尾部");
+});
+
+/**
+ * 跨扩展组合（timeout-bg-todo#3）：用**宿主真实的 createEventBus** 把能力载荷交给本扩展，
+ * 断言合并后的 bash 同时具备「远端分派」与「本扩展的超时→后台执行」两条路。
+ * 边界：事件总线真实；能力载荷是自己造的契约形状（remote-tools 侧的真实现另测）。
+ */
+function busWithCapability(value: unknown): EventBus {
+  const bus = createEventBus();
+  bus.on(SHELL_CAPABILITY_CHANNEL, (box) => {
+    (box as { bash?: unknown }).bash = value;
+  });
+  return bus;
+}
+
+test("跨扩展组合：能力载荷 ⇒ schema 合并 + 按参数分派（远端转交能力、本地走超时→后台）", async () => {
+  const remoteCalls: unknown[][] = [];
+  const capability = {
+    parameters: { remote: { type: "string" }, remotePort: { type: "number" }, remoteCwd: { type: "string" } },
+    isRemoteCall: (params: unknown) => (params as { remote?: unknown }).remote === "deploy@host",
+    executeRemote: async (...args: unknown[]) => {
+      remoteCalls.push(args);
+      return { content: [{ type: "text", text: "remote-ok" }] };
+    },
+    guideline: "远端 bash 指南",
+  };
+  const ext = makeExtension(["bash"], {}, new FakeChild(), { events: busWithCapability(capability) });
+  await ext.fire("session_start");
+
+  const tool = ext.tools.get("bash")!;
+  for (const key of ["command", "timeout", "remote", "remotePort", "remoteCwd"]) {
+    assert.ok(key in (tool.parameters?.properties ?? {}), `合并后的 schema 缺参数 ${key}`);
+  }
+  assert.ok((tool.promptGuidelines ?? []).includes("远端 bash 指南"), "能力指南必须拼进 promptGuidelines");
+  assert.match(tool.description ?? "", /keeps running in the background/, "description 仍是 timeout-bg 的文案");
+
+  const remote = (await tool.execute("call-1", { command: "uname -s", remote: "deploy@host" }, undefined, undefined, toolCtx(ext.dir))) as ToolResult;
+  assert.equal(remoteCalls.length, 1, "远端意图必须交给能力执行");
+  assert.equal((remoteCalls[0]![1] as { command: string }).command, "uname -s");
+  assert.equal(remote.content?.[0]?.text, "remote-ok");
+  assert.equal(ext.spawnCalls(), 0, "远端调用不得 spawn 本地 shell");
+
+  const pending = tool.execute("call-2", { command: "echo hi" }, undefined, undefined, toolCtx(ext.dir));
+  ext.child.emitData("hi\n");
+  ext.child.exit(0);
+  const local = (await pending) as ToolResult;
+  assert.equal(local.structuredContent?.output, "hi\n", "本地调用仍走 timeout-bg 自己的 ops（结构化结果不变）");
+  assert.equal(ext.spawnCalls(), 1);
+});
+
+test("跨扩展组合：畸形载荷/判定抛错/执行抛错各自可见，且远端意图绝不回退到本机", async () => {
+  const malformed = makeExtension(["bash"], {}, new FakeChild(), { events: busWithCapability({ parameters: {}, isRemoteCall: "nope" }) });
+  await malformed.fire("session_start");
+  assert.ok(malformed.notices.some((n) => n.includes("畸形")), malformed.notices.join("|"));
+  assert.equal(malformed.tools.get("bash")?.parameters?.properties?.remote, undefined, "畸形载荷不得并进 schema");
+
+  // 收到过载荷（哪怕畸形）+ 当前 bash 不是内置 ⇒ 只报「畸形」，不再说「未知扩展接管」（那是误导）。
+  const malformedWithForeign = makeExtension(["bash"], {}, new FakeChild(), {
+    events: busWithCapability({ parameters: {}, isRemoteCall: "nope" }),
+    tools: [{ name: "bash", path: "<other>/index.ts", description: "other bash" }],
+  });
+  await malformedWithForeign.fire("session_start");
+  assert.ok(malformedWithForeign.notices.some((n) => n.includes("畸形")));
+  assert.deepEqual(
+    malformedWithForeign.notices.filter((n) => n.includes("已被另一个扩展接管")),
+    [],
+    "收到过载荷就不再报「未知接管」（那条只说给真的没提供方的场景）",
+  );
+
+  const throwingJudgement = makeExtension(["bash"], {}, new FakeChild(), {
+    events: busWithCapability({
+      parameters: { remote: {} },
+      isRemoteCall: () => {
+        throw new Error("judgement boom");
+      },
+      executeRemote: async () => ({}),
+    }),
+  });
+  await throwingJudgement.fire("session_start");
+  const refused = await throwingJudgement.tools
+    .get("bash")!
+    .execute("call-1", { command: "echo hi" }, undefined, undefined, toolCtx(throwingJudgement.dir, throwingJudgement.uiCtx))
+    .then(() => null, (error: unknown) => error as Error);
+  assert.match(String(refused), /拒绝执行/);
+  assert.equal(throwingJudgement.spawnCalls(), 0, "判定失败时不得在本机跑");
+  assert.ok(throwingJudgement.notices.some((n) => n.includes("能力判定失败")));
+
+  const throwingRemote = makeExtension(["bash"], {}, new FakeChild(), {
+    events: busWithCapability({
+      parameters: { remote: {} },
+      isRemoteCall: () => true,
+      executeRemote: async () => {
+        throw new Error("REMOTE_EXEC_FAILED");
+      },
+    }),
+  });
+  await throwingRemote.fire("session_start");
+  const failed = await throwingRemote.tools
+    .get("bash")!
+    .execute("call-1", { command: "echo hi" }, undefined, undefined, toolCtx(throwingRemote.dir, throwingRemote.uiCtx))
+    .then(() => null, (error: unknown) => error as Error);
+  assert.match(String(failed), /REMOTE_EXEC_FAILED/);
+  assert.equal(throwingRemote.spawnCalls(), 0, "远端执行失败绝不回退到本机");
+  assert.ok(throwingRemote.notices.some((n) => n.includes("远端 shell 能力执行出错")));
+});
+
+test("冲突可见：未知扩展接管 bash（注册前）与注册被加载顺序丢掉（注册后）都 notify 一次", async () => {
+  const takeover = makeExtension(["bash"], {}, new FakeChild(), { tools: [{ name: "bash", path: "<other>/index.ts", description: "other bash" }] });
+  await takeover.fire("session_start");
+  assert.equal(takeover.notices.length, 1, takeover.notices.join("|"));
+  assert.match(takeover.notices[0]!, /接管/);
+
+  const lateOwner = makeExtension(["bash"], {}, new FakeChild(), {
+    tools: [{ name: "bash", path: "<partner>/index.ts", description: "partner bash" }],
+    foreignWins: true,
+    events: busWithCapability({ parameters: { remote: {} }, isRemoteCall: () => false, executeRemote: async () => ({}) }),
+  });
+  await lateOwner.fire("session_start");
+  assert.equal(lateOwner.notices.length, 1, lateOwner.notices.join("|"));
+  assert.match(lateOwner.notices[0]!, /加载顺序更早/);
 });
