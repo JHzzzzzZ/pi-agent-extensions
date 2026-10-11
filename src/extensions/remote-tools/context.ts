@@ -154,7 +154,10 @@ export function createRemoteContextCapability(deps: RemoteContextDeps): RemoteCo
 			// 尾斜杠归一：相对路径经 `posix.join` 会**保留**尾斜杠（绝对路径那条已被 resolveRemoteSearchPath 剥掉），
 			// 不归一的话块头会显示双斜杠、去重键也会与不带尾斜杠的触碰不一致（同一份内容注两次）。
 			const anchorDir = rawAnchor.replace(/\/+$/, "") || "/";
-			const dirs = contextChainDirs(anchorDir, resolved.baseDir);
+			// 基准同样归一：远端 $HOME 配置带尾斜杠时（`/home/u/`），`isWithinBase` 会判 false ⇒ 空链 ⇒
+			// 相对路径的远端注入静默全灭（工具本身照常工作，只有本功能消失）。
+			const baseDir = resolved.baseDir.replace(/\/+$/, "") || "/";
+			const dirs = contextChainDirs(anchorDir, baseDir);
 			if (dirs.length === 0) return { ok: true, dir: anchorDir, files: [] };
 
 			const result = await runSsh(deps.exec, resolved.target, buildContextCommand(dirs));

@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ e090c60
+> last verified @ HEAD_PLACEHOLDER
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
@@ -112,7 +112,7 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
-- `test/` — 122 个：113 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `context.test.ts`(22，远端上下文能力：祖先链/命令拼装/NUL 分帧/形状守卫/降级) / `bash-timeout.test.ts`(9，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
+- `test/` — 123 个：114 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `context.test.ts`(23，远端上下文能力：祖先链/命令拼装/NUL 分帧/形状守卫/降级) / `bash-timeout.test.ts`(9，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 

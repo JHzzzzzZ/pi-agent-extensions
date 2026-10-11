@@ -143,7 +143,7 @@ test("取上下文：目录类触碰把该路径自身当锚点（ls 不丢自�
   assert.ok((calls[0]?.args.at(-1) ?? "").includes("f='/home/u/docs'/$n"), "目录自身那一级在命令里");
 });
 
-test("取上下文：目录锚点的尾斜杠被归一（否则块头双斜杠 + 去重键与不带斜杠的触碰不一致）", async () => {
+test("取上下文：目录锚点的尾斜杠被归一", async () => {
   const { exec, calls } = makeExec(() => ({ stdout: framed([["/home/u/docs/AGENTS.md", "docs"]]) }));
   const capability = createRemoteContextCapability({
     resolve: async () => ({ remotePath: "/home/u/docs/", baseDir: "/home/u", target: TARGET.target }),
@@ -151,7 +151,18 @@ test("取上下文：目录锚点的尾斜杠被归一（否则块头双斜杠 +
   });
   const outcome = await capability.fetchRemoteContext({ remote: "prod", path: "docs/", kind: "directory" });
   assert.equal(outcome.ok && outcome.dir, "/home/u/docs", "锚点不带尾斜杠");
-  assert.equal((calls[0]?.args.at(-1) ?? "").includes("//AGENTS"), false, "命令里不出现双斜杠");
+  assert.ok((calls[0]?.args.at(-1) ?? "").includes("f='/home/u/docs'/$n"), "命令里目录被单引号包裹且不带尾斜杠");
+});
+
+test("取上下文：远端 $HOME 带尾斜杠时基准也归一（否则空链 ⇒ 相对路径静默零注入）", async () => {
+  const { exec, calls } = makeExec(() => ({ stdout: framed([["/home/u/AGENTS.md", "home 约定"]]) }));
+  const capability = createRemoteContextCapability({
+    resolve: async () => ({ remotePath: "/home/u/docs/x.md", baseDir: "/home/u/", target: TARGET.target }),
+    exec,
+  });
+  const outcome = await capability.fetchRemoteContext(REQUEST);
+  assert.deepEqual(outcome, { ok: true, dir: "/home/u/docs", files: [{ path: "/home/u/AGENTS.md", content: "home 约定" }] });
+  assert.equal(calls.length, 1, "归一后仍走正常一趟");
 });
 
 test("取上下文：解析失败 / 解析抛错 ⇒ ok:false（不抛，消费方据此退回提示）", async () => {
