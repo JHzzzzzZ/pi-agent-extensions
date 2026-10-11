@@ -147,7 +147,7 @@ test("DEFAULT_SUITES：serial 只标三条负载敏感套件（不放宽断言�
   assert.deepEqual(serial, ["agent-manager", "pwr", "root:todo"]);
 });
 
-test("DEFAULT_SUITES：登记覆盖 pi.extensions 全部扩展与根三套自检", () => {
+test("DEFAULT_SUITES：登记覆盖 pi.extensions 全部扩展与根四套自检", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   const covered = (needle: string) =>
     DEFAULT_SUITES.some((s) => s.cwd.includes(needle) || s.cmd.some((a) => a.includes(needle)));
@@ -155,7 +155,12 @@ test("DEFAULT_SUITES：登记覆盖 pi.extensions 全部扩展与根三套自检
     const dir = path.posix.dirname(entry).replace(/^\.\//, "");
     assert.ok(covered(dir), `扩展 ${dir} 没有对应套件`);
   }
-  for (const script of ["test/status-bar-contract.test.ts", "test/install-smoke.test.ts", ".agents/skills/todo-cli"]) {
+  for (const script of [
+    "test/status-bar-contract.test.ts",
+    "test/install-smoke.test.ts",
+    "test/package-lock-drift.test.ts",
+    ".agents/skills/todo-cli",
+  ]) {
     assert.ok(covered(script), `根自检 ${script} 没有对应套件`);
   }
   assert.ok(DEFAULT_SUITES.some((s) => s.cwd.includes("agent-manager")), "agent-manager 没有套件");

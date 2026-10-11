@@ -748,7 +748,7 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 
 ## 开发约定
 
-全仓测试一条命令（23 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
+全仓测试一条命令（24 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
 
 ```bash
 npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 / --jobs 4 更高并发）
@@ -756,6 +756,7 @@ node tools/test-all.mjs --install # 新 worktree：先并行 npm install（--pre
 npm run test:contract             # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke                # 安装冒烟工具纯逻辑
 npm run test:todo                 # todo CLI（142 个）
+npm run test:lock                 # lock 版本与 package.json 一致（防 npm install 改出无关 diff）
 node tools/composition-surfaces.mjs # 插件接触面清单校验 + 组合配对生成（root:composition 的来源）
 node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi）
 ```

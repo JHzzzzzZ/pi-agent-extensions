@@ -1,6 +1,6 @@
 # agent-team — 可复用多 agent 团队
 
-> last verified @ 44fb2ba
+> last verified @ 90fe7ff
 ## 职责与边界
 
 Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 `team_run` 派单（同一会话最多 3 个 run 并行，v1.25.0；registry 按 runId 隔离进度/预算/停止/steer/提问）：拉起独立 leader 子进程（`--mode rpc`），leader 经 `team_dispatch` 调度成员子进程并行干活，遇需求歧义时用 `team_ask` 向主会话（用户）提问并阻塞等待答案，报告以 followUp 送回；派单变卦/超预算/跑偏时主 agent 用 `team_stop <runId>` 中止（runId 由 team_run 返回与 team_status 展示）；viewer 内 `m` 发消息与成员/leader 直接对话——**leader 运行中走 RPC steer 插话（当前回合边界送达、不打断任务），成员/已落定走派单语义**（见数据流 ⑧）。**不做**：worktree 管理（`worktree.ts` 只做薄封装）、脚本编排（那是 pwr）、缓存回放（每次使用重扫团队文件）。
@@ -107,7 +107,7 @@ Markdown 定义团队（leader + members），cockpit 模式下主 agent 通过 
 ## 改动清单
 
 - 必跑：`cd src/extensions/agent-team && npm install && npm test`（729 个）+ `npm run typecheck`。
-- 仓库级：`npm run test:all` 一条命令跑全仓 17 套件（本套件已登记，默认并发运行；逐条计时/失败聚合见 docs/tools/test-all.md）。
+- 仓库级：`npm run test:all` 一条命令跑全仓套件（本套件已登记，默认并发运行；套件数与逐条计时/失败聚合见 docs/tools/test-all.md；测试数唯一来源是根 README）。
 - 改动 viewer 正文块 / 转录 kind / viewer 发消息链路：除单测外必跑 `test/viewer-user-host.test.ts`（真实 TuiMainScreen + 样式追踪 VT 仿真屏：背景分类/连续等宽）与 `test/viewer-chat-host.test.ts`（真实入口 + 真实转录文件；含对话线 3 轮往返的宿主级用例）；只改对话线前文注入/用量口径时必跑 `test/dialogue.test.ts`（真实 ChatCoordinator + 真实转录读写）。
 - 真实 pi 宿主契约（opt-in，不调模型）：`node test/resume-host-smoke.mjs` —— 写 fixture 会话后 `pi --mode rpc --session <file>`，断言 `get_state` 的 `messageCount` 保留且 `sessionFile` 指向该文件，stdin 结束后干净退出（续跑功能的宿主前提）。
 - 真机级 reload 复演：`node test/reload-host-replay.mjs [部署副本 index.ts]`——用 pi 包真实 loader + ExtensionRunner 复演 reload 序列（shutdown → 重绑），非 fake；`node test/reload-real-env.mjs`——直接驱动宿主 `DefaultResourceLoader.reload()`（/reload 命令真实实现）在真实环境（git 包解析 + 缓存装载）跑两轮 reload。回归 /reload 工具消失 bug（b8f6eaf）。

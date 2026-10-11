@@ -32,7 +32,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 ## 关键目录
 
 - `docs/` — agent 知识库，入口是 [`docs/INDEX.md`](docs/INDEX.md) 路由表：`extensions/<插件名>.md` 每插件一卡、`cross/` 横切契约、`tools/<工具名>.md` 仓库工具卡、`adr/` 决策记录、`specs/` 规格（红线 3）、`incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；每卡 ≤100 行、头部带 `last verified @ <commit>`，改代码须同步对应卡片与该行。
-- `test/` — 仓库根自检（状态条契约 / 安装冒烟纯逻辑）；todo CLI 的测试随工具住在 `.agents/skills/todo-cli/todo-cli/test/`，由根脚本 `npm run test:todo` 指向该 glob（命令见下节）。
+- `test/` — 仓库根自检（状态条契约 / 安装冒烟纯逻辑 / lock 版本漂移守门）；todo CLI 的测试随工具住在 `.agents/skills/todo-cli/todo-cli/test/`，由根脚本 `npm run test:todo` 指向该 glob（命令见下节）。
 - `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 15 扩展加载）、`composition-surfaces.mjs`（接触面清单校验 + 组合配对生成，`general-todo#32`）。用法见脚本头与 `docs/tools/`。
 - `.agents/skills/todo-cli/` — 仓库内项目级 skill：`SKILL.md`（命令参考卡）+ `scripts/todo.sh` 包装器 + `todo-cli/`（todo CLI 入口与实现同居，任意 git 仓库任意 cwd 可用；仓库根解析 = `--root` > `git rev-parse --show-toplevel`，见 `docs/tools/todo-cli.md`）。
 - `src/extensions/<插件名>/` — 17 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
@@ -55,7 +55,7 @@ node --test runtime/test/scheduler.test.ts
 仓库根（无任何依赖）：
 
 ```bash
-npm run test:all        # 全仓 23 套件一条命令（逐条计时/失败聚合；--jobs N 调并发；见 docs/tools/test-all.md）
+npm run test:all        # 全仓 24 套件一条命令（逐条计时/失败聚合；--jobs N 调并发；见 docs/tools/test-all.md）
 node tools/composition-surfaces.mjs                    # 插件接触面清单校验 + L2 组合配对生成（general-todo#32）
 npm run test:contract   # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke      # 安装冒烟工具的纯逻辑单测

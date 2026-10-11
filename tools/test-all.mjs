@@ -135,6 +135,7 @@ export const DEFAULT_SUITES = [
   },
   { ...strip, name: "root:contract", cwd: ".", cmd: ["node", "--test", "test/status-bar-contract.test.ts"] },  { ...strip, name: "root:smoke", cwd: ".", cmd: ["node", "--test", "test/install-smoke.test.ts"] },
   { ...strip, name: "root:test-all", cwd: ".", cmd: ["node", "--test", "test/test-all.test.ts"] },
+  { ...strip, name: "root:lock", cwd: ".", cmd: ["node", "--test", "test/package-lock-drift.test.ts"] },
   { ...strip, name: "root:todo", cwd: ".", serial: true, cmd: ["node", "--test", ".agents/skills/todo-cli/todo-cli/test/*.test.ts"] },
   {
     ...strip,
