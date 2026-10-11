@@ -42,12 +42,29 @@ const declaredToolNames = (name) => [
   ...declaredValues(name, "toolSurface").map((v) => v.replace(/^(replace|wrap)\s*[:：]\s*/, "").trim()),
 ];
 
+/** 跑一个配对探针（子进程）：带超时，失败时把探针 stdout 里的报告读回来（否则只看到 execFileSync 的堆栈）。 */
 const runProbe = (a, b, env = {}) => {
-  const output = execFileSync(process.execPath, [PROBE, a, b], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-  });
+  const childEnv = { ...process.env, ...env };
+  delete childEnv.PI_AGENT_TEAM_FILE; // 环境隔离：leader 子进程里跑 test:all 时不能污染 cockpit 语义
+  let output;
+  try {
+    output = execFileSync(process.execPath, [PROBE, a, b], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+      env: childEnv,
+    });
+  } catch (error) {
+    const raw = typeof error?.stdout === "string" ? error.stdout : "";
+    const line = raw.trim().split("\n").pop() ?? "";
+    try {
+      return JSON.parse(line);
+    } catch {
+      throw new Error(
+        `探针 ${a} × ${b} 异常退出：${error instanceof Error ? error.message : String(error)}；stdout 尾部：${line.slice(0, 300)}`,
+      );
+    }
+  }
   return JSON.parse(output.trim().split("\n").pop());
 };
 
@@ -90,7 +107,6 @@ for (const { pair: [a, b], reasons } of pairs) {
         assert.ok(observed.has(tool), `${side}: 同装后声明的 \`${tool}\` 没有注册（静默消失？）`);
       }
       for (const command of declaredValues(side, "commands")) {
-        if (command.includes(":")) continue; // 子命令随父命令注册
         assert.ok(
           forward.commands.some((c) => c.name === command),
           `${side}: 同装后声明的命令 \`${command}\` 没注册`,

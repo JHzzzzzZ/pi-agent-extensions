@@ -13,7 +13,7 @@
 `DEFAULT_SUITES`（`tools/test-all.mjs` 顶部常量）逐条镜像各插件 README / `package.json` 的测试命令：17 个扩展 + agent-manager + 根四套自检（contract / smoke / todo / composition）+ test-all 自身 = **23 套件**（`root:todo` 142 用例——`concurrency.test.ts` 的跨文件并发写在负载下偶发红（主干同款，见 todo-cli#13），其余全绿）。
 
 - **serial 三条**（负载敏感，运行期独占、断言绝不放宽）：`pwr`（含 `test/perf.test.ts` 300ms 门）、`agent-manager`（core 性能门）、`root:todo`（真子进程并发/中断用例）。serial 语义 = 启动前等其它套件排空、运行中不启动任何新套件。
-- **`root:composition`**（组合矩阵，`general-todo#32`）：L1 单装 + L2 配对 + 清单校验器共 50 用例（≈30s）。命令带 `--test-force-exit`——扩展会留下真实定时器 / detached 子进程句柄，断言全绿进程也不退出；该标志只影响退出，不放宽断言。配对每对跑一个子进程（`test/helpers/pair-probe.mjs`），进程内用宿主 API 替身记录注册面。它需要**至少一个扩展装了依赖**（宿主包解析基点，见 `docs/tools/composition-surfaces.md`）。
+- **`root:composition`**（组合矩阵，`general-todo#32`）：L1 单装 + L2 配对 + 清单校验器共 56 用例（≈42s）。命令带 `--test-force-exit`——扩展会留下真实定时器 / detached 子进程句柄，断言全绿进程也不退出；该标志只影响退出，不放宽断言。配对每对跑一个子进程（`test/helpers/pair-probe.mjs`），进程内用宿主 API 替身记录注册面。它需要**至少一个扩展装了依赖**（宿主包解析基点，见 `docs/tools/composition-surfaces.md`）。
 - 覆盖只增不减由 `test/test-all.test.ts` 锁定：形状/名字唯一/serial 集合/「`pi.extensions` 全部扩展 + 根三套自检」都有登记。
 - `install: true`：pwr / agent-team / loop / opencode-bridge / deep-init / timeout-bg / virtual-model-router / jev-safe-gate / remote-tools / dir-context / agent-manager（有自己的 `node_modules`）；其余无 `package.json`，从仓库根跑。
 

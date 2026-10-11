@@ -24,6 +24,10 @@ const markdown = fs.readFileSync(path.join(REPO_ROOT, "docs/cross/composition-su
 const surfaces = parseSurfaces(markdown);
 const extensions = listExtensions(REPO_ROOT);
 
+// 环境隔离：leader 子进程里跑本套件时 PI_AGENT_TEAM_FILE 会已设置，
+// 不清掉会让 agent-team 进入 leader 模式而把 cockpit 用例误红（反之亦然）。
+delete process.env.PI_AGENT_TEAM_FILE;
+
 const declared = (name) => surfaces.get(name)?.fields ?? new Map();
 const declaredValues = (name, field) => declared(name).get(field) ?? [];
 /** 多模式扩展（如 agent-team 的 cockpit / leader）：声明与观测按模式分叉，L1 放宽「声明必注册」。 */
@@ -68,11 +72,27 @@ for (const name of extensions) {
     }
     const observedCommands = new Set(host.record.commands.map((c) => c.name));
     for (const command of registered.commands) {
-      assert.ok(
-        observedCommands.has(command) || command.includes(":"),
-        `${name}: 清单声明了命令 \`${command}\`，但没注册（子命令形态需父命令在场）`,
-      );
+      assert.ok(observedCommands.has(command), `${name}: 清单声明了命令 \`${command}\`，但没注册`);
     }
+    // 快捷键：声明的必须注册，注册的必须已声明
+    const observedShortcuts = host.record.shortcuts.map((s) => s.key);
+    for (const shortcut of registered.shortcuts) {
+      assert.ok(observedShortcuts.includes(shortcut), `${name}: 清单声明了快捷键 \`${shortcut}\`，但没注册`);
+    }
+    const undeclaredShortcuts = observedShortcuts.filter((key) => !registered.shortcuts.includes(key));
+    assert.deepEqual(undeclaredShortcuts, [], `${name}: 注册了未在清单声明的快捷键：${undeclaredShortcuts.join(", ")}`);
+    // 状态键 / widget 键 / 钩子：运行时写下去的也必须已声明
+    const undeclaredRuntime = [
+      ...host.record.statusWrites.map((w) => `状态键:${w.key}`),
+      ...host.record.widgetWrites.map((w) => `widget:${w.key}`),
+      ...host.record.hooks.map((h) => `钩子:${h.event}`),
+    ].filter((entry) => {
+      const [kind, value] = [entry.slice(0, entry.indexOf(":")), entry.slice(entry.indexOf(":") + 1)];
+      const declaredList =
+        kind === "状态键" ? declaredValues(name, "status") : kind === "widget" ? declaredValues(name, "widget") : declaredValues(name, "hooks");
+      return !declaredList.includes(value);
+    });
+    assert.deepEqual(undeclaredRuntime, [], `${name}: 运行时写了未在清单声明的面：${undeclaredRuntime.join(", ")}`);
     assert.ok(
       host.record.providers.length + host.record.virtualModels.length >= registered.providers.length,
       `${name}: 清单声明了 ${registered.providers.length} 个模型面，实际注册 ${host.record.providers.length + host.record.virtualModels.length} 个`,
@@ -103,7 +123,8 @@ test("L1 模式分叉：agent-team 用 PI_AGENT_TEAM_FILE 进 leader 模式，�
   const factory = await loadExtension("agent-team");
   const host = makeHost({ label: "agent-team:leader" });
   const previous = process.env.PI_AGENT_TEAM_FILE;
-  process.env.PI_AGENT_TEAM_FILE = path.join(process.cwd(), "examples/dev-team.example.md");
+  // 真文件路径（相对扩展目录）：走到 parsed-team 分支，而不是靠“缺文件容忍”碰巧绿。
+  process.env.PI_AGENT_TEAM_FILE = path.join(REPO_ROOT, "src/extensions/agent-team/examples/dev-team.example.md");
   try {
     await factory(host.pi);
     const tools = host.record.tools.map((t) => t.name).sort();

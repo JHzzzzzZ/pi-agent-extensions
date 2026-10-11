@@ -134,7 +134,7 @@ export function readExtensionSource(repoRoot, ext) {
   const out = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (["node_modules", "vendor", "dist", ".git"].includes(entry.name)) continue;
+      if (["node_modules", "vendor", "dist", ".git", "test", "tests", "fixtures"].includes(entry.name)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (/\.(ts|mjs)$/.test(entry.name) && !entry.name.includes(".test.")) {

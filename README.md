@@ -754,7 +754,7 @@ node tools/install-smoke.mjs      # 真实 pi 全新安装冒烟（需已装 pi�
 ```
 
 - **测试框架**：`node:test` + `node:assert/strict`，无 vitest/jest、无 mock 库（手写进程边界 fake）
-- **组合矩阵**：`root:composition` 套件（50 用例）验「A+B 同装兼容 / A、B 各自单装可跑」——清单在 [`docs/cross/composition-surfaces.md`](docs/cross/composition-surfaces.md)（谁占了哪个槽），L1 单装 + L2 配对（每对一个子进程、正反两种加载顺序），新增插件必须补清单一节，否则套件红；工具卡见 [`docs/tools/composition-surfaces.md`](docs/tools/composition-surfaces.md)
+- **组合矩阵**：`root:composition` 套件（56 用例）验「A+B 同装兼容 / A、B 各自单装可跑」——清单在 [`docs/cross/composition-surfaces.md`](docs/cross/composition-surfaces.md)（谁占了哪个槽），L1 单装 + L2 配对（每对一个子进程、正反两种加载顺序），新增插件必须补清单一节，否则套件红；工具卡见 [`docs/tools/composition-surfaces.md`](docs/tools/composition-surfaces.md)
 - **代码风格**：`src/extensions/pwr/` 用 tab 缩进，`src/extensions/` 下其余插件目录（`agent-team/`、`run-timer/`、`stream-token-speed/`、`loop/`、`goal/`、`opencode-bridge/`、`solo-mode/` 等）与 `.agents/skills/todo-cli/todo-cli/`、`agent-manager/` 用 2 空格；相对导入必须带 `.ts` 扩展名；类型导入用 `import type`（`verbatimModuleSyntax`）；错误用结果联合（`{ ok: true, value } | { ok: false, code, message }`），不用异常
 - **注入约定**：时钟注入（`now` 参数）、依赖注入（deps 对象），保证测试确定性
 - 无 linter、无 formatter、无构建步骤；`src/extensions/pwr/vendor/acorn.mjs` 为生成文件，勿修改

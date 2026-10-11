@@ -1,6 +1,6 @@
 # 跨扩展横切契约：插件接触面清单（谁占了哪个槽）
 
-> last verified @ 323d92f
+> last verified @ 83829d2
 >
 > 本表回答**唯一一个问题**：「哪个插件占了宿主的哪个共享槽位」——状态键、widget 槽、
 > 内置工具名、`pi.events` 频道、拦截型宿主钩子、模型面、命令与快捷键。
@@ -38,7 +38,7 @@
 | `共享槽` | 该取值**可多方共享**，并写明共享契约（如排序带的段键顺序） | 否（L2 用它做冲突裁决） |
 | `模式` | 加载期面随运行模式分叉（如 leader / cockpit），列出全部模式 | 否（L1 据此放宽"声明必注册"断言） |
 | `会话生命周期` | `session_start` / `session_shutdown` 做什么、是否需要 revive | 否（由 L1/L2 的「可重入、无残留」断言覆盖） |
-| `无注册面` | 除生命周期钩子外全空 | 否 |
+| `无注册面` | 除宿主钩子（`宿主钩子` 字段）外没有任何注册面；写了它就表示其余字段全为 `-` | 否 |
 
 > **冲突裁决（L2 口径）**：两个插件在任一维度共享同一取值时，**双方都必须把它列进
 > `独占声明` 或 `共享槽`**；否则视为未声明的真冲突 ⇒ L2 失败。生命周期钩子
@@ -58,9 +58,10 @@ events 订阅: -
 宿主钩子: model_select, input, before_agent_start, session_start, session_shutdown, tool_call, tool_result
 模型面: -
 命令: workflow, workflow:run, workflow:delete, workflow:model, workflow:list, workflow:view, workflow:open, workflow:pause, workflow:resume, workflow:stop, workflow:restart, workflow:save, workflow:saved, workflow:script, workflow:approve, workflow:help
+文件契约: PI_SOLO_MODE_FILE（只读消费方：免审批时批准卡自动通过，见 solo-approval-gate.md）
 快捷键: ctrl+alt+z, ctrl+alt+x, ctrl+alt+r
 独占声明: -
-共享槽: widget-band（上方排序带，段键 10:pwr-runs 保证顺序，见 status-bar.md）, tool_call（拦截型钩子：脚本审批/工具面把关，与 jev-safe-gate 并存）, tool_result（观察型钩子：只做 trace 记录，与 dir-context 并存）, model_select（观察型：只读当前模型名）
+共享槽: widget-band（上方排序带，段键 10:pwr-runs 保证顺序，见 status-bar.md）, tool_call（拦截型钩子：脚本审批/工具面把关，与 jev-safe-gate 并存）, tool_result（观察型钩子：只做 trace 记录，与 dir-context 并存）, model_select（观察型：只读当前模型名）, PI_SOLO_MODE_FILE（solo-mode 写、本扩展只读）
 模式: -
 会话生命周期: `session_start` 水合批准/运行条目并 `runtime.revive()` 复活跨会话单例；`session_shutdown` 做 UI clear + `runtime.shutdown()`（**shutdown 后必须 revive，否则 `/new` 后永久抛错**）
 无注册面: -
@@ -110,9 +111,10 @@ events 订阅: -
 宿主钩子: -
 模型面: -
 命令: deep-init
+文件契约: PI_SOLO_MODE_FILE（只读消费方：免审批时跳过二次确认，见 solo-approval-gate.md）
 快捷键: -
 独占声明: -
-共享槽: -
+共享槽: PI_SOLO_MODE_FILE（solo-mode 写、本扩展只读）
 模式: -
 会话生命周期: 无钩子；经 `pi.sendMessage`（customType `deep-init-start`）下达初始化提示词
 无注册面: -
@@ -285,7 +287,7 @@ events 订阅: -
 命令: solo, solo:on, solo:off, solo:status
 快捷键: -
 独占声明: -
-共享槽: PI_SOLO_MODE_FILE（本扩展写入、jev-safe-gate / opencode-bridge 只读）
+共享槽: PI_SOLO_MODE_FILE（本扩展写入；pwr / jev-safe-gate / deep-init / opencode-bridge 只读）
 模式: -
 无注册面: -
 
