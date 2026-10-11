@@ -60,7 +60,7 @@
 - 模型面 `bash` 参数任何变化（仍是 `command`/`timeout` + `remote`/`remotePort`/`remoteCwd` 的并集）。
 - 远端超时的"自动重试""自动降级到远端 nohup"等未讨论的行为。
 
-## 实现注记（2026-10-11，分支 `feat/remote-timeout-bg`，实现提交 `7de0a44`）
+## 实现注记（2026-10-11，分支 `feat/remote-timeout-bg`，实现提交 `7de0a44`，评审修复 `ccb6e44` / `e77c448`）
 
 实现与上文措辞的偏离与补充（红线 3：偏离要写清）：
 

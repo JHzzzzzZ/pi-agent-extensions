@@ -1,6 +1,6 @@
 # 跨扩展横切契约：shell 工具能力协商（bash）
 
-> last verified @ 7de0a44
+> last verified @ e77c448
 >
 > 背景：`bash` 是两个扩展共享的名字——timeout-bg 在 `session_start` 重注册它（默认超时 + 超时转后台），
 > remote-tools 在加载期重注册它（远端 ssh 后端）。宿主 `pi.registerTool` 对同名工具是

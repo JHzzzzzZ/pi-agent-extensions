@@ -1,6 +1,6 @@
 # timeout-bg — shell 工具超时转后台 + 默认超时
 
-> last verified @ 7de0a44
+> last verified @ e77c448
 
 一句话：覆盖内置 `bash` / `powershell` 工具，把「超时即 `killProcessTree` 整树杀」改成「超时转后台继续跑」，
 并在未显式传 `timeout` 时施加默认 300 秒（`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 关闭）。
