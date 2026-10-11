@@ -142,4 +142,4 @@ argv → `parseArgs` → `main(argv, deps)` → **仓库根发现**（`deps.repo
 - 必跑：`npm run test:todo`（glob = `.agents/skills/todo-cli/todo-cli/test/*.test.ts`；142 个，2026-10-05 实测（#18 共享计数器 + 发号前对齐台账 + repair；并发用例在负载下偶发红，见 #13），含 7 个全局 id 计数器用例、3 个共享布局/真 worktree 取号 E2E 用例、3 个 repair 用例、7 个依赖图纯函数用例、reopen 回退/归档用例、9 个失败现场 helper 契约用例、priority（schema/query/命令闭环/migrate）用例与迁移、并发/中断真子进程用例）+ `node .agents/skills/todo-cli/todo-cli/todo.mjs lint`（exit 0）；仓库无根级 typecheck 门，新文件全用可擦除 TS 语法。
 - 改行为：同步 `test/todo-cli.test.ts`（命令面）/ `test/root-discovery.test.ts`（根发现）+ 本卡；改命令面：同步 `core.ts` 的 `USAGE` + `SKILL.md` + 本卡。
 - 改 schema：`schema.ts` 版本位 + `parseTodoJson` 校验 + 本卡 + `docs/adr/0002`/`0003`/`0005`/`0008` 同步。
-- 新增子命令/flags：先补测试（in-process + 必要的进程边界用例）再实现，并确认退出码与 stdout 约定不变（`REPO_COMMANDS` 同步，否则新命令会被当未知命令）。
+- 新增子命令/flags：同一变更内带上锁定测试（in-process + 必要的进程边界用例），并确认退出码与 stdout 约定不变（`REPO_COMMANDS` 同步，否则新命令会被当未知命令）。
