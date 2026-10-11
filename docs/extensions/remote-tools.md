@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ b7094f0
+> last verified @ 046c419
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
@@ -30,7 +30,8 @@
 - **路径换算只有一个出口，且标记根结构上不可占用**：交给内置工具的远端路径一律经 `toHostPath`，前缀是 **标记根**
   `<扩展目录>/index.ts/pi-remote`（锚在一个**已存在的普通文件**下：只要锚文件还是普通文件，本地就**建不出**这个目录
   ——实测 Windows `mkdir -p` → `ENOTDIR`、`realpath` → `ENOENT`，所以宿主 read 的本地变体探测没有可命中的本地文件），
-  ops 层经 `toRemotePath` 还原。没有标记的形态原样返回、由 `validateRemotePath` 拒绝——**模型给的 `C:/…` 与相对路径在发 ssh 之前就 fail-closed**。
+  ops 层经 `toRemotePath` 还原。没有标记的形态原样返回、由 `validateRemotePath` 拒绝——**fail-closed 的只有 Windows 盘符形态、`~` 开头、宿主标记首段**（`assertModelPathInput` + `validateRemotePath`，都在发 ssh 之前）；
+  相对路径/省略 `path` 按**远端 `$HOME`** 解析（同目标只解析一次）——`#11` 修正过这里一处自相矛盾的旧表述（曾写成「相对路径也 fail-closed」，实测不是）。
   配套运行时守卫 `assertMarkerRootUsable`：锚文件不是普通文件时远端调用 fail-closed 报 `HOST_MARKER_CONFLICT`（本地分支零影响）。
 - **校验先于 ssh**：目标形态（前导 `-` / 空格 / 多 `@` / 内嵌端口）、端口范围、路径形态三者在任何 ssh 进程之前完成。
   绝对路径不需要远端 `$HOME` ⇒ 不为此多发一次 ssh（只有省略/相对路径才解析，且同目标只解析一次）。
@@ -62,39 +63,62 @@
   那一次往返的顺风车（`head -c 8192 … | base64`，零额外往返），判定交给**宿主同一份**
   `detectSupportedImageMimeTypeFromFile`（包根唯一导出；纯 buffer 版未导出、深路径被 `exports` 封死 ⇒ 样本落
   本地临时文件再喂进去，用完即删），魔数/动图/BMP 规则零复制。接新工具/跟新宿主时先枚举 `XxxOperations` 的**全部端口（含可选）**。
+- **ls/find 的远端错误必须自己拦（`#10`）**：宿主 `ls.js:44/50` 与 `find.js:71` 在 `ops.exists()` 为假 / `stat()`
+  非目录时用自己的模板抛错，模板插值的正是我们传进去的**宿主标记形态路径**（模型可见的 `Path not found: C:\…\pi-remote\…`）。
+  所以远端 ls/find 在进宿主校验**之前**先 `probeDirectory`：不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒
+  新码 `REMOTE_NOT_DIRECTORY`，消息全静态模板。探针答案缓存进同一个 ops 实例 ⇒ 宿主随后的 `exists`/`stat`
+  不触网（ls 往返 3 → 2，find 2；`probeDirectory` 是新方法，`exists`/`stat` 的既有语义不变）。
+- **bash 的远端能力经 `pi.events` 交给 shell owner（`#9`）**：宿主对同名工具按扩展加载顺序 first-wins、
+  无法包裹下层实现，所以本扩展在加载期把远端 bash 能力放进 timeout-bg 的收集盒子（`capability.ts`），
+  由它合并 schema 并按参数分派；远端分支只有 `executeRemoteBash` 一份实现（本扩展自己的 bash 与能力载荷共用）。
+  频道/载荷/分派安全口径/加载顺序见 `docs/cross/shell-tool-capability.md`，本侧锁在 `test/capability.test.ts`
+  与跨扩展组合测试里。
 - **远端 $HOME 缓存失败不毒化**：session 按目标永久缓存，所以 `home()` 失败时清缓存、下次重试（瞬时网络抖动
   不能让该目标所有相对路径调用挂到 `/reload`）。
 
 ## 文件地图
 
 - `index.ts` — 扩展入口：`registerRemoteTools(pi, { exec: createSpawnExec(), cwd: process.cwd() })`
+- `capability.ts` — 跨扩展能力载荷：频道名、`RemoteBashCapability` 形状、`isRemoteBashCall`（远端意图判定，噪声容错、形态非法也算远端）、
+  `offerBashCapability`（订阅收集频道、同步填盒子、形状守卫与异常隔离）
 - `tools.ts` — 7 个同名覆盖的接线：schema 拼接（内置参数 + remote 三件套）、本地/远端分派、
   `resolveToolPath`（校验 + $HOME 懒解析）、`remoteContext`（把内置定义的 `ctx.cwd` 换成远端基准）、
-  session 缓存（同目标共享、`$HOME` 只解析一次）
+  session 缓存（同目标共享、`$HOME` 只解析一次）、`executeRemoteBash`（远端分支单一实现，供自身注册与能力载荷共用）
 - `ops.ts` — 远端 Operations 后端：read/write/edit/ls/find/bash 的远端原语（**目录分支在前**的 `if/elif` 一次往返区分
   「不存在/是目录/正常」——`-e` 对目录同样成立，顺序写反会把「是目录」误报成「不可读」；read 的 `access` 顺带取回图片嗅探样本，`detectImageMimeType` 消费）、
-  `createRemoteSession`、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单
+  `createRemoteSession`、ls/find 的 `probeDirectory` 探针（fail-closed 目录校验 + 答案缓存）、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单
 - `grep.ts` — 整份重写的远程 grep：`rg --json` 解析 + 与内置同形的输出/限流/截断，rg 缺失时 GNU grep 回退
 - `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`HOST_PATH_ROOT`/`toHostPath`/`toRemotePath`/`stripHostMarker`）
   + 标记根守卫（`assertMarkerRootUsable`：锚文件必须是普通文件）
   + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
-- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
-- `test/` — 77 个：70 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(18) / `grep.test.ts`(13) / `tools.test.ts`(18)）+ 7 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
+- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
+- `test/` — 87 个：79 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(3) / `shell-composition.test.ts`(2，真实加载 remote-tools + timeout-bg)）+ 8 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
 
-## 真机验收（2026-10-10 已执行）
+## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 
-目标：本机 WSL Ubuntu（`user@127.0.0.1:22`，Linux 内核 + 已装 ripgrep），Windows 侧跑测试。7 个用例**全绿**：
+目标：本机 WSL Ubuntu（`user@127.0.0.1:22`，Linux 内核 + 已装 ripgrep），Windows 侧跑测试。8 个用例**全绿**：
 
 ```bash
-PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
+MSYS2_ENV_CONV_EXCL='*' PI_REMOTE_TOOLS_TEST_TARGET=user@127.0.0.1 PI_REMOTE_TOOLS_TEST_DIR=/home/user \
   node --test test/remote-live.test.ts
 ```
 
 覆盖：建连 + 远端 `$HOME` 解析、bash 目录/退出码/缺目录结构化错误、ops 层 write→read→edit→ls 往返、
 远端**图片**走宿主图片管线（真 PNG → image 块；`#8`）、**工具层端到端**（注册覆盖 → 标记根 → 宿主 path 解析 → ops 还原 →
-远端 write/read/ls/grep（真 rg）/find/bash）、远端不存在/无权限的结构化错误码、不可达主机 fail-closed。
+远端 write/read/ls/grep（真 rg）/find/bash）、远端不存在/无权限的结构化错误码、不可达主机 fail-closed、
+以及 `#9`/`#10` 新增的一条：带 `remote` 的 bash 真在远端跑（`uname -s` = `Linux`）与 ls/find 的不存在/传文件结构化错误
+（消息里既没有 `pi-remote` 也没有宿主模板字样）。
+
+组合的端到端另有一次真实 pi 会话验收（不推包，直接 `-e` 两个扩展的最小链路）：
+
+```bash
+pi --print --no-session --no-extensions -e <本目录>/index.ts -e <timeout-bg 目录>/index.ts \
+  --tools bash --model <任意模型> -- "用 bash 调 uname -s，remote=user@127.0.0.1"
+# ⇒ 工具面的参数是五元并集（command/timeout/remote/remotePort/remoteCwd），带 remote 的调用返回 Linux
+```
+
 本地侧另有结构性断言（不靠真机也能守）：`paths.test.ts` 断言 `mkdir -p 标记根` 必失败、`realpath` 必是 missing-path 错误。
 
 两个只有真机才能发现的问题（已修 + 已加回归测试）：

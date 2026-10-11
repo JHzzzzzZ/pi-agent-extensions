@@ -192,3 +192,10 @@
 - 根因：编辑工具的相对路径按**会话 cwd（主干工作区）**解析，不按「当前正在作业的 worktree」解析。同一批操作里，用绝对 worktree 路径的改动全部正确落地，用相对路径的那批全部落到主干——两种写法混在一轮里，肉眼几乎看不出。
 - 处置：把主干上误落的改动逐条重放到 worktree（并补上真正遗漏的规格一处），`git checkout --` 还原主干，再走 merge；因此多花一轮评审（第 2 轮）。
 - 教训：① worktree 作业期间**所有文件读写一律用绝对路径**，写完立刻用 `git -C <worktree> status -s` 与 `git -C <主干> status -s` 对账「改动落在哪边」。② 文档里写「已改」之前必须回读那份文件（grep 到新句子）——**自称的完成状态**是最容易被评审一票否决的东西，比不改更伤：第 2 轮评审正是靠比对文件现状抓到的。
+
+## 同名工具静默覆盖：带 `remote` 的 bash 跑在本机（remote-tools #9 / timeout-bg #3，2026-10-10）
+
+- 症状：同时装了 timeout-bg 与 remote-tools 时，`bash(command="uname -s", remote="user@127.0.0.1")` 返回本机 `MINGW64_NT`，`remoteCwd` 也不生效，`/reload` 后依旧——远端能力整个消失，**没有任何提示**；反过来（扩展加载顺序变化时）也可能静默丢掉 timeout-bg 的超时语义。
+- 根因：两个扩展都靠「`pi.registerTool` 覆盖同名工具」实现，而宿主对同名工具是**按扩展加载顺序 first-wins**（`ExtensionRunner.getAllRegisteredTools()` 先到先得，agent-session 再用它覆盖内置），且**没有取回下层定义再包裹的 API**（`getAllTools()` 只给 schema 与 `sourceInfo`，没有 `execute`）；timeout-bg 在 `session_start` 重注册 bash（时点晚于加载期注册，但顺序由扩展加载顺序决定），于是必有一方被丢掉且不可见。
+- 处置：仓库内用宿主官方 `pi.events` 做能力协商（契约 `docs/cross/shell-tool-capability.md`，规格 `docs/specs/shell-tool-composition.md`）——timeout-bg 注册前广播可变盒子收集「shell 能力」，remote-tools 同步放入远端 bash 能力，owner 合并参数并按参数分派；没有对端时行为与今天逐字一致。冲突可见性兜底（未知接管者 notify、注册后自检生效版本）与两条安全口径（判定抛错 fail-closed、执行失败绝不回退本机）一并落地。上游 API 缺口另立 `general-todo#30`（请 `registerTool` 对齐自家 `registerMcpServer` 的冲突报错与 `registerToolRenderer` 的链式组合）。
+- 教训：① **覆盖同名工具是跨扩展的隐式契约**——本仓任何两个扩展共用工具名（今天只有 bash）都必须显式约定归属，并让冲突可见；宿主 API 的「静默 last-write-wins」在插件生态里等于「功能随机消失」。② 修这类 bug 不能只看「谁后注册」：判定顺序的是**加载顺序 + first-wins**，且实测证据（`getAllTools()` 的生效版本）比推理可靠——注册后自检就是这个证据的自动化版本。③ 「回退到原行为」这句话在跨扩展分派里要加安全前置：远端意图的命令**绝不**因为远端路径失败而在本机重跑。

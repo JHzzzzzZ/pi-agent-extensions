@@ -1,6 +1,6 @@
 # timeout-bg — shell 工具超时转后台 + 默认超时
 
-> last verified @ 1c1acc5
+> last verified @ 24b761a
 
 一句话：覆盖内置 `bash` / `powershell` 工具，把「超时即 `killProcessTree` 整树杀」改成「超时转后台继续跑」，
 并在未显式传 `timeout` 时施加默认 300 秒（`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 关闭）。
@@ -33,6 +33,16 @@
   **动哪里会破**：一旦改成自己拼返回值（`defineTool` / 自定义 `execute`）而不再 spread 宿主工具，就必须自己声明等价的
   `outputSchema` 并回填 `structuredContent`，否则脚本侧静默退化（拿不到 1 MiB 输出与落盘路径）——`test/index.test.ts` 的
   两条「codemode 视角」测试锁的就是这个（devDependency 因此要求 `^1.0.0`：0.85.x 既无 codemode 也无 outputSchema）。
+- **bash 是两扩展共享的名字（timeout-bg#3）**：remote-tools 也在加载期重注册 `bash`（远端 ssh 后端），而宿主对同名工具
+  按**扩展加载顺序 first-wins**（`getAllTools()` 只给 schema/sourceInfo、无 execute ⇒ 无法包裹下层）。所以本扩展在注册前
+  经 `pi.events` 广播 `{ bash? }` 盒子收集能力，合并参数片段并按参数分派：本地走自己的超时→后台 ops，远端转交能力
+  （契约卡 `docs/cross/shell-tool-capability.md`）。
+  - **合并生效前提是 timeout-bg 先于 remote-tools 加载**（根 `package.json` 的 `pi.extensions` 顺序）；顺序相反时
+    remote-tools 的 bash 生效，**注册后自检**会把「加载顺序更早的扩展覆盖了本扩展」notify 一次（不静默）。
+  - **分派安全口径**：`isRemoteCall` 抛错 ⇒ fail-closed 报错（不猜、不落本机）；`executeRemote` 抛错 ⇒ 原样抛 + notify，
+    **绝不回退到本机执行**（远端意图的命令在本机跑是安全事故）。
+  - **没有对端 / 没有事件总线 / 载荷畸形 ⇒ 行为与今天逐字一致**（畸形载荷额外 notify 一次）；注册前发现 bash 不是内置实现
+    且确定没有提供方 ⇒ notify 一次（未知接管者可见）。
 
 ## codemode 结构化结果（timeout-bg#2 实测，pi 1.0.1）
 
@@ -53,7 +63,10 @@
 
 ## 文件地图
 
-- `index.ts` — 接线：工具覆盖、`/bg` 命令面、`session_start`/`session_shutdown`、followUp 送达、默认 deps
+- `index.ts` — 接线：工具覆盖、`/bg` 命令面、`session_start`/`session_shutdown`、followUp 送达、默认 deps、bash 归属自检
+- `shell-capability.ts` — 与 remote-tools 的能力协商：`collectBashCapability`（广播盒子 + 形状守卫）、
+  `mergeBashParameters`（只能新增参数，撞名整份拒绝）、`createBashDispatch`（按参数分派 + 两条安全口径 + notify）、
+  `describeForeignBash`/`describeLostBashRegistration`（归属冲突可见性）
 - `shell-ops.ts` — `BashOperations.exec` 实现：spawn → 计时 → 输出落盘 → 退出/超时/abort 分流
 - `jobs.ts` — 后台任务注册表（`running` → `exited` / `killed`，注入 `now` / `killTree` / `onExit`）
 - `logs.ts` — 日志尾部读取、控制字符剔除、保留策略（7 天 / 50 个）
@@ -73,7 +86,9 @@
 
 ## 测试与验证
 
-- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（33 个：config / jobs / logs / shell-ops / index 接线，其中 2 条锁 codemode 视角的结构化结果）
+- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（40 个：config(6) / jobs(6) / logs(6) /
+  shell-ops(8) / shell-capability(4) / index 接线(10)，其中 2 条锁 codemode 视角的结构化结果、3 条锁跨扩展组合
+  （合并 schema + 分派、畸形/抛错回退可见、未知接管与顺序覆盖 notify））
 - 进程边界测试只 fake `spawn` 与 `killTree`，真实读写临时目录日志、真实毫秒级计时器；工具本体用宿主真实 `createBashTool`。
 - 真机验证（2026-09-22，Windows + Node 24）：真实 spawn + 真实计时器跑 `for i in 1..6; do echo tick-$i; sleep 1; done`，
   `timeout: 2` → 2.3s 转后台、进程存活且日志持续增长 → 7.3s 自然结束，注册表转 `exited(0)` 且 `onExit` 恰好一次。
