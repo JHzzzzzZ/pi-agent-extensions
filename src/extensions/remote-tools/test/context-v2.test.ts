@@ -78,9 +78,22 @@ test("真 shell 往返：内容含 NUL 也只产出一个帧，字节级还原�
     assert.ok(first.path.endsWith("/AGENTS.md"), `路径帧是真实路径：${first.path}`);
     assert.equal(decode(first.payload).toString("utf8"), forged, "字节级还原：NUL / 制表 / CRLF / 空行 / 中文都不丢");
     assert.ok(decode(first.payload).includes(0), "内容里的 NUL 真的还在（不是被悄悄吃掉）");
-    assert.ok(first.payload.includes("\n"), "base64 载荷真的带换行（GNU 默认 76 列）⇒「解码前剥空白」被真实触发");
+    assert.ok(first.payload.includes("\n"), "base64 载荷真的带换行（GNU 默认 76 列）");
     assert.ok(!first.payload.includes("\u0000"), "载荷里不可能有 NUL：这正是内容无法伪造帧边界的原因");
     assert.equal(parts[2], "", "帧尾分帧符之后没有多余段 ⇒ 没有被伪造出来的第二个路径");
+
+    // 生产路径必须自己吃下这份真实折行输出：解析器早已不剥空白（靠 Node 解码器忽略字母表外字符），
+    // 而上面那个 decode() 辅助是测试侧的——只断言它等于 forged 就漏掉了「生产解码对折行输入正确」。
+    // Windows 上真 shell 产出的帧头是 C:/…（不是 POSIX 绝对路径，按契约会被丢弃），所以那种情况下
+    // 把**同一份真实载荷**配一个 POSIX 帧头重放；路径校验本身另有平台无关用例覆盖。
+    const parsedFiles = first.path.startsWith("/")
+      ? parseContextFiles(stdout).files
+      : parseContextFiles(Buffer.from(`${FRAME_MARK.readable}/tmp/replay/AGENTS.md\u0000${first.payload}\u0000`, "utf8")).files;
+    assert.deepEqual(
+      parsedFiles,
+      [{ path: first.path.startsWith("/") ? first.path : "/tmp/replay/AGENTS.md", content: forged }],
+      "生产分帧+解码路径对真实 GNU 折行输入还原正确（不依赖测试侧辅助）",
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
