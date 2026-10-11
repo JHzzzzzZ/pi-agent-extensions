@@ -1,12 +1,12 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ f53c85a
+> last verified @ 8ee5f5c
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
-`remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
+`remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
 需求与验收见 `todos/align/remote-tools-todo#1.md`。
 
-> **与 dir-context 的交叉面**：带 `remote` 的调用 `path` 在远端解析，所以 `dir-context` **不会**为它注入本机（甚至远端）的 `AGENTS.md`——它只看入参有没有 `remote` 字段，不 import 本插件任何模块（零耦合）。模型要远端目录的约定得自己 `read`（首次远端触碰时 dir-context 会追加一行提示）。见 [`docs/extensions/dir-context.md`](dir-context.md)。
+> **与 dir-context 的交叉面**：带 `remote` 的调用 `path` 在远端解析，所以 `dir-context` **默认不会**为它注入本机（甚至远端）的 `AGENTS.md`——它只看入参有没有 `remote` 字段，不 import 本插件任何模块。本插件另经 `pi.events` 向它提供一个「取远端目录上下文」能力（`context.ts`）：一条 ssh 取该目录祖先链上的 `AGENTS.md`/`CLAUDE.md`，**注入规则仍全在 dir-context**。契约见 [`docs/cross/remote-context-capability.md`](../cross/remote-context-capability.md)。
 
 ## 为什么这么做（决策原因）
 
@@ -91,6 +91,7 @@
   仍写出）在 `test/remote-live.test.ts`。
 
 ## 文件地图
+- `context.ts` — 跨扩展能力「取远端目录上下文」的提供方：祖先链计算（到 `$HOME` 或 `/` 为止、深度有上限、逃逸即空链）、一条 ssh 的 NUL 分帧命令、请求形状守卫、失败一律收敛成 `ok:false`；由 `tools.ts` 在 `registerRemoteTools` 里订阅收集频道填槽（复用同一个 `planSession` 与 session 缓存）
 
 - `index.ts` — 扩展入口：`registerRemoteTools(pi, { exec: createSpawnExec(), cwd: process.cwd() })`
 - `capability.ts` — 跨扩展能力载荷：频道名、`RemoteBashCapability` 形状、`isRemoteBashCall`（远端意图判定，噪声容错、形态非法也算远端）、
@@ -111,7 +112,7 @@
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT`）
-- `test/` — 100 个：91 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `bash-timeout.test.ts`(9，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
+- `test/` — 119 个：110 个纯本地（`ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5，含托管端口索取) / `context.test.ts`(19，远端上下文能力：祖先链/命令拼装/NUL 分帧/形状守卫/降级) / `bash-timeout.test.ts`(9，托管路径的进程边界) / `shell-composition.test.ts`(3，真实加载 remote-tools + timeout-bg：能力合并 / job 托管频道 / 反向顺序)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）；`test/fixtures.ts` 是真 PNG 等样本（不是测试文件本身，不被 glob 收集）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 

@@ -28,6 +28,10 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 - 目标主机已配好密钥 / ssh-agent，且指纹已在 `known_hosts` 里。本扩展非交互执行（`BatchMode=yes`）且拒绝未知指纹（`StrictHostKeyChecking=yes`）——首次连一台机器请先在终端手工 `ssh user@host` 一次。
 - 远端有 `ripgrep` 时 `grep`/`find` 语义与本地一致（遵守 `.gitignore`）；没有则回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不生效）。
 
+## 向 dir-context 提供远端上下文能力
+
+带 `remote` 的调用 `path` 在远端解析，所以 `dir-context` 默认不会为它注入 `AGENTS.md`。本扩展经宿主 `pi.events` 提供 `fetchRemoteContext`：**一条 ssh** 取回该目录祖先链上的 `AGENTS.md`/`CLAUDE.md`（相对/省略路径走到远端 `$HOME`、绝对路径走到 `/`，由外向内、每目录按优先级取一个，深度有上限）。**注入规则全在 dir-context**（本扩展只负责取文件），没装 dir-context 时这项能力没人用、不影响本扩展任何行为。契约见 [`docs/cross/remote-context-capability.md`](../../../docs/cross/remote-context-capability.md)。
+
 ## 实现要点（改代码前先读）
 
 - **不自己复刻内置行为**：`read` / `write` / `edit` / `ls` / `find` / `bash` 都用宿主同一份 `createXxxToolDefinition` 配上远端 Operations 实现，因此截断、限流、渲染器、提示词片段与内置完全一致；`remote` 为空时直接调宿主本地实现（零漂移、绝不 spawn ssh）。
