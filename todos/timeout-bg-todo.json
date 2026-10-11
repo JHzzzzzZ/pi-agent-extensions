@@ -38,19 +38,21 @@
     },
     {
       "id": 3,
-      "globalId": 366,
+      "globalId": 369,
       "text": "timeout-bg 侧：与 remote-tools 组合 bash（配套 remote-tools#9，同一变更交付；不设 dep——两半同时开工，dep 门会挡住同批实现）。需求：① 在 session_start 注册 bash 前，通过官方 pi.events（dist/core/event-bus.js：emit 同步派发，无返回值）广播一个「收集 shell 能力」的盒子，订阅方（remote-tools）把自己的远端 bash 能力放进来（参数片段 + 是否远端调用 + 远端执行函数 + 指南文案）；② 盒子非空 ⇒ 注册**合并后**的 bash：schema = 自身 schema ∪ 远端参数片段，execute 按「是否远端调用」分派（本地走自己的 timeout→后台 ops，远端转交远端实现）——两个功能都保留，且不用跨扩展 import；③ 盒子为空（未装 remote-tools）⇒ 行为与今天完全一致；④ 冲突可见性兜底：注册前后若发现 bash 已被**未知扩展**接管（getAllTools() 的 sourceInfo.path 既不是 builtin:bash 也不是自己与已知伙伴），notify 一次而不是静默；⑤ 契约（频道名 + 载荷形状）写进 docs/cross/ 并配测试（两扩展各自的既有测试 + 一个跨扩展组合测试）。",
-      "status": "processing",
+      "status": "done",
       "branch": "fix/shell-tool-composition",
       "tags": [
         "bugfix"
       ],
       "priority": 7,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "已交付并合并（merge 7c052ac；代码 24b761a/846213e）。owner 侧：session_start 注册 bash 前收集能力盒子 → 形状守卫 / 参数合并（与自身参数撞名整份拒绝）/ 按参数分派 / 归属冲突可见（未知接管者与注册被顺序覆盖各 notify 一次）；无对端、无事件总线、载荷畸形时行为与今天逐字一致（既有 33 个测试全绿）。测试 33 → 40。评审 3 轮（kimi-coding/k3-256k）无 P0/P1，终轮意见已收口。合并生效顺序前提（timeout-bg 先加载）写在契约卡与两张卡。"
+      ],
       "createdAt": "2026-10-11T03:09:30.421Z",
       "claimedAt": "2026-10-11T03:09:44.391Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T04:23:16.076Z",
       "alignedAt": "2026-10-11T03:10:55.471Z"
     }
   ]

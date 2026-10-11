@@ -160,51 +160,57 @@
       "id": 9,
       "globalId": 363,
       "text": "bash 的 remote/remotePort/remoteCwd 被忽略（用户 2026-10-10 实测：bash(command=\"uname -s\", remote=\"user@127.0.0.1\") 返回 MINGW64_NT、带 remoteCwd 仍用本机 cwd，reload 后亦然）。已核代码：timeout-bg 在 pi.on(\"session_start\") 里用 createBashTool 重新注册同名 bash（index.ts:146/157），时点晚于所有扩展的加载期注册 ⇒ 总是压掉 remote-tools 的 bash（tools.ts 的 bash 分支）。两个扩展都靠「覆盖同名 bash」，而宿主 registerTool 是 last-write-wins，且没有取回已注册定义并包裹的 API（getAllTools 只给 schema/sourceInfo，无 execute）⇒ 冲突必然静默。要求：定一个确定且不静默丢功能的归属方案（候选 A：remote-tools 也在 session_start 注册取胜 + timeout-bg 检测到已被接管就 fail-loud 通知；候选 B：shell 工具统一归 timeout-bg，它的 bash 内部支持 remote 路由；候选 C：共享契约/组合），并让冲突对用户可见。",
-      "status": "processing",
+      "status": "done",
       "branch": "fix/shell-tool-composition",
       "tags": [
         "bugfix"
       ],
       "priority": 8,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "已交付并合并（merge 7c052ac；代码 24b761a/046c419/846213e）。方案 B′：timeout-bg 注册前经 pi.events 广播 { bash? } 盒子收集能力（横切契约 docs/cross/shell-tool-capability.md、规格 docs/specs/shell-tool-composition.md），remote-tools 提供远端能力，owner 合并 schema 并按参数分派；executeRemoteBash 单一实现。安全口径有意偏离对齐文档字面（判定抛错 fail-closed、执行失败绝不回退本机，理由见规格）：远端意图的命令在本机跑是安全事故。冲突可见：未知接管者与注册被顺序覆盖各 notify 一次。加载顺序要求 timeout-bg 先于 remote-tools（契约/卡片已写）。测试：remote-tools 79 本地 + 8 真机（WSL 8/8）、timeout-bg 40；跨扩展组合测试走真实 discoverAndLoadExtensions + 真实 event bus + 真实 ExtensionRunner（含反向顺序）；真实 pi 会话 -e 两扩展验证带 remote 的 bash 返回 Linux。评审 3 轮（kimi-coding/k3-256k）无 P0/P1，终轮意见已收口。"
+      ],
       "createdAt": "2026-10-11T02:51:52.872Z",
       "claimedAt": "2026-10-11T03:09:37.871Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T04:23:07.771Z",
       "alignedAt": "2026-10-11T03:10:54.821Z"
     },
     {
       "id": 10,
       "globalId": 365,
       "text": "ls/find 的远端错误不是结构化 REMOTE_ 码，且把宿主标记路径回灌给模型（用户 2026-10-10 实测）：ls /nope-here → \"Path not found: C:\\…\\remote-tools\\index.ts\\pi-remote\\nope-here\"；ls 传文件 → \"Not a directory: …\"；find 同款。根因已核：宿主 ls.js:44/50 与 find.js:71 在 ops.exists() 返回 false / ops.stat() 非目录时，用自己的模板抛错，模板里插值的正是我们传进去的宿主形态路径。read/grep 分支已是结构化码（REMOTE_NOT_FOUND 等）。要求：远端 ls/find 在进宿主校验前做一次 fail-closed 目录探针（顺带缓存 exists/stat 答案，不给每次调用增加 ssh 往返），错误用本插件错误码（新增 REMOTE_NOT_DIRECTORY）且消息静态、不插值路径。",
-      "status": "processing",
+      "status": "done",
       "branch": "fix/shell-tool-composition",
       "tags": [
         "bugfix"
       ],
       "priority": 7,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "已交付并合并（merge 7c052ac；代码 046c419）。远端 ls/find 进宿主校验前 probeDirectory：不存在 REMOTE_NOT_FOUND、传文件新增 REMOTE_NOT_DIRECTORY（消息全静态、不插值宿主标记路径），答案缓存进同一个 ops 实例 ⇒ ls 往返 3→2、find 2，exists/stat 既有语义不变（探针是新增独立方法）。错误码横切表同步（12 个）。测试：ops 20 + tools 20 本地 + 真机新增用例（8/8）。评审 3 轮无 P0/P1。"
+      ],
       "createdAt": "2026-10-11T02:51:53.099Z",
       "claimedAt": "2026-10-11T03:09:38.108Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T04:23:15.476Z",
       "alignedAt": "2026-10-11T03:10:55.032Z"
     },
     {
       "id": 11,
       "globalId": 367,
       "text": "文档矛盾（用户 2026-10-10 指出）：docs/extensions/remote-tools.md 的「路径换算只有一个出口」段写「模型给的 C:/… 与相对路径在发 ssh 之前就 fail-closed」，同卡「校验先于 ssh」段又写「只有省略/相对路径才解析（远端 $HOME）」；实测后者正确（相对路径正常解析）。要求：改成准确口径——fail-closed 的只有 Windows 盘符形态与 ~ 开头；相对路径/省略走远端 $HOME 解析且同目标只解析一次。",
-      "status": "processing",
+      "status": "done",
       "branch": "fix/shell-tool-composition",
       "tags": [
         "docs"
       ],
       "priority": 5,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "已交付并合并（merge 7c052ac；文档 a3f12f4/52c10d9/d996554）。卡片失实的「相对路径 fail-closed」改为准确口径（fail-closed 只有 Windows 盘符形态、~ 开头、宿主标记首段；相对路径/省略按远端 $HOME 解析、同目标只解析一次）；同批统一 index.ts 头注释、根/扩展 README、模型面文案（REMOTE_GUIDELINE + 9 处参数/工具说明），ADR-0010 加 v2 注记（不改写历史原文）。评审 3 轮无 P0/P1。"
+      ],
       "createdAt": "2026-10-11T03:10:04.315Z",
       "claimedAt": "2026-10-11T03:10:04.547Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T04:23:15.776Z",
       "alignedAt": "2026-10-11T03:10:55.250Z"
     }
   ]
