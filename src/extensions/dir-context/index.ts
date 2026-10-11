@@ -16,6 +16,8 @@
  *   原结果）。嵌套调用（codemode 脚本发起）的补偿路径：**嵌套事件带完整入参**，按顶层调用 id
  *   缓冲，等**顶层** codemode 结果到达时与 `details.calls`（截断预览，兜底）取并集，再复用同一套
  *   发现/去重/预算（ADR-0012 及其 v1.2 补充 / 工单 dir-context-todo#3）。
+ * - **远端调用**（入参带 `remote`，来自 remote-tools 一类插件）零注入：`path` 在远端解析，
+ *   与本地 cwd 无关，按本地解锚点会错注入（见 remote.ts / 工单 dir-context-todo#4）。
  */
 import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
@@ -25,6 +27,7 @@ import { discoverContextFilesForAnchors } from "./discover.ts";
 import { ErrorCodes, type DirContextError } from "./errors.ts";
 import { buildInjection, type ContextFileContent } from "./inject.ts";
 import { canonicalize, toDisplayPath } from "./paths.ts";
+import { isRemoteCall, REMOTE_NOTICE } from "./remote.ts";
 import { writeBand } from "./status-band.ts";
 import { detectTouch, type Touch } from "./touch.ts";
 
@@ -46,6 +49,8 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   const nestedTouches = createNestedTouchBuffer();
   const loaded: LoadedFile[] = [];
   let readFailureReported = false;
+  /** 远端提示是否已给过（会话内一次，见 remote.ts 的 REMOTE_NOTICE）。 */
+  let remoteNoticeShown = false;
 
   const renderStatus = (ctx: ExtensionContext): void => {
     if (!ctx.hasUI) return;
@@ -62,6 +67,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     nestedTouches.clear();
     loaded.length = 0;
     readFailureReported = false;
+    remoteNoticeShown = false;
     renderStatus(ctx);
   };
 
@@ -82,6 +88,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     injected.clear();
     nestedTouches.clear();
     loaded.length = 0;
+    remoteNoticeShown = false;
     if (!ctx.hasUI) return;
     try {
       writeBand(STATUS_KEY, undefined, (rendered) => ctx.ui.setStatus(STATUS_KEY, rendered));
@@ -90,19 +97,12 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     }
   });
 
-  pi.on("tool_result", async (event, ctx) => {
-    // 嵌套调用（codemode 脚本的 tools.*）：结果只回到调用方工具、不进 transcript，往这里注入没意义；
-    // 但它的 `input` 是**完整入参**（宿主不截断），记下来供发起它的那次**顶层** codemode 结果使用。
-    // 不看 `isError`：文件可能已被读写，注入与这次嵌套调用的成败无关（对齐决策 1）。
-    if (event.parentToolCallId) {
-      const touch = detectTouch(event.toolName, event.input);
-      if (touch) nestedTouches.record(event.parentToolCallId, touch);
-      return undefined;
-    }
-
-    const touches = collectTouches(event, nestedTouches);
-    if (touches.length === 0) return undefined;
-
+  /**
+   * 本机触碰 → 注入文本（没有可注入的返回 undefined）。
+   *
+   * 远端触碰不进这个函数：它的 `path` 在远端解析，按本地 cwd 解锚点就是错注入。
+   */
+  const injectLocalContext = (touches: readonly Touch[], ctx: ExtensionContext): string | undefined => {
     const anchorDirs: string[] = [];
     for (const touch of touches) {
       const anchor = resolveAnchor({ rawPath: touch.rawPath, kind: touch.kind, cwd: ctx.cwd });
@@ -135,13 +135,54 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
       loaded.push({ relativePath: file.relativePath, truncated: file.truncated, bytes: file.bytes });
     }
     renderStatus(ctx);
+    return injection.text;
+  };
 
-    // 只追加一个 text block：原内容逐字保留在前，注入内容在后（模型读到的顺序即此）。
+  /**
+   * 远端提示（会话内一次）。只在有文本内容的非错误结果上追加——与注入同一条口径：
+   * 失败结果（尾部追加指令只会污染错误诊断）与纯图片结果没有落点。
+   */
+  const takeRemoteNotice = (event: ToolResultEvent): string | undefined => {
+    if (remoteNoticeShown || event.isError) return undefined;
+    if (!event.content.some((block) => block.type === "text")) return undefined;
+    remoteNoticeShown = true;
+    return REMOTE_NOTICE;
+  };
+
+  pi.on("tool_result", async (event, ctx) => {
+    // 嵌套调用（codemode 脚本的 tools.*）：结果只回到调用方工具、不进 transcript，往这里注入没意义；
+    // 但它的 `input` 是**完整入参**（宿主不截断），记下来供发起它的那次**顶层** codemode 结果使用。
+    // 不看 `isError`：文件可能已被读写，注入与这次嵌套调用的成败无关（对齐决策 1）。
+    if (event.parentToolCallId) {
+      // 远端嵌套调用不记触碰：记了就会在顶层结果里按本机 cwd 注入同名路径的上下文，
+      // 正是 dir-context-todo#4 要修的错注入。只留记号，让顶层那次结果给一次提示。
+      if (isRemoteCall(event.input)) {
+        nestedTouches.markRemote(event.parentToolCallId);
+        return undefined;
+      }
+      const touch = detectTouch(event.toolName, event.input);
+      if (touch) nestedTouches.record(event.parentToolCallId, touch);
+      return undefined;
+    }
+
+    // 远端调用（`remote` 字段来自 remote-tools 一类插件，判据见 remote.ts）：`path` 在**远端**解析、
+    // 与本地 cwd 无关 ⇒ 本机上下文一律不参与（fail-closed）。判据只看入参字段：不 import 任何插件、
+    // 不共享代码；没装 remote-tools 时这个字段根本不存在，行为与今天逐字一致。
+    // 注：内置 codemode 的入参只有 `code`，不会带 `remote`，两条分支互斥。
+    const remoteCall = isRemoteCall(event.input);
+    const collected = remoteCall ? { touches: [] as Touch[], remote: true } : collectTouches(event, nestedTouches);
+
+    const injectedText = collected.touches.length === 0 ? undefined : injectLocalContext(collected.touches, ctx);
+    const notice = collected.remote ? takeRemoteNotice(event) : undefined;
+
+    // 只追加 text block：原内容逐字保留在前，注入内容与提示在后（模型读到的顺序即此）。
     // 宿主契约：替换 `content` 而不回传 `structuredContent` 会**丢掉**结构化结果
     //（`ToolResultEventResult` 明文警告 + runner 真的 delete），而 `read` / `bash` 都产出
     // structuredContent —— 必须原样回传，否则 transcript 里的结构化数据静默丢失。
+    const appended = [injectedText, notice].filter((text): text is string => text !== undefined);
+    if (appended.length === 0) return undefined;
     return {
-      content: [...event.content, { type: "text", text: injection.text }],
+      content: [...event.content, ...appended.map((text) => ({ type: "text" as const, text }))],
       ...(event.structuredContent !== undefined ? { structuredContent: event.structuredContent } : {}),
     };
   });
@@ -170,6 +211,12 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
   };
 }
 
+interface CollectedTouches {
+  touches: Touch[];
+  /** 对应的 codemode 分组里出现过远端调用（普通工具恒 false；远端顶层调用不走这个函数）。 */
+  remote: boolean;
+}
+
 /**
  * 一次顶层工具结果 → 被触碰的路径（可能多个）。三类路径：
  * - 普通工具：入参即触碰（完整入参）。
@@ -178,20 +225,24 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
  * 两类一律零注入：失败结果（尾部追加指令只会污染错误诊断）、无文本内容的结果（纯图片等，
  * 追加元信息没有落点）。嵌套调用自身在 handler 入口就分流了（不注入，只记触碰）。
  */
-function collectTouches(event: ToolResultEvent, nestedTouches: NestedTouchBuffer): Touch[] {
+function collectTouches(event: ToolResultEvent, nestedTouches: NestedTouchBuffer): CollectedTouches {
+  const empty: CollectedTouches = { touches: [], remote: false };
   // 判「是不是 codemode」只认工具名（与 details 形状解耦）：无论 details 长什么样，该组缓冲都要在
   // 这次结果处取走，也都要给缓冲触碰一个上场的时机（details 不可用时它就是唯一来源）。
   if (isCodemodeResult(event.toolName)) {
     const buffered = nestedTouches.take(event.toolCallId);
-    if (event.isError) return [];
-    if (!event.content.some((block) => block.type === "text")) return [];
-    return dedupeTouches([...buffered, ...(detectCodemodeTouches(event.toolName, event.details) ?? [])]);
+    if (event.isError) return empty;
+    if (!event.content.some((block) => block.type === "text")) return empty;
+    return {
+      touches: dedupeTouches([...buffered.touches, ...(detectCodemodeTouches(event.toolName, event.details) ?? [])]),
+      remote: buffered.remote,
+    };
   }
 
-  if (event.isError) return [];
-  if (!event.content.some((block) => block.type === "text")) return [];
+  if (event.isError) return empty;
+  if (!event.content.some((block) => block.type === "text")) return empty;
   const touch = detectTouch(event.toolName, event.input);
-  return touch ? [touch] : [];
+  return { touches: touch ? [touch] : [], remote: false };
 }
 
 function readContextFile(absolutePath: string): { ok: true; value: string } | DirContextError {
