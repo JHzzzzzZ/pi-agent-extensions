@@ -217,7 +217,7 @@
       "id": 12,
       "globalId": 371,
       "text": "远端 bash 超时语义与本地对齐（用户 2026-10-11 实测）：本地超时=不杀进程+转后台+日志+结束通知（bg-8 闭环）；远端超时=宿主原生消息「Command timed out after N seconds」+ 本地 ssh 被杀，但**远端命令继续孤儿运行**（实测 sleep 15 超时后仍写出标记文件），无 job、无日志、无通知，文案还误导为「已结束」。用户选定方案 B：远端超时也走 timeout-bg 的转后台语义——ssh 不被 kill、输出继续落盘、给出可查询 job、结束时通知。契约 docs/cross/shell-tool-capability.md 补「远端超时」一节（现无任何描述），并加集成测试（现无任何断言）。跨扩展边界待对齐：timeout-bg 的 job 注册/通知能力如何被远端分支复用（禁跨扩展 import）",
-      "status": "aligned",
+      "status": "done",
       "branch": "feat/remote-timeout-bg",
       "tags": [
         "超时",
@@ -228,11 +228,12 @@
       "dependsOn": [],
       "notes": [
         "5 条设计决策经用户逐条 yes 确认（见对齐文档）",
-        "撤销 2026-10-11：从 processing 回到未领取；交接：实现由用户执行，退回待领取（aligned 交付）"
+        "撤销 2026-10-11：从 processing 回到未领取；交接：实现由用户执行，退回待领取（aligned 交付）",
+        "方案 B 落地（feat/remote-timeout-bg，merge e8584af，已推送）：远端超时不再杀 ssh、输出继续落本地 job 日志、经新频道 pi-extensions:shell-job-host:v1 登记为统一 job；/bg:kill 按 /tmp pid 文件尽力杀远端进程组（TERM→KILL）再断 ssh；未装 timeout-bg 时行为与改动前逐字一致；远端沿用默认超时 300s。文档四处同步（契约卡/规格+实现注记/两张扩展卡/根与扩展 README/状态条契约 80 段）。测试：remote-tools 91 本地 + 9 真机 opt-in（真机 9/9 绿：不断连与 kill 生效）、timeout-bg 53；全量 22/22。真机抓到并修掉 pid 文件 TERM trap 吞信号问题。跨厂商评审 3 轮（kimi-coding/k3-256k）：0 阻断、终轮无新意见；第 3 轮唯一非阻断备注（错误码透传缺测试）已补用例。"
       ],
       "createdAt": "2026-10-11T05:37:06.449Z",
       "claimedAt": "2026-10-11T05:41:22.605Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T06:45:42.305Z",
       "alignedAt": "2026-10-11T05:41:22.836Z"
     }
   ]
