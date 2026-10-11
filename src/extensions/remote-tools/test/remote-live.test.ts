@@ -225,12 +225,72 @@ test("真机：远端不存在 / 无权限报结构化错误码（不是未捕�
 	);
 });
 
-test("真机：不可达/未知主机 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {
-	const exec = createSpawnExec();
+test("真机：不可达/未知主机 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {	const exec = createSpawnExec();
 	const bogus = { host: "pi-remote-tools.invalid", user: "nobody", port: undefined };
 	assert.equal(buildSshArgs(bogus, "true").includes("-o"), true);
 
 	const result = await runSsh(exec, bogus, "true", { timeoutMs: 20_000 });
 	assert.notEqual(result.exitCode, 0, "不存在的域名不该成功");
 	assert.equal(result.stderr.length > 0, true);
+});
+
+test("真机：远端 bash 真在远端跑；ls/find 的不存在/传文件报结构化错误且不泄露宿主标记路径（remote-tools#9/#10）", { skip }, async () => {
+	const tools = new Map<string, ToolDefinition>();
+	registerRemoteTools(
+		{
+			registerTool(tool: ToolDefinition) {
+				tools.set(tool.name, tool);
+			},
+		} as unknown as ExtensionAPI,
+		{ exec: createSpawnExec(), cwd: process.cwd() },
+	);
+	const ctx = {
+		cwd: process.cwd(),
+		sessionManager: { getSessionId: () => "live-errors", getSessionFile: () => undefined },
+	} as unknown as ExtensionToolContext;
+	const remote = targetInput as string;
+	const base = baseDirInput ?? (await makeSession().home());
+	const marker = `${base}/.pi-remote-tools-probe-${Date.now()}`;
+	const file = `${marker}/probe.txt`;
+	const text = (result: { content: Array<{ type: string; text?: string }> }): string =>
+		result.content.map((part) => (part.type === "text" ? (part.text ?? "") : "")).join("");
+	const failure = (run: () => Promise<unknown>): Promise<string> =>
+		run().then(
+			() => "",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+
+	try {
+		// 远端 bash 真的在远端跑（本机是 MINGW64_NT，远端是 Linux）。
+		const uname = await tools.get("bash")!.execute(ID, { command: "uname -s", remote }, undefined, undefined, ctx);
+		assert.match(text(uname as never), /Linux/, "带 remote 的 bash 必须真的在远端执行");
+
+		await tools.get("bash")!.execute(ID, { command: `mkdir -p '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+		await tools.get("write")!.execute(ID, { path: file, content: "probe\n", remote }, undefined, undefined, ctx);
+
+		// 真目录：正常列出（探针缓存路径的真机分支）。
+		const listed = await tools.get("ls")!.execute(ID, { path: marker, remote }, undefined, undefined, ctx);
+		assert.match(text(listed as never), /probe\.txt/);
+
+		const missing = `${marker}/nope-${Date.now()}`;
+		for (const [name, params] of [
+			["ls", { path: missing }],
+			["find", { path: missing, pattern: "**/*.ts" }],
+		] as Array<[string, Record<string, unknown>]>) {
+			const message = await failure(() => tools.get(name)!.execute(ID, { ...params, remote }, undefined, undefined, ctx));
+			assert.match(message, new RegExp(`^${ErrorCodes.REMOTE_NOT_FOUND}`), `${name}: ${message}`);
+			assert.equal(message.includes("pi-remote"), false, `${name} 不得回灌宿主标记路径：${message}`);
+			assert.equal(message.includes("Path not found"), false, `${name} 不得落到宿主错误模板：${message}`);
+		}
+		for (const [name, params] of [
+			["ls", { path: file }],
+			["find", { path: file, pattern: "**/*.ts" }],
+		] as Array<[string, Record<string, unknown>]>) {
+			const message = await failure(() => tools.get(name)!.execute(ID, { ...params, remote }, undefined, undefined, ctx));
+			assert.match(message, new RegExp(`^${ErrorCodes.REMOTE_NOT_DIRECTORY}`), `${name}: ${message}`);
+			assert.equal(message.includes("Not a directory"), false, `${name} 不得落到宿主错误模板：${message}`);
+		}
+	} finally {
+		await tools.get("bash")!.execute(ID, { command: `rm -rf '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+	}
 });
