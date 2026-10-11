@@ -66,7 +66,7 @@
       "id": 4,
       "globalId": 370,
       "text": "closes#3 遗留：远端调用的锚点错判。现状（实机+真实函数验证）：remote-tools 的调用入参带 remote 字段，而 dir-context 只看 path 按本地 cwd 解析——① 远端绝对路径（/srv/app/x.md）落在 cwd 之外 ⇒ 零注入（静默）；② **远端相对路径（docs/x.md，remote-tools 按远端 $HOME 解析）被当成本地路径 ⇒ 注入本地 docs/AGENTS.md（错注入，比不注入更危险）**。要求：① 远端判据 = 工具入参 remote 字段存在且非空字符串且非缺省值字面量（与 remote-tools 同口径），命中即一律零注入（fail-closed，不看 path，绝不按本地 cwd 解析）；② **不得依赖 remote-tools 插件**——只读入参字段，不 import 其内部（resolveToolPath/createSessionCache 是内部面），remote-tools 未安装 / 工具无 remote 参数 / 字段缺失或为空 ⇒ 完全维持现状（本地路径照常注入），静默无异常；③ 首次远端触碰时在结果里追加一行提示（会话内一次；不含远端内容），告知模型可自行 read remote=<host> path=<远端>/AGENTS.md；④ 文档：dir-context 卡片/README 写契约，remote-tools 卡片交叉引用一句。范围外：remote-tools 侧随行注入远端上下文（留待真机案例驱动）、dir-context 自己 ssh、远端 grep/find。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/dir-context-remote-calls",
       "tags": [
         "enhancement",
@@ -74,10 +74,12 @@
       ],
       "priority": 7,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "完成 2026-10-11 @ merge 9e4419e（feat/dir-context-remote-calls / dir-context 1.3.0 / 根 2.68.0）：入参带非空 remote（非空字符串且非缺省值字面量 null/undefined/nil/none/n/a/na，trim+大小写无关）即判为远端调用，三条通路各自拦截（顶层 sidestep 不看 path；嵌套事件在记触碰之前拦、只 markRemote 留记号；details.calls 兜底独立拦）⇒ 一律零注入，绝不按本地 cwd 解锚点。不 import remote-tools 任何模块（判据只看入参字段，缺省值字面量集合自持一份）。字段缺失/空/纯空白/非缺省值字面量 ⇒ 本地行为逐字不变。会话内首次远端触碰追加一行静态提示（不插值模型输入），session_start/session_compact 重置；失败结果与纯图片结果不追加、也不消耗配额。测试 79→97（远端判据 7 纯逻辑 + 宿主事件路径 36）。跨厂商评审 3 轮（kimi-coding/k3-256k，与 DeepSeek 系不同厂商）：第 1 轮 1 P1（AGENTS.md 计数过期）+4 P2 → 403fc9a，第 2 轮 4 P2（含差分断言可被「既记又标」骗过这一真缺陷）→ 6e29b03 + 变异验证，第 3 轮无新意见。真机验收（真实 pi + 真实 remote-tools + 真实 ssh 到本机 WSL）：本地调用照常注入；同一条远端相对路径（ls .config remote=user@localhost）修复前注入本机 .config/AGENTS.md、修复后零注入+提示；远端绝对路径 read 真内容到达；同会话第二次远端调用纯透传。全仓 test:all 唯一失败是既有 todo-cli#21（Windows 并发 rename EPERM，本分支未触碰）。"
+      ],
       "createdAt": "2026-10-11T04:48:33.956Z",
       "claimedAt": "2026-10-11T04:48:34.254Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T06:37:28.458Z",
       "alignedAt": "2026-10-11T05:36:00.209Z"
     }
   ]
