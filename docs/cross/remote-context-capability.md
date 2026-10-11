@@ -16,7 +16,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 频道名 | `pi-extensions:dir-context-remote-context:v1`（形状升级开新频道 `…:v2`，不做版本字段——与 shell 频道同口径） |
+| 频道名 | `pi-extensions:dir-context-remote-context:v2`（**线格式不兼容变更就升频道号**，不做版本字段——与 shell 频道同口径；`#6` 的 v1 → `#13` 的 v2 就是因为分帧换了编码） |
 | 方向 | 消费方 `dir-context` 在 `session_start` **广播空盒子**，提供方 `remote-tools` 在**同步**回调里填 `box.remoteContext` |
 | 盒子 | `{ remoteContext?: RemoteContextCapability }` |
 | 填充规则 | 槽位已有值不覆盖（先到先得）；盒子不是对象 ⇒ 忽略 |
@@ -42,8 +42,8 @@
 
 | 形状 | 语义 |
 | --- | --- |
-| `{ ok: true, dir: string, files: { path, content }[] }` | 取到了（`files` 可为空 = 该链上确实没有约定文件；**空的真文件也会作为空内容列出**）。链上任一候选存在却读不出 ⇒ 不走这条，直接 `ok: false` |
-| `{ ok: false, code: string, message: string }` | 取不到（解析失败 / ssh 失败 / 远端非零退出） |
+| `{ ok: true, dir: string, files: { path, content }[] }` | 取到了（`files` 可为空 = 该链上确实没有约定文件）。**空的真文件也会作为空内容列出**——提供方照实上报，注不注入由消费方判（消费方对空内容走 `nothing`）。链上任一候选存在却读不出 ⇒ 不走这条，直接 `ok: false` |
+| `{ ok: false, code: string, message: string }` | 取不到。码有两个：`REMOTE_CONTEXT_UNREADABLE`（链上候选存在但读不出——消费方据此给**专属**提示）、`REMOTE_CONTEXT_FAILED`（解析失败 / ssh 失败 / 远端非零退出 / 远端缺 `base64`）。消费方**按码判定，不摘要 message**；未知码回落通用提示 |
 
 ## 双方义务
 
@@ -58,12 +58,34 @@
 - **一趟 ssh**：一条祖先链合成**一条**远端命令取完（不逐级往返）。远端没有 cwd 概念，链的终点是
   远端解析基准：相对/省略路径走到远端 `$HOME`、绝对路径走到 `/`（两端都含，由外向内，深度有上限）。
 - **锚点逃出基准即空链**（fail-closed）：`..` 越过 `$HOME` 的路径不取，零注入。
-- **消费方的三态**：`injected`（真的注入了 ⇒ **不再**追加提示）/ `nothing`（已注入过、或远端确实没有
-  约定文件 ⇒ 不是失败，也不提示）/ `unavailable`（没装对端或取失败 ⇒ 退回那行静态提示）。
+- **消费方的三态**：`injected`（真的注入了 ⇒ **不再**追加提示）/ `nothing`（已注入过、远端确实没有约定文件、
+  或取回的**内容为空** ⇒ 不是失败，也不提示）/ `unavailable`（没装对端或取失败 ⇒ 退回那行静态提示，
+  `REMOTE_CONTEXT_UNREADABLE` 时退回的是**权限专属**那条，见下）。
 - **块头自报来源**：远端块的 `Loaded` 行与 `<dir-context remote="…">` 属性都带 host
   （`Loaded <host>:<远端绝对路径>`），避免把远端约定误当本机约定；本地块格式逐字不变。
 - **路径帧要校验**：远端登录 rc/banner 可能往 stdout 吐东西 ⇒ 提供方解析时丢弃「不以 `/` 开头或含换行」的路径帧（内容不可信，不往上下文里编）；根目录拼命令时不产出 `//` 前缀（POSIX 对 `//` 是实现自定义）。
-- **读不出 ≠ 不存在**：命令用 `[ -f ]` 判存在、`[ -r ]` 判读得出；**存在但读不出**时发一个带 SOH（`\x01`）前缀的标记帧（真实路径帧恒以 `/` 开头，撞不了车）。只要链上出现任一个读不出的候选 ⇒ 整条请求 `ok: false`（fail-closed）——**绝不静默少注入**：那个读不出的正是最该生效的那份约定，而且消费方据此走 `unavailable`（出提示行、不标记已注入，权限修好后同一会话还能重试）。`-f` 单判会踩的坑：文件 `chmod 000` 时 `-f` 仍为真、`cat` 失败只写 stderr ⇒ 内容帧为空 ⇒ 被当成「真的空文件」，注入空块 + 抑制提示 + 误标已注入（`dir-context-todo#7`）。已知边界：`-r` 为真但 `cat` 仍失败（竞态 / IO 错误 / NFS root-squash）会退回「空帧 = 空文件」的老行为——概率极低，记录不改。
+- **线格式 v2（伪造-proof）**：一趟 ssh 的 stdout 由重复的 `MARK <path>\0<payload>\0` 组成，
+  `MARK` 是 `\x01`（读得出，payload = 内容的 base64）/ `\x02`（存在但读不出，payload 空）/
+  `\x03`（远端没有 `base64`，单帧）。**为什么 payload 必须 base64**（`remote-tools-todo#13`）：
+  v1 直接发原文，等于把「NUL 不会出现在文本内容里」当契约——而内容不可信，含 NUL 的文件
+  （`FIRST\0/evil\0SECOND`）会让 NUL 变成帧边界，从而**伪造出任意路径的块**并把真内容劈成两半。
+  base64 的字母表不含 NUL / SOH / STX ⇒ 每个 NUL 分隔段都是完整帧，内容再也无法参与边界判定；
+  代价是线上体积 +33%（一趟 ssh，可忽略）。`\x03` 的存在理由：远端缺 `base64` 时它只往 stderr 报错、
+  stdout 什么都不出 ⇒ 否则会得到「空载荷 ⇒ 看起来像空文件 ⇒ 静默跳过」。
+- **读不出 ≠ 不存在**：命令用 `[ -f ]` 判存在、`[ -r ]` 判读得出，读不出时发 `\x02` 帧。只要链上出现
+  任一个读不出的候选 ⇒ 整条请求 `ok: false` 且码是 `REMOTE_CONTEXT_UNREADABLE`（fail-closed）——
+  **绝不静默少注入**：那个读不出的正是最该生效的那份约定。消费方据此走 `unavailable`：出提示行、
+  **不标记已注入**（权限修好后同一会话再触碰就能拿到），且提示是**权限专属**那条（`dir-context-todo#8`：
+  使用者的下一步动作是「去 chmod」，与「没装 remote-tools」的「自己去 read」不同）。
+  已知边界：`-r` 为真但 `base64` 仍读失败（竞态 / IO 错误 / NFS root-squash）会退回「空载荷 = 空文件」——
+  概率极低，记录不改。
+- **路径必须归一化后再用**（`remote-tools-todo#14`）：解析出远端绝对路径后立刻 `posix.normalize`，
+  再用于祖先链与帧里的 `<path>`。消费方的去重键与块标题都取自帧里的路径 ⇒ 提供方一处归一同时修好两边；
+  否则 `.`/`..` 一变就是一个新键（同一份 `AGENTS.md` 被重复注入，标题也不是真实路径）。
+  不做符号链接同文件识别（那要 `realpath`；判据是「路径字符串归一」而非「文件身份」）。
+- **空内容归消费方判**（`dir-context-todo#9`）：0 字节的约定文件由提供方照实上报（`ok: true` + 空内容），
+  消费方判定「空 ⇒ 无可注入的新内容」⇒ 走 `nothing`（不注入空块、不标记、不提示）。
+  不这么做的代价：空块是噪声，且被标成已注入 ⇒ 文件后来有内容时**同一会话**也拿不到。
 - **不在触发面上的工具不取**：`grep`/`find` 这类工具带 `remote` 时不申请远端上下文（只按入参字段给提示）。
 
 ## 相关
@@ -71,6 +93,6 @@
 - 消费方：`src/extensions/dir-context/remote-context.ts`（握手 + 守卫）、`index.ts`（三态与注入接线）
 - 提供方：`src/extensions/remote-tools/context.ts`（祖先链 + 命令拼装 + NUL 分帧）、`tools.ts`（订阅填槽）
 - 卡片：[`extensions/dir-context.md`](../extensions/dir-context.md)、[`extensions/remote-tools.md`](../extensions/remote-tools.md)
-- 规格：[`specs/dir-context.md`](../specs/dir-context.md)
-- 需求与对齐：`todos/align/dir-context-todo#6.md`
+- 规格：[`specs/dir-context.md`](../specs/dir-context.md)、[`specs/remote-context-v2.md`](../specs/remote-context-v2.md)
+- 需求与对齐：`todos/align/dir-context-todo#6.md`（握手与三态）、`todos/align/remote-context-v2-design.md` + 四份 `todos/align/*#13|#14|#8|#9*.md`（协议 v2）
 - 同类先例：[`shell-tool-capability.md`](shell-tool-capability.md)（那片是 owner 广播、提供方填槽）
