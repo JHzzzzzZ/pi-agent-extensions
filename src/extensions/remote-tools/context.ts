@@ -177,8 +177,10 @@ export function parseContextFiles(stdout: Buffer): ParsedContextOutput {
 			continue;
 		}
 		if (mark !== FRAME_MARK.readable) continue;
-		// base64 允许换行包裹（GNU 默认 76 列）⇒ 解码前剥空白，行尾差异不影响字节。
-		files.push({ path, content: Buffer.from(payload.replace(/\s+/g, ""), "base64").toString("utf8") });
+		// 载荷是 base64：GNU 的 `base64` 默认按 76 列折行，而 Node 的解码器忽略字母表外字符（含空白），
+		// 所以不需要先剥空白。曾经有一行 `payload.replace(/\s+/g, "")`，实测与不剥行为完全等价
+		// （变异测试也抓不到区别）——按「不留以防万一的分支」删掉。
+		files.push({ path, content: Buffer.from(payload, "base64").toString("utf8") });
 	}
 	return { files, unreadable, unsupported };
 }

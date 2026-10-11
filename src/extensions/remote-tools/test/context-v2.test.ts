@@ -62,7 +62,10 @@ function runRealShell(dir: string): Buffer | null {
 test("真 shell 往返：内容含 NUL 也只产出一个帧，字节级还原（v1 能被内容伪造出帧边界）", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rc-v2-"));
   try {
-    const forged = "FIRST\u0000/evil\u0000SECOND\n中文\t制表\r\n空行下面\n\n尾";
+    // 内容撑过 57 字节：GNU base64 默认 76 列换行，短内容永远一行 ⇒「解码前剥空白」这条路径
+    // 在端到端上就永远跑不到真输入（Node 的 base64 解码本身容忍空白，光看结果发现不了）。
+    const forged = `FIRST\u0000/evil\u0000SECOND\n中文\t制表\r\n空行下面\n\n尾\n${"0123456789".repeat(12)}`;
+    assert.ok(Buffer.byteLength(forged, "utf8") > 57, "fixture 必须撑过 57 字节，否则 base64 不换行");
     fs.writeFileSync(path.join(dir, "AGENTS.md"), forged);
     const stdout = runRealShell(dir);
     if (stdout === null) return t.skip("本机没有 bash 或 base64（平台条件不满足）");
@@ -75,6 +78,8 @@ test("真 shell 往返：内容含 NUL 也只产出一个帧，字节级还原�
     assert.ok(first.path.endsWith("/AGENTS.md"), `路径帧是真实路径：${first.path}`);
     assert.equal(decode(first.payload).toString("utf8"), forged, "字节级还原：NUL / 制表 / CRLF / 空行 / 中文都不丢");
     assert.ok(decode(first.payload).includes(0), "内容里的 NUL 真的还在（不是被悄悄吃掉）");
+    assert.ok(first.payload.includes("\n"), "base64 载荷真的带换行（GNU 默认 76 列）⇒「解码前剥空白」被真实触发");
+    assert.ok(!first.payload.includes("\u0000"), "载荷里不可能有 NUL：这正是内容无法伪造帧边界的原因");
     assert.equal(parts[2], "", "帧尾分帧符之后没有多余段 ⇒ 没有被伪造出来的第二个路径");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

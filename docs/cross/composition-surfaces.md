@@ -124,7 +124,7 @@ events 订阅: -
 widget: -
 工具: -
 工具面: -
-events 广播: -
+events 广播: pi-extensions:dir-context-remote-context:v2
 events 订阅: -
 宿主钩子: session_start, session_compact, session_shutdown, tool_result
 模型面: -
@@ -245,7 +245,7 @@ widget: -
 工具: -
 工具面: replace:read, replace:write, replace:edit, replace:ls, replace:find, replace:grep, replace:bash
 events 广播: -
-events 订阅: pi-extensions:shell-capability:v1
+events 订阅: pi-extensions:shell-capability:v1, pi-extensions:dir-context-remote-context:v2
 宿主钩子: -
 模型面: -
 命令: -
