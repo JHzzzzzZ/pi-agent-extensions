@@ -517,6 +517,40 @@
       "claimedAt": "2026-10-11T05:49:33.581Z",
       "completedAt": "2026-10-11T06:10:28.450Z",
       "alignedAt": "2026-10-11T05:49:53.763Z"
+    },
+    {
+      "id": 32,
+      "globalId": 374,
+      "text": "插件组合集成测试矩阵（用户 2026-10-11 提出）：插件已 18 个，需要系统化验证两种性质——① A+B 同时加载能兼容运行；② A 与 B 各自单独加载也能独立运行（缺对方提供的频道/工具/槽位时走声明的降级路径，不崩、不静默错行为）。方案骨架（待对齐细化）：三层——L1 单装（每插件单独装进临时 PI 目录加载，断言注册面自洽、无隐式跨插件依赖）；L2 声明式配对（每插件声明所占接触面：状态键/widget 槽、pi.events 能力频道、内置工具面、宿主事件钩子、模型面；脚本按接触面交集生成配对，跑真实 ExtensionRunner + 真实事件总线，断言双方注册成功、同槽不互相覆盖、顺序无关、卸载/重载幂等）；L3 契约场景（真 pi RPC + 真模型 opt-in，如 remote-tools × timeout-bg 远端超时转后台）。复用 tools/install-smoke.mjs（扩 --matrix）与 tools/test-all.mjs（纳入总门）；现状种子 = 已有 4 个宿主路径跨扩展测试（solo-gate / capability / shell-composition / timeout-bg index）+ docs/cross/ 6 份契约卡。待定选择：① 接触面清单落点（docs/cross/ 单文件表 vs 每插件 README 声明 + 脚本聚合）；② 配对生成方式（自动生成 vs 人工白名单 vs 自动+白名单覆盖）。验收：L1/L2 离线进 test:all 且无网络依赖；新增插件时自动进矩阵（漏声明接触面时报错而非静默跳过）；关键组合（remote-tools×timeout-bg、jev-safe-gate×solo-mode、dir-context×内置工具面）有专测；能给出「A+B 兼容 / A、B 独立」的可执行判据。",
+      "status": "done",
+      "branch": "feat/composition-test-matrix",
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "完成 2026-10-11 @ merge 7414d1d（feat a7d9316 / 追修 2c18af9）。交付：① 接触面清单 docs/cross/composition-surfaces.md（17 个扩展逐条声明状态键/widget/工具与工具面/events 广播订阅/宿主钩子/模型面/文件契约/命令/快捷键 + 独占声明/共享槽/模式）；② 校验器 tools/composition-surfaces.mjs（完备性 + 声明↔源码正向校验 + 共享槽仲裁 + 配对生成，现 16 对，不做 N²）；③ L1 单装 test/composition-standalone.test.ts（加载 + 生命周期可重入 + 注册面 ⊆ 声明且声明 ⊆ 观测，含状态键/widget/钩子/命令/快捷键；agent-team cockpit/leader 双模式专测）；④ L2 配对 test/composition-pairs.test.ts + test/helpers/pair-probe.mjs（每对一个子进程、正反两种加载顺序、顺序无关、共享槽已裁决）；⑤ 接入 tools/test-all.mjs 的 root:composition（56 用例 ≈45s，--test-force-exit）；⑥ 变异自证两条（注入同名工具必须被看见；未声明同槽必须判冲突）。评审 kimi-coding/k3-256k 两轮：第 1 轮 OK with notes（11 条全处理，含 pwr/deep-init 也消费 PI_SOLO_MODE_FILE 而清单漏声明的真盲区 → 配对 10→16）；第 2 轮 No issues found / OK。自测：主干 npm run test:all 23 套件 2448→全绿（composition 56/56）。合并后主干复跑时反向断言又抓到一处清单陈旧（timeout-bg 80:timeout-bg 状态键），修于 2c18af9——即该断言确实在干活。拆出后续条目 general-todo#33（降级语义 fail-closed/fail-soft 的逐扩展声明与断言，规格 §User Story 8 已标注未实现）。"
+      ],
+      "createdAt": "2026-10-11T06:19:16.263Z",
+      "claimedAt": "2026-10-11T06:19:16.891Z",
+      "completedAt": "2026-10-11T08:02:29.806Z",
+      "alignedAt": "2026-10-11T06:26:28.213Z"
+    },
+    {
+      "id": 33,
+      "globalId": 377,
+      "text": "接触面清单补「降级语义」声明与断言（general-todo#32 评审第 1 轮 P2#7 拆出的后续）：当前 L1 只验「单独加载不抛未捕获异常 + 注册面自洽」，清单没有 fail-closed / fail-soft 的逐扩展声明，规格 §User Story 8 与原文的降级承诺因此降级为「未实现」。要求：① 清单增字段「降级」（取 fail-closed:<错误码> 或 fail-soft），逐扩展声明缺对方提供物（events 频道 / 文件契约 / 工具面）时的行为；② 校验器校验错误码取值形态；③ L1/L2 加断言：单装时若声明 fail-closed，缺频道的行为必须给出该错误码（而不是静默成功），fail-soft 则不得抛错。验收：清单 17 个扩展全部有降级声明；人为把某扩展的 fail-closed 改成静默成功 ⇒ 套件红（变异自证）。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [
+        "general-todo#32"
+      ],
+      "notes": [],
+      "createdAt": "2026-10-11T07:41:01.731Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
