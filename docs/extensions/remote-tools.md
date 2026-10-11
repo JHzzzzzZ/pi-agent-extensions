@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 046c419
+> last verified @ 846213e
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
@@ -172,4 +172,6 @@ pi --print --no-session --no-extensions -e <本目录>/index.ts -e <timeout-bg �
   建议②（`last verified` 改指文档提交）**驳回**，理由=仓库惯例是**指向被验证的代码提交**（见 `docs/extensions/jev-safe-gate.md`
   头部 = feat 提交，其后的文档同步提交信息就是「同步 … last verified 标记（@ 20acc24）」）。
 - **评审记录（`#7`/`#8`）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 4 备注）：① `readFile` 的目录分支位次错误（`-e` 对目录同样成立 ⇒ 先 `cat` 把「是目录」误报成「权限不足」，`exit 4` 真机不可达）——已改为目录分支在前，并补命令形态断言与真机目录断言；② 真机用例里过时的旧标记注释——已改；③ 本卡“见下方评审记录”的悬空引用——已补（即本条）；④ 规格里绕口的范围外措辞——第 1 轮称已改但实际未落地，第 2 轮回补（现为「不做远端文件缓存」）。第 2 轮（复评本轮修复）= 可合并（0 阻断 / 0 建议 / 2 文档备注）：⑤ 规格范围外措辞回补——已改；⑥ 本卡 `ops.ts` 文件地图还写着「`if [ -e ]` 一次往返区分不存在/是目录/正常」——已改为「目录分支在前的 `if/elif`」。第 3 轮（复核两条文档备注）= 可合并（0 阻断 / 0 建议 / 0 备注）：四条核对全部通过，无新意见。
+- **评审记录（`#9`/`#10`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 0 建议 / 5 备注）：① `negotiateBash` 的 `base` 死参数——已删（`846213e`）；② timeout-bg 卡 `last verified` 与共享文档不同——**驳回**（惯例是「指向被验证的**代码**提交」，见上面 `#6` 那条；本轮已按最后一次动代码的提交统一为 `846213e`）；③ 两份 align 文档的「抛错回退原路径」与实现的安全口径冲突——**驳回**（对齐文档是开工前的人工确认记录，事后回写会让对齐门失去意义；偏离与理由已按红线 3 记在 `docs/specs/shell-tool-composition.md`，并在 `complete` 备注重申）；④ 模型面文案仍写「path 必须是远端绝对 POSIX 路径」——已改为「相对路径/省略按远端 $HOME」（`846213e`：`REMOTE_GUIDELINE` + 7 处参数/工具说明 + README）；⑤ `remote-live.test.ts` 一处排版——已修（`846213e`）。第 2 轮（复核 ①④⑤）= 见下条。
+- **评审记录（第 2 轮）**：待补（复核完成后回填）。
 - **坑（评审备注记录的边缘场景）**：若扩展目录路径**本身**含 U+00A0 之类的 unicode 空格，宿主的 `normalizePath` 会把它改写成普通空格 ⇒ 标记根前缀失配 ⇒ 远端调用 fail-closed 报 `REMOTE_PATH_NOT_ABSOLUTE`（是误报，不是静默放行；概率极低，记录不改）。
