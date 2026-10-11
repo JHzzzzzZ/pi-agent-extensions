@@ -56,16 +56,19 @@ function makeUi(): { ui: ExtensionUIContext; seen: Seen } {
   return { ui, seen };
 }
 
-/** 一棵真实的小项目树：src/AGENTS.md + src/components/{AGENTS.md,Button.tsx}。 */
+/** 一棵真实的小项目树：src/AGENTS.md + src/components/{AGENTS.md,Button.tsx} + docs/AGENTS.md。 */
 function makeProject(): { cwd: string; cleanup: () => void } {
   // realpath 归一：与 canonicalize 同一坐标系（Windows 临时目录大小写差异会造成假红）。
   const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "dir-context-host-")));
   fs.mkdirSync(path.join(cwd, "src", "components"), { recursive: true });
+  // docs/ 是给「远端触碰不得泄进注入」那组用例的诱饵：它不在任何本地触碰的目录链上。
+  fs.mkdirSync(path.join(cwd, "docs"), { recursive: true });
   fs.writeFileSync(path.join(cwd, "AGENTS.md"), "根约定（pi 已加载，插件不得重复注入）");
   fs.writeFileSync(path.join(cwd, "src", "AGENTS.md"), "src 约定");
   fs.writeFileSync(path.join(cwd, "src", "components", "AGENTS.md"), "组件约定");
   fs.writeFileSync(path.join(cwd, "src", "components", "Button.tsx"), "export const Button = 1;\n");
   fs.writeFileSync(path.join(cwd, "src", "index.ts"), "export {};\n");
+  fs.writeFileSync(path.join(cwd, "docs", "AGENTS.md"), "docs 约定（只在被本地触碰时该出现）");
   return { cwd, cleanup: () => fs.rmSync(cwd, { recursive: true, force: true }) };
 }
 
@@ -485,31 +488,33 @@ test("远端调用不限定工具：顶层 remote bash 与 grep 同样零注入�
   t.after(project.cleanup);
   const h = await startHarness(t, project.cwd);
 
-  // bash 在本插件触发面上（单文件读白名单），带 remote ⇒ 不认那个本地目标。
-  const bash = await h.runner.emitToolResult(
-    toolResult({ toolName: "bash", toolInput: { command: "cat src/index.ts", remote: "prod" } }),
-  );
-  const bashText = injectedText(bash);
-  assert.doesNotMatch(bashText, /Loaded/, "远端 bash 不得注入本机上下文");
-  assert.match(bashText, /远端调用/, "首个远端结果要给提示");
-
-  // grep 本就不在触发面上（恒零注入）；它带 remote 时同样吃那行提示（附着面按字段，不按工具）。
+  // grep 不在触发面上（恒零注入）；带 remote 时它照样吃那行提示（附着面按字段，不按工具）。
   const grep = await h.runner.emitToolResult(
     toolResult({ toolName: "grep", toolInput: { pattern: "x", path: "src", remote: "prod" } }),
   );
+  const grepText = injectedText(grep);
+  assert.doesNotMatch(grepText, /Loaded/, "grep 本就不在触发面上");
+  assert.match(grepText, /远端调用/, "带 remote 的 grep 结果同样吃那行提示（附着面按字段）");
+
+  // bash 在触发面上但命中远端 ⇒ 零注入；提示已用掉 ⇒ 纯透传。
   assert.equal(
-    await h.runner.emitToolResult(toolResult({ toolName: "grep", toolInput: { pattern: "x", path: "src", remote: "prod" } })),
+    await h.runner.emitToolResult(toolResult({ toolName: "bash", toolInput: { command: "cat src/index.ts", remote: "prod" } })),
     undefined,
-    "提示已给过 + 恒零注入 ⇒ 纯透传",
+    "远端 bash：既不注入、也不再重复提示",
   );
-  assert.equal(grep, undefined, "同上（第一次调用时提示已在上一条 bash 结果上用掉）");
 });
 
 test("codemode 混合：本地触碰照注入、远端触碰对注入内容零贡献（只多一行提示）", async (t) => {
   const project = makeProject();
   t.after(project.cleanup);
 
-  /** 同一棵树跑两次：一次只有本地嵌套读，一次再叠一条远端嵌套读。 */
+  /**
+   * 同一棵树跑两次：一次只有本地嵌套读，一次再叠一条远端嵌套读。
+   *
+   * 远端那条必须挑一个**不在本地触碰目录链上**的路径（docs/），否则「既记又标」（嵌套分支漏
+   * `return`：远端触碰既 markRemote 又 record）这种错误会被去重抹平，等式照样成立——断言就形同
+   * 虚设（评审 round 2 的 P2-3）。
+   */
   const run = async (withRemote: boolean): Promise<string> => {
     const h = await startHarness(t, project.cwd);
     await h.runner.emitToolResult(
@@ -517,7 +522,7 @@ test("codemode 混合：本地触碰照注入、远端触碰对注入内容零�
     );
     if (withRemote) {
       await h.runner.emitToolResult(
-        nestedCall({ toolName: "read", toolInput: { path: "src/index.ts", remote: "prod" }, parentToolCallId: "call-m", index: 2 }),
+        nestedCall({ toolName: "read", toolInput: { path: "docs/remote-only.ts", remote: "prod" }, parentToolCallId: "call-m", index: 2 }),
       );
     }
     const top = await h.runner.emitToolResult(
@@ -528,10 +533,9 @@ test("codemode 混合：本地触碰照注入、远端触碰对注入内容零�
 
   const localOnly = await run(false);
   const mixed = await run(true);
-  // 远端那条 src/index.ts 与本地那条同目录链：若它参与了注入，无论多注（两份 src 链）还是少注
-  // （只认后面那条）都会与这个等式不等。
   assert.match(localOnly, /Loaded src\/AGENTS\.md/);
   assert.match(localOnly, /Loaded src\/components\/AGENTS\.md/);
+  assert.doesNotMatch(localOnly, /docs\/AGENTS\.md/, "对照组里 docs/ 不该出现（它只被远端触碰过）");
   assert.equal(mixed, `${localOnly}\n${REMOTE_NOTICE}`, "远端触碰对注入内容零贡献：只在末尾多一行提示");
 });
 
