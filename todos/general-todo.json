@@ -393,15 +393,17 @@
       "id": 24,
       "globalId": 341,
       "text": "package-lock.json 的 version 字段与 package.json 漂移（既有问题，本次反复撞到）：实测 pwr（lock 2.9.3 / pkg 2.10.0）、opencode-bridge（lock 1.7.0 / pkg 1.7.1）等至少 4 个扩展的 lock 顶层与 packages.\"\".version 落后于 package.json——后果是任何人跑 npm install（含 tools/test-all.mjs --install）都会顺手改这些 lock，把无关改动混进 diff，交付时只能逐个 git checkout 回滚。要求：各扩展重生成 lock 使 version 与 package.json 一致 + 加一条检查（或写进 test-all 的 --install 后校验）防再漂移",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/general-lock-drift",
       "tags": [],
       "priority": 4,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "完成 2026-10-11 @ merge 13151a4（分支 feat/general-lock-drift）：条目要求两半都落地。① 漂移归零——实测范围比条目写作时收敛（原文「至少 4 个扩展」→ 只剩 opencode-bridge 1.7.0/1.7.1，其余在别的会话的 856d7bd 里被顺手改到一致）；用 npm install --package-lock-only 重生成，diff 只有那两行版本字段，无依赖树波动；不全量重跑所有扩展的 install（会引入上百行无意义波动）。② 守门——新增根测试 test/package-lock-drift.test.ts + 套件 root:lock，挂进 tools/test-all.mjs 的 DEFAULT_SUITES 与根 package.json 的 test:lock；纯读文件、无网络无子进程，扫全仓（跳过 node_modules/.git/.worktrees/.pi/history）lock 的顶层与内层 packages[\"\"].version；第一个用例是扫描器自检（六种临时目录形态：只有顶层漂/只有内层漂/两处都漂/一致/无同级 package.json/旧 lockfileVersion 1）。变异验证：顶层改回 1.7.0 ⇒ 红且打印文件+字段，只改内层 ⇒ 也红，改回 ⇒ 绿。③ 口径同步：套件 23 → 24 在 AGENTS.md / README / docs/INDEX.md / docs/tools/test-all.md / test/test-all.test.ts 的覆盖锁全部对齐。④ 顺手清理 docs/extensions/agent-team.md 的陈旧「全仓 17 套件」计数（改指唯一来源）。跨厂商评审 2 轮（kimi-coding/k3-256k）：第 1 轮 OK with notes（无 P0/P1，3 条 P2：我的注释把「JSON 损坏」错写成静默跳过、agent-team 陈旧计数、根版本口径）→ 全部处理；第 2 轮无新意见。判断点（评审认可）：不 bump 任何 package.json 版本——lock 是派生物、非特性发布，与 83829d2 的 test(composition) 先例一致。关键一手：整仓 test:all --install 跑完之后 root:lock 仍绿，证明这次 install 没有再改出漂移。全仓 24 套件 23 绿，唯一红是 root:todo 的已知 Windows 并发抖动 todo-cli#21（非本次引入）。"
+      ],
       "createdAt": "2026-10-04T01:02:10.620Z",
       "claimedAt": "2026-10-11T12:01:19.541Z",
-      "completedAt": null,
+      "completedAt": "2026-10-11T12:16:29.840Z",
       "alignedAt": "2026-10-11T12:02:03.546Z"
     },
     {
