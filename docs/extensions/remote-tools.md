@@ -6,6 +6,8 @@
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**。
 需求与验收见 `todos/align/remote-tools-todo#1.md`。
 
+> **与 dir-context 的交叉面**：带 `remote` 的调用 `path` 在远端解析，所以 `dir-context` **不会**为它注入本机（甚至远端）的 `AGENTS.md`——它只看入参有没有 `remote` 字段，不 import 本插件任何模块（零耦合）。模型要远端目录的约定得自己 `read`（首次远端触碰时 dir-context 会追加一行提示）。见 [`docs/extensions/dir-context.md`](dir-context.md)。
+
 ## 为什么这么做（决策原因）
 
 > 架构决策全文（含「路径信道」的根因与硬化取舍）见 [`docs/adr/0010-remote-tools-host-operations-seam.md`](../adr/0010-remote-tools-host-operations-seam.md)；

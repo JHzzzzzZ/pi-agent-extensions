@@ -1,5 +1,5 @@
 /**
- * agent-manager W2 — pi 子进程运行器测试（TDD：先红后绿）。
+ * agent-manager W2 — pi 子进程运行器测试（实现与锁定测试同一变更内落地）。
  *
  * 边界与手法：
  * - fake spawn 只做进程边界替身（沿 pwr/runner/test/helpers.ts 的 FakeChild 手法），

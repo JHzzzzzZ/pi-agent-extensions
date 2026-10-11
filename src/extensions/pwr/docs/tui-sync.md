@@ -50,7 +50,7 @@
 - ~~**A4 overlay 高度**改 `maxHeight: "85%", margin: 1`~~（✅ 完成 @ 31446bc）：`VIEWER_OVERLAY_OPTIONS` verbatim fleet（width 95% / minWidth 60 / maxHeight 85% / margin 1），高度自算删除。
 - **A5 结果页 Markdown**（低优先级，缓办）：需先确认结果 JSON 文本的 Markdown 化收益。
 
-执行 A1–A4 时遵守：TDD 先行；测试仍不实例化真实 pi-tui（若需真机级验证，参照 agent-team `viewer-host.test.ts` 的"真实 TuiMainScreen + 假终端 headless"模式单独立项）。A2–A4 落地时同步新增了 `pwr/tests/ui-viewer-host.test.ts`（移植该模式，锁定 overlay 不堆叠/帧高恒定）。
+执行 A1–A4 时遵守：实现与锁定行为的测试在同一变更内落地；测试仍不实例化真实 pi-tui（若需真机级验证，参照 agent-team `viewer-host.test.ts` 的"真实 TuiMainScreen + 假终端 headless"模式单独立项）。A2–A4 落地时同步新增了 `pwr/tests/ui-viewer-host.test.ts`（移植该模式，锁定 overlay 不堆叠/帧高恒定）。
 
 ## 4. 宿主升级复核流程
 

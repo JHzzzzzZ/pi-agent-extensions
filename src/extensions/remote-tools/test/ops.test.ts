@@ -1,5 +1,5 @@
 /*
- * remote-tools — 远端 Operations 后端测试（先写测试，实现见 ../ops.ts）。
+ * remote-tools — 远端 Operations 后端测试（实现见 ../ops.ts；同一变更内落地锁定测试）。
  *
  * 边界与动机：断言**发给 ssh 的远端命令字符串**与错误映射（这两个才是真出问题的地方），
  * 真实 ssh 进程用注入的假 `SshExec` 替代；tools.ts 的本地保真与分派另测。

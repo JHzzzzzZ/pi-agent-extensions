@@ -12,9 +12,12 @@
  *   JSON ⇒ 该条跳过。因此 `details.calls` 在本扩展里只是**兜底**来源：主来源是嵌套 `tool_result`
  *   事件的**完整 `input`**（见下方缓冲与 docs/adr/0012 的 v1.2 补充）。
  * - 工具名不认识（`grep` / `find` / `models.*` 的 `chat` 等）⇒ 跳过（`detectTouch` 返回 null）。
+ * - `args` 里带 `remote`（远端调用）⇒ 跳过：远端路径与本地路径不可区分，按本机 cwd 解析会错注入
+ *   （`dir-context-todo#4`）。这条**必须**在这里拦，`details.calls` 是独立于嵌套事件的第二条来源。
  * - `status` 为 `error` / `cancelled` **照算**：文件可能已经被读过或写过，注入与脚本成败无关。
  */
 import type { CodemodeToolDetails } from "@earendil-works/pi-coding-agent";
+import { isRemoteCall } from "./remote.ts";
 import { detectTouch, type Touch } from "./touch.ts";
 
 /** 宿主内置 codemode 的工具名（宿主常量 `CODEMODE_TOOL_NAME`）。 */
@@ -79,26 +82,43 @@ export const MAX_NESTED_CALL_GROUPS = 8;
  * 归组键：嵌套事件的 `parentToolCallId` == 顶层事件的 `toolCallId`（宿主事实：嵌套调用 id 形如
  * `<顶层 id>/<n>`）。取走（`take`）即删组，会话 reset 时 `clear` 全部。
  */
+export interface NestedTouches {
+  /** 该组记下的本地触碰（按发生顺序）。 */
+  touches: Touch[];
+  /** 该组里出现过**远端**调用：远端路径不进 `touches`，只留这个记号供顶层结果给一次提示。 */
+  remote: boolean;
+}
+
 export function createNestedTouchBuffer() {
-  const groups = new Map<string, Touch[]>();
+  const groups = new Map<string, NestedTouches>();
+
+  /** 取该 call id 的分组，没有就新建（超过分组上限时淘汰最旧的一组：内存有界）。 */
+  const groupOf = (parentCallId: string): NestedTouches => {
+    const existing = groups.get(parentCallId);
+    if (existing !== undefined) return existing;
+    if (groups.size >= MAX_NESTED_CALL_GROUPS) {
+      const oldest = groups.keys().next();
+      if (!oldest.done) groups.delete(oldest.value);
+    }
+    const created: NestedTouches = { touches: [], remote: false };
+    groups.set(parentCallId, created);
+    return created;
+  };
 
   return {
     record(parentCallId: string, touch: Touch): void {
-      const existing = groups.get(parentCallId);
-      if (existing === undefined) {
-        if (groups.size >= MAX_NESTED_CALL_GROUPS) {
-          const oldest = groups.keys().next();
-          if (!oldest.done) groups.delete(oldest.value);
-        }
-        groups.set(parentCallId, [touch]);
-        return;
-      }
-      if (existing.length < MAX_NESTED_TOUCHES_PER_CALL) existing.push(touch);
+      const group = groupOf(parentCallId);
+      if (group.touches.length < MAX_NESTED_TOUCHES_PER_CALL) group.touches.push(touch);
     },
 
-    take(parentCallId: string): Touch[] {
+    /** 标记「这组里有远端调用」。远端触碰不记路径：路径按远端解析，本机上下文与它无关。 */
+    markRemote(parentCallId: string): void {
+      groupOf(parentCallId).remote = true;
+    },
+
+    take(parentCallId: string): NestedTouches {
       const recorded = groups.get(parentCallId);
-      if (recorded === undefined) return [];
+      if (recorded === undefined) return { touches: [], remote: false };
       groups.delete(parentCallId);
       return recorded;
     },
@@ -127,7 +147,8 @@ function isCall(value: unknown): value is CodemodeToolDetails["calls"][number] {
 
 function readCallTouch(call: CodemodeToolDetails["calls"][number]): Touch | null {
   const args = parseArgs(call.args);
-  return args === null ? null : detectTouch(call.name, args);
+  if (args === null || isRemoteCall(args)) return null;
+  return detectTouch(call.name, args);
 }
 
 /** 宿主的 `args` 是紧凑 JSON（可能被截断）：解析不出对象就返回 null（该条跳过）。 */
