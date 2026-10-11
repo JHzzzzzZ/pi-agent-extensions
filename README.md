@@ -642,7 +642,7 @@ ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write /
 - **参数健壮** — 没有远端意图的字段不影响调用：`remote` 传空串/纯空白/缺省值字面量（`null`/`undefined`/`nil`/`none`/`n/a`）一律当本机；`remotePort` 是 `null`/非数字/`0`/负数也当没给（宿主 strict 采样器会把可选字段填成 `0`）；**自由字符串仍当主机名**（`local` 是常见的 ssh 别名，当本机会静默跑错机器）；只有真正说错的值（越界端口、带标记首段的路径、`~` 开头）才 fail-closed
 - **错误可读** — 远端 `ls`/`find` 在进宿主校验前先判目录：不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒ `REMOTE_NOT_DIRECTORY`，消息是静态模板（不会把内部标记路径 `C:\…\pi-remote\…` 回灌给模型）；探针答案顺带缓存，`ls` 往返 3 → 2
 - **与 timeout-bg 共存** — `bash` 这个名字两家都要用：timeout-bg（超时转后台）注册前经 `pi.events` 收集「shell 能力」，本扩展把远端 bash 能力交过去由它合并分派——两个功能都保留；前提是 timeout-bg 先加载（仓库 `package.json` 顺序即如此），顺序相反时会有冲突提示
-- **安全与 fail-closed** — 路径必须是远端绝对 POSIX 路径（模型给的 `C:/…`、`~` 开头、宿主标记首段在发 ssh 之前就报错；**相对路径/省略 `path` 按远端 `$HOME` 解析**）；只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`），其余 `PI_*` 绝不送远端；错误消息全静态模板；远端执行失败只会以错误结束，不会回退到本机重跑
+- **安全与 fail-closed** — 路径口径：绝对 POSIX 路径直接用，相对路径/省略 `path` 按远端 `$HOME` 解析；fail-closed 的只有 Windows 盘符形态（`C:/…`）、`~` 开头、宿主标记首段（都在发 ssh 之前）。只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`），其余 `PI_*` 绝不送远端；错误消息全静态模板；远端执行失败只会以错误结束，不会回退到本机重跑
 - **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`
 
 ```bash

@@ -99,8 +99,10 @@ Status: accepted（2026-10-10，`remote-tools-todo#1` / `#6`；决策 1、2、3 
 
 ## Consequences
 
-- 信道是**内部实现细节**：模型侧契约仍是 `path`（远端绝对 POSIX）+ `remote`/`remotePort`/`remoteCwd`
+- 信道是**内部实现细节**：模型侧契约仍是 `path`（远端路径）+ `remote`/`remotePort`/`remoteCwd`
   （对齐文档的扁平参数口径）；换信道不动模型面。
+  > v2 注记（remote-tools#11 之后）：决策当日的「远端绝对 POSIX」描述已不准确——模型侧相对路径/省略 `path`
+  > 按远端 `$HOME` 解析，只有盘符形态、`~` 开头、宿主标记首段在发 ssh 前 fail-closed；本句保留为历史记录，当前口径见卡片。
 - 宿主对工具路径有**本地副作用**（read 的变体探测、write/edit 的 realpath 锁键）——卡片「坑」与本 ADR 的
   根因是同一件事；硬化后标记根是**结构上不可占用**的（C'），守卫（A）只是兜底。
 - 代价：标记根路径比原 `C:\pi-remote` 长 ~90 字符，且随安装形态变化（全局扩展目录 / 包缓存 clone / 项目
