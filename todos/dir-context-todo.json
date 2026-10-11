@@ -81,6 +81,44 @@
       "claimedAt": "2026-10-11T04:48:34.254Z",
       "completedAt": "2026-10-11T06:37:28.458Z",
       "alignedAt": "2026-10-11T05:36:00.209Z"
+    },
+    {
+      "id": 5,
+      "globalId": 375,
+      "text": "远端目录的上下文自动注入（用户 2026-10-11 提出，dir-context#4 的『范围外』项转正式需求）：现在带 remote 的调用只给一行提示、模型要自己 read 远端 AGENTS.md——用户要的是**自动注入**。现状边界（#4 对齐文档明确排除的理由）：dir-context 不会 ssh、远端路径也解不了（这正是 #4 的根因），要自动注入必须有远端取文件的通道，且不能造出第二套去重/预算实现。候选方案（待对齐定档）：A 数据信道（推荐）——remote-tools 在自己那次远端调用的 results.details 上挂 { remoteContext: { path, content }[] }（它已有 ssh 与已解析的远端绝对路径、且已经是「一次调用一趟 ssh」，多取祖先链可在同一条远端命令里完成），dir-context 读该字段、复用自己那套发现/去重/预算/格式化注入；无该字段 ⇒ 退化成今天的一行提示。B 能力协商（pi.events，对齐 docs/cross/shell-tool-capability.md 的 shell 先例）——dir-context 广播请求、remote-tools 提供 fetchRemoteContext(target, dir) 函数。C remote-tools 侧随行注入——传输与注入同一处，但会把『Loaded <路径>』格式与去重/预算规则复制进第二个插件（#4 已因此排除）。共同待定项：远端祖先链的终点与深度上限（远端没有 cwd 概念，只有解析基准 /c/Users/蒋晗 或 /）、每级一次 ssh 还是合成一条命令、失败/超时如何降级、远端内容是否要标『来自远端』以免与本机约定混淆、提示行去留。验收草案：远端相对路径与绝对路径都能自动拿到该目录祖先链的 AGENTS.override.md/AGENTS.md/CLAUDE.md（由外向内、会话内去重、码点截断、预算与本地共用）；remote-tools 未装/未提供通道时行为与今天逐字一致（一行提示）；真机 A/B（真实 ssh 到可连主机）+ 宿主级用例 + 跨厂商评审。",
+      "status": "done",
+      "branch": null,
+      "tags": [
+        "enhancement",
+        "remote-tools"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [
+        "登记文本被 shell 展开污染（$HOME 被替换成 /c/Users/蒋晗 字面量），原条目作废、按原意重新登记。"
+      ],
+      "createdAt": "2026-10-11T06:41:47.778Z",
+      "claimedAt": null,
+      "completedAt": "2026-10-11T06:42:04.128Z",
+      "alignedAt": null
+    },
+    {
+      "id": 6,
+      "globalId": 376,
+      "text": "远端目录的上下文自动注入（用户 2026-10-11 提出，dir-context#4 的「范围外」项转正式需求）——现在带 remote 的调用只给一行提示、模型要自己 read 远端 AGENTS.md，用户要的是自动注入。为什么 #4 当时排除了它：dir-context 不会 ssh、也解不了远端路径（这正是 #4 的根因），要自动注入必须有「远端取文件」的通道，且不能造出第二套去重/预算实现。候选方案（待对齐定档）：A 数据信道（推荐）——remote-tools 在自己那次远端调用的 results.details 上挂 { remoteContext: { path, content }[] }（它已有 ssh 与已解析的远端绝对路径，且本来就是「一次调用一趟 ssh」，祖先链可在同一条远端命令里取完），dir-context 读该字段、复用自己那套发现/去重/预算/格式化去注入；无该字段 ⇒ 退化成今天的一行提示，两个插件仍可各自独立安装。B 能力协商（pi.events，对齐 docs/cross/shell-tool-capability.md 的 shell 先例）——dir-context 广播请求、remote-tools 提供 fetchRemoteContext(target, dir) 函数。C remote-tools 侧随行注入——传输与注入同一处，但会把「Loaded <路径>」格式与去重/预算规则复制进第二个插件（#4 已因此排除）。共同待定项：远端祖先链的终点与深度上限（远端没有 cwd 概念，只有解析基准 remote $HOME 或 /）、每级一次 ssh 还是合成一条远端命令、失败/超时如何降级、远端内容是否要标注「来自远端」以免与本机约定混淆、现有那行提示的去留。验收草案：远端相对路径与绝对路径都能自动拿到该目录祖先链的 AGENTS.override.md/AGENTS.md/CLAUDE.md（由外向内、会话内去重、码点截断、预算与本地共用）；remote-tools 未装或未提供通道时行为与今天逐字一致（一行提示）；真机 A/B（真实 ssh 到可连主机）+ 宿主级用例 + 跨厂商评审。",
+      "status": "processing",
+      "branch": "feat/dir-context-remote-context",
+      "tags": [
+        "enhancement",
+        "remote-tools"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T06:42:04.424Z",
+      "claimedAt": "2026-10-11T06:49:11.634Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-11T06:56:25.146Z"
     }
   ]
 }
