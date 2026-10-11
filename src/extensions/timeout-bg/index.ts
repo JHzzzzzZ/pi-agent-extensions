@@ -29,10 +29,10 @@ import {
   getPowerShellConfig,
   getShellConfig,
 } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resolveDefaultTimeout } from "./config.ts";
 import { createJobRegistry, type JobRecord } from "./jobs.ts";
-import { pruneJobLogs, tailFileSync } from "./logs.ts";
+import { pruneJobLogs, resolveJobLogPath, tailFileSync } from "./logs.ts";
 import { createTimeoutOps, type ShellConfig, type SpawnLike } from "./shell-ops.ts";
 import {
   collectBashCapability,
@@ -41,7 +41,20 @@ import {
   describeLostBashRegistration,
   mergeBashParameters,
 } from "./shell-capability.ts";
-import { followUpText, formatJobList, shellToolDescription, TIMEOUT_BG_CUSTOM_TYPE, timeoutParamDescription } from "./text.ts";
+import { createRemoteJobPort, offerRemoteJobPort } from "./shell-job-host.ts";
+import { writeBand } from "./status-band.ts";
+import {
+  followUpText,
+  formatJobList,
+  shellToolDescription,
+  statusBandText,
+  TIMEOUT_BG_CUSTOM_TYPE,
+  timeoutParamDescription,
+  timeoutResultText,
+} from "./text.ts";
+
+/** footer 状态条键（排序带 80；见 docs/cross/status-bar.md）。 */
+export const STATUS_KEY = "80:timeout-bg";
 
 /** 日志根目录覆盖环境变量（测试隔离 / 多实例隔离）。 */
 export const LOG_ROOT_ENV = "PI_TIMEOUT_BG_DIR";
@@ -111,6 +124,9 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
     const now = deps.now ?? Date.now;
     const defaultTimeout = resolveDefaultTimeout(deps.env);
     let jobSeq = 0;
+    const newJobId = (): string => `bg-${++jobSeq}`;
+    /** 本会话的 UI 上下文（footer 状态条段写入口；headless / 会话外为 undefined）。 */
+    let uiContext: ExtensionUIContext | undefined;
     const registered = new Set<ShellKind>();
     /** bash 归属冲突（未知接管者 / 本次注册被加载顺序丢掉）一次会话只提示一次。 */
     let bashConflictNotified = false;
@@ -137,7 +153,26 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
       }
     };
 
-    const registry = createJobRegistry({ now, killTree: deps.killTree, onExit: deliverExit });
+    /** footer 状态条段：只显示运行中的后台任务数（本地 + 远端同一注册表），没有则清段。 */
+    const refreshStatusBand = (): void => {
+      const ui = uiContext;
+      if (ui === undefined) return;
+      writeBand(STATUS_KEY, statusBandText(registry.running().length), (rendered) => ui.setStatus(STATUS_KEY, rendered));
+    };
+
+    const registry = createJobRegistry({ now, killTree: deps.killTree, onExit: deliverExit, onChange: refreshStatusBand });
+
+    // 远端 bash 的 job 托管端口（timeout-bg#4）：提供方（remote-tools）需要时同步索取，
+    // 本扩展在回调里把端口放进盒子；没装对端时这个端口永远没人拿，行为与今天逐字一致。
+    offerRemoteJobPort(
+      pi.events,
+      createRemoteJobPort({
+        newJobId,
+        logPathFor: (id) => resolveJobLogPath(deps.logRoot, id),
+        registry,
+        timeoutText: timeoutResultText,
+      }),
+    );
 
     interface BashOverrides {
       parameters: unknown;
@@ -164,7 +199,13 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
       const guideline = offered.capability.guideline;
       return {
         parameters,
-        execute: createBashDispatch({ local: own.execute, capability: offered.capability, notify }),
+        execute: createBashDispatch({
+          local: own.execute,
+          capability: offered.capability,
+          notify,
+          // 远端沿用本扩展的默认超时（用户只记一个数字），显式 timeout 原样透传。
+          defaultTimeoutSeconds: defaultTimeout.seconds,
+        }),
         guidelines: guideline === undefined ? own.guidelines : [...own.guidelines, guideline],
       };
     };
@@ -178,7 +219,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
         shellName: kind,
         registry,
         killTree: deps.killTree,
-        newJobId: () => `bg-${++jobSeq}`,
+        newJobId,
         logRoot: deps.logRoot,
         defaultTimeoutSeconds: defaultTimeout.seconds,
         platform: deps.platform ?? process.platform,
@@ -220,6 +261,8 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
       } catch {
         /* 清理失败不影响会话 */
       }
+      uiContext = ctx.hasUI ? ctx.ui : undefined;
+      refreshStatusBand();
       let active: string[] = [];
       try {
         active = pi.getActiveTools();
@@ -238,6 +281,10 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
       } catch {
         /* 清理失败不破坏收尾 */
       }
+      // 清段登记：否则 /reload / 会话切换后残留文本会干扰其它扩展的首段判定。
+      const ui = uiContext;
+      uiContext = undefined;
+      if (ui !== undefined) writeBand(STATUS_KEY, undefined, (rendered) => ui.setStatus(STATUS_KEY, rendered));
     });
 
     pi.registerCommand(BG_COMMANDS.list, {

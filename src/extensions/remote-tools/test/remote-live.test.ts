@@ -14,10 +14,14 @@
  */
 
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 
 import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+import type { RemoteJobPort } from "../capability.ts";
 import { ErrorCodes } from "../errors.ts";
 import {
 	createRemoteBashOps,
@@ -293,5 +297,73 @@ test("真机：远端 bash 真在远端跑；ls/find 的不存在/传文件报�
 		}
 	} finally {
 		await tools.get("bash")!.execute(ID, { command: `rm -rf '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
+	}
+});
+
+/**
+ * 真机：远端超时转后台（remote-tools#12）——真 ssh/真远端 shell，owner 用契约形状的假实现。
+ *
+ * 分工：跨扩展协商（真两个扩展 + 真事件总线）在 shell-composition.test.ts 里测；这里只验
+ * 假 ssh 测不出的东西——pid 文件在当前远端 shell 下真的可写、超时不断连真的保住了远端命令、
+ * 终止脚本真的杀得掉远端进程组。owner 用假端口是为了让本文件保持「只依赖 remote-tools」。
+ */
+function waitUntil(check: () => Promise<boolean>, what: string, timeoutMs = 20_000): Promise<void> {
+	const started = Date.now();
+	const poll = async (): Promise<void> => {
+		if (await check()) return;
+		if (Date.now() - started > timeoutMs) assert.fail(`等待超时：${what}`);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		return poll();
+	};
+	return poll();
+}
+
+test("真机：远端超时不断连（命令跑到结束）；/bg:kill 杀掉远端进程组", { skip }, async () => {
+	const session = makeSession();
+	const baseDir = baseDirInput ?? (await session.home());
+	const target = makeTarget();
+	const marker = `${baseDir}/.pi-remote-timeout-${Date.now()}`;
+	const markerAlive = `${marker}.alive`;
+	const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-live-job-"));
+	const registrations: Array<{ id: string; logPath: string; tail: string; terminate: () => void }> = [];
+	const settled: Array<number | null> = [];
+	const host: RemoteJobPort = {
+		allocate: () => ({ id: "bg-live", logPath: path.join(logDir, "bg-live.log") }),
+		register: (job) => {
+			registrations.push({ id: job.id, logPath: job.logPath, tail: job.tail, terminate: job.terminate });
+			return `超时转后台：job ${job.id} 日志 ${job.logPath}`;
+		},
+		settle: (_id, exitCode) => settled.push(exitCode),
+	};
+	const ops = createRemoteBashOps(session, { jobHost: () => host });
+	const remoteRead = async (command: string): Promise<string> => {
+		const result = await runSsh(session.exec, target, command, { timeoutMs: 15_000 });
+		return result.stdout.toString("utf8").trim();
+	};
+
+	try {
+		// ① 超时不再杀连：本地 ssh 活着，命令 3 秒后写出标记（timeout=1 早就过了）。
+		await assert.rejects(
+			() => ops.exec(`sleep 3; printf 'DONE' > '${markerAlive}'`, baseDir, { onData: () => {}, timeout: 1, env: {} }),
+			/超时转后台/, // 假 owner 的文本；真 owner 的文案在 timeout-bg 的单测里锁
+		);
+		assert.equal(registrations.length, 1);
+		await waitUntil(async () => (await remoteRead(`cat '${markerAlive}' 2>/dev/null || true`)) === "DONE", "远端命令跑到结束（没被杀）");
+		await waitUntil(async () => settled.length === 1, "命令结束后 settle 一次");
+		assert.equal(settled[0], 0, "自然结束的退出码必须回传");
+
+		// ② /bg:kill：杀掉远端进程组（长任务不再写出标记）。
+		await assert.rejects(
+			() => ops.exec(`sleep 987654; printf 'ALIVE' > '${markerAlive}'`, baseDir, { onData: () => {}, timeout: 1, env: {} }),
+			/超时转后台/,
+		);
+		registrations[1]!.terminate();
+		// 字符类写法（sleep 98765[4]）：轮询命令自己的命令行不含可匹配的字面串，免得自匹配。
+		await waitUntil(async () => (await remoteRead("pgrep -f 'sleep 98765[4]' | wc -l")) === "0", "远端进程组被终止");
+		const after = await remoteRead(`cat '${markerAlive}' 2>/dev/null || true`);
+		assert.notEqual(after, "ALIVE", "被 kill 的命令不得继续跑到结束");
+	} finally {
+		await remoteRead(`rm -f '${markerAlive}'`);
+		fs.rmSync(logDir, { recursive: true, force: true });
 	}
 });

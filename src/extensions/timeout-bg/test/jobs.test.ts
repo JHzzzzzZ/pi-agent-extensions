@@ -13,12 +13,14 @@ function makeHarness() {
   let clock = 1_000;
   const killCalls: number[] = [];
   const exits: JobRecord[] = [];
+  let changes = 0;
   const registry = createJobRegistry({
     now: () => clock,
     killTree: (pid) => killCalls.push(pid),
     onExit: (job) => exits.push(job),
+    onChange: () => (changes += 1),
   });
-  return { registry, killCalls, exits, tickClock: (ms: number) => (clock += ms) };
+  return { registry, killCalls, exits, tickClock: (ms: number) => (clock += ms), changes: () => changes };
 }
 
 test("background：登记 running 任务，pid/命令/日志路径就位", () => {
@@ -75,6 +77,55 @@ test("killAll：只杀 running，返回条数", () => {
   h.registry.markExited("bg-2", 0);
   assert.equal(h.registry.killAll(), 2);
   assert.deepEqual(h.killCalls, [1, 3]);
+});
+
+test("远端 job：terminate 优先于 killTree，且 onChange 覆盖登记/结束/被杀/清理（timeout-bg#4）", () => {
+  const h = makeHarness();
+  const terminates: string[] = [];
+  h.registry.background({
+    id: "bg-1",
+    pid: null,
+    command: "sleep 400",
+    logPath: "/tmp/1.log",
+    target: "deploy@host",
+    terminate: () => terminates.push("bg-1"),
+  });
+  const job = h.registry.get("bg-1")!;
+  assert.equal(job.pid, null, "远端 job 没有本地 pid");
+  assert.equal(job.target, "deploy@host");
+  assert.equal(h.changes(), 1, "background 要触发 onChange（状态条段刷新）");
+
+  assert.equal(h.registry.kill("bg-1"), true);
+  assert.deepEqual(terminates, ["bg-1"], "远端 job 走自带终止钩子");
+  assert.deepEqual(h.killCalls, [], "有 terminate 时不得拿 pid 兜底（远端 job 的 pid 是 null）");
+  assert.equal(h.changes(), 2);
+
+  // 已被 kill 的 job 再 settle：忽略（不重复通知、不改状态）。
+  h.registry.markExited("bg-1", 0);
+  assert.equal(h.registry.get("bg-1")!.status, "killed");
+  assert.equal(h.exits.length, 0);
+  assert.equal(h.changes(), 2, "无效变更不触发 onChange");
+
+  assert.equal(h.registry.clear(), 1);
+  assert.equal(h.changes(), 3, "清理也要刷新状态条段（段消失）");
+});
+
+/** 没有 terminate 的 job（本地）仍然走 killTree；异常钩子不得破坏命令面。 */
+test("terminate 抛错被吞掉：kill/killAll 不因观察者异常失败", () => {
+  const h = makeHarness();
+  h.registry.background({
+    id: "bg-1",
+    pid: null,
+    command: "x",
+    logPath: "/tmp/1.log",
+    target: "deploy@host",
+    terminate: () => {
+      throw new Error("remote kill boom");
+    },
+  });
+  assert.equal(h.registry.kill("bg-1"), true);
+  assert.equal(h.registry.get("bg-1")!.status, "killed");
+  assert.equal(h.registry.killAll(), 0, "已 killed 不再重复终止");
 });
 
 test("list：最近登记在前；clear：只清已结束的记录", () => {

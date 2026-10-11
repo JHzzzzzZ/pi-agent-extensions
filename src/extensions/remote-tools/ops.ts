@@ -16,13 +16,27 @@ import type {
 	WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 import { detectSupportedImageMimeTypeFromFile } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
+import type { RemoteJobPort } from "./capability.ts";
 import { ErrorCodes, type RemoteToolsErrorCode } from "./errors.ts";
 import { toRemotePath } from "./paths.ts";
-import { type SshExec, type SshTarget, buildSshArgs, classifySshFailure, runSsh, shellQuote, validateRemotePath } from "./ssh.ts";
+import {
+	type SshExec,
+	type SshExecResult,
+	type SshTarget,
+	buildSshArgs,
+	classifySshFailure,
+	describeFailure,
+	formatTarget,
+	runSsh,
+	shellQuote,
+	validateRemotePath,
+} from "./ssh.ts";
 
 /** 远端降级标记：远端命令在 stderr 上打这个标记表示走了 POSIX 回退路径。 */
 export const DEGRADED_MARKER = "PI_REMOTE_TOOLS_DEGRADED";
@@ -418,34 +432,256 @@ export function formatEnvPrefix(env: NodeJS.ProcessEnv | undefined): string {
 	return assignments.length === 0 ? "" : `${assignments.join(" ")} `;
 }
 
-export function createRemoteBashOps(session: RemoteSession): BashOperations {
+/** bash 执行选项（与宿主 `BashOperations.exec` 的第三参同形）。 */
+type BashExecOptions = { onData: (data: Buffer) => void; signal?: AbortSignal; timeout?: number; env?: NodeJS.ProcessEnv };
+
+/** 远端 job 托管依赖（remote-tools#12）：没有它时远端 bash 与今天逐字一致。 */
+export interface RemoteBashJobDeps {
+	/** job 托管端口（懒索取；null = 没装 timeout-bg，远端超时沿用宿主 kill 语义）。 */
+	jobHost: () => RemoteJobPort | null;
+	/** 转后台不可用/失败时的可见性通知（异常隔离由调用方保证）。 */
+	notify?: ((message: string) => void) | undefined;
+}
+
+/** 远端超时结果里附带的最近输出上限（字符；与 timeout-bg 本地口径一致）。 */
+export const REMOTE_TIMEOUT_TAIL_CHARS = 2000;
+
+/** 远端 pid 文件前缀：/tmp + 随机名（不需解析远端 $HOME，也无法被预置符号链接命中）。 */
+export const REMOTE_PID_FILE_PREFIX = "/tmp/pi-remote-job-";
+
+/** /bg:kill 的远端终止命令超时（尽力而为，不阻断命令面交互）。 */
+export const REMOTE_KILL_TIMEOUT_MS = 15_000;
+
+/** 转后台失败的静态文案（tool error 与 notify 共用）。 */
+export const REMOTE_BACKGROUND_FAILED = "远端超时转后台失败：已断开本地 ssh（远端命令可能仍在运行）。";
+
+/**
+ * 显式 timeout 的校验：与宿主 `resolveTimeoutMs` 同一句文案（托管路径下计时器在本地，
+ * 宿主的计时逻辑够不着这里，校验得自己做）。
+ */
+function resolveRemoteTimeoutMs(seconds: number | undefined): number | undefined {
+	if (seconds === undefined) return undefined;
+	if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("Invalid timeout: must be a finite number of seconds");
+	return seconds * 1000;
+}
+
+/**
+ * 远端命令前缀：把登录 shell 的 pid 写进 pid 文件供 `/bg:kill` 定位远端进程组，
+ * 并留一个 EXIT trap 在正常结束时清掉（不额外花一次 ssh）。
+ * 多个前置命令还顺带挡住 shell 的「最后一条命令直接 exec」优化 ⇒ `$$` 一定是命令的父 shell。
+ */
+export function buildRemotePidFilePrologue(pidFile: string): string {
+	const quoted = shellQuote(pidFile);
+	const cleanup = `rm -f "$pi_remote_job_pidfile"`;
+	return [
+		`pi_remote_job_pidfile=${quoted}`,
+		`printf '%s\\n' "$$" > "$pi_remote_job_pidfile" 2>/dev/null || true`,
+		// TERM/HUP **必须显式 exit**：只挂一个清理 trap 会让 shell 吞掉信号、继续跑下一条命令。
+		// 真机验收抓到过：`sleep 987654; printf ALIVE > marker` 在 /bg:kill 之后仍然写出了标记文件。
+		`trap '${cleanup}; exit 143' TERM`,
+		`trap '${cleanup}; exit 129' HUP`,
+		`trap '${cleanup}' EXIT`,
+	].join("; ");
+}
+
+/**
+ * `/bg:kill` 的远端终止脚本：pid 文件 → 进程组（仅在 shell 是组长时）/ 直接子进程 / 本体，
+ * TERM → KILL，最后清掉 pid 文件。全部 `|| true`：尽力而为，单步失败不阻断后续步骤。
+ */
+export function buildRemoteKillCommand(pidFile: string): string {
+	const quoted = shellQuote(pidFile);
+	return [
+		`pid=$(cat ${quoted} 2>/dev/null) || exit 0`,
+		`pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')`,
+		`if [ -n "$pgid" ] && [ "$pgid" = "$pid" ]; then kill -TERM -- "-$pid" 2>/dev/null || true; fi`,
+		`pkill -TERM -P "$pid" 2>/dev/null || true`,
+		`kill -TERM "$pid" 2>/dev/null || true`,
+		`sleep 1`,
+		`if [ -n "$pgid" ] && [ "$pgid" = "$pid" ]; then kill -KILL -- "-$pid" 2>/dev/null || true; fi`,
+		`pkill -KILL -P "$pid" 2>/dev/null || true`,
+		`kill -KILL "$pid" 2>/dev/null || true`,
+		`rm -f ${quoted}`,
+	].join("; ");
+}
+
+/** 后台日志落盘（超时那一刻之前的输出也在里面）；建不出文件时返回 null，调用方回退旧路径。 */
+function openJobLog(logPath: string): WriteStream | null {
+	try {
+		mkdirSync(dirname(logPath), { recursive: true });
+		return createWriteStream(logPath, { flags: "a" });
+	} catch {
+		return null;
+	}
+}
+
+/** 后台任务结束时应记的退出码：传输层中断记「未知」（不把 ssh 的 255 当成命令退出码）。 */
+function jobExitCode(result: SshExecResult): number | null {
+	return classifySshFailure(result) === null ? result.exitCode : null;
+}
+
+/** 尽力终止远端 job：新开一条 ssh 读 pid 文件杀进程组；失败就只剩「断开本地 ssh」兜底。 */
+async function killRemoteJob(session: RemoteSession, pidFile: string): Promise<void> {
+	try {
+		await runSsh(session.exec, session.target, buildRemoteKillCommand(pidFile), { timeoutMs: REMOTE_KILL_TIMEOUT_MS });
+	} catch {
+		/* 尽力而为：杀不掉不影响后续断开本地 ssh */
+	}
+}
+
+/**
+ * bash 的远端执行接缝。
+ *
+ * 两条路径：
+ *   - **旧路径**（没有 job 托管端口，即只装了 remote-tools）：超时交给传输层杀 ssh，
+ *     与宿主同文案 `timeout:<秒>`——行为与今天逐字一致。
+ *   - **托管路径**（与 timeout-bg 组合）：自己计时，命中超时**不断连**——本地继续持有同一 ssh、
+ *     输出继续写 job 日志，命令登记进统一 job 面（/bg:kill 走 pid 文件杀远端进程组）；
+ *     本次 tool call 以超时结果文本结束，跑完由 owner 发完成通知。
+ */
+export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBashJobDeps): BashOperations {
+	/** 旧路径：传输层 timeout → `timeout:<秒>`，宿主 bash 会渲染成原生超时文案。 */
+	async function execLegacy(command: string, remoteCwd: string, { onData, signal, timeout, env }: BashExecOptions): Promise<{ exitCode: number }> {
+		const remoteCommand = `cd ${shellQuote(remoteCwd)} || exit ${EXIT_CWD_MISSING}; ${formatEnvPrefix(env)}${command}`;
+		const result = await session.exec({
+			file: "ssh",
+			args: buildSshArgs(session.target, remoteCommand),
+			stdin: undefined,
+			timeoutMs: timeout === undefined ? undefined : Math.max(1, Math.ceil(timeout * 1000)),
+			signal,
+			onData,
+		});
+
+		if (timeout !== undefined && result.timedOut === true) {
+			// 与内置本地后端同形态：bash 工具自己的 timeout 参数超时 → 抛 `timeout:<秒>`。
+			throw new Error(`timeout:${timeout}`);
+		}
+		const transport = classifySshFailure(result);
+		if (transport !== null) fail(transport.code, transport.message);
+		if (result.aborted === true || signal?.aborted) throw new Error("aborted");
+		if (result.exitCode === EXIT_CWD_MISSING) {
+			fail(ErrorCodes.REMOTE_NOT_FOUND, "不存在的远端目录：请先确认远端工作目录路径。");
+		}
+		if (result.exitCode === null) fail(ErrorCodes.SSH_CONNECT_FAILED, "ssh 连接在命令执行期间中断。");
+		return { exitCode: result.exitCode };
+	}
+
+	/** 托管路径：超时不断连，转后台 + 登记 job。 */
+	async function execHosted(command: string, remoteCwd: string, options: BashExecOptions, host: RemoteJobPort): Promise<{ exitCode: number }> {
+		const { onData, signal, timeout, env } = options;
+		const timeoutMs = resolveRemoteTimeoutMs(timeout);
+		const ticket = host.allocate();
+		const logStream = openJobLog(ticket.logPath);
+		if (logStream === null) {
+			jobDeps?.notify?.(`无法创建远端后台日志（${ticket.logPath}）：本次远端调用按原有超时语义执行。`);
+			return execLegacy(command, remoteCwd, options);
+		}
+
+		const controller = new AbortController();
+		const onAbort = () => controller.abort();
+		signal?.addEventListener("abort", onAbort, { once: true });
+		const detachAbort = () => signal?.removeEventListener("abort", onAbort);
+
+		const pidFile = `${REMOTE_PID_FILE_PREFIX}${randomUUID()}.pid`;
+		const remoteCommand = `cd ${shellQuote(remoteCwd)} || exit ${EXIT_CWD_MISSING}; ${buildRemotePidFilePrologue(pidFile)}; ${formatEnvPrefix(env)}${command}`;
+
+		let backgrounded = false;
+		let settled = false;
+		let timer: NodeJS.Timeout | undefined;
+		let recentTail = "";
+
+		const running = session.exec({
+			file: "ssh",
+			args: buildSshArgs(session.target, remoteCommand),
+			stdin: undefined,
+			// 自己计时：托管语义要求「超时不断连」，所以不能把 timeout 交给传输层去杀 ssh。
+			timeoutMs: undefined,
+			signal: controller.signal,
+			onData: (chunk) => {
+				// 内存里保留尾部：超时那一刻日志流可能还没 flush，结果文本不能等 IO（与本地同口径）。
+				recentTail = (recentTail + chunk.toString("utf8")).slice(-REMOTE_TIMEOUT_TAIL_CHARS);
+				logStream.write(chunk);
+				if (!backgrounded) onData(chunk);
+			},
+		});
+
+		return await new Promise<{ exitCode: number }>((resolve, reject) => {
+			const settleOnce = (finish: () => void): void => {
+				if (settled) return;
+				settled = true;
+				if (timer !== undefined) clearTimeout(timer);
+				detachAbort();
+				finish();
+			};
+
+			running.then(
+				(result) => {
+					// 日志先落盘再收尾：通知/结果不能读到半截日志（与本地同口径）。
+					logStream.end(() => {
+						try {
+							if (backgrounded) {
+								host.settle(ticket.id, jobExitCode(result));
+								return;
+							}
+							const transport = classifySshFailure(result);
+							if (transport !== null) return settleOnce(() => reject(new Error(describeFailure(transport))));
+							if (result.aborted === true || controller.signal.aborted) return settleOnce(() => reject(new Error("aborted")));
+							if (result.exitCode === EXIT_CWD_MISSING) {
+								return settleOnce(() => reject(new Error(`${ErrorCodes.REMOTE_NOT_FOUND}: 不存在的远端目录：请先确认远端工作目录路径。`)));
+							}
+							if (result.exitCode === null) {
+								return settleOnce(() => reject(new Error(`${ErrorCodes.SSH_CONNECT_FAILED}: ssh 连接在命令执行期间中断。`)));
+							}
+							settleOnce(() => resolve({ exitCode: result.exitCode as number }));
+						} catch {
+							/* 收尾观察者异常不破坏会话 */
+						}
+					});
+				},
+				(error: unknown) => {
+					logStream.end();
+					settleOnce(() => reject(error instanceof Error ? error : new Error(String(error))));
+				},
+			);
+
+			if (timeoutMs !== undefined) {
+				timer = setTimeout(() => {
+					if (settled || backgrounded) return;
+					backgrounded = true;
+					// 本次 tool call 到此结束：之后的外部 abort（Esc）不再波及后台任务（与本地一致）。
+					detachAbort();
+					let text: string;
+					try {
+						text = host.register({
+							id: ticket.id,
+							logPath: ticket.logPath,
+							command,
+							target: formatTarget(session.target),
+							timeoutSeconds: timeoutMs / 1000,
+							tail: recentTail,
+							terminate: () => {
+								// 先尽力杀远端进程组，再断开本地 ssh（失败时的退化路径）。
+								void killRemoteJob(session, pidFile);
+								controller.abort();
+							},
+						});
+					} catch {
+						controller.abort();
+						jobDeps?.notify?.(REMOTE_BACKGROUND_FAILED);
+						return settleOnce(() => reject(new Error(REMOTE_BACKGROUND_FAILED)));
+					}
+					settleOnce(() => reject(new Error(text)));
+				}, timeoutMs);
+			}
+		});
+	}
+
 	return {
-		async exec(command, cwd, { onData, signal, timeout, env }): Promise<{ exitCode: number }> {
+		async exec(command, cwd, options): Promise<{ exitCode: number }> {
 			const remoteCwd = requireRemotePath(cwd);
-			if (signal?.aborted === true) throw new Error("aborted");
-
-			const remoteCommand = `cd ${shellQuote(remoteCwd)} || exit ${EXIT_CWD_MISSING}; ${formatEnvPrefix(env)}${command}`;
-			const result = await session.exec({
-				file: "ssh",
-				args: buildSshArgs(session.target, remoteCommand),
-				stdin: undefined,
-				timeoutMs: timeout === undefined ? undefined : Math.max(1, Math.ceil(timeout * 1000)),
-				signal,
-				onData,
-			});
-
-			if (timeout !== undefined && result.timedOut === true) {
-				// 与内置本地后端同形态：bash 工具自己的 timeout 参数超时 → 抛 `timeout:<秒>`。
-				throw new Error(`timeout:${timeout}`);
-			}
-			const transport = classifySshFailure(result);
-			if (transport !== null) fail(transport.code, transport.message);
-			if (result.aborted === true || signal?.aborted) throw new Error("aborted");
-			if (result.exitCode === EXIT_CWD_MISSING) {
-				fail(ErrorCodes.REMOTE_NOT_FOUND, "不存在的远端目录：请先确认远端工作目录路径。");
-			}
-			if (result.exitCode === null) fail(ErrorCodes.SSH_CONNECT_FAILED, "ssh 连接在命令执行期间中断。");
-			return { exitCode: result.exitCode };
+			if (options.signal?.aborted === true) throw new Error("aborted");
+			const host = jobDeps === undefined ? null : jobDeps.jobHost();
+			if (host === null) return execLegacy(command, remoteCwd, options);
+			return execHosted(command, remoteCwd, options, host);
 		},
 	};
 }

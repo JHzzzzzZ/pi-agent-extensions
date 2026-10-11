@@ -9,9 +9,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type ExtensionAPI, type ExtensionToolContext, type ToolDefinition, createEventBus } from "@earendil-works/pi-coding-agent";
+import { type EventBus, type ExtensionAPI, type ExtensionToolContext, type ToolDefinition, createEventBus } from "@earendil-works/pi-coding-agent";
 
-import { type RemoteBashCapability, SHELL_CAPABILITY_CHANNEL, isRemoteBashCall } from "../capability.ts";
+import {
+	type RemoteBashCapability,
+	SHELL_CAPABILITY_CHANNEL,
+	SHELL_JOB_HOST_CHANNEL,
+	claimRemoteJobHost,
+	isRemoteBashCall,
+} from "../capability.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
 
@@ -102,6 +108,73 @@ test("offerBashCapability：畸形盒子忽略、先到先得（不覆盖别的�
 	// 没有事件总线（旧宿主 / 结构 fake）也必须能注册成功：协商不可用，自身 bash 仍在。
 	const pi = { registerTool: () => undefined } as unknown as ExtensionAPI;
 	assert.doesNotThrow(() => registerRemoteTools(pi, { exec: async () => ({ exitCode: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, spawnFailed: false }), cwd: process.cwd() }));
+});
+
+/** 一个最小合法端口：owner 侧的真实现在 timeout-bg 的 shell-job-host.ts 里单独测。 */
+function makePort(overrides: Partial<{ allocate: () => unknown; register: () => unknown; settle: () => void }> = {}) {
+	return {
+		allocate: () => ({ id: "bg-1", logPath: "/tmp/bg-1.log" }),
+		register: () => "超时文本",
+		settle: () => undefined,
+		...overrides,
+	};
+}
+
+/** 模拟 owner：在托管频道上把值填进盒子。 */
+function busOffering(value: unknown) {
+	const bus = createEventBus();
+	bus.on(SHELL_JOB_HOST_CHANNEL, (box) => {
+		(box as { host?: unknown }).host = value;
+	});
+	return bus;
+}
+
+test("claimRemoteJobHost：owner 同步填盒子 ⇒ 拿到端口；缺席/畸形/总线抛错 ⇒ null", () => {
+	assert.equal(claimRemoteJobHost(createEventBus()), null, "没装 owner 时返回 null（调用方按原行为工作）");
+	assert.equal(claimRemoteJobHost(undefined), null, "旧宿主没有事件总线也不得报错");
+
+	const claimed = claimRemoteJobHost(busOffering(makePort()));
+	assert.ok(claimed);
+	assert.deepEqual(claimed.allocate(), { id: "bg-1", logPath: "/tmp/bg-1.log" });
+
+	for (const value of [
+		null,
+		"port",
+		42,
+		{},
+		{ allocate: () => ({ id: "x", logPath: "/tmp/x" }), register: () => "t" },
+		{ allocate: () => ({ id: "x", logPath: "/tmp/x" }), register: () => "t", settle: 1 },
+		{ allocate: 1, register: () => "t", settle: () => undefined },
+	]) {
+		const offered = claimRemoteJobHost(busOffering(value));
+		assert.equal(offered, null, `畸形端口必须当「没有 owner」：${JSON.stringify(value)}`);
+	}
+
+	const throwingBus = {
+		emit: () => {
+			throw new Error("bus down");
+		},
+	} as unknown as EventBus;
+	assert.equal(claimRemoteJobHost(throwingBus), null);
+});
+
+test("claimRemoteJobHost：端口自身的返回值也守卫（畸形 job 句柄/非字符串文本 ⇒ 抛静态错误，由调用方降级）", () => {
+	const port = claimRemoteJobHost(busOffering(makePort({ allocate: () => ({ id: 42, logPath: null }), register: () => 42 })));
+	assert.ok(port !== null);
+	assert.throws(() => port.allocate(), /非法 job 句柄/);
+	assert.throws(
+		() =>
+			port.register({
+				id: "bg-1",
+				logPath: "/tmp/bg-1.log",
+				command: "x",
+				target: "host",
+				timeoutSeconds: 1,
+				tail: "",
+				terminate: () => undefined,
+			}),
+		/未返回超时结果文本/,
+	);
 });
 
 test("能力载荷的 executeRemote 与自身注册的 bash 共用同一远端实现（同一条命令）", async () => {

@@ -45,6 +45,8 @@ import { Type } from "typebox";
 import {
 	BASH_REMOTE_GUIDELINE,
 	type RemoteBashCapability,
+	type RemoteJobPort,
+	claimRemoteJobHost,
 	isRemoteBashCall,
 	offerBashCapability,
 } from "./capability.ts";
@@ -168,6 +170,15 @@ function remoteContext(ctx: ExtensionToolContext | undefined, remoteBase: string
 	return Object.create(base as object, { cwd: { value: toHostPath(remoteBase), enumerable: true } }) as ExtensionToolContext;
 }
 
+/** 工具上下文可见性通知（远端超时转后台失败等），异常隔离在本地。 */
+function notifyTool(ctx: ExtensionToolContext | undefined, message: string): void {
+	try {
+		if (ctx?.hasUI === true) ctx.ui.notify(message, "warning");
+	} catch {
+		/* UI 异常不破坏工具调用 */
+	}
+}
+
 /** 宿主理论上总是给 ctx（codemode 嵌套调用也可能给）；缺失时用最小形状兜住 bash 的会话环境读取。 */
 const EMPTY_HOST_CONTEXT = {
 	sessionManager: { getSessionId: () => "", getSessionFile: () => undefined },
@@ -177,6 +188,14 @@ const EMPTY_HOST_CONTEXT = {
 
 export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): void {
 	const sessionFor = createSessionCache(deps.exec);
+	// job 托管端口懒索取（首次要用时 emit 一次并缓存）：
+	//   - 索取放在首次使用而不是加载期，是因为加载顺序不保证 owner 的订阅已就位；
+	//   - 拿不到（没装 timeout-bg）就永远是 null ⇒ 远端超时沿用宿主 kill 语义（今天的行为）。
+	let claimedJobHost: RemoteJobPort | null | undefined;
+	const currentJobHost = (): RemoteJobPort | null => {
+		if (claimedJobHost === undefined) claimedJobHost = claimRemoteJobHost(pi.events);
+		return claimedJobHost;
+	};
 
 	async function planSession(params: RemoteTargetParams): Promise<SessionPlan> {
 		const parsed = parseTarget({ remote: params.remote, remotePort: params.remotePort });
@@ -321,7 +340,12 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		}
 		const rest = stripRemoteFields(params);
 		const cwd = await resolveToolPath(plan, params.remoteCwd);
-		const definition = createBashToolDefinition(toHostPath(cwd.remotePath), { operations: createRemoteBashOps(plan.session) });
+		const definition = createBashToolDefinition(toHostPath(cwd.remotePath), {
+			operations: createRemoteBashOps(plan.session, {
+				jobHost: currentJobHost,
+				notify: (message) => notifyTool(ctx, message),
+			}),
+		});
 		return definition.execute(id, rest, signal, onUpdate, remoteContext(ctx, cwd.remotePath));
 	}
 

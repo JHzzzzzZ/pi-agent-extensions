@@ -90,6 +90,23 @@ export interface BashDispatchDeps {
 	capability: ShellCapability;
 	/** 异常/回退的可见性通知（notify 内部自带异常隔离与 UI 守卫）。 */
 	notify: (ctx: ExtensionContext, message: string) => void;
+	/**
+	 * 远端调用未显式给 `timeout` 时的默认秒数（本扩展的超时策略，在同一数字下转交）。
+	 * undefined = 不施加默认超时（`PI_TIMEOUT_BG_DEFAULT=0`）。
+	 */
+	defaultTimeoutSeconds: number | undefined;
+}
+
+/**
+ * 把本扩展的默认超时套用到远端参数上：只补缺省，**不碰模型显式给的值**
+ * （哪怕它非法——合法性由远端分支按宿主同一句文案拒绝）。
+ */
+export function applyDefaultTimeout(params: unknown, defaultSeconds: number | undefined): unknown {
+	if (defaultSeconds === undefined) return params;
+	if (typeof params !== "object" || params === null) return params;
+	const source = params as { timeout?: unknown };
+	if (source.timeout !== undefined) return params;
+	return { ...(source as object), timeout: defaultSeconds };
 }
 
 /**
@@ -107,8 +124,9 @@ export function createBashDispatch(deps: BashDispatchDeps): ToolDefinition["exec
 			throw new Error("远端 shell 能力判定失败：本次调用已拒绝执行。");
 		}
 		if (!remote) return deps.local(id, params, signal, onUpdate, ctx);
+		const forwarded = applyDefaultTimeout(params, deps.defaultTimeoutSeconds);
 		try {
-			const result = await deps.capability.executeRemote(id, params, signal, onUpdate, ctx);
+			const result = await deps.capability.executeRemote(id, forwarded, signal, onUpdate, ctx);
 			return result as Awaited<ReturnType<ToolDefinition["execute"]>>;
 		} catch (error) {
 			deps.notify(ctx, "远端 shell 能力执行出错：本次调用以错误结束（未在本机重跑）。");
