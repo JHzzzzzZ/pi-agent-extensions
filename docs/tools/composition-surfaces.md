@@ -39,7 +39,7 @@ node tools/composition-surfaces.mjs --root <dir>
 | 层 | 位置 | 验什么 | 何时跑 |
 | --- | --- | --- | --- |
 | L1 单装 | `test/composition-standalone.test.ts` | A 单独加载可跑、生命周期可重入、注册面 ⊇ 声明、**注册面 ⊆ 声明** | `test:all` 的 `root:composition`（离线） |
-| L2 配对 | `test/composition-pairs.test.ts` + `test/helpers/pair-probe.mjs`（子进程，每对一进程） | A+B 同装不抛错、声明的面都注册、**加载顺序无关**、共享槽已裁决 | 同上（离线，56 用例约 42s） |
+| L2 配对 | `test/composition-pairs.test.ts` + `test/helpers/pair-probe.mjs`（子进程，每对一进程） | A+B 同装不抛错、声明的面都注册、**加载顺序无关**、共享槽已裁决 | 同上（离线，56 用例约 45s） |
 | L3 契约 | 真 pi RPC + 真模型（opt-in，沿用 `tools/install-smoke.mjs` 的临时配置目录手法） | 关键组合的端到端行为（如 remote-tools × timeout-bg 远端超时转后台） | 手动，不进 CI |
 
 校验器自身的纯函数测试在 `test/composition-surfaces.test.ts`（解析 / 完备性 / 配对 / 仲裁，含变异自证）。

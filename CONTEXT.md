@@ -1,8 +1,53 @@
 # dev_extensions（Pi 扩展工作区）
 
-Pi 编码助手的扩展工作区：16 个零构建 TypeScript ESM 插件（`src/extensions/` 下的 `typesafe/` 只剩 node_modules、未注册进 `pi.extensions`）（pwr 工作流编排、agent-team 多 agent 协作等，见 AGENTS.md）+ 仓库级工具（todo CLI、install-smoke）+ 独立工具 agent-manager。本文件是全仓术语表；架构与目录事实在 AGENTS.md，决策记录在 `docs/adr/`。
+Pi 编码助手的扩展工作区：17 个零构建 TypeScript ESM 插件（另有 `src/extensions/typesafe/` 只剩 node_modules、未注册进 `pi.extensions`）（pwr 工作流编排、agent-team 多 agent 协作等，见 AGENTS.md）+ 仓库级工具（todo CLI、install-smoke、composition-surfaces）+ 独立工具 agent-manager。本文件是全仓术语表；架构与目录事实在 AGENTS.md，决策记录在 `docs/adr/`。
 
 ## Language
+
+### 插件组合（composition 域）
+
+> 术语的服务对象：`docs/cross/composition-surfaces.md`（接触面清单）、`tools/composition-surfaces.mjs`（校验与配对）、`test/composition-*.test.ts`（L1/L2）与规格 `docs/specs/composition-test-matrix.md`。
+
+**接触面（Contact Surface）**:
+一个扩展占用的**宿主共享槽位**的集合——状态键 / widget / 工具与工具面 / `pi.events` 频道 / 宿主钩子 / 模型面 / 文件契约 / 命令 / 快捷键。回答"这个插件和谁可能互相影响"。
+_Avoid_: 接口、能力面、API 面
+
+**槽位（Slot）**:
+接触面上的一个具体取值，如状态键 `30:pwr`、widget `widget-band`、工具名 `bash`。同槽的两方必须有裁决。
+_Avoid_: 资源、通道
+
+**配对（Pair）**:
+由接触面交集**自动生成**的两个扩展的组合单位（现 16 对）；L2 每个配对跑一个子进程、正反两种加载顺序。不做 17² 全跑。
+_Avoid_: 组合用例、交叉测试
+
+**独占声明（exclusive）**:
+该槽只能有一个主人，而本扩展是主人（工具名 / provider id / 命令名）。同一取值被两方共享时，双方都必须声明（`独占声明` 或 `共享槽`）。
+_Avoid_: 占用、归属
+
+**共享槽（shared）**:
+该槽可多方共享，并写明共享契约（排序带的段键顺序、文件契约的读写方向）。典型：`widget-band` 三方共享、`pi-extensions:shell-capability:v1` 能力频道。
+_Avoid_: 公共资源
+
+**文件契约（file contract）**:
+不走 `pi.events` 的跨扩展约定，经文件 / 环境变量传递状态（如 `PI_SOLO_MODE_FILE` 免审批状态：solo-mode 写，pwr / deep-init / jev-safe-gate / opencode-bridge 只读）。
+_Avoid_: 全局状态、共享文件
+
+**模式（mode）**:
+加载期注册面随运行模式分叉（agent-team 的 cockpit / leader），清单里以 `模式` 行声明；L1 据此放宽"声明必注册"并由专门用例覆盖另一支。
+_Avoid_: 分支、变体
+
+**降级语义（degradation）**:
+缺对方提供物时的行为——`fail-closed`（给类型化错误）或 `fail-soft`（静默走原路径）。**尚未实现**：逐扩展声明与断言见 `todos` 的 general-todo#33。
+_Avoid_: 兜底、回退
+
+**仲裁（arbitration）**:
+判定"同一槽被两方占用"是否已裁决的规则：双方都得把它列进 `独占声明` 或 `共享槽`，否则算**未声明的真冲突**（套件红）。
+_Avoid_: 冲突检测
+
+**L1 / L2 / L3**:
+组合测试三层——**L1 单装**（每个扩展单独加载、生命周期可重入、注册面 ⊆ 声明且声明 ⊆ 观测）、**L2 配对**（同装、顺序无关、共享槽已裁决）、**L3 契约**（真 pi RPC + 真模型，opt-in，不进 CI）。
+_Avoid_: 单元/集成/端到端
+
 
 ### todos 工作流（todo-cli 域）
 
