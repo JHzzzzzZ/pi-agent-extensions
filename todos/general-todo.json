@@ -483,6 +483,23 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 30,
+      "globalId": 366,
+      "text": "上游 issue（红线 8：宿主缺口走上游，不打本仓补丁）：pi.registerTool 对同名工具是**静默 last-write-wins**，跨扩展冲突不可见也不可组合——本仓 2026-10-10 的真实事故：timeout-bg（session_start 重新注册 bash）无声压掉 remote-tools 的 bash，模型带 remote 调用却跑在本机。已核宿主源码/文档：① registerMcpServer 对「另一个扩展注册的同名」直接 throw（docs/extensions.md:201），registerTool 却没有；② registerToolRenderer 提供 (name, next) => … 链式 API（docs/extensions.md:190，next() 返回下层实现），工具注册没有 ⇒ 无法「包裹」下层实现；③ registerTool 没有 priority/override 参数，getAllTools() 只给 schema+sourceInfo（无 execute）。诉求（按业界先例）：给 registerTool 补「冲突可见 + 可组合」——(a) 跨扩展同名默认 throw 或 warning（对齐自家 registerMcpServer；VS Code registerCommand 重复注册直接报错；Hermes Agent 覆盖内置需 operator 显式 allow_tool_override；Rust agent_sdk 默认 evict+warn / try_register fail-closed）；(b) 提供链式注册 (name, next) => definition 或 getToolDefinition(name)（对齐自家 registerToolRenderer 与 pytest-pluggy 的 hook wrapper / tryfirst-trylast 优先级）。产出：issue 草稿落 docs/（参照 docs/pi-http-proxy-loopback-issue.md 的先例）+ 提上游。",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "upstream"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T03:09:30.396Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }

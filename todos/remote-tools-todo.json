@@ -155,6 +155,57 @@
       "claimedAt": "2026-10-10T19:05:09.677Z",
       "completedAt": "2026-10-10T19:37:21.310Z",
       "alignedAt": "2026-10-10T19:05:14.027Z"
+    },
+    {
+      "id": 9,
+      "globalId": 363,
+      "text": "bash 的 remote/remotePort/remoteCwd 被忽略（用户 2026-10-10 实测：bash(command=\"uname -s\", remote=\"user@127.0.0.1\") 返回 MINGW64_NT、带 remoteCwd 仍用本机 cwd，reload 后亦然）。已核代码：timeout-bg 在 pi.on(\"session_start\") 里用 createBashTool 重新注册同名 bash（index.ts:146/157），时点晚于所有扩展的加载期注册 ⇒ 总是压掉 remote-tools 的 bash（tools.ts 的 bash 分支）。两个扩展都靠「覆盖同名 bash」，而宿主 registerTool 是 last-write-wins，且没有取回已注册定义并包裹的 API（getAllTools 只给 schema/sourceInfo，无 execute）⇒ 冲突必然静默。要求：定一个确定且不静默丢功能的归属方案（候选 A：remote-tools 也在 session_start 注册取胜 + timeout-bg 检测到已被接管就 fail-loud 通知；候选 B：shell 工具统一归 timeout-bg，它的 bash 内部支持 remote 路由；候选 C：共享契约/组合），并让冲突对用户可见。",
+      "status": "processing",
+      "branch": "fix/shell-tool-composition",
+      "tags": [
+        "bugfix"
+      ],
+      "priority": 8,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T02:51:52.872Z",
+      "claimedAt": "2026-10-11T03:09:37.871Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-11T03:10:54.821Z"
+    },
+    {
+      "id": 10,
+      "globalId": 365,
+      "text": "ls/find 的远端错误不是结构化 REMOTE_ 码，且把宿主标记路径回灌给模型（用户 2026-10-10 实测）：ls /nope-here → \"Path not found: C:\\…\\remote-tools\\index.ts\\pi-remote\\nope-here\"；ls 传文件 → \"Not a directory: …\"；find 同款。根因已核：宿主 ls.js:44/50 与 find.js:71 在 ops.exists() 返回 false / ops.stat() 非目录时，用自己的模板抛错，模板里插值的正是我们传进去的宿主形态路径。read/grep 分支已是结构化码（REMOTE_NOT_FOUND 等）。要求：远端 ls/find 在进宿主校验前做一次 fail-closed 目录探针（顺带缓存 exists/stat 答案，不给每次调用增加 ssh 往返），错误用本插件错误码（新增 REMOTE_NOT_DIRECTORY）且消息静态、不插值路径。",
+      "status": "processing",
+      "branch": "fix/shell-tool-composition",
+      "tags": [
+        "bugfix"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T02:51:53.099Z",
+      "claimedAt": "2026-10-11T03:09:38.108Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-11T03:10:55.032Z"
+    },
+    {
+      "id": 11,
+      "globalId": 367,
+      "text": "文档矛盾（用户 2026-10-10 指出）：docs/extensions/remote-tools.md 的「路径换算只有一个出口」段写「模型给的 C:/… 与相对路径在发 ssh 之前就 fail-closed」，同卡「校验先于 ssh」段又写「只有省略/相对路径才解析（远端 $HOME）」；实测后者正确（相对路径正常解析）。要求：改成准确口径——fail-closed 的只有 Windows 盘符形态与 ~ 开头；相对路径/省略走远端 $HOME 解析且同目标只解析一次。",
+      "status": "processing",
+      "branch": "fix/shell-tool-composition",
+      "tags": [
+        "docs"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-11T03:10:04.315Z",
+      "claimedAt": "2026-10-11T03:10:04.547Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-11T03:10:55.250Z"
     }
   ]
 }
