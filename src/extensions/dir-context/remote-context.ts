@@ -15,8 +15,16 @@ import type { EventBus } from "@earendil-works/pi-coding-agent";
 import { ErrorCodes } from "./errors.ts";
 import type { ContextFileContent } from "./inject.ts";
 
-/** 收集频道（跨扩展契约；升级形状用新频道 v2，不做版本字段）。 */
-export const REMOTE_CONTEXT_CHANNEL = "pi-extensions:dir-context-remote-context:v1";
+/** 收集频道（跨扩展契约；线格式不兼容变更 ⇒ 新频道 v2，不做版本字段）。 */
+export const REMOTE_CONTEXT_CHANNEL = "pi-extensions:dir-context-remote-context:v2";
+
+/**
+ * 「带候选存在但读不出（权限）」的错误码值（`dir-context-todo#8`）。
+ *
+ * 值由契约固定（`docs/cross/remote-context-capability.md`）：消费方按**码**挑提示文案，
+ * 不摘要提供方的 message——否则两边得一直手动对齐文案字符串。未知码一律回落通用提示。
+ */
+export const REMOTE_CONTEXT_UNREADABLE_CODE = "REMOTE_CONTEXT_UNREADABLE";
 
 /**
  * 单次能力调用的消费方超时（毫秒）。

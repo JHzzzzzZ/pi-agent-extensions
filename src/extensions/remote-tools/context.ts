@@ -19,8 +19,8 @@ import type { EventBus } from "@earendil-works/pi-coding-agent";
 import { ErrorCodes } from "./errors.ts";
 import { type SshExec, type SshTarget, classifySshFailure, runSsh, shellQuote } from "./ssh.ts";
 
-/** 收集频道（跨扩展契约；升级形状用新频道 v2，不做版本字段）。 */
-export const REMOTE_CONTEXT_CHANNEL = "pi-extensions:dir-context-remote-context:v1";
+/** 收集频道（跨扩展契约；线格式不兼容变更 ⇒ 新频道 v2，旧版不匹配即没有提供方，走既有提示行）。 */
+export const REMOTE_CONTEXT_CHANNEL = "pi-extensions:dir-context-remote-context:v2";
 
 /**
  * 每个目录按优先级取一个 —— 与 dir-context 的本地发现口径逐字一致
@@ -92,22 +92,33 @@ export function contextChainDirs(anchorDir: string, baseDir: string): string[] {
 }
 
 /**
- * 一趟 ssh 的远端命令：逐级、逐候选名探一个存在的文件，命中即把「路径 + 内容」以 **NUL 分帧**吐出来
- * （NUL 不可能出现在文本内容里 ⇒ 不需要转义、不会与内容撞车）。
+ * 一趟 ssh 的远端命令：逐级、逐候选名探一个存在的文件，命中即把「标记 + 路径 + base64 内容」
+ * 以 NUL 分帧吐出来（协议 v2，契约卡 docs/cross/remote-context-capability.md）。
+ *
+ * **为什么内容要 base64**（remote-tools-todo#13）：v1 直接 `cat` 内容，等于把「NUL 不会出现在
+ * 文本内容里」当契约——而内容是不可信的：含 NUL 的文件（`FIRST\0/evil\0SECOND`）让 NUL 变成
+ * 帧边界，于是能伪造出任意路径的块。base64 的字母表（`A–Za–z0–9+/=` 与空白）不含 NUL / SOH / STX
+ * ⇒ 「每个 NUL 分隔段都是一个完整帧」重新成立，内容再也无法伪造边界。代价是线上体积 +33%。
  *
  * `-f` 判存在、`-r` 判**读得出**：只看 `-f` 会踩下面这个坑——文件被 `chmod 000` 时 `-f` 仍为真，
- * 而 `cat` 失败只写 stderr，stdout 上照样是 `path\0\0`（内容帧为空）⇒ 调用方把「读不出」当成
- * 「真的空文件」，于是注入一个空块、抑制提示、还把它标成已注入（下次触碰不再重试）。
- * 所以读不出时改发一个带 **SOH（`\x01`）前缀**的标记帧：真实路径帧恒以 `/` 开头，撞不了车。
+ * 而 `cat` 失败只写 stderr，stdout 上照样是内容帧为空 ⇒ 调用方把「读不出」当成「真的空文件」，
+ * 于是注入一个空块、抑制提示、还把它标成已注入（下次触碰不再重试）。
+ * 所以每帧带标记：`\x01` 读得出、`\x02` 存在但读不出。另外远端可能根本没有 `base64`：
+ * 命令缺失时它只往 stderr 报错、stdout 什么都不出，那样会得到「空内容 ⇒ 看起来像空文件 ⇒ 静默跳过」，
+ * 所以远程先探一次，缺失就发 `\x03` 单帧。
  */
 export function buildContextCommand(dirs: readonly string[]): string {
 	const names = CONTEXT_FILE_NAMES.join(" ");
-	return dirs
-		.map((dir) => {
-			const base = quoteDir(dir);
-			return `for n in ${names}; do f=${base}/$n; if [ -f "$f" ]; then if [ -r "$f" ]; then printf '%s\\000' "$f"; cat "$f"; else printf '\\001%s\\000' "$f"; fi; printf '\\000'; break; fi; done`;
-		})
-		.join("; ");
+	const probe = `command -v base64 >/dev/null 2>&1 || { printf '\\003\\000'; exit 0; }; `;
+	return (
+		probe +
+		dirs
+			.map((dir) => {
+				const base = quoteDir(dir);
+				return `for n in ${names}; do f=${base}/$n; if [ -f "$f" ]; then if [ -r "$f" ]; then printf '\\001%s\\000' "$f"; base64 < "$f"; else printf '\\002%s\\000' "$f"; fi; printf '\\000'; break; fi; done`;
+			})
+			.join("; ")
+	);
 }
 
 /** 拼目录时不把根写成 `'/'`：否则得到 `//AGENTS.md`，而 POSIX 对 `//` 前缀是实现自定义（Cygwin 会当 UNC）。 */
@@ -115,11 +126,11 @@ function quoteDir(dir: string): string {
 	return dir === "/" ? "''" : shellQuote(dir);
 }
 
-/** 不可读候选帧的路径前缀（SOH）：真实路径帧恒以 `/` 开头，故不会撞车。 */
-export const UNREADABLE_FRAME_PREFIX = "\u0001";
+/** 帧标记（协议 v2）：每个 NUL 分隔段的首字节。内容走 base64，字母表不含这三个字节。 */
+export const FRAME_MARK = { readable: "\u0001", unreadable: "\u0002", unsupported: "\u0003" } as const;
 
 export interface ParsedContextOutput {
-	/** 真的取到的约定文件（**空的真文件也算**）。 */
+	/** 真的取到的约定文件（**空的真文件也算**——诚实上报是提供方的职责，注不注入由消费方定）。 */
 	files: RemoteContextFile[];
 	/**
 	 * 存在但**读不出**的候选（权限）。
@@ -127,31 +138,49 @@ export interface ParsedContextOutput {
 	 * 静默地不给任何提示。
 	 */
 	unreadable: string[];
+	/**
+	 * 远端环境不支持协议 v2（没有 `base64`）。
+	 * 与「空文件」必须可区分：否则会静默跳过，使用者完全看不到本功能没在工作。
+	 */
+	unsupported: boolean;
+}
+
+/** 路径帧必须长得像绝对 POSIX 路径且不含换行：远端登录 rc/banner 往 stdout 吐的东西会被扇进首帧。 */
+function isRemoteAbsPath(path: string): boolean {
+	return path.startsWith("/") && !/[\r\n]/.test(path);
 }
 
 /**
- * NUL 分帧的输出 → { 文件, 读不出的候选 }（奇数项是路径、偶数项是内容；尾部空段丢弃）。
+ * v2 分帧的输出 → { 文件, 读不出的候选, 是否不支持 }（奇数项是帧头、偶数项是载荷；尾部空段丢弃）。
  *
- * 路径帧必须长得像绝对 POSIX 路径且不含换行：远端登录 rc/banner 往 stdout 吐的东西会被扇进
- * 首帧，不做校验就会以垃圾标题注入（内容不可信，不往上下文里编）。
+ * 内容不可信（`remote-tools-todo#13`）：帧边界靠 NUL，而载荷恒为 base64 ⇒ 字母表里没有 NUL，
+ * 内容无法伪造出新帧；帧头另带标记，标记之外的部分还要过 `isRemoteAbsPath`。
  */
 export function parseContextFiles(stdout: Buffer): ParsedContextOutput {
 	const parts = stdout.toString("utf8").split("\u0000");
 	const files: RemoteContextFile[] = [];
 	const unreadable: string[] = [];
+	let unsupported = false;
 	for (let index = 0; index + 1 < parts.length; index += 2) {
-		const path = parts[index];
-		const content = parts[index + 1];
-		if (path === undefined || content === undefined) continue;
-		if (path.startsWith(UNREADABLE_FRAME_PREFIX)) {
-			const real = path.slice(UNREADABLE_FRAME_PREFIX.length);
-			if (real.startsWith("/") && !/[\r\n]/.test(real)) unreadable.push(real);
+		const frame = parts[index];
+		const payload = parts[index + 1];
+		if (frame === undefined || payload === undefined) continue;
+		const mark = frame.slice(0, 1);
+		const path = frame.slice(1);
+		if (mark === FRAME_MARK.unsupported) {
+			unsupported = true;
 			continue;
 		}
-		if (!path.startsWith("/") || /[\r\n]/.test(path)) continue;
-		files.push({ path, content });
+		if (!isRemoteAbsPath(path)) continue;
+		if (mark === FRAME_MARK.unreadable) {
+			unreadable.push(path);
+			continue;
+		}
+		if (mark !== FRAME_MARK.readable) continue;
+		// base64 允许换行包裹（GNU 默认 76 列）⇒ 解码前剥空白，行尾差异不影响字节。
+		files.push({ path, content: Buffer.from(payload.replace(/\s+/g, ""), "base64").toString("utf8") });
 	}
-	return { files, unreadable };
+	return { files, unreadable, unsupported };
 }
 
 export interface RemoteContextDeps {
@@ -178,9 +207,11 @@ export function createRemoteContextCapability(deps: RemoteContextDeps): RemoteCo
 				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_FAILED, message: "远端上下文：目标不可用，本次跳过。" };
 			}
 			const rawAnchor = request.kind === "directory" ? resolved.remotePath : posix.dirname(resolved.remotePath);
+			// 归一化（`remote-tools-todo#14`）：`.`/`..` 一变就是一个新去重键 ⇒ 同一份 AGENTS.md 被重复注入，
+			// 块标题也不是真实路径。只在这一处归一——消费方的键与标题都取自本侧给回的路径。
 			// 尾斜杠归一：相对路径经 `posix.join` 会**保留**尾斜杠（绝对路径那条已被 resolveRemoteSearchPath 剥掉），
 			// 不归一的话块头会显示双斜杠、去重键也会与不带尾斜杠的触碰不一致（同一份内容注两次）。
-			const anchorDir = rawAnchor.replace(/\/+$/, "") || "/";
+			const anchorDir = posix.normalize(rawAnchor).replace(/\/+$/, "") || "/";
 			// 基准同样归一：远端 $HOME 配置带尾斜杠时（`/home/u/`），`isWithinBase` 会判 false ⇒ 空链 ⇒
 			// 相对路径的远端注入静默全灭（工具本身照常工作，只有本功能消失）。
 			const baseDir = resolved.baseDir.replace(/\/+$/, "") || "/";
@@ -194,10 +225,15 @@ export function createRemoteContextCapability(deps: RemoteContextDeps): RemoteCo
 				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_FAILED, message: "远端上下文：远端命令非零退出，本次跳过。" };
 			}
 			const parsed = parseContextFiles(result.stdout);
+			// 远端没有 `base64` ⇒ 协议 v2 取不到任何内容。必须报失败：静默跳过等于「本功能没在工作」而使用者不知道。
+			if (parsed.unsupported) {
+				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_FAILED, message: "远端上下文：远端缺少 base64，本次跳过。" };
+			}
 			// 链上只要有一个候选存在却读不出 ⇒ 整条请求算失败（fail-closed）：
 			// 静默少注入比不注入更危险——那个读不出的正是最该生效的那份约定。
+			// 专属错误码（不是通用的 FAILED）：消费方据此给一条**说得清原因**的提示（dir-context#8）。
 			if (parsed.unreadable.length > 0) {
-				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_FAILED, message: "远端上下文：约定文件存在但读不出（权限），本次跳过。" };
+				return { ok: false, code: ErrorCodes.REMOTE_CONTEXT_UNREADABLE, message: "远端上下文：约定文件存在但读不出（权限），本次跳过。" };
 			}
 			return { ok: true, dir: anchorDir, files: parsed.files };
 		},
