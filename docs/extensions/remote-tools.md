@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 5e76c02
+> last verified @ 74e6222
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
@@ -115,6 +115,7 @@
   `claimRemoteJobHost`（job 托管端口的索取与形状守卫）
 - `tools.ts` — 7 个同名覆盖的接线：schema 拼接（内置参数 + remote 三件套）、本地/远端分派、
   `resolveToolPath`（校验 + $HOME 懒解析）、`remoteContext`（把内置定义的 `ctx.cwd` 换成远端基准）、
+  `withRemotePaths` / `rewriteHostPathInStructured`（远端分支唯一后处理：结果/报错里的宿主标记路径回写，`#16`）、
   session 缓存（同目标共享、`$HOME` 只解析一次）、`executeRemoteBash`（远端分支单一实现，供自身注册与能力载荷共用）
 - `ops.ts` — 远端 Operations 后端：read/write/edit/ls/find/bash 的远端原语（**目录分支在前**的 `if/elif` 一次往返区分
   「不存在/是目录/正常」——`-e` 对目录同样成立，顺序写反会把「是目录」误报成「不可读」；read 的 `access` 顺带取回图片嗅探样本，`detectImageMimeType` 消费）、

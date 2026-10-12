@@ -43,7 +43,7 @@ Pi 的内置工具（`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls`）只操作
 - **图片识别**（`#8`）：`ReadOperations.detectImageMimeType` 端口必须自己实现，否则宿主把 PNG 当文本读（`read.js` 的 `ops.detectImageMimeType ? … : undefined`）。实现方式：嗅探样本搭 `access` 的**顺风车**（`head -c 8192 … | base64`，零额外往返），判定交给**宿主同一份** `detectSupportedImageMimeTypeFromFile`（包根唯一导出；纯 buffer 版未导出、深路径被 `exports` 封死 ⇒ 样本落本地临时文件再喂进去），魔数/动图/BMP 规则零复制。
 - **参数健壮性**（`#5`/`#6` 两轮实测回归）：没有远端意图的字段不得让调用失败、也不得抛裸异常——非字符串 `path`/`remoteCwd`、`null`/非数字/`<=0` 的 `remotePort`、缺省值字面量一律当「未提供」；**自由字符串一律不猜**（仍当主机名，连不上就响亮报错，避免静默跑错机器）。
 - **安全不变量**：只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`；**白名单而非前缀匹配**——环境里存在 `PI_WEB_TOKEN` 这类值）；错误消息全静态模板（不插值远端路径内容或远端输出）；不存凭据。
-- **指纹策略与文案口径**（`#15`/`#16`，2026-10-12 用户选定/实测）：指纹走 `accept-new`（TOFU：新主机首次自动记录、变更仍 fail-closed，不自行 `ssh-keyscan`）；工具**成功/失败文案一律展示远端路径**——`tools.ts` 的 `withRemotePaths` 在出口处把宿主原样插值的标记路径换回远端绝对路径（内容文本 + `details.patch` + 抛出的错误），本地分支逐字不变。
+- **指纹策略与文案口径**（`#15`/`#16`，2026-10-12 用户选定/实测）：指纹走 `accept-new`（TOFU：新主机首次自动记录、变更仍 fail-closed，不自行 `ssh-keyscan`）；工具**成功/失败文案一律展示远端路径**——`tools.ts` 的 `withRemotePaths` 在出口处把宿主原样插值的标记路径换回远端绝对路径（content 文本 + `details.patch`/`diff` + `structuredContent`（string 或图片对象的 `note`）+ 抛出的错误），本地分支逐字不变。
 - **错误码**：单文件 `errors.ts`（`as const` 联合 + 静态消息模板），层内契约见 `docs/cross/result-unions.md`。
 
 ## 测试决策
