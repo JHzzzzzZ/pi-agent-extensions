@@ -14,12 +14,12 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 
 ### 改动分档（T1/T2/T3）
 
-**判据看碰没碰契约面，不看行数**（行数是坏代理：`context.ts` 5 行能改掉远端路径语义）。动手前用 `git diff --name-only` 自证档位；T2/T3 把档位写进对齐文档正文（**不进 todo JSON**，不迁 schema）。决策与实证见 `docs/adr/0013-dev-process-tiers.md`。
+**判据看碰没碰契约面，不看行数**（行数是坏代理：`context.ts` 5 行能改掉远端路径语义）。定档时按预计触及的文件清单自证，提交前用 `git diff --name-only` 复核；T2/T3 把档位写进对齐文档正文（**不进 todo JSON**，不迁 schema）。决策与实证见 `docs/adr/0013-dev-process-tiers.md`。
 
 | 档位 | 判据（可核对） | 流程 |
 | --- | --- | --- |
-| **T1 无行为改动** | diff 不含行为代码，且不碰契约/流程定义面（`docs/cross/`、`AGENTS.md`、`docs/adr/`、`CONTEXT.md`、`GOAL.md`）：只碰注释、其余 `.md`、`package.json` 版本号、lock 文件 | 免红线 1/2/3/4/11 与红线 7 的全量测试门——无 todo 条目、无对齐、无规格、无评审、无 worktree、无收尾报告；**直接在主干提交**，commit message 首行标 `[T1]`（唯一留痕，便于事后抽查越档）。两项仍成立：既有套件不得变红（碰了会读到该文件的测试就得跑它）；改到 docs 卡片则同行更新其 `last verified` |
-| **T2 小修** | **行为代码**只动一个单元：`src/extensions/<x>/`、`agent-manager/`、`.agents/skills/todo-cli/todo-cli/`，或根 `test/`、`tools/` 的单个文件（含其配套测试）；可同变更附带 T1 类文件（卡片/README/版本号/lock/对齐文档）；且 `docs/cross/`、状态键/widget/工具名/频道/命令/模型面、错误码集、消息键、公开 API **零变化** | 生命周期 1→7 照走（含两段式 `claim` 与对齐门），三处减免：红线 3 免规格、红线 11 单轮评审（含行为面护栏）、红线 7 全量测试留 merge 前 |
+| **T1 无行为改动** | diff 不含行为代码，且不碰契约/流程定义面（`docs/cross/`、`AGENTS.md`、`docs/adr/`、`CONTEXT.md`、`GOAL.md`）：只碰注释、其余 `.md`、`package.json` 版本号、lock 文件，或 **`todos/` 记账文件**（`todos/*.json`、`todos/align/*.md`——登记/claim/align/complete 类提交视同 T1） | 免红线 1/2/3/4/11 与红线 7 的全量测试门——无 todo 条目、无对齐、无规格、无评审、无 worktree、无收尾报告；**直接在主干提交**，commit message 首行标 `[T1]`（唯一留痕，便于事后抽查越档）。两项仍成立：既有套件不得变红（碰了会读到该文件的测试就得跑它）；改到 docs 卡片则同行更新其 `last verified` |
+| **T2 小修** | **行为代码**只动一个单元：`src/extensions/<x>/`、`agent-manager/`、`.agents/skills/todo-cli/todo-cli/`，或根 `test/`、`tools/` 的单个文件（含其配套测试）；可同变更附带 **T1 类文件**（= 上一行的文件清单，含注释、其余 `.md`、版本号、lock、记账文件）；且 `docs/cross/`、状态键/widget/工具名/频道/命令/模型面、错误码集、消息键、公开 API **零变化** | 生命周期 1→7 照走（含两段式 `claim` 与对齐门），三处减免：红线 3 免规格、红线 11 单轮评审（含行为面护栏）、红线 7 全量测试留 merge 前 |
 | **T3 契约改动** | 触碰上列任一面或契约/流程定义文件；跨插件、新插件、删扩展、改流程本身；**其余一切**（含跨两个以上目录/单元的改动） | 现行全流程，一字不减 |
 
 **从严取档**：同时满足多档时按 T3 > T2 > T1 执行（例：只改 `docs/cross/error-codes.md`——文件类型像 T1，但它就是契约面 ⇒ T3）。红线 8（仓库边界）、9（命令超时）、10（团队方案审批）**全档适用**；红线 4（worktree）仅 T1 免（带 `--branch` 的登记/领用不受影响）。
@@ -29,7 +29,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 1. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建同名文件；通用/跨插件需求 → `todos/general-todo.json`；仓库级工具 → 该工具专门文件（现 `todo-cli-todo.json`、`agent-manager-todo.json`）。`todos/` 唯一读写入口是 todo CLI（`node .agents/skills/todo-cli/todo-cli/todo.mjs`，手工编辑 JSON 视为破坏存储；命令面/锁/查重口径见 `docs/tools/todo-cli.md`）：已有条目 `claim` 领取（`--branch` 写入分支引用；两段式——首次领取进 `aligning`，对齐确认后再次 `claim` 才进 `processing`），没有则 `add` 追加；取消/搁置用 `complete --note "<原因>"` 收口（从 `aligning`/`aligned` 收口必带 `--note`）；误标为在途或推翻对齐结论用 `reopen --note "<原因>"` 退回未领取（从 `aligning`/`aligned` 撤销必带 `--note`，`done` 拒绝，陈旧对齐文档自动归档为 `.reopened-<UTC 紧凑>.md`）——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）手工解决。
 2. **先对齐意图（grill-with-docs）**——登记后、动手前，先跑 `/skill:grill-with-docs`（mattpocock/skills 库：内部为 grilling 访谈 + domain-modeling 建模）与人类把意图、边界、术语问清，**对齐产物必须落盘**：逐条对齐文档落 `todos/align/<名>#<id>.md`（四小节 `意图/范围/验收标准/人工确认`，由 `align` 做结构校验；门形态见 `docs/adr/0003-todo-align-gate.md`）、术语与领域词汇进 `CONTEXT.md`、决策进 `docs/adr/`；只留在会话里的对齐视为没对齐。
 3. **规格落盘（to-spec）**——对齐后用 `/skill:to-spec` 把结论综合成规格文档（问题陈述/方案/用户故事/实现决策/测试决策/范围外）落盘到 `docs/specs/`；规格与实现同变更同步，不许只活在会话或工单里。需求跟踪始终以 `todos/` 为准（第 1 步），不引入外部 issue tracker。**T2 免**：对齐文档的「范围」小节（含「不做什么」）即规格，不再另写 `docs/specs/`；仅 T3 落规格。
-4. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记（自测、合并与清理在第 7 步）。
+4. **一律 worktree 实现（T1 与 `todos/` 记账提交免）**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令、`todos/` 登记与 T1 直提（自测、合并与清理在第 7 步）。
 5. **实现 + 测试**——新能力、bug 修复与重构按正常顺序实现，同一变更内带上锁定该行为的测试并跑绿；重构要有测试保护网。
 6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
 7. **交付四处同步 + 收尾**——自测达标（全量测试绿 + `npm run typecheck` 零错误；**T2 开发中跑受影响套件 + typecheck，全量留 merge 前一次**）+ 跨厂商评审终轮无新意见（红线 11；**T2 见该条的档位口径**）才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`，并确认对齐门已过（对齐文档 + 人工确认）后 `complete --note` 收口 `todos/` 条目。任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node .agents/skills/todo-cli/todo-cli/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
