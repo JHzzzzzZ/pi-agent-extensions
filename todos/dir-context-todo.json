@@ -177,6 +177,64 @@
       "claimedAt": "2026-10-11T12:29:58.913Z",
       "completedAt": "2026-10-11T14:09:23.833Z",
       "alignedAt": "2026-10-11T12:32:18.656Z"
+    },
+    {
+      "id": 10,
+      "globalId": 388,
+      "text": "并行工具调用时嵌套 AGENTS.md 注入只落在一个结果上：host 并发执行同一条 assistant 消息里的多个调用（executeToolCallsParallel 的 Promise.all），tool_result hook 按完成顺序触发 ⇒ 会话级去重让最先完成的结果独吞块，其余结果静默无块（真机复现：4 个并行 read 同目录，只有 1 个带块且赢家随机；用户 2026-10-12 会话中 read loop/index.ts 无块、同消息的 loop/tasks.ts 有块）。修：同 turn 内每个触碰结果都带块（跨 turn 去重保留 += 引文），或一次全量块 + 同链其余结果一行指针（对齐时定）；50KB『总量阈值』经实测不成立（51545B/83218B 结果均正常注入）。",
+      "status": "done",
+      "branch": "feat/dir-context-parallel-turns",
+      "tags": [
+        "注入",
+        "并行",
+        "host-并发"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "merge 98a7023（分支 feat/dir-context-parallel-turns，T2 档）。实现：injectedThisTurn + turn_start 边界 + renderPointer 一行指针（远端保持现状，卡片记已知不对称）。测试 119→123（宿主事件路径 47→51），全量 24/24 套件 2514 用例 0 fail + typecheck 零错误。真机 A/B：4 并行 read 两链 → 4 个结果全有痕迹；单读 195KB 仍正文；跨 turn 仍静默。跨厂商单轮评审 kimi-coding/k3-256k：0 P1 / 3 P2（已全修）/ 3 P3（已登记 #11、#12），显式回答无未覆盖行为面疑虑。"
+      ],
+      "createdAt": "2026-10-12T11:26:39.130Z",
+      "claimedAt": "2026-10-12T11:26:56.632Z",
+      "completedAt": "2026-10-12T12:19:53.182Z",
+      "alignedAt": "2026-10-12T11:33:01.814Z"
+    },
+    {
+      "id": 11,
+      "globalId": 389,
+      "text": "dir-context 小整洁（#10 评审 P3，kimi-coding/k3-256k 2026-10-12）：① index.ts 的 dispose 回调只清 injected/loaded，未清 injectedThisTurn（实例销毁后无实际影响，属清理完整性）；② inject.ts 的 renderPointer 未对 ref=\"…\" 做引号转义（路径含双引号会撑破属性；与既有全量块 path=\"…\" 同模式、Windows 不可触发，仅记事）。两处都是一行小改，等下一个动 dir-context 的变更顺手带上。",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "清理",
+        "评审遗留"
+      ],
+      "priority": 3,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-12T12:00:47.787Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 12,
+      "globalId": 390,
+      "text": "远端同链并发的重复注入竞态（#10 评审 P3，既有缺陷、非本次引入）：injectRemoteContext 在 await fetchRemoteContext 之后才查 injected 去重 ⇒ 同一 turn 内同一条远端链的并发触碰会各发一趟 ssh，后返回的那次在前一次标记前也可能再注入一份（远端块重复 + 重复 ssh）。修法候选：按 (remote, remotePort, kind, path) 在 turn 内合并 in-flight promise（复用同一趟结果），或先乐观标记、失败回退。验收：并发两条远端同链触碰只发一趟 ssh、只注入一份块；与本轮记在卡片的「已知不对称」口径对齐（本机路径已有指针补位）。",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "远端",
+        "并发",
+        "竞态"
+      ],
+      "priority": 4,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-12T12:00:48.287Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
