@@ -236,10 +236,10 @@ export function classifySshFailure(result: SshFailureInput): RemoteToolsFailure 
 	if (result.spawnFailed) {
 		return failure(ErrorCodes.SSH_CONNECT_FAILED, "无法启动 ssh 客户端：请确认系统 PATH 里有 ssh。");
 	}
-	if (result.exitCode === 255 && /ssh:|Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|Permission denied|Connection (refused|timed out|closed)/i.test(result.stderr)) {
+	if (result.exitCode === 255 && /ssh:|Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|Permission denied|Connection (refused|timed out|closed)|Bad configuration option/i.test(result.stderr)) {
 		return failure(
 			ErrorCodes.SSH_CONNECT_FAILED,
-			"ssh 连接失败（主机指纹已变更、密钥认证失败或网络不可达）：请核对目标主机身份后重试；指纹变更需在目标机上确认后清理旧条目（ssh-keygen -R <host>）。",
+			"ssh 连接失败（主机指纹已变更、密钥认证失败、网络不可达，或客户端不支持本扩展使用的选项——`accept-new` 需 OpenSSH ≥ 7.6）：请核对目标主机身份与 ssh 版本后重试；指纹变更需在目标机上确认后清理旧条目（ssh-keygen -R <host>）。",
 		);
 	}
 	return null;

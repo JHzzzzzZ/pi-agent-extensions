@@ -20,7 +20,7 @@
  *   - 非交互（BatchMode）且 TOFU 指纹策略（StrictHostKeyChecking=accept-new）⇒ 新主机首次连接自动把指纹
  *     写进 known_hosts（零人工前置），已收录主机的指纹变更仍然 fail-closed（remote-tools#15）；
  *   - 远端分支的结果/错误文案把宿主标记形态路径换回远端真实路径（宿主的成功文案与补丁头会原样插值入参
- *     path，不换就会被读成「写到了本机」，remote-tools#16）；本地分支逐字不劫；
+ *     path，不换就会被读成「写到了本机」，remote-tools#16）；本地分支逐字不动；
  *   - remote 为空时直接调宿主本地实现，不触网、不产生任何 SSH 进程；
  *   - 路径在**发 ssh 之前**校验：Windows 盘符形态、`~` 开头与宿主标记首段直接 fail-closed；
  *     省略/相对路径按**远端 $HOME** 解析（同目标只解析一次）；

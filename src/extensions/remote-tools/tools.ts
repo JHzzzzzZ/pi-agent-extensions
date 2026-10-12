@@ -200,7 +200,23 @@ async function withRemotePaths<D>(paths: RemotePathPair, run: () => Promise<Agen
 		throw error;
 	}
 	const content = result.content.map((part) => (part.type === "text" ? { ...part, text: rewriteHostPathInText(part.text, paths.hostPath, paths.remotePath) } : part));
-	return { ...result, content, details: rewriteHostPathInDetails(result.details, paths) };
+	const details = rewriteHostPathInDetails(result.details, paths);
+	// structuredContent 不在公开类型面里（宿主 read 在 read.js 末尾从**改写前**的 content 派生它，`:178`），
+	// 但它会透传给 codemode 消费方 ⇒ 不重写就等于给假路径留了第二个出口（第 1 轮评审建议 2）。
+	const structured = (result as { structuredContent?: unknown }).structuredContent;
+	const rewritten = rewriteHostPathInStructured(structured, paths);
+	if (rewritten === structured) return { ...result, content, details };
+	return { ...result, content, details, structuredContent: rewritten } as AgentToolResult<D> & { structuredContent?: unknown };
+}
+
+/** structuredContent 只有两种形状（read.js 的 `toReadOutput`）：文本串，或图片对象（附 `note` 文本）。 */
+function rewriteHostPathInStructured(structured: unknown, paths: RemotePathPair): unknown {
+	if (typeof structured === "string") return rewriteHostPathInText(structured, paths.hostPath, paths.remotePath);
+	if (typeof structured !== "object" || structured === null) return structured;
+	const record = structured as Record<string, unknown>;
+	if (typeof record.note !== "string") return structured;
+	const note = rewriteHostPathInText(record.note, paths.hostPath, paths.remotePath);
+	return note === record.note ? structured : { ...record, note };
 }
 
 /**

@@ -659,4 +659,10 @@ test("远端 read：大行提示里的路径也是远端路径（同族的第三
 	assert.match(text, /\[Line 1 is /);
 	assert.ok(text.includes(REMOTE_FILE), `大行提示应指向远端路径：${text}`);
 	assert.equal(text.includes(MARKER), false, `大行提示里不该有宿主标记：${text}`);
+
+	// 第二个出口：宿主在 read.js 末尾从**改写前**的 content 派生 structuredContent（codemode 消费方走它）。
+	const structured = (result as { structuredContent?: unknown } | undefined)?.structuredContent;
+	assert.equal(typeof structured, "string", "read 文本结果应带 string 形态的 structuredContent");
+	assert.ok(String(structured).includes(REMOTE_FILE), `structuredContent 应指向远端路径：${String(structured)}`);
+	assert.equal(String(structured).includes(MARKER), false, `structuredContent 里不该有宿主标记：${String(structured)}`);
 });

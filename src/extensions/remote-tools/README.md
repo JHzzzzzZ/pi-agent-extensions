@@ -24,7 +24,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 
 ## 前提
 
-- 系统 PATH 里有 `ssh`（Windows 10+ 自带 OpenSSH 即可），**零 npm 运行时依赖**。
+- 系统 PATH 里有 `ssh`（Windows 10+ 自带 OpenSSH 即可；`accept-new` 需 **OpenSSH ≥ 7.6**），**零 npm 运行时依赖**。
 - 目标主机已配好密钥 / ssh-agent。本扩展非交互执行（`BatchMode=yes`）且指纹策略是 **TOFU**（`StrictHostKeyChecking=accept-new`，`#15`）：新主机首次连接由 ssh 自己把指纹写进 `known_hosts`，**不需要**先手工 `ssh user@host` 一次；已收录主机的**指纹变更仍然拒绝**（报 `SSH_CONNECT_FAILED`，清理旧条目用 `ssh-keygen -R <host>`）。
 - 远端有 `ripgrep` 时 `grep`/`find` 语义与本地一致（遵守 `.gitignore`）；没有则回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不生效）。
 

@@ -169,6 +169,8 @@ test("失败分类：超时、ssh 客户端缺失、255 + 主机指纹/认证错
 		"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!@@@Host key verification failed.",
 		"PERMISSION DENIED (publickey).",
 		"ssh: connect to host 10.0.0.7 port 22: Connection refused",
+		// 老 OpenSSH（< 7.6）不认识 accept-new / 客户端配置项写错时的原文（第 1 轮评审备注 2）
+		"command-line: line 0: Bad configuration option: stricthostkeychecking",
 	]) {
 		const failure = classifySshFailure({ exitCode: 255, stdout: Buffer.alloc(0), stderr, timedOut: false, spawnFailed: false });
 		assert.equal(failure?.code, ErrorCodes.SSH_CONNECT_FAILED, stderr);

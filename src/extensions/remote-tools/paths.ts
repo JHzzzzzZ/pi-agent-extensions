@@ -131,7 +131,8 @@ export function rewriteHostPathInText(text: string, hostPath: string, remotePath
 	let rewritten = text;
 	for (const variant of variants) {
 		const flags = process.platform === "win32" ? "gi" : "g";
-		rewritten = rewritten.replace(new RegExp(escapeRegExp(variant), flags), remotePath);
+		// 替换串用函数形态：远端路径里的 `$&`/`$'` 等是 String.replace 的特殊模式，直接当替换串会把宿主标记路径插回去。
+		rewritten = rewritten.replace(new RegExp(escapeRegExp(variant), flags), () => remotePath);
 	}
 	return rewritten;
 }

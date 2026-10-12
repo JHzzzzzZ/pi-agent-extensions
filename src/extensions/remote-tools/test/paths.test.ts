@@ -138,4 +138,7 @@ test("rewriteHostPathInText：宿主标记路径换回远端路径（remote-tool
 	assert.equal(rewriteHostPathInText("/srv/app/x.ts", "/srv/app/x.ts", "/srv/app/x.ts"), "/srv/app/x.ts");
 	// 宿主形态里的正则元字符（Windows 盘符冒号、反斜杠）不得当元字符用
 	assert.equal(rewriteHostPathInText(`cat ${hostPath} | head`, hostPath, "/srv/app/x.ts"), "cat /srv/app/x.ts | head");
+	// 替换串里 `$&`/`$'` 是 String.replace 的特殊模式（POSIX 远端路径允许 `$`）：必须原样输出（第 1 轮评审建议 3）
+	assert.equal(rewriteHostPathInText(`wrote ${hostPath}`, hostPath, "/srv/$&/x.ts"), "wrote /srv/$&/x.ts");
+	assert.equal(rewriteHostPathInText(`wrote ${hostPath}`, hostPath, "/srv/$'/x.ts"), "wrote /srv/$'/x.ts");
 });

@@ -9,7 +9,8 @@
  *   PI_REMOTE_TOOLS_TEST_PORT=2222               # 可选
  *   PI_REMOTE_TOOLS_TEST_DIR=/srv/app            # 可选，可写目录；缺省远端 $HOME
  *
- * 前提：本机已配好密钥/ssh-agent，且目标机指纹已在 known_hosts（本扩展拒绝未知指纹）。
+ * 前提：本机已配好密钥/ssh-agent。指纹策略是 TOFU（`accept-new`，`#15`）：目标机不在 known_hosts 里也能首次连上
+ * （由 ssh 自己写入）；已收录主机的指纹变更仍会 fail-closed。
  * 用例只在自己创建的临时目录里读写，结束前删除。
  */
 
@@ -52,7 +53,7 @@ function makeSession() {
 	return createRemoteSession({ target: makeTarget(), exec: createSpawnExec() });
 }
 
-test("真机：建连并解析远端 $HOME（非交互 + 拒绝未知指纹）", { skip }, async () => {
+test("真机：建连并解析远端 $HOME（非交互 + TOFU 指纹策略）", { skip }, async () => {
 	const session = makeSession();
 	const home = await session.home();
 	assert.equal(home.startsWith("/"), true, `远端 $HOME 异常：${home}`);
@@ -178,13 +179,20 @@ test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → �
 		const mkdir = await tools.get("bash")!.execute(ID, { command: `mkdir -p '${marker}'`, remote, remoteCwd: base }, undefined, undefined, ctx);
 		assert.match(text(mkdir as never), /.*/);
 
-		// write → read
-		await tools.get("write")!.execute(ID, { path: file, content: "export const live = 1;\n", remote }, undefined, undefined, ctx);
+		// write → read（#16：成功文案必须是远端绝对路径，不是宿主标记形态）
+		const written = await tools.get("write")!.execute(ID, { path: file, content: "export const live = 1;\n", remote }, undefined, undefined, ctx);
+		assert.equal(text(written as never), `Successfully wrote to ${file}`);
+		assert.equal(text(written as never).includes("pi-remote"), false, "write 文案泄露了宿主标记路径");
 		const readBack = await tools.get("read")!.execute(ID, { path: file, remote }, undefined, undefined, ctx);
 		assert.match(text(readBack as never), /export const live = 1;/);
 
-		// edit（宿主 read-modify-write + 远端写回）
-		await tools.get("edit")!.execute(ID, { path: file, edits: [{ oldText: "live = 1", newText: "live = 2" }], remote }, undefined, undefined, ctx);
+		// edit（宿主 read-modify-write + 远端写回；#16：文案与 patch 头同样是远端路径）
+		const edited = await tools.get("edit")!.execute(ID, { path: file, edits: [{ oldText: "live = 1", newText: "live = 2" }], remote }, undefined, undefined, ctx);
+		assert.equal(text(edited as never), `Successfully replaced 1 block(s) in ${file}.`);
+		assert.equal(text(edited as never).includes("pi-remote"), false, "edit 文案泄露了宿主标记路径");
+		const patch = (edited as { details?: { patch?: string } } | undefined)?.details?.patch ?? "";
+		assert.equal(patch.includes("pi-remote"), false, `edit patch 泄露了宿主标记路径：${patch.split("\n").slice(0, 3).join(" | ")}`);
+		assert.ok(patch.includes(file), "edit patch 头应是远端路径");
 		const afterEdit = await tools.get("read")!.execute(ID, { path: file, remote }, undefined, undefined, ctx);
 		assert.match(text(afterEdit as never), /export const live = 2;/);
 
@@ -229,7 +237,7 @@ test("真机：远端不存在 / 无权限报结构化错误码（不是未捕�
 	);
 });
 
-test("真机：不可达/未知主机 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {
+test("真机：不可达域名 fail-closed（ssh 参数含 BatchMode 与 StrictHostKeyChecking）", { skip }, async () => {
 	const exec = createSpawnExec();
 	const bogus = { host: "pi-remote-tools.invalid", user: "nobody", port: undefined };
 	assert.equal(buildSshArgs(bogus, "true").includes("-o"), true);
@@ -383,6 +391,8 @@ test("真机：干净 known_hosts 下首次连接成功、指纹由 ssh 自己�
 	const result = await createSpawnExec()({ file: "ssh", args, stdin: undefined, timeoutMs: 20_000, signal: undefined });
 	assert.equal(result.exitCode, 0, `干净 known_hosts 的首次连接应成功：${result.stderr}`);
 	const written = fs.readFileSync(knownHosts, "utf8");
-	assert.ok(written.includes(target.host), `ssh 应把主机条目写进 known_hosts：${written}`);
+	assert.ok(written.trim().length > 0, "ssh 应把主机条目写进 known_hosts（空文件 = 没写）");
+	// 不直接断言主机名字面量：用户/系统 ssh_config 开了 `HashKnownHosts yes` 时条目是哈希形态。
+	// 写进文件就说明 ssh 接受了主机身份（这才是 accept-new 的语义）。
 	fs.rmSync(dir, { recursive: true, force: true });
 });
