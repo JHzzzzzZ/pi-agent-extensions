@@ -227,7 +227,7 @@
     },
     {
       "id": 14,
-      "globalId": 318,
+      "globalId": 387,
       "text": "在本机安装 TypeSafe 官方 agent skill（typesafe-ai）：skills#12/#13 在另一检出完成，本机 ~/.agents/skills/ 不存在（2026-09-23 实测），Pi 会话读不到 Jev 官方设计文档。落点沿用 #13 已人工确认的口径：全局 ~/.agents/skills/typesafe-ai/，三文件（上游 SKILL.md + LICENSE 原样保真 + 本仓写的 SOURCE.md 溯源卡），不留仓库副本。上游 github.com/typesafe-ai/skills v0.5.7（=main HEAD commit 65a39f39，MIT）。注：#13 记录 10189B/0ab58b75 与本机下载 10040B/71ea90d7 差异 = CRLF 转换（+149 字节 = 149 行），内容同一。回滚 rm -rf ~/.agents/skills/typesafe-ai。",
       "status": "done",
       "branch": "chore/typesafe-skill-local",
