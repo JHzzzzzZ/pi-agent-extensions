@@ -24,6 +24,7 @@ import {
 	HOST_PATH_ROOT,
 	assertMarkerRootUsable,
 	assertModelPathInput,
+	rewriteHostPathInText,
 	stripHostMarker,
 	toHostPath,
 	toRemotePath,
@@ -123,4 +124,21 @@ test("toRemotePath 折叠冗余斜杠与尾斜杠，但保留根目录", () => {
 	assert.equal(toRemotePath("/a//b/c/"), "/a/b/c");
 	assert.equal(toRemotePath("\\a\\b\\c\\"), "/a/b/c");
 	assert.equal(toRemotePath("/"), "/");
+});
+
+test("rewriteHostPathInText：宿主标记路径换回远端路径（remote-tools#16 的文案锚点）", () => {
+	const hostPath = toHostPath("/srv/app/x.ts");
+	assert.equal(rewriteHostPathInText(`Successfully wrote to ${hostPath}`, hostPath, "/srv/app/x.ts"), "Successfully wrote to /srv/app/x.ts");
+	// 分隔符翻转（宿主若经 path 家族回写）与重复出现都要认
+	assert.equal(rewriteHostPathInText(hostPath.replace(/\\/g, "/"), hostPath, "/srv/app/x.ts"), "/srv/app/x.ts");
+	assert.equal(rewriteHostPathInText(`${hostPath} + ${hostPath}`, hostPath, "/srv/app/x.ts"), "/srv/app/x.ts + /srv/app/x.ts");
+	// 无关文本与空输入原样返回（不做任何泛化改写）
+	assert.equal(rewriteHostPathInText("no path here", hostPath, "/srv/app/x.ts"), "no path here");
+	assert.equal(rewriteHostPathInText("", hostPath, "/srv/app/x.ts"), "");
+	assert.equal(rewriteHostPathInText("/srv/app/x.ts", "/srv/app/x.ts", "/srv/app/x.ts"), "/srv/app/x.ts");
+	// 宿主形态里的正则元字符（Windows 盘符冒号、反斜杠）不得当元字符用
+	assert.equal(rewriteHostPathInText(`cat ${hostPath} | head`, hostPath, "/srv/app/x.ts"), "cat /srv/app/x.ts | head");
+	// 替换串里 `$&`/`$'` 是 String.replace 的特殊模式（POSIX 远端路径允许 `$`）：必须原样输出（第 1 轮评审建议 3）
+	assert.equal(rewriteHostPathInText(`wrote ${hostPath}`, hostPath, "/srv/$&/x.ts"), "wrote /srv/$&/x.ts");
+	assert.equal(rewriteHostPathInText(`wrote ${hostPath}`, hostPath, "/srv/$'/x.ts"), "wrote /srv/$'/x.ts");
 });

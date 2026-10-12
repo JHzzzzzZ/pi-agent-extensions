@@ -19,7 +19,7 @@
 | [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭）；bash 与 remote-tools 经 `pi.events` 组合（能力协商，两个功能都保留），**远端 bash 超时同样不杀 ssh、转后台并进统一 job 面**（`/bg`、`/bg:kill`、底部状态条段），`/bg:kill` 尽力杀远端进程组 | 53 个（node:test） |
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
-| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链；**分帧用 base64 载荷**——内容含 NUL 也无法伪造出假路径块；读到写不出的候选或远端缺 base64 时明确报失败） | 123 个（+9 真机 opt-in） |
+| [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链；**分帧用 base64 载荷**——内容含 NUL 也无法伪造出假路径块；读到写不出的候选或远端缺 base64 时明确报失败）；**主机指纹走 TOFU（`accept-new`）：新主机首次连接零人工前置、指纹变更仍 fail-closed**；**成功/失败文案一律展示远端路径**（不把内部标记路径 `C:\…\pi-remote\…` 回灌给模型） | 127 个（+10 真机 opt-in） |
 | [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；codemode 走「顶层结果代偿」（主来源 = 嵌套事件的完整入参、`details.calls` 截断预览降级兜底）；带 `remote` 的调用**默认零注入**（只读入参字段，绝不按本地 cwd 解远端路径），装了 remote-tools 时经 `pi.events` 协商**自动注入远端那条祖先链**（块头标来源，取不到才退回一行提示）；会话内去重、compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次）；**空内容的约定文件不注入空块也不标记**（随后写入内容同会话即可拿到），**读不出时给权限专属提示** | 119 个（node:test） |
 
 ## 安装
@@ -639,17 +639,17 @@ ls    path="/srv/app"                remote="deploy@10.0.0.7"          # write /
 
 - **三个参数** — `remote`（`"[user@]host"`，省略或留空 = 本机）、`remotePort`（1-65535，省略用 `~/.ssh/config`）、`remoteCwd`（仅 `bash`，省略 = 远端 `$HOME`）；`ls`/`find`/`grep` 省略 `path` 也用远端 `$HOME`，相对路径按远端 `$HOME` 解析
 - **保真优先** — `read`/`write`/`edit`/`ls`/`find`/`bash` 用宿主**同一份** `createXxxToolDefinition` 配远端 Operations，截断/限流/渲染器/提示词片段全部沿用内置；只有 `grep` 必须整份重写（宿主的 `GrepOperations` 覆盖不到真正的 ripgrep 搜索），代价是其自定义 TUI 渲染器回落默认
-- **零运行时依赖** — 只调系统 `ssh`（Windows 自带 OpenSSH 即可）；不做密码登录、不存凭据，走密钥 / ssh-agent；非交互（`BatchMode`）且拒绝未知主机指纹，首次连一台机器请先在终端手工 `ssh` 一次
+- **零运行时依赖** — 只调系统 `ssh`（Windows 自带 OpenSSH 即可）；不做密码登录、不存凭据，走密钥 / ssh-agent；非交互（`BatchMode`）且指纹策略是 **TOFU**（`StrictHostKeyChecking=accept-new`）：新主机首次连接由 ssh 自己把指纹写进 `known_hosts`，**不需要**先手工 `ssh` 一次；**已收录主机的指纹变更仍然拒绝**（`ssh-keygen -R <host>` 清理旧条目）
 - **远端缺 `ripgrep` 时** — `grep`/`find` 回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不再生效）
 - **参数健壮** — 没有远端意图的字段不影响调用：`remote` 传空串/纯空白/缺省值字面量（`null`/`undefined`/`nil`/`none`/`n/a`）一律当本机；`remotePort` 是 `null`/非数字/`0`/负数也当没给（宿主 strict 采样器会把可选字段填成 `0`）；**自由字符串仍当主机名**（`local` 是常见的 ssh 别名，当本机会静默跑错机器）；只有真正说错的值（越界端口、带标记首段的路径、`~` 开头）才 fail-closed
-- **错误可读** — 远端 `ls`/`find` 在进宿主校验前先判目录：不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒ `REMOTE_NOT_DIRECTORY`，消息是静态模板（不会把内部标记路径 `C:\…\pi-remote\…` 回灌给模型）；探针答案顺带缓存，`ls` 往返 3 → 2
+- **错误可读** — 远端 `ls`/`find` 在进宿主校验前先判目录：不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒ `REMOTE_NOT_DIRECTORY`，消息是静态模板（不会把内部标记路径 `C:\…\pi-remote\…` 回灌给模型）；探针答案顺带缓存，`ls` 往返 3 → 2；**成功文案同样**——`write`/`edit` 回的是 `Successfully wrote to /srv/app/x.ts` 这种远端真实路径（含 `details.patch` 的 `---`/`+++` 头与 edit 的报错），不是宿主内部标记路径
 - **与 timeout-bg 共存** — `bash` 这个名字两家都要用：timeout-bg（超时转后台）注册前经 `pi.events` 收集「shell 能力」，本扩展把远端 bash 能力交过去由它合并分派——两个功能都保留；前提是 timeout-bg 先加载（仓库 `package.json` 顺序即如此），顺序相反时会有冲突提示
 - **远端超时转后台** — 与 timeout-bg 组合后，远端 `bash` 超时不再杀本地 ssh：命令继续跑、输出继续落本地 job 日志、进统一 `/bg` 面（`/bg:kill` 按 pid 文件尽力杀远端进程组，失败退化为断开 ssh），结束时收同格式通知；拿不到 timeout-bg（单装本扩展）时超时语义与内置一致（`Command timed out after N seconds`）
 - **安全与 fail-closed** — 路径口径：绝对 POSIX 路径直接用，相对路径/省略 `path` 按远端 `$HOME` 解析；fail-closed 的只有 Windows 盘符形态（`C:/…`）、`~` 开头、宿主标记首段（都在发 ssh 之前）。只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`），其余 `PI_*` 绝不送远端；错误消息全静态模板；远端执行失败只会以错误结束，不会回退到本机重跑
 - **不做** — 不做整树同步/镜像、不做本地↔远端路径映射、不做只读开关与主机白名单（v1）、不覆盖 `powershell`
 
 ```bash
-cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 123 个（+9 真机 opt-in；含远端上下文能力：祖先链/一趟 ssh/协议 v2 分帧（伪造-proof）/形状守卫/路径归一/降级/读不出 ≠ 不存在）
+cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 127 个（+10 真机 opt-in；含远端上下文能力：祖先链/一趟 ssh/协议 v2 分帧（伪造-proof）/形状守卫/路径归一/降级/读不出 ≠ 不存在，以及 TOFU 指纹策略与 write/edit/read 文案回写远端路径）
 ```
 
 ---

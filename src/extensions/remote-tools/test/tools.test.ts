@@ -142,18 +142,25 @@ test("本地保真：remote 为空时与宿主实现逐字一致，且绝不调�
 		assert.equal(textOf(ours as { content: Array<{ type: string; text?: string }> }), textOf(theirs as { content: Array<{ type: string; text?: string }> }), `${name} 本地输出不一致`);
 	}
 
-	// write / edit 的真实副作用必须与宿主一致
-	await recorder.tools.get("write")?.execute(ID, { path: "src/written.ts", content: "hello\n" }, undefined, undefined, ctx);
-	assert.equal(await readFile(path.join(dir, "src", "written.ts"), "utf8"), "hello\n");
+	// write / edit 的真实副作用必须与宿主一致，且文案逐字一致（remote-tools#16 的对照基准）。
+	// 两边用**同一条相对路径但不同临时目录**，这样 patch 里的路径字符串完全可比。
+	const dir2 = await mkdtemp(path.join(tmpdir(), "remote-tools-local2-"));
+	await mkdir(path.join(dir2, "src"), { recursive: true });
+	await writeFile(path.join(dir2, "src", "a.ts"), "const x = 1;\n// hello\n", "utf8");
+	const ctx2 = ctxFor(dir2);
 
-	await recorder.tools.get("edit")?.execute(
-		ID,
-		{ path: "src/a.ts", edits: [{ oldText: "const x = 1;", newText: "const x = 42;" }] },
-		undefined,
-		undefined,
-		ctx,
-	);
+	const writeParams = { path: "src/written.ts", content: "hello\n" };
+	const oursWrite = await recorder.tools.get("write")?.execute(ID, writeParams, undefined, undefined, ctx);
+	const theirsWrite = await createWriteToolDefinition(dir2).execute(ID, writeParams, undefined, undefined, ctx2);
+	assert.equal(await readFile(path.join(dir, "src", "written.ts"), "utf8"), "hello\n");
+	assert.equal(textOf(oursWrite as never), textOf(theirsWrite as never), "write 本地文案不一致");
+
+	const editParams = { path: "src/a.ts", edits: [{ oldText: "const x = 1;", newText: "const x = 42;" }] };
+	const oursEdit = await recorder.tools.get("edit")?.execute(ID, editParams, undefined, undefined, ctx);
+	const theirsEdit = await createEditToolDefinition(dir2).execute(ID, editParams, undefined, undefined, ctx2);
 	assert.equal(await readFile(path.join(dir, "src", "a.ts"), "utf8"), "const x = 42;\n// hello\n");
+	assert.equal(textOf(oursEdit as never), textOf(theirsEdit as never), "edit 本地文案不一致");
+	assert.deepEqual((oursEdit as { details?: unknown })?.details, (theirsEdit as { details?: unknown })?.details, "edit 本地 details（patch/diff）不一致");
 	assert.equal(recorder.calls.length, 0, "本地分支不应产生任何 ssh 调用");
 
 	// bash：真实本地子进程（同一命令、同一 cwd）
@@ -170,7 +177,9 @@ test("本地保真：remote 为空时与宿主实现逐字一致，且绝不调�
 		const outcome = async (run: () => Promise<unknown>): Promise<string> => {
 			try {
 				const result = (await run()) as { content: Array<{ type: string; text?: string }> };
-				return textOf(result);
+				// 行序由宿主外部工具（rg/fd）的遍历顺序决定，两个临时目录间本就不保证一致；
+				// 这里要比的是内容与错误口径，不是排列顺序（#16 改动前此处就会零星抖动）。
+				return textOf(result).split("\n").sort().join("\n");
 			} catch (error) {
 				return `THREW:${error instanceof Error ? error.message : String(error)}`;
 			}
@@ -373,6 +382,13 @@ test("远端 read 图片：走宿主图片管线（补上 detectImageMimeType �
 	assert.equal(image?.mimeType, "image/png", textOf(result as never));
 	assert.equal((image?.data ?? "").length > 0, true, "图片数据必须随结果回传");
 	assert.match(textOf(result as never), /Read image file \[image\/png\]/);
+	// 图片形态的 structuredContent（对象 + note）是 rewriteHostPathInStructured 的第二个分支：形状与 data 必须原样保住
+	// （评审第 2 轮建议 2：该分支不能只靠纸面推理）。
+	const structured = (result as { structuredContent?: { type?: string; data?: string; mimeType?: string; note?: string } }).structuredContent;
+	assert.equal(structured?.type, "image");
+	assert.equal(structured?.mimeType, "image/png");
+	assert.equal(structured?.data, image?.data, "图片 data 不得被改写路径的过程碰掉");
+	assert.match(structured?.note ?? "", /Read image file \[image\/png\]/);
 	assert.equal(recorder.calls.length, 2, "一次远端 read = 嗅探（搭 access）+ 读取，共两条 ssh");
 });
 
@@ -577,4 +593,83 @@ test("grep 远端：输出与降级标注走工具层", async () => {
 		ctxFor(process.cwd()),
 	);
 	assert.equal(textOf(result as never), "src/a.ts:3: const x = 1;");
+});
+
+/*
+ * remote-tools#16：宿主把自己的入参 path 原样插进成功文案、补丁头与一族报错，而远端分支必须传宿主标记
+ * 形态 ⇒ 不后处理就会把假路径（形如 C:\…\index.ts\pi-remote\srv\a.ts）喂给模型，读起来像「写到了本机」。
+ * 这里断言的是**模型实际看到的结果/错误文本**（不是内部字符串），并用宿主真实定义跑出来的 patch 对照。
+ */
+const REMOTE_FILE = "/srv/app/x.ts";
+const MARKER = "pi-remote";
+
+test("远端 write：成功文案展示远端真实路径，不出现宿主标记形态（remote-tools#16）", async () => {
+	const recorder = recordTools();
+	const result = await recorder.tools.get("write")?.execute(
+		ID,
+		{ path: REMOTE_FILE, content: "hello\n", remote: REMOTE },
+		undefined,
+		undefined,
+		ctxFor(process.cwd()),
+	);
+	const text = textOf(result as never);
+	assert.equal(text, `Successfully wrote to ${REMOTE_FILE}`);
+	assert.equal(text.includes(MARKER), false, `文案里不该有宿主标记：${text}`);
+	// 真的写入远端路径（不是宿主形态）
+	assert.equal((recorder.calls.at(-1)?.args.at(-1) ?? "").includes(`cat > '${REMOTE_FILE}'`), true);
+});
+
+test("远端 edit：成功文案与 patch 头都是远端路径，失败报错也是远端路径（remote-tools#16）", async () => {
+	const content = "const x = 1;\n// hello\n";
+	const recorder = recordTools((request) => {
+		const command = request.args.at(-1) ?? "";
+		if (command.includes("; then LC_ALL=C cat ")) return { stdout: Buffer.from(content) };
+		return {};
+	});
+	const edit = recorder.tools.get("edit");
+	const ctx = ctxFor(process.cwd());
+
+	const result = await edit?.execute(
+		ID,
+		{ path: REMOTE_FILE, edits: [{ oldText: "const x = 1;", newText: "const x = 42;" }], remote: REMOTE },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const text = textOf(result as never);
+	assert.equal(text, `Successfully replaced 1 block(s) in ${REMOTE_FILE}.`);
+	assert.equal(text.includes(MARKER), false, `文案里不该有宿主标记：${text}`);
+
+	const patch = (result as { details?: { patch?: string; diff?: string } } | undefined)?.details?.patch ?? "";
+	assert.ok(patch.includes(`--- ${REMOTE_FILE}`), `patch 头应是远端路径：${patch.split("\n").slice(0, 3).join(" | ")}`);
+	assert.ok(patch.includes(`+++ ${REMOTE_FILE}`), "patch 头应是远端路径");
+	assert.equal(patch.includes(MARKER), false, "patch 里不该有宿主标记");
+
+	// 失败路径：宿主模板 `Could not find the exact text in ${path}` 同样插的是我们传进去的形态。
+	const failure = await failureOf(() =>
+		edit!.execute(ID, { path: REMOTE_FILE, edits: [{ oldText: "不存在的片段", newText: "x" }], remote: REMOTE }, undefined, undefined, ctx),
+	);
+	assert.ok(failure.includes(REMOTE_FILE), `报错应含远端路径：${failure}`);
+	assert.equal(failure.includes(MARKER), false, `报错里不该有宿主标记：${failure}`);
+});
+
+test("远端 read：大行提示里的路径也是远端路径（同族的第三处插值，remote-tools#16）", async () => {
+	const hugeLine = "x".repeat(60_000);
+	const recorder = recordTools((request) => {
+		const command = request.args.at(-1) ?? "";
+		if (command.includes("; then LC_ALL=C cat ")) return { stdout: Buffer.from(`${hugeLine}\n`) };
+		return {};
+	});
+
+	const result = await recorder.tools.get("read")?.execute(ID, { path: REMOTE_FILE, remote: REMOTE }, undefined, undefined, ctxFor(process.cwd()));
+	const text = textOf(result as never);
+	assert.match(text, /\[Line 1 is /);
+	assert.ok(text.includes(REMOTE_FILE), `大行提示应指向远端路径：${text}`);
+	assert.equal(text.includes(MARKER), false, `大行提示里不该有宿主标记：${text}`);
+
+	// 第二个出口：宿主在 read.js 末尾从**改写前**的 content 派生 structuredContent（codemode 消费方走它）。
+	const structured = (result as { structuredContent?: unknown } | undefined)?.structuredContent;
+	assert.equal(typeof structured, "string", "read 文本结果应带 string 形态的 structuredContent");
+	assert.ok(String(structured).includes(REMOTE_FILE), `structuredContent 应指向远端路径：${String(structured)}`);
+	assert.equal(String(structured).includes(MARKER), false, `structuredContent 里不该有宿主标记：${String(structured)}`);
 });

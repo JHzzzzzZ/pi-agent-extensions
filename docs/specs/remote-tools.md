@@ -21,14 +21,17 @@ Pi 的内置工具（`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls`）只操作
 `remote` 非空时把宿主的 **Operations 接缝**换成远端实现（`read`/`write`/`edit`/`ls`/`find`/`bash` 复用同一份宿主定义，
 `grep` 因接缝覆盖不到真正的 ripgrep 搜索而整份重写）；`remote` 为空时直接委托宿主本地实现（零漂移、零 ssh）。
 七个 `Operations` 接口里的**每个可选端口**都要实现齐——少一个（如 `ReadOperations.detectImageMimeType`）宿主就静默退化成另一条分支。
-传输只用系统 `ssh`：非交互（`BatchMode`）、拒绝未知主机指纹（`StrictHostKeyChecking=yes`）、零运行时 npm 依赖、不存凭据。
+传输只用系统 `ssh`：非交互（`BatchMode`）、主机指纹 TOFU（`StrictHostKeyChecking=accept-new`：新主机首次连接自动记录，
+**指纹变更仍拒绝**，`#15`）、零运行时 npm 依赖、不存凭据。
 
 ## 用户故事
 
 - 作为在 Windows 上开发的用户，我用 `read path="/srv/app/x.ts" remote="deploy@host"` 直接读远端文件，不必先 ssh 进去。
 - 作为 agent，我在同一次会话里既改本机又跑远端命令，靠 `remote` 区分目标；忘了带 `remote` 时行为与内置**逐字一致**。
 - 作为用户，远端 `read` 一张 PNG 时我拿到的是图片内容（走宿主同一套图片管线/校验），而不是一屏二进制乱码。
-- 作为谨慎的用户，我信任「远端写只落远端」：所有实际 I/O 都走注入的 ssh ops，本地只在文件锁里做一次 `realpath`（不当内容通道）。
+- 作为用户，我信任「远端写只落远端」：所有实际 I/O 都走注入的 ssh 操作，本地只在文件锁里做一次 `realpath`（不当内容通道）。
+- 作为用户，我第一次连一台新主机时不需要先手工 `ssh` 一次（`#15`）；而真正该警觉的「主机指纹已变」仍会挡住我。
+- 作为 agent，`write`/`edit` 成功后我看到的是**远端真实路径**（`Successfully wrote to /srv/app/x.ts`），而不是宿主内部标记路径（`#16`）。
 - 作为用户，远端缺 `ripgrep` 时我在结果里看到**降级标注**（不遵守 `.gitignore`），而不是静默得到语义不符的结果。
 - 作为 agent，我传了 `remotePort: 0` 或 `remote: "null"` 这类噪声时不该让调用失败，也不该静默连到别的机器。
 
@@ -40,14 +43,15 @@ Pi 的内置工具（`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls`）只操作
 - **图片识别**（`#8`）：`ReadOperations.detectImageMimeType` 端口必须自己实现，否则宿主把 PNG 当文本读（`read.js` 的 `ops.detectImageMimeType ? … : undefined`）。实现方式：嗅探样本搭 `access` 的**顺风车**（`head -c 8192 … | base64`，零额外往返），判定交给**宿主同一份** `detectSupportedImageMimeTypeFromFile`（包根唯一导出；纯 buffer 版未导出、深路径被 `exports` 封死 ⇒ 样本落本地临时文件再喂进去），魔数/动图/BMP 规则零复制。
 - **参数健壮性**（`#5`/`#6` 两轮实测回归）：没有远端意图的字段不得让调用失败、也不得抛裸异常——非字符串 `path`/`remoteCwd`、`null`/非数字/`<=0` 的 `remotePort`、缺省值字面量一律当「未提供」；**自由字符串一律不猜**（仍当主机名，连不上就响亮报错，避免静默跑错机器）。
 - **安全不变量**：只转发白名单会话变量（`PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`；**白名单而非前缀匹配**——环境里存在 `PI_WEB_TOKEN` 这类值）；错误消息全静态模板（不插值远端路径内容或远端输出）；不存凭据。
+- **指纹策略与文案口径**（`#15`/`#16`，2026-10-12 用户选定/实测）：指纹走 `accept-new`（TOFU：新主机首次自动记录、变更仍 fail-closed，不自行 `ssh-keyscan`）；工具**成功/失败文案一律展示远端路径**——`tools.ts` 的 `withRemotePaths` 在出口处把宿主原样插值的标记路径换回远端绝对路径（content 文本 + `details.patch`/`diff` + `structuredContent`（string 或图片对象的 `note`）+ 抛出的错误），本地分支逐字不变。
 - **错误码**：单文件 `errors.ts`（`as const` 联合 + 静态消息模板），层内契约见 `docs/cross/result-unions.md`。
 
 ## 测试决策
 
 - **进程边界用手写 fake**：`SshExec` 端口注入（`ssh.ts`），断言**实际发给 ssh 的命令字符串**——Windows 上宿主 `path` 解析会改写远端路径，只有命令字符串断言能守住那个 bug；真机行为由 opt-in 用例覆盖。
 - **本地保真对照宿主真实实现**：同一组参数分别打我们的定义与宿主 `createXxxToolDefinition`，在临时目录里比输出与真实文件副作用；`find`/`grep` 依赖宿主外部工具（fd/rg）时，两边给出**同一个错误**也算保真。
-- **真机 opt-in（默认跳过）**：`PI_REMOTE_TOOLS_TEST_TARGET=user@host` 开启后接真实 ssh，覆盖建连/`$HOME` 解析、bash 目录与退出码、ops 与**工具层**往返、远端图片走图片管线、降级、结构化错误码、不可达 fail-closed、远端 bash 真在远端跑 + ls/find 目录探针（本机 WSL 实测 8/8）。
-- 计数与运行命令见插件 README（当前 79 个本地 + 8 个真机 opt-in）。
+- **真机 opt-in（默认跳过）**：`PI_REMOTE_TOOLS_TEST_TARGET=user@host` 开启后接真实 ssh，覆盖建连/`$HOME` 解析、bash 目录与退出码、ops 与**工具层**往返、远端图片走图片管线、降级、结构化错误码、不可达域名 fail-closed、远端 bash 真在远端跑 + ls/find 目录探针、干净 `known_hosts` 下 `accept-new` 首次连接成功并被 ssh 写入条目（`#15`）、工具层 write/edit 成功文案与 `details.patch` 头是远端路径（`#16`）；本机 WSL 历史实测 8/8（本次新增的两条待重跑）。
+- 计数与运行命令见插件 README（当前 127 个本地 + 10 个真机 opt-in）。
 - **跨扩展组合（`#9`/`#10`）另见 `docs/specs/shell-tool-composition.md`**：bash 能力协商（`pi.events` 盒子）、
   分派安全口径、加载顺序与冲突可见性、ls/find 目录探针与 `REMOTE_NOT_DIRECTORY`。
 

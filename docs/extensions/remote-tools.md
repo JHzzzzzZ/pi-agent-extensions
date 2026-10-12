@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 1c7c6d7
+> last verified @ 74e6222
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
@@ -37,8 +37,23 @@
   配套运行时守卫 `assertMarkerRootUsable`：锚文件不是普通文件时远端调用 fail-closed 报 `HOST_MARKER_CONFLICT`（本地分支零影响）。
 - **校验先于 ssh**：目标形态（前导 `-` / 空格 / 多 `@` / 内嵌端口）、端口范围、路径形态三者在任何 ssh 进程之前完成。
   绝对路径不需要远端 `$HOME` ⇒ 不为此多发一次 ssh（只有省略/相对路径才解析，且同目标只解析一次）。
-- **已知主机指纹 fail-closed**：`BatchMode=yes` + `StrictHostKeyChecking=yes`；未收录指纹/认证失败报
-  `SSH_CONNECT_FAILED` 并提示先在终端手工 ssh 一次，绝不 accept-new。
+- **主机指纹 TOFU**（`#15`，用户 2026-10-12 选定）：`BatchMode=yes` + `StrictHostKeyChecking=accept-new`——未知主机
+  首次连接由 **ssh 自己**把指纹写进 `known_hosts`（零人工前置，不再需要先手工 ssh / ssh-keyscan），
+  **已收录主机的指纹变更仍 fail-closed**（`REMOTE HOST IDENTIFICATION HAS CHANGED` 与 `Host key verification failed`
+  同归 `SSH_CONNECT_FAILED`，文案给 `ssh-keygen -R <host>` 的排查入口；客户端不支持该选项（OpenSSH < 7.6 报
+  `Bad configuration option`）同样归 `SSH_CONNECT_FAILED`）；不自行跑 `ssh-keyscan`——自己抓公钥自证
+  并不比 TOFU 强，还多一条外部命令。代价：首次连接不校验对端身份（TOFU 固有）；命令行 `-o` 优先于 `ssh_config`，
+  所以想要回严格模式只能改代码（本条目 `reopen` 重议）。
+- **结果/报错文案不回灌宿主标记路径**（`#16`，用户 2026-10-12 实测）：宿主把自己的**入参 `path` 原样**插进成功
+  文案（`Successfully wrote to ${path}`）、`details.patch` 头（`edit.js:129` 的 `generateUnifiedPatch(path, baseContent, newContent)`，
+  其内部是 `Diff.createTwoFilesPatch(path, path, …)`）与一族报错
+  （`Could not edit file: ${path}`、`Could not find the exact text in ${path}`、read 的大行提示），而远端分支按标记
+  路径信道**必须**传宿主形态 ⇒ 模型会读到「写到了 `C:\…\pi-remote\…`」这种本地假路径。`tools.ts` 的
+  `withRemotePaths` 在出口处把**我们传进去的那个字符串**换回远端绝对路径（精确替换，不是猜文案格式），
+  同时作用于 content 文本、`details.patch`/`diff`、`structuredContent`（宿主 `read.js` 末尾从改写前的 content
+  派生的第二个出口，codemode 消费方走它）与抛出的错误；本地分支不走这条路径（逐字不变）。
+  残留风险（已知可接受）：read 分支的改写作用于整个 content，所以**文件内容**里恰好出现该文件自身的宿主标记
+  路径时也会被换掉（概率可忽略，且标记形态本就是本扩展的私有信道）。
 - **远端环境只给白名单**：转发 `PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`
   （与宿主 `resolveSpawnContext` 自己维护的那五个一致）。**不能用 `PI_` 前缀匹配**——实测环境里存在
   `PI_WEB_TOKEN` 这类宿主敏感变量，前缀匹配会把它们送进远端命令（`test/ops.test.ts` 锁住）。
@@ -100,6 +115,7 @@
   `claimRemoteJobHost`（job 托管端口的索取与形状守卫）
 - `tools.ts` — 7 个同名覆盖的接线：schema 拼接（内置参数 + remote 三件套）、本地/远端分派、
   `resolveToolPath`（校验 + $HOME 懒解析）、`remoteContext`（把内置定义的 `ctx.cwd` 换成远端基准）、
+  `withRemotePaths` / `rewriteHostPathInStructured`（远端分支唯一后处理：结果/报错里的宿主标记路径回写，`#16`）、
   session 缓存（同目标共享、`$HOME` 只解析一次）、`executeRemoteBash`（远端分支单一实现，供自身注册与能力载荷共用）
 - `ops.ts` — 远端 Operations 后端：read/write/edit/ls/find/bash 的远端原语（**目录分支在前**的 `if/elif` 一次往返区分
   「不存在/是目录/正常」——`-e` 对目录同样成立，顺序写反会把「是目录」误报成「不可读」；read 的 `access` 顺带取回图片嗅探样本，`detectImageMimeType` 消费）、
@@ -110,10 +126,11 @@
 - `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`HOST_PATH_ROOT`/`toHostPath`/`toRemotePath`/`stripHostMarker`）
   + 标记根守卫（`assertMarkerRootUsable`：锚文件必须是普通文件）
   + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
+  + 文案改写 `rewriteHostPathInText`（宿主标记路径 → 远端路径，`#16`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT` / `REMOTE_CONTEXT_FAILED` / `REMOTE_CONTEXT_UNREADABLE`（后两个是远端上下文能力的：通用失败 / 链上候选存在但读不出））
-- `test/` — 132 个：123 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `test/` — 137 个：127 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(11) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(23) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 10 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 
@@ -211,3 +228,4 @@ pi --print --no-session --no-extensions -e <本目录>/index.ts -e <timeout-bg �
   宿主是否清监听器本仓无法核实；`terminate` 缺失时 `/bg:kill` 只报「已停止」（契约明确当没有钩子）；未超时的远端调用也烧号 + 落盘（见「坑」节的有意取舍）；
   日志异步建不出来时不会「当场回退旧路径」（契约字面只覆盖同步失败，有 `error` 兜底不炸会话）；`session_shutdown` 的 terminate 是 fire-and-forget（Q3 已接受「尽力而为」）。
 - **坑（评审备注记录的边缘场景）**：若扩展目录路径**本身**含 U+00A0 之类的 unicode 空格，宿主的 `normalizePath` 会把它改写成普通空格 ⇒ 标记根前缀失配 ⇒ 远端调用 fail-closed 报 `REMOTE_PATH_NOT_ABSOLUTE`（是误报，不是静默放行；概率极低，记录不改）。
+- **评审记录（`#15`/`#16`，2026-10-12）**：三轮跨厂商评审（reviewer = `kimi-coding/k3-256k`；本轮开发模型属 DeepSeek 家族，跨厂商成立）。第 1 轮 = OK with notes（0 阻断 / 5 建议 / 5 备注）：① `structuredContent` 未改写（宿主 `read.js` 末尾从**改写前**的 content 派生它，codemode 消费方走这条渠道）——已补 `rewriteHostPathInStructured` 并锁测试；② `String.replace` 的替换串未防 `$&`/`$'`（POSIX 远端路径允许 `$`）——已改函数形态替换；③ `remote-live.test.ts` 残留「拒绝未知指纹」旧口径——已改 TOFU 口径；④ `accept-new` 需 OpenSSH ≥7.6 未文档化、老客户端 `Bad configuration option` 落不到分类——已补正则/文案/README；⑤ 真机 `written.includes(host)` 在 `HashKnownHosts yes` 下假失败——已改「文件非空」；另卡片 `generateUnifiedPatch` 签名失实、`index.ts` 错别字「逐字不劫」等已修（`5e76c02`/`529d26c`）。第 2 轮（复核第 1 轮 7 项：6 已修 / 1 部分）= OK with notes（0 阻断 / 2 建议 / 5 备注）：⑥ 真机新增阴性断言**一跑必假失败**——临时目录名 `.pi-remote-tools-tool-*` 自身含 `pi-remote`，合法远端路径被误判——已把四处临时目录改名 `.rt-*` 并把三条断言从裸子串换成 `HOST_PATH_ROOT`（标记根形态）；⑦ 图片形态 `structuredContent` 无测试锁定——已补 type/mimeType/data/note 断言（`74e6222`/`1e4aa62`）。第 3 轮（终轮，复核第 2 轮 7 项全落实）= **无新意见**（0 阻断 / 0 建议 / 2 非阻断备注）：① `HOST_PATH_ROOT` 阴性断言的残余盲区仅「改写本身失效 **且** 宿主翻转分隔符/大小写」这一种双重失效；② 图片 `structuredContent` 断言锁「形状保住」而非「note 真被改写」，而宿主 `toReadOutput` 的 note 永不含路径 ⇒ 该子情形生产不可达。两条均为残余盲区、非回归，按记录收口；按红线 11 的 3 轮上限，本轮即终轮（不再开第 4 轮）。
