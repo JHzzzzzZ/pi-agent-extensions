@@ -109,6 +109,33 @@ export function stripHostMarker(hostPath: string): string {
 	return rest.startsWith("/") ? rest : `/${rest}`;
 }
 
+/** 正则元字符转义（文案改写用）。 */
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * 文案改写：宿主标记形态路径 → 远端真实路径。
+ *
+ * 为什么需要：宿主内置定义把**入参 path 原样**插进成功文案、补丁头与一族报错
+ * （`write.js` 的 `Successfully wrote to ${path}`、`edit.js` 的 `generateUnifiedPatch(path, path, …)` 与
+ * `Could not edit file: ${path}`、`read.js` 的大行提示），而远端分支必须传标记形态（见本文件头部说明）
+ * ⇒ 假路径会进模型上下文，读起来像「写到了本机」（用户实测，remote-tools#16）。
+ *
+ * 锚点就是**我们传进内置定义的那个字符串**（宿主原样插值，不做归一化）⇒ 精确替换而非猜文案格式；
+ * Windows 上额外容忍分隔符翻转与大小写差异（宿主可能经 path 家族回写）。
+ */
+export function rewriteHostPathInText(text: string, hostPath: string, remotePath: string): string {
+	if (text === "" || hostPath === "" || hostPath === remotePath) return text;
+	const variants = new Set([hostPath, hostPath.replace(/\\/g, "/")]);
+	let rewritten = text;
+	for (const variant of variants) {
+		const flags = process.platform === "win32" ? "gi" : "g";
+		rewritten = rewritten.replace(new RegExp(escapeRegExp(variant), flags), remotePath);
+	}
+	return rewritten;
+}
+
 /** 宿主 path 解析结果 → 远端 POSIX 绝对路径；没有宿主标记的形态原样返回（由调用方校验后拒绝）。 */
 export function toRemotePath(hostPath: string): string {
 	const stripped = stripHostMarker(hostPath);

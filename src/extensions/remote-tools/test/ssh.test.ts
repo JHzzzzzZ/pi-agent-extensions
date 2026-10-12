@@ -103,14 +103,14 @@ test("采样器噪声不得打断调用：remotePort 为 0 / null / 非数字 / 
 	}
 });
 
-test("ssh 参数：非交互、拒绝未知指纹、连接超时、端口可选、远端命令是最后一个参数", () => {
+test("ssh 参数：非交互、TOFU 指纹策略（accept-new；remote-tools#15）、连接超时、端口可选、远端命令是最后一个参数", () => {
 	const args = buildSshArgs({ host: "h", user: "u", port: 2222 }, "cat /srv/x");
 	assert.deepEqual(args, [
 		"-T",
 		"-o",
 		"BatchMode=yes",
 		"-o",
-		"StrictHostKeyChecking=yes",
+		"StrictHostKeyChecking=accept-new",
 		"-o",
 		"ConnectTimeout=10",
 		"-p",
@@ -165,12 +165,16 @@ test("失败分类：超时、ssh 客户端缺失、255 + 主机指纹/认证错
 
 	for (const stderr of [
 		"Host key verification failed.",
-		"Permission denied (publickey).",
+		// 指纹变更时 OpenSSH 的两行原文（accept-new 只自动接受**未知**主机，变更仍会走到这里）
+		"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!@@@Host key verification failed.",
+		"PERMISSION DENIED (publickey).",
 		"ssh: connect to host 10.0.0.7 port 22: Connection refused",
 	]) {
 		const failure = classifySshFailure({ exitCode: 255, stdout: Buffer.alloc(0), stderr, timedOut: false, spawnFailed: false });
 		assert.equal(failure?.code, ErrorCodes.SSH_CONNECT_FAILED, stderr);
 		assert.match(failure?.message ?? "", /ssh /, "错误消息要给出人工排查入口");
+		// 指纹策略改 accept-new 之后，旧文案「请先在终端手工 ssh 一次」不再成立（那会让人自证式地跳过校验）。
+		assert.doesNotMatch(failure?.message ?? "", /手工/, `旧指纹文案残留：${failure?.message}`);
 	}
 
 	assert.equal(classifySshFailure({ exitCode: 1, stdout: Buffer.alloc(0), stderr: "", timedOut: false, spawnFailed: false }), null);

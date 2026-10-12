@@ -6,7 +6,8 @@
  * 保真策略：
  *   1. 本地分支直接调 `createXxxToolDefinition(ctx.cwd)` 的原实现，零行为漂移；
  *   2. 远端分支把**同一份**内置定义配上远端 Operations（read/write/edit/ls/find/bash），
- *      因此截断、限流、渲染器、提示词片段全部沿用宿主实现；
+ *      因此截断、限流、渲染器、提示词片段全部沿用宿主实现；唯一的后处理是 `withRemotePaths`
+ *      ——把宿主原样插进文案/补丁/报错的宿主标记路径换回远端路径（remote-tools#16）；
  *   3. 只有 grep 必须整份重写（GrepOperations 覆盖不到真正的搜索，见 grep.ts）。
  *
  * 顺序不变量：参数校验（目标、端口、远端路径）一律发生在**任何 ssh 进程之前**；
@@ -63,7 +64,7 @@ import {
 	createRemoteWriteOps,
 } from "./ops.ts";
 import { createRemoteContextCapability, offerRemoteContextCapability } from "./context.ts";
-import { assertMarkerRootUsable, assertModelPathInput, toHostPath } from "./paths.ts";
+import { assertMarkerRootUsable, assertModelPathInput, rewriteHostPathInText, toHostPath } from "./paths.ts";
 import { type SshExec, type SshTarget, formatTarget, parseTarget, validateRemotePath } from "./ssh.ts";
 
 const REMOTE_GUIDELINE =
@@ -161,6 +162,47 @@ function appendNotice<D>(result: AgentToolResult<D>, notice: string): AgentToolR
 	return { ...result, content: [{ ...first, text: `${first.text}\n\n[${notice}]` }, ...result.content.slice(1)] };
 }
 
+interface RemotePathPair {
+	/** 交给内置定义的宿主标记形态路径（宿主把它原样插进文案与补丁头）。 */
+	hostPath: string;
+	/** 远端真实绝对路径（展示用）。 */
+	remotePath: string;
+}
+
+/** details 里只有 patch/diff 会带路径（edit 的 `generateUnifiedPatch(path, path, …)`）；其余字段原样。 */
+function rewriteHostPathInDetails<D>(details: D, paths: RemotePathPair): D {
+	if (typeof details !== "object" || details === null) return details;
+	const record = details as Record<string, unknown>;
+	const next: Record<string, unknown> = { ...record };
+	let changed = false;
+	for (const key of ["patch", "diff"]) {
+		const value = record[key];
+		if (typeof value !== "string") continue;
+		const rewritten = rewriteHostPathInText(value, paths.hostPath, paths.remotePath);
+		if (rewritten === value) continue;
+		next[key] = rewritten;
+		changed = true;
+	}
+	return changed ? (next as D) : details;
+}
+
+/**
+ * 远端分支的统一出口：跑内置定义，并把**宿主标记形态路径**换回远端真实路径（remote-tools#16）。
+ * 宿主把自己的入参 path 原样插进成功文案、补丁头与报错模板（见 paths.ts 的说明），
+ * 不换就会让模型以为改动落在了本机。本地分支不走这里（零行为漂移）。
+ */
+async function withRemotePaths<D>(paths: RemotePathPair, run: () => Promise<AgentToolResult<D>> | AgentToolResult<D>): Promise<AgentToolResult<D>> {
+	let result: AgentToolResult<D>;
+	try {
+		result = await run();
+	} catch (error) {
+		if (error instanceof Error) error.message = rewriteHostPathInText(error.message, paths.hostPath, paths.remotePath);
+		throw error;
+	}
+	const content = result.content.map((part) => (part.type === "text" ? { ...part, text: rewriteHostPathInText(part.text, paths.hostPath, paths.remotePath) } : part));
+	return { ...result, content, details: rewriteHostPathInDetails(result.details, paths) };
+}
+
 /**
  * 远端分支要给内置定义一个「cwd 在远端」的 ctx：宿主 ctx 的 cwd 是本机项目目录，
  * bash 拿它当工作目录、其余工具用它解析路径，直接用会把本机路径当成远端路径。
@@ -222,8 +264,11 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 				return createReadToolDefinition(ctx?.cwd ?? deps.cwd).execute(id, rest, signal, onUpdate, ctx);
 			}
 			const path = await resolveToolPath(plan, rest.path);
+			const hostPath = toHostPath(path.remotePath);
 			const definition = createReadToolDefinition(toHostPath(path.baseDir), { operations: createRemoteReadOps(plan.session) });
-			return definition.execute(id, { ...rest, path: toHostPath(path.remotePath) }, signal, onUpdate, remoteContext(ctx, path.baseDir));
+			return withRemotePaths({ hostPath, remotePath: path.remotePath }, () =>
+				definition.execute(id, { ...rest, path: hostPath }, signal, onUpdate, remoteContext(ctx, path.baseDir)),
+			);
 		},
 	});
 
@@ -241,8 +286,11 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 				return createWriteToolDefinition(ctx?.cwd ?? deps.cwd).execute(id, rest, signal, onUpdate, ctx);
 			}
 			const path = await resolveToolPath(plan, rest.path);
+			const hostPath = toHostPath(path.remotePath);
 			const definition = createWriteToolDefinition(toHostPath(path.baseDir), { operations: createRemoteWriteOps(plan.session) });
-			return definition.execute(id, { ...rest, path: toHostPath(path.remotePath) }, signal, onUpdate, remoteContext(ctx, path.baseDir));
+			return withRemotePaths({ hostPath, remotePath: path.remotePath }, () =>
+				definition.execute(id, { ...rest, path: hostPath }, signal, onUpdate, remoteContext(ctx, path.baseDir)),
+			);
 		},
 	});
 
@@ -260,8 +308,11 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 				return createEditToolDefinition(ctx?.cwd ?? deps.cwd).execute(id, rest, signal, onUpdate, ctx);
 			}
 			const path = await resolveToolPath(plan, rest.path);
+			const hostPath = toHostPath(path.remotePath);
 			const definition = createEditToolDefinition(toHostPath(path.baseDir), { operations: createRemoteEditOps(plan.session) });
-			return definition.execute(id, { ...rest, path: toHostPath(path.remotePath) }, signal, onUpdate, remoteContext(ctx, path.baseDir));
+			return withRemotePaths({ hostPath, remotePath: path.remotePath }, () =>
+				definition.execute(id, { ...rest, path: hostPath }, signal, onUpdate, remoteContext(ctx, path.baseDir)),
+			);
 		},
 	});
 

@@ -5,8 +5,9 @@
  * 端口注入（测试用手写 fake，生产用 createSpawnExec 的 node:child_process）。
  * 安全不变量：
  *   - 远端命令始终作为**单个 argv 元素**交给 ssh（不经过本地 shell），路径必须经 shellQuote 转义；
- *   - 非交互（BatchMode）且拒绝未知主机指纹（StrictHostKeyChecking=yes）⇒ 首次连接失败报错，
- *     由人工先手工 ssh 一次把指纹写进 known_hosts（不自动 accept-new）；
+ *   - 非交互（BatchMode）与 TOFU 指纹策略（StrictHostKeyChecking=accept-new）：未知主机首次连接自动写入
+ *     known_hosts（零人工前置，remote-tools#15），已收录主机的指纹变更仍然 fail-closed；不自行跑
+ *     ssh-keyscan（自己抓公钥自证不比 TOFU 强，还多一条外部命令）；
  *   - 不存任何凭据，复用系统密钥 / ssh-agent。
  */
 
@@ -89,7 +90,7 @@ export function formatTarget(target: SshTarget): string {
  * 构造 ssh argv：远端命令是最后一个参数（由 ssh 交给远端登录 shell 执行）。
  */
 export function buildSshArgs(target: SshTarget, remoteCommand: string): string[] {
-	const args = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", `ConnectTimeout=${CONNECT_TIMEOUT_SECONDS}`];
+	const args = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", `ConnectTimeout=${CONNECT_TIMEOUT_SECONDS}`];
 	if (target.port !== undefined) args.push("-p", String(target.port));
 	args.push(formatTarget(target), remoteCommand);
 	return args;
@@ -235,10 +236,10 @@ export function classifySshFailure(result: SshFailureInput): RemoteToolsFailure 
 	if (result.spawnFailed) {
 		return failure(ErrorCodes.SSH_CONNECT_FAILED, "无法启动 ssh 客户端：请确认系统 PATH 里有 ssh。");
 	}
-	if (result.exitCode === 255 && /ssh:|Host key verification failed|Permission denied|Connection (refused|timed out|closed)/i.test(result.stderr)) {
+	if (result.exitCode === 255 && /ssh:|Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|Permission denied|Connection (refused|timed out|closed)/i.test(result.stderr)) {
 		return failure(
 			ErrorCodes.SSH_CONNECT_FAILED,
-			"ssh 连接失败（未知主机指纹、认证失败或网络不可达）：请先在终端手工执行一次 ssh 完成确认与排错，再重试。",
+			"ssh 连接失败（主机指纹已变更、密钥认证失败或网络不可达）：请核对目标主机身份后重试；指纹变更需在目标机上确认后清理旧条目（ssh-keygen -R <host>）。",
 		);
 	}
 	return null;

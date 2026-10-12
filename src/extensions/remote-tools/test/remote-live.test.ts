@@ -367,3 +367,22 @@ test("真机：远端超时不断连（命令跑到结束）；/bg:kill 杀掉�
 		fs.rmSync(logDir, { recursive: true, force: true });
 	}
 });
+
+test("真机：干净 known_hosts 下首次连接成功、指纹由 ssh 自己写入（accept-new，remote-tools#15）", { skip }, async () => {
+	const target = makeTarget();
+	// 生产 argv 必须带 accept-new（防无声回退到 yes）；再挂一个隔离的 UserKnownHostsFile 观察「谁写了指纹」。
+	const args = buildSshArgs(target, "true");
+	assert.equal(args.includes("StrictHostKeyChecking=accept-new"), true, "生产参数应使用 accept-new");
+	assert.equal(args.includes("StrictHostKeyChecking=yes"), false, "不该回退到 yes");
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-tools-known-hosts-"));
+	const knownHosts = path.join(dir, "known_hosts");
+	args.splice(1, 0, "-o", `UserKnownHostsFile=${knownHosts}`);
+
+	assert.equal(fs.existsSync(knownHosts), false, "起点必须是干净 known_hosts");
+
+	const result = await createSpawnExec()({ file: "ssh", args, stdin: undefined, timeoutMs: 20_000, signal: undefined });
+	assert.equal(result.exitCode, 0, `干净 known_hosts 的首次连接应成功：${result.stderr}`);
+	const written = fs.readFileSync(knownHosts, "utf8");
+	assert.ok(written.includes(target.host), `ssh 应把主机条目写进 known_hosts：${written}`);
+	fs.rmSync(dir, { recursive: true, force: true });
+});
