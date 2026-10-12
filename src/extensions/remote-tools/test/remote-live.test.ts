@@ -31,6 +31,7 @@ import {
 	createRemoteSession,
 	createRemoteWriteOps,
 } from "../ops.ts";
+import { HOST_PATH_ROOT } from "../paths.ts";
 import { buildSshArgs, createSpawnExec, parseTarget, runSsh } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
 import { png1x1 } from "./fixtures.ts";
@@ -81,7 +82,7 @@ test("真机：bash 在远端目录执行并回传输出/退出码；缺目录�
 test("真机：write → read → edit → ls 往返（临时目录，结束清理）", { skip }, async () => {
 	const session = makeSession();
 	const baseDir = baseDirInput ?? (await session.home());
-	const marker = `${baseDir}/.pi-remote-tools-${Date.now()}`;
+	const marker = `${baseDir}/.rt-live-${Date.now()}`;
 	const filePath = `${marker}/hello.ts`;
 
 	const read = createRemoteReadOps(session);
@@ -123,7 +124,7 @@ test("真机：远端 read 图片走图片管线（真 PNG → image 块；文�
 
 	const remote = targetInput as string;
 	const base = baseDirInput ?? (await makeSession().home());
-	const marker = `${base}/.pi-remote-tools-image-${Date.now()}`;
+	const marker = `${base}/.rt-image-${Date.now()}`;
 	const pngPath = `${marker}/pic.png`;
 	const textPath = `${marker}/note.txt`;
 	const textOf = (result: { content: Array<{ type: string; text?: string }> }): string =>
@@ -169,7 +170,7 @@ test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → �
 
 	const remote = targetInput as string;
 	const base = baseDirInput ?? (await makeSession().home());
-	const marker = `${base}/.pi-remote-tools-tool-${Date.now()}`;
+	const marker = `${base}/.rt-tool-${Date.now()}`;
 	const file = `${marker}/live.ts`;
 	const text = (result: { content: Array<{ type: string; text?: string }> }): string =>
 		result.content.map((part) => (part.type === "text" ? (part.text ?? "") : "")).join("");
@@ -182,16 +183,16 @@ test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → �
 		// write → read（#16：成功文案必须是远端绝对路径，不是宿主标记形态）
 		const written = await tools.get("write")!.execute(ID, { path: file, content: "export const live = 1;\n", remote }, undefined, undefined, ctx);
 		assert.equal(text(written as never), `Successfully wrote to ${file}`);
-		assert.equal(text(written as never).includes("pi-remote"), false, "write 文案泄露了宿主标记路径");
+		assert.equal(text(written as never).includes(HOST_PATH_ROOT), false, "write 文案泄露了宿主标记路径");
 		const readBack = await tools.get("read")!.execute(ID, { path: file, remote }, undefined, undefined, ctx);
 		assert.match(text(readBack as never), /export const live = 1;/);
 
 		// edit（宿主 read-modify-write + 远端写回；#16：文案与 patch 头同样是远端路径）
 		const edited = await tools.get("edit")!.execute(ID, { path: file, edits: [{ oldText: "live = 1", newText: "live = 2" }], remote }, undefined, undefined, ctx);
 		assert.equal(text(edited as never), `Successfully replaced 1 block(s) in ${file}.`);
-		assert.equal(text(edited as never).includes("pi-remote"), false, "edit 文案泄露了宿主标记路径");
+		assert.equal(text(edited as never).includes(HOST_PATH_ROOT), false, "edit 文案泄露了宿主标记路径");
 		const patch = (edited as { details?: { patch?: string } } | undefined)?.details?.patch ?? "";
-		assert.equal(patch.includes("pi-remote"), false, `edit patch 泄露了宿主标记路径：${patch.split("\n").slice(0, 3).join(" | ")}`);
+		assert.equal(patch.includes(HOST_PATH_ROOT), false, `edit patch 泄露了宿主标记路径：${patch.split("\n").slice(0, 3).join(" | ")}`);
 		assert.ok(patch.includes(file), "edit patch 头应是远端路径");
 		const afterEdit = await tools.get("read")!.execute(ID, { path: file, remote }, undefined, undefined, ctx);
 		assert.match(text(afterEdit as never), /export const live = 2;/);
@@ -263,7 +264,7 @@ test("真机：远端 bash 真在远端跑；ls/find 的不存在/传文件报�
 	} as unknown as ExtensionToolContext;
 	const remote = targetInput as string;
 	const base = baseDirInput ?? (await makeSession().home());
-	const marker = `${base}/.pi-remote-tools-probe-${Date.now()}`;
+	const marker = `${base}/.rt-probe-${Date.now()}`;
 	const file = `${marker}/probe.txt`;
 	const text = (result: { content: Array<{ type: string; text?: string }> }): string =>
 		result.content.map((part) => (part.type === "text" ? (part.text ?? "") : "")).join("");

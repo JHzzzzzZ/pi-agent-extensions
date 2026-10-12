@@ -239,7 +239,7 @@ export function classifySshFailure(result: SshFailureInput): RemoteToolsFailure 
 	if (result.exitCode === 255 && /ssh:|Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|Permission denied|Connection (refused|timed out|closed)|Bad configuration option/i.test(result.stderr)) {
 		return failure(
 			ErrorCodes.SSH_CONNECT_FAILED,
-			"ssh 连接失败（主机指纹已变更、密钥认证失败、网络不可达，或客户端不支持本扩展使用的选项——`accept-new` 需 OpenSSH ≥ 7.6）：请核对目标主机身份与 ssh 版本后重试；指纹变更需在目标机上确认后清理旧条目（ssh-keygen -R <host>）。",
+			"ssh 连接失败（主机指纹已变更、密钥认证失败、网络不可达；或 ssh 客户端不支持 / 本机配置里的选项无效——`accept-new` 需 OpenSSH ≥ 7.6）：请核对目标主机身份与本机 ssh 配置后重试；指纹变更需在目标机上确认后清理旧条目（ssh-keygen -R <host>）。",
 		);
 	}
 	return null;

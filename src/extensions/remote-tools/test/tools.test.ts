@@ -382,6 +382,13 @@ test("远端 read 图片：走宿主图片管线（补上 detectImageMimeType �
 	assert.equal(image?.mimeType, "image/png", textOf(result as never));
 	assert.equal((image?.data ?? "").length > 0, true, "图片数据必须随结果回传");
 	assert.match(textOf(result as never), /Read image file \[image\/png\]/);
+	// 图片形态的 structuredContent（对象 + note）是 rewriteHostPathInStructured 的第二个分支：形状与 data 必须原样保住
+	// （评审第 2 轮建议 2：该分支不能只靠纸面推理）。
+	const structured = (result as { structuredContent?: { type?: string; data?: string; mimeType?: string; note?: string } }).structuredContent;
+	assert.equal(structured?.type, "image");
+	assert.equal(structured?.mimeType, "image/png");
+	assert.equal(structured?.data, image?.data, "图片 data 不得被改写路径的过程碰掉");
+	assert.match(structured?.note ?? "", /Read image file \[image\/png\]/);
 	assert.equal(recorder.calls.length, 2, "一次远端 read = 嗅探（搭 access）+ 读取，共两条 ssh");
 });
 
