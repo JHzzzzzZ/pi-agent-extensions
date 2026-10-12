@@ -20,7 +20,7 @@
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
 | [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；零运行时依赖（系统 `ssh`），不做路径映射/只读开关/白名单；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链；**分帧用 base64 载荷**——内容含 NUL 也无法伪造出假路径块；读到写不出的候选或远端缺 base64 时明确报失败）；**主机指纹走 TOFU（`accept-new`）：新主机首次连接零人工前置、指纹变更仍 fail-closed**；**成功/失败文案一律展示远端路径**（不把内部标记路径 `C:\…\pi-remote\…` 回灌给模型） | 127 个（+10 真机 opt-in） |
-| [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；codemode 走「顶层结果代偿」（主来源 = 嵌套事件的完整入参、`details.calls` 截断预览降级兜底）；带 `remote` 的调用**默认零注入**（只读入参字段，绝不按本地 cwd 解远端路径），装了 remote-tools 时经 `pi.events` 协商**自动注入远端那条祖先链**（块头标来源，取不到才退回一行提示）；**同一文件每 turn 只给一次正文，同 turn 内同条目录链的其余触碰结果补一行指针**（宿主并发执行同一条消息里的多个调用、hook 按完成顺序触发 ⇒ 并行 read 时读大文件的那个结果不再静默无标记）；compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次）；**空内容的约定文件不注入空块也不标记**（随后写入内容同会话即可拿到），**读不出时给权限专属提示** | 119 个（node:test） |
+| [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；codemode 走「顶层结果代偿」（主来源 = 嵌套事件的完整入参、`details.calls` 截断预览降级兜底）；带 `remote` 的调用**默认零注入**（只读入参字段，绝不按本地 cwd 解远端路径），装了 remote-tools 时经 `pi.events` 协商**自动注入远端那条祖先链**（块头标来源，取不到才退回一行提示）；**同一文件每 turn 只给一次正文，同 turn 内同条目录链的其余触碰结果补一行指针**（宿主并发执行同一条消息里的多个调用、hook 按完成顺序触发 ⇒ 并行 read 时读大文件的那个结果不再静默无标记）；compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次）；**空内容的约定文件不注入空块也不标记**（随后写入内容同会话即可拿到），**读不出时给权限专属提示** | 123 个（node:test） |
 
 ## 安装
 
@@ -696,7 +696,7 @@ Loaded src/components/AGENTS.md
 - **不要与同类扩展同装** —— [`pi-subdir-context`](https://github.com/ruttybob/pi-subdir-context)、[`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) 与本扩展都在 `read` 路径注入，同装会让同一份 AGENTS.md 进两次上下文（功能不冲突，只是浪费 token）；那两家只钩 `read`，本扩展多覆盖 `write`/`edit`/`ls`/bash
 
 ```bash
-cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 122 个测试
+cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 123 个测试
 ```
 
 ---

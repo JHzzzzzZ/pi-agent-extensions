@@ -61,8 +61,9 @@ pi 原生只加载 **agent dir + cwd + cwd 的全部祖先链**（`dist/core/res
 
 ## 测试与验证
 
-（122 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 9 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 10 / 宿主事件路径 50）
-- **并行调用 / turn 边界的宿主机用例（v1.6）**：真 `ExtensionRunner` 上 `Promise.all` 同时 emit 两条 `tool_result`——恰好一个带正文、另一个带指针（断言形状而非赢家）；同 turn 第二次触碰出指针、`turn_start` 后零注入；codemode 顶层注入过的文件在脚本结果里改出指针。
+（123 个：触碰识别 6 / 锚点解析 9 / 发现 13（含 2 个平台条件跳过）/ 注入与截断 9 / codemode 明细与缓冲 18 / 远端判据 7 / 远端上下文消费方 10 / 宿主事件路径 51）
+- **并行调用 / turn 边界的宿主机用例（v1.6）**：真 `ExtensionRunner` 上 `Promise.all` 同时 emit 两条 `tool_result`——同链：恰好一个带正文、另一个带指针（断言形状而非赢家）；两条**不同**链：各自拿正文、都不降级成指针；同 turn 第二次触碰出指针、`turn_start` 后零注入；codemode 顶层注入过的文件在脚本结果里改出指针。
+- **评审记录（`#10`，2026-10-12，T2 单轮）**：reviewer = `kimi-coding/k3-256k`（跨厂商）。结论 **0 P1 / 3 P2 / 3 P3**，六个行为面（turn 边界派发路径、并发原子性、指针与既有关闸、状态计数、YAGNI、文档一致性）逐条查实成立。P2 均已处理：① 根 README 总表测试数 119→123；② `docs/specs/dir-context.md` 的去重口径改为 turn 语义；③ 补「两条不同链并发各自拿正文」回归锁（`index-host.test.ts`）。P3 不阻塞、已登记为 `dir-context#11`（dispose 未完清理 + 指针属性未转义）与 `dir-context#12`（远端同链并发在 fetch 后判重、理论重复注入的既有竞态）。reviewer 显式回答「无首轮未覆盖的行为面疑虑」（额外追了 abort/`stopReason=length`/溢出恢复抹除/阈值自动 compact/分支切换五条路径，均排除）。
 - 宿主事件路径测试走**真实 `discoverAndLoadExtensions`（jiti 走 index.ts）+ 真实 `ExtensionRunner.emitToolResult`**，只 fake `sessionManager` / `modelRegistry` / actions（本扩展不读它们）；文件系统是真实临时目录树（realpath 与包含校验正是被测对象）。
 - **远端零注入的真机/真实函数 A/B（v1.3）**：同一条事件 `read { path: "src/components/Button.tsx", remote: "prod" }`（本机**确实存在** `src/components/AGENTS.md`）——修复前（HEAD）注入 `Loaded src/AGENTS.md`，修复后零注入 + 一行提示；A/B 脚本把两个版本各加载一次（`git show HEAD:<file>` 取出旧源码到临时目录）后在真实 `ExtensionRunner` 上跑同一条事件。
 - **远端自动注入的真机 A/B（v1.4）**：真实 `pi` + 真实 remote-tools + 真实 ssh 到本机 WSL（远端用其自带的 `~/.hermes/hermes-agent/` 多层真实 `AGENTS.md`，**不在远端写任何文件**），本地另造同名目录 + 诱饵 `AGENTS.md`——v1.3 对照：零注入 + 一行提示；v1.4：注入两条由外向内的远端块（带 `user@localhost:` 来源）、无提示、本地诱饵零泄漏；同文件连读两次：第二次纯透传。

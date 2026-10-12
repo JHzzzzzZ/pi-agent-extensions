@@ -70,6 +70,7 @@ function makeProject(): { cwd: string; cleanup: () => void } {
   fs.writeFileSync(path.join(cwd, "src", "components", "Button.tsx"), "export const Button = 1;\n");
   fs.writeFileSync(path.join(cwd, "src", "index.ts"), "export {};\n");
   fs.writeFileSync(path.join(cwd, "docs", "AGENTS.md"), "docs 约定（只在被本地触碰时该出现）");
+  fs.writeFileSync(path.join(cwd, "docs", "guide.md"), "# guide\n");
   return { cwd, cleanup: () => fs.rmSync(cwd, { recursive: true, force: true }) };
 }
 
@@ -251,6 +252,21 @@ test("同一条消息里的并发触碰：恰好一个结果拿正文、另一�
   const texts = [injectedText(a), injectedText(b)];
   assert.equal(texts.filter((text) => text.includes('<dir-context path="src/AGENTS.md">')).length, 1, "恰好一个结果带正文");
   assert.equal(texts.filter((text) => text.includes('<dir-context ref="src/AGENTS.md" ')).length, 1, "另一个结果必须带指针");
+});
+
+test("同一条消息里的并发触碰（两条不同链）：各自拿正文，不得降级成指针", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  const [a, b] = await Promise.all([
+    h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, toolCallId: "call-1" })),
+    h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "docs/guide.md" }, toolCallId: "call-2" })),
+  ]);
+  const texts = [injectedText(a), injectedText(b)];
+  assert.equal(texts.filter((text) => text.includes('<dir-context path="src/components/AGENTS.md">')).length, 1, "src 链拿正文");
+  assert.equal(texts.filter((text) => text.includes('<dir-context path="docs/AGENTS.md">')).length, 1, "docs 链也拿正文");
+  assert.equal(texts.filter((text) => text.includes("<dir-context ref=")).length, 0, "不同链互不影响、都不会降级成指针");
 });
 
 test("session_compact 后：缓存清空，同一文件可再次注入（= Claude 的按需重载）", async (t) => {
