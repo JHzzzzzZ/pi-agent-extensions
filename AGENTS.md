@@ -10,24 +10,36 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 
 ## 规则红线（强制）
 
-以下规则无例外；与其他考量冲突时以本节为准。分两组：**需求生命周期**按序执行（1→7），**全程硬约束**在任何阶段都适用。
+以下规则按**改动档位**执行（先定档、再动手——见下方「改动分档」表）；T1/T2 的减免只写在该表与对应红线里，表外一律不免。分两组：**需求生命周期**按序执行（1→7），**全程硬约束**在任何阶段都适用。
+
+### 改动分档（T1/T2/T3）
+
+**判据看碰没碰契约面，不看行数**（行数是坏代理：`context.ts` 5 行能改掉远端路径语义）。动手前用 `git status --short` + 改动文件自证档位；T2/T3 把档位写进对齐文档正文（**不进 todo JSON**，不迁 schema）。决策与实证见 `docs/adr/0013-dev-process-tiers.md`。
+
+| 档位 | 判据（机器可查） | 流程 |
+| --- | --- | --- |
+| **T1 无行为改动** | diff 不含行为代码：只碰注释、`.md`、`package.json` 版本号、lock 文件 | 免红线 1/2/3/11——无 todo 条目、无对齐、无规格、无评审、无收尾报告；直接提交，commit message 首行标 `[T1]`（唯一的留痕，便于事后抽查越档） |
+| **T2 小修** | 只动一个 `src/extensions/<x>/`（或根 `test/`、`tools/` 的单个文件），且 `docs/cross/`、状态键/widget/工具名/频道/命令/模型面、错误码集、消息键、公开 API **零变化** | 生命周期 1→7 照走（含两段式 `claim` 与对齐门），三处减免：红线 3 免规格、红线 11 单轮评审、红线 7 全量测试留 merge 前 |
+| **T3 契约改动** | 触碰上列任一面；跨插件、新插件、删扩展、改流程本身 | 现行全流程，一字不减 |
+
+红线 4（worktree）、8（仓库边界）、9（命令超时）、10（团队方案审批）**全档适用、不减免**。
 
 ### 需求生命周期（按序执行）
 
 1. **需求先登记 `todos/`**——动手实现前按路由登记到唯一落点：现有插件 → `todos/<插件名>-todo.json`；未实现的特定插件 → 新建同名文件；通用/跨插件需求 → `todos/general-todo.json`；仓库级工具 → 该工具专门文件（现 `todo-cli-todo.json`、`agent-manager-todo.json`）。`todos/` 唯一读写入口是 todo CLI（`node .agents/skills/todo-cli/todo-cli/todo.mjs`，手工编辑 JSON 视为破坏存储；命令面/锁/查重口径见 `docs/tools/todo-cli.md`）：已有条目 `claim` 领取（`--branch` 写入分支引用；两段式——首次领取进 `aligning`，对齐确认后再次 `claim` 才进 `processing`），没有则 `add` 追加；取消/搁置用 `complete --note "<原因>"` 收口（从 `aligning`/`aligned` 收口必带 `--note`）；误标为在途或推翻对齐结论用 `reopen --note "<原因>"` 退回未领取（从 `aligning`/`aligned` 撤销必带 `--note`，`done` 拒绝，陈旧对齐文档自动归档为 `.reopened-<UTC 紧凑>.md`）——`todos/` 始终反映真实状态。条目 id 文件内 max+1 永不复用、entries 数组 append-only，合并冲突按 globalId 判同条目取并集（`文件#id` 展示不变）手工解决。
 2. **先对齐意图（grill-with-docs）**——登记后、动手前，先跑 `/skill:grill-with-docs`（mattpocock/skills 库：内部为 grilling 访谈 + domain-modeling 建模）与人类把意图、边界、术语问清，**对齐产物必须落盘**：逐条对齐文档落 `todos/align/<名>#<id>.md`（四小节 `意图/范围/验收标准/人工确认`，由 `align` 做结构校验；门形态见 `docs/adr/0003-todo-align-gate.md`）、术语与领域词汇进 `CONTEXT.md`、决策进 `docs/adr/`；只留在会话里的对齐视为没对齐。
-3. **规格落盘（to-spec）**——对齐后用 `/skill:to-spec` 把结论综合成规格文档（问题陈述/方案/用户故事/实现决策/测试决策/范围外）落盘到 `docs/specs/`；规格与实现同变更同步，不许只活在会话或工单里。需求跟踪始终以 `todos/` 为准（第 1 步），不引入外部 issue tracker。
+3. **规格落盘（to-spec）**——对齐后用 `/skill:to-spec` 把结论综合成规格文档（问题陈述/方案/用户故事/实现决策/测试决策/范围外）落盘到 `docs/specs/`；规格与实现同变更同步，不许只活在会话或工单里。需求跟踪始终以 `todos/` 为准（第 1 步），不引入外部 issue tracker。**T2 免**：对齐文档的「范围」小节（含「不做什么」）即规格，不再另写 `docs/specs/`；仅 T3 落规格。
 4. **一律 worktree 实现**——从主干（`dev-laptop`）开 `.worktrees/<短名>`：`git worktree add .worktrees/<短名> -b feat/<插件名>-<事项> dev-laptop`；主干工作区只做评审、只读命令与 `todos/` 登记（自测、合并与清理在第 7 步）。
 5. **实现 + 测试**——新能力、bug 修复与重构按正常顺序实现，同一变更内带上锁定该行为的测试并跑绿；重构要有测试保护网。
 6. **docs/ 卡同步**——动手前先读 `docs/INDEX.md` 路由到的对应卡片；改完代码须同一变更内同步该卡（含头部 `last verified @ <commit>` 行）；新增插件必须同变更内建卡并在 INDEX 登记；横切契约（错误码/端口/消息键）变更同步 `docs/cross/` 对应文件；新事故记入 `docs/incidents.md`。
-7. **交付四处同步 + 收尾**——自测达标（全量测试绿 + `npm run typecheck` 零错误）+ 跨厂商评审终轮无新意见（红线 11）才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`，并确认对齐门已过（对齐文档 + 人工确认）后 `complete --note` 收口 `todos/` 条目。任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node .agents/skills/todo-cli/todo-cli/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
+7. **交付四处同步 + 收尾**——自测达标（全量测试绿 + `npm run typecheck` 零错误；**T2 开发中跑受影响套件 + typecheck，全量留 merge 前一次**）+ 跨厂商评审终轮无新意见（红线 11；**T2 见该条的档位口径**）才回主干 `git merge --no-ff`（冲突就地解决不绕行），合完确认主干正常即 `git worktree remove`，并确认对齐门已过（对齐文档 + 人工确认）后 `complete --note` 收口 `todos/` 条目。任务结束前逐项核对：根/扩展 README（新增/变更功能、用法与实测测试数——测试数唯一来源）、AGENTS.md（架构/布局/约定/命令变化时）、根/扩展 `package.json`（被触及的扩展 bump `version`，根版本与发布特性版本对齐）、`docs/` 相关内容（不再成立的直接删除，仍成立的更新 last verified）。`todos/` 的插件文件与插件目录、根 `package.json` 的 `pi.extensions` 注册保持一一对应（`todo-cli`、`agent-manager` 是既有非插件工具文件，不参与；`node .agents/skills/todo-cli/todo-cli/todo.mjs lint` 校验）。文档/清单更新在同一 push 中以独立 commit 提交（`docs:` / `chore(pi):` 前缀）。
 
 ### 全程硬约束（任何阶段都适用）
 
 8. **仓库边界**——默认只改本仓库内文件。宿主 npm 全局安装（`@earendil-works/pi-coding-agent` / `pi-tui` 的 `dist/`、`bundle/chunks/` 等）、其它全局包、用户配置（`~/.pi/agent/`）、系统文件一律不动。宿主/依赖行为不满足需求只有两条路：① 插件侧用公开扩展 API 解决；② 向上游提 issue/PR（或请用户人工处理）。确需动仓库外文件：先说明「改哪个文件、为什么、风险、回滚方式」，取得用户对具体改动的逐次明确同意，改完在交付报告中登记（文件、备份、回滚）；仓库内文档/待办不得把「已应用宿主补丁」当作插件行为的前提或契约；违反本规则的历史改动一律还原并在 `todos/` 记录真实状态。
 9. **命令必须显式超时**——每次执行命令都传 bash 工具的 `timeout` 参数：快速 shell 操作（ls/grep/git）30–60 秒，`npm test`/`npm run typecheck` 120–300 秒；不允许不带超时的命令，长工作拆成多个有界小步骤。
 10. **团队方案先审批**——agent team 出具方案后、实施改动之前，必须用 `team_ask` 把方案交用户审批并取得明确同意；未获同意（含超时/取消/无法提问）不得开始写代码或改文件，只停下如实报告；只读排查与评审不受限，审批结论随 run 记录留存。
-11. **交付前跨厂商独立评审**——每次改动在回主干 merge 前，必须派 **sub agent 做代码评审，且 reviewer 与开发者不是同一个开发商**（自评会漏问题，同厂会共享盲区）：默认 reviewer = `kimi-coding/k3-256k`（262K 上下文、套餐内计费）。评审提出的意见**逐条处理**（改掉，或明确驳回并写明理由），处理完**重新评审**，直到某一轮不再产生**新意见**才可 merge——同一条意见重复出现不算新意见、不触发新一轮。护栏：循环必须设**最大轮数（默认 3 轮）与预算上限**，到顶即停下如实报告，无上限烧钱不允许；每轮评审结论落盘可复查（agent-team run 落 `history/team-runs/<runId>/40-review.md`，其余改动落提交说明或 `docs/`）。厂商判据按**模型家族**（DeepSeek / Kimi / Qwen / GLM / MiniMax / Gemini / GPT / Claude…）而非 provider 前缀：`opencode-go/kimi-k3` 与 `kimi-coding/k3-256k` 属同厂商，不可互为 reviewer。只读排查不适用（无改动可评）。
+11. **交付前跨厂商独立评审**——每次改动在回主干 merge 前，必须派 **sub agent 做代码评审，且 reviewer 与开发者不是同一个开发商**（自评会漏问题，同厂会共享盲区）：默认 reviewer = `kimi-coding/k3-256k`（262K 上下文、套餐内计费）。评审提出的意见**逐条处理**（改掉，或明确驳回并写明理由），处理完**重新评审**，直到某一轮不再产生**新意见**才可 merge——同一条意见重复出现不算新意见、不触发新一轮。护栏：循环必须设**最大轮数（默认 3 轮）与预算上限**，到顶即停下如实报告，无上限烧钱不允许；每轮评审结论落盘可复查（agent-team run 落 `history/team-runs/<runId>/40-review.md`，其余改动落提交说明或 `docs/`）。厂商判据按**模型家族**（DeepSeek / Kimi / Qwen / GLM / MiniMax / Gemini / GPT / Claude…）而非 provider 前缀：`opencode-go/kimi-k3` 与 `kimi-coding/k3-256k` 属同厂商，不可互为 reviewer。**档位口径（ADR-0013）**：T1 免评审；**T2 单轮**——首轮意见只处理 P1/P2（P3 记 `todos/` 条目不阻塞），处理完即可 merge，**不再触发复评**（实证：真行为修复都在第 1 轮，第 2–4 轮全是文档/计数/测试补强）；T3 维持「终轮无新意见 + ≤3 轮 + 预算上限」。只读排查不适用（无改动可评）。
 
 ## 关键目录
 

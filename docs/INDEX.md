@@ -17,6 +17,7 @@
 | todos 优先级（priority 1-10 软字段 / add --priority / list `[pN]` 与 --sort priority / 不占版本位） | `tools/todo-cli.md` + `adr/0009-todo-priority-soft-field.md` + `specs/todo-cli-priority.md` |
 | todo 统一全局 id（globalId 主键与双轨 / 计数器与写门禁 / 存量迁移与回滚） | `tools/todo-cli.md` + `adr/0008-todo-global-id.md` + `specs/todo-cli-global-id.md` |
 | todos 存储为什么是 JSON、迁移与回滚决策 | `adr/0002-todos-json-storage.md` |
+| 改动分档（T1/T2/T3 判据 / 各档减免哪些流程环节 / T2 单轮评审与免 spec 的实证依据） | `adr/0013-dev-process-tiers.md` + `AGENTS.md` |
 | 已实现需求的规格（问题陈述 / 方案 / 实现与测试决策 / 范围外） | `specs/<名>.md` |
 | 模型选择（虚拟模型按请求 reason 路由到物理模型）与注册位置约束 | `extensions/virtual-model-router.md` + `virtual-model-router-checklist.md` |
 | 各扩展职责边界、文件地图、数据流、坑 | `extensions/<插件名>.md`（下表逐张列出） |
