@@ -30,7 +30,7 @@ pi 原生只把 **agent dir + cwd + cwd 的全部祖先链** 的上下文文件�
 2. **必须回传 `structuredContent`**：宿主明文契约规定「替换 `content` 而不返回 `structuredContent` 就丢掉结构化结果」（runner 真的 `delete`），`read` / `bash` 都产出它 ⇒ 原样回传（跨厂商评审 B1）。
 3. **发现顺序**：每目录唯一一个、优先级 `AGENTS.override.md` > `AGENTS.md` > `AGENTS.MD` > `CLAUDE.md` > `CLAUDE.MD`（与 pi 原生候选集合一致）、结果**由外向内**；返回 realpath 归一后的磁盘真名。
 4. **作用域 fail-closed**：锚点经 `realpath` 归一后必须落在 cwd 之内（链接逃逸、`repo` vs `repo-evil` 前缀冒充、`../` 越界一律零注入）；cwd 自身的上下文文件不注入（pi 已加载）。
-5. **去重与重载**：会话内每绝对路径一次；`session_start` / `session_compact` 清空缓存（compact 后上下文已不在窗口里，必须允许按需重载）。
+5. **去重与重载**：同一绝对路径**每 turn 只给一次正文**（v1.6，`dir-context-todo#10`）——`turn_start` 是边界，同 turn 内同链的其余触碰结果补一行自闭合**指针**（无正文、不进预算/计数），跨 turn 不再重复；`session_start` / `session_compact` 清空两个集合（compact 后上下文已不在窗口里，必须允许按需重载）。
 6. **预算**：单文件 32 KiB、单次注入合计 128 KiB，按 UTF-8 码点边界截断；截断与丢弃都在块内留标记。**「已注入」只标记真正进了文本的文件**：被预算丢弃的不算（否则后续触碰永久拿不到那份上下文，与读取失败的重试语义自相矛盾）；目录链并集让一次注入覆盖多个文件后，这条路径是常态。
 7. **降级**：`isError` 结果、无文本内容的结果、嵌套工具调用（`parentToolCallId`）、无候选目录、读取失败（只报一次告警，不标记已注入以便重试）——一律返回 `undefined` 透传原结果。
 8. **codemode 补偿路径（v1.1）**：嵌套调用自身不注入；改在读它**顶层** codemode 结果的触碰，把每个条目翻译回第 1 条的触碰语义（`read`/`write`/`edit`/`ls` + bash 单文件读白名单）。多条触碰取目录链**并集**（同一文件一次、整体仍由外向内），与顶层共用同一份会话去重缓存与预算。`status` 为 `error`/`cancelled` **照算**；非触碰工具、顶层 `isError` 的 codemode 结果一律跳过。判真伪用「工具名 `codemode` + `details.calls` 是数组」双重结构守卫——宿主的 `isCodemodeTool` 不在公开导出面（见 ADR-0012 的落地偏差）。
