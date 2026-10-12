@@ -553,6 +553,23 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 34,
+      "globalId": 385,
+      "text": "开发流程分档：给 AGENTS.md 红线加 T1/T2/T3 三档判据（机器可查），小改动不再按全套流程走——T1 无行为改动（注释/文档/版本号/lock）免 todo/对齐/规格/评审；T2 单扩展内行为变化且不碰契约面（对齐门与两段式 claim 照旧，免 spec、评审单轮只处理 P1/P2 不复评、全量测试留 merge 前）；T3 契约面/跨插件/新插件/删扩展维持现行全流程。评审口径修正：红线 11 对 T2 的『终轮无新意见』改为『首轮意见处理完即可 merge，不再复评』（实证：真行为修复都在第 1 轮，第 2-4 轮全是文档/计数/测试补强）。落地：docs/adr/0013-dev-process-tiers.md + AGENTS.md 红线 3/7/11 档位措辞。（来源：2026-10-12 用户提出『小改动流程太重』，逐项裁决后批准）",
+      "status": "processing",
+      "branch": "feat/general-process-tiers",
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [
+        "四小节齐全；用户 2026-10-12 逐条裁决（对齐保留 / 尾部瘦身 / T2 单轮不复评）"
+      ],
+      "createdAt": "2026-10-12T03:43:57.836Z",
+      "claimedAt": "2026-10-12T03:44:04.784Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-12T03:44:36.373Z"
     }
   ]
 }
