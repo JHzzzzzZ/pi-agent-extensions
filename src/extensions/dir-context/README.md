@@ -37,7 +37,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 
 - **发现**：从锚点目录逐级向上到 cwd（不含 cwd），同目录取一个（`AGENTS.override.md` > `AGENTS.md` > `AGENTS.MD` > `CLAUDE.md` > `CLAUDE.MD`），顺序由外向内。
 - **作用域**：`realpath` 后必须落在 cwd 之内，否则零注入（符号链接逃逸、`../` 越界、`repo` vs `repo-evil` 都拦住）。
-- **去重**：会话内每文件一次；`/compact` 后清空缓存，再触碰会重新注入。
+- **去重（v1.6 起按 turn 计）**：同一文件**每 turn 只给一次正文**；同 turn 内同一条目录链的**后续**触碰结果改补一行**指针**（`<dir-context ref="src/AGENTS.md" note="already loaded earlier in this turn; content not repeated" />`）——宿主对同一条 assistant 消息里的多个调用**并发执行**、`tool_result` hook 按完成顺序触发，谁先跑完谁拿正文，其余不得静默无标记（并行读时你们通常看到的就是这种）。跨 turn 不再重复，`turn_start` 是边界；`/compact` 后两个集合一起清空，再触碰会重新注入。
 - **预算**：单文件 32 KiB / 单次 128 KiB，按 UTF-8 码点边界截断并留标记。
 - **降级**：失败的结果、纯图片结果、嵌套工具调用本身不注入；读不出上下文文件时只跳过（不标记已注入，下次还能重试）。
 - **codemode（v1.1 起）**：脚本里的 `tools.read/write/edit/ls/bash` 是嵌套调用（结果只回到脚本、不进 transcript），本扩展把它们的**完整入参**（嵌套 `tool_result` 事件，宿主不截断）按顶层调用 id 缓冲，等 codemode **顶层**结果到达时合并 `details.calls`（宿主 200 字符截断预览，兜底）并注入一次——与顶层共用同一份去重/预算。嵌套调用报错（`isError`/cancelled）照算（文件可能已被读写）；顶层结果失败、非触碰工具不注入。缓冲有界：单组 64 条、最多 8 组、取走即删。
@@ -54,7 +54,7 @@ mkdir -p .pi/extensions && cp -r src/extensions/dir-context .pi/extensions/
 ## 开发
 
 ```bash
-npm install && npm test && npm run typecheck   # 119 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
+npm install && npm test && npm run typecheck   # 122 个测试（含 2 个平台条件跳过：创建文件符号链接需权限）
 ```
 
 设计决策与不变量见仓库 `docs/extensions/dir-context.md`、`docs/adr/0011-dir-context-scoped-injection.md` 与 `docs/adr/0012-dir-context-codemode.md`。
