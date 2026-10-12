@@ -89,6 +89,18 @@ export function buildInjection(files: ContextFileContent[]): Injection {
   return { text: blocks.join("\n"), injected };
 }
 
+/**
+ * 同 turn 内同一目录链的**后续**触碰用的一行指针（dir-context-todo#10）。
+ *
+ * 正文已经在同一 turn 的另一个结果里给过（宿主并发执行同一条消息里的多个调用，
+ * `tool_result` hook 按完成顺序触发 ⇒ 谁先跑完谁拿正文），这里只标出「该目录的约定
+ * 已在本轮上下文里」，不再重复正文。用**自闭合**标签而非 `<dir-context path="…">正文</dir-context>`：
+ * 形状上与全量块区分得开，模型不会把指针文案误读成文件内容；也不占预算、不进 `loaded` 计数。
+ */
+export function renderPointer(relativePath: string): string {
+  return `<dir-context ref="${relativePath}" note="already loaded earlier in this turn; content not repeated" />`;
+}
+
 interface BlockOptions {
   relativePath: string;
   /** 块头 `path=` 的值；省略 = `relativePath`。 */

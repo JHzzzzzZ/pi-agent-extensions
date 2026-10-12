@@ -10,7 +10,10 @@
  *
  * 设计要点（决策记录见 todos/align/dir-context-todo#1.md 与 docs/adr/0011）：
  * - 注入通道 = `tool_result` 追加 text block（最窄的公开接缝；失败不影响工具本身）。
- * - 会话内每绝对路径只注入一次；`session_compact` 后清空（compact 会把之前的注入
+ * - 注入范围以 **turn** 为单位（dir-context-todo#10）：同一绝对路径每 turn 只给一次正文，
+ *   同 turn 内同一条目录链的其余触碰结果补一行**指针**（宿主对同一条 assistant 消息里的多个
+ *   调用并发执行、`tool_result` hook 按完成顺序触发 ⇒ 谁先跑完谁拿正文，其余不得静默无标记）；
+ *   跨 turn 不再重复，`turn_start` 是边界。`session_compact` 后整体清空（compact 会把之前的注入
  *   从上下文里抹掉，必须允许按需重载，否则那段上下文永久丢失）。
  * - cwd 之外的触碰、失败结果、嵌套工具调用一律零注入（fail-open 降级，绝不改坏
  *   原结果）。嵌套调用（codemode 脚本发起）的补偿路径：**嵌套事件带完整入参**，按顶层调用 id
@@ -25,7 +28,7 @@ import { resolveAnchor } from "./anchor.ts";
 import { createNestedTouchBuffer, dedupeTouches, detectCodemodeTouches, isCodemodeResult, type NestedTouchBuffer } from "./codemode.ts";
 import { discoverContextFilesForAnchors } from "./discover.ts";
 import { ErrorCodes, type DirContextError } from "./errors.ts";
-import { buildInjection, type ContextFileContent } from "./inject.ts";
+import { buildInjection, renderPointer, type ContextFileContent } from "./inject.ts";
 import { canonicalize, toDisplayPath } from "./paths.ts";
 import { collectRemoteContext, toContextFiles, REMOTE_CONTEXT_UNREADABLE_CODE, type RemoteContextCapability, type RemoteContextRequest } from "./remote-context.ts";
 import { isRemoteCall, REMOTE_NOTICE, REMOTE_UNREADABLE_NOTICE } from "./remote.ts";
@@ -44,8 +47,20 @@ interface LoadedFile {
 }
 
 export default function dirContext(pi: ExtensionAPI): (() => void) | void {
-  /** 本会话已注入过的绝对路径（compact/shutdown 时清空）。 */
+  /** 跨 turn 已注入过的绝对路径（compact/shutdown 时清空；turn 边界见 `flushTurn`）。 */
   const injected = new Set<string>();
+  /** 本 turn 内已注入过的绝对路径：同 turn 的后续触碰据此补指针而不是重复正文（#10）。 */
+  const injectedThisTurn = new Set<string>();
+  /**
+   * turn 边界：把本 turn 的注入并入跨 turn 集合。
+   *
+   * 选 `turn_start` 而不是 `turn_end`——中断的 turn 不保证派发 `turn_end`，而每个 turn 都有开始；
+   * 用开始侧兜底，最坏也只是把上一 turn 的记号晚一个事件并入。
+   */
+  const flushTurn = (): void => {
+    for (const file of injectedThisTurn) injected.add(file);
+    injectedThisTurn.clear();
+  };
   /** codemode 的嵌套触碰缓冲（顶层结果到达即取走；reset 时清空）。 */
   const nestedTouches = createNestedTouchBuffer();
   const loaded: LoadedFile[] = [];
@@ -72,6 +87,7 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
 
   const reset = (ctx: ExtensionContext): void => {
     injected.clear();
+    injectedThisTurn.clear();
     nestedTouches.clear();
     loaded.length = 0;
     readFailureReported = false;
@@ -109,9 +125,11 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     reset(ctx);
     connectRemoteContext(ctx);
   });
+  pi.on("turn_start", () => flushTurn());
   pi.on("session_compact", (_event, ctx) => reset(ctx));
   pi.on("session_shutdown", (_event, ctx) => {
     injected.clear();
+    injectedThisTurn.clear();
     nestedTouches.clear();
     loaded.length = 0;
     remoteNoticesShown.clear();
@@ -142,7 +160,13 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
     if (pending.length === 0) return undefined;
 
     const contents: ContextFileContent[] = [];
+    /** 本 turn 已给过正文的文件：只补一行指针（不重复读盘、不进预算、不计入状态计数）。 */
+    const repeated: string[] = [];
     for (const absolutePath of pending) {
+      if (injectedThisTurn.has(absolutePath)) {
+        repeated.push(toDisplayPath(root, absolutePath));
+        continue;
+      }
       const read = readContextFile(absolutePath);
       if (!read.ok) {
         // 读不出来就不标记已注入：下个触碰还能重试（fail-open，但可观测一次）。
@@ -151,17 +175,21 @@ export default function dirContext(pi: ExtensionAPI): (() => void) | void {
       }
       contents.push({ absolutePath, relativePath: toDisplayPath(root, absolutePath), content: read.value });
     }
-    if (contents.length === 0) return undefined;
 
-    // 标记「已注入」必须等 buildInjection 之后，只认真正进了文本的那些：被预算丢弃的
-    // 文件没有进上下文，标记了就等于承诺了没发生的事（后续触碰永久拿不到那份内容）。
-    const injection = buildInjection(contents);
-    for (const file of injection.injected) {
-      injected.add(file.absolutePath);
-      loaded.push({ relativePath: file.relativePath, truncated: file.truncated, bytes: file.bytes });
+    const parts: string[] = [];
+    if (contents.length > 0) {
+      // 标记「已注入」必须等 buildInjection 之后，只认真正进了文本的那些：被预算丢弃的
+      // 文件没有进上下文，标记了就等于承诺了没发生的事（后续触碰永久拿不到那份内容）。
+      const injection = buildInjection(contents);
+      for (const file of injection.injected) {
+        injectedThisTurn.add(file.absolutePath);
+        loaded.push({ relativePath: file.relativePath, truncated: file.truncated, bytes: file.bytes });
+      }
+      parts.push(injection.text);
+      renderStatus(ctx);
     }
-    renderStatus(ctx);
-    return injection.text;
+    for (const relativePath of repeated) parts.push(renderPointer(relativePath));
+    return parts.length === 0 ? undefined : parts.join("\n");
   };
 
   /**

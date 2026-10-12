@@ -203,15 +203,54 @@ test("read 深层文件：注入祖先链（由外向内），原内容逐字保
   assert.doesNotMatch(text, /Loaded AGENTS\.md\n/, "更不得注入 cwd 根文件");
 });
 
-test("同会话重复触碰同一目录：第二次起零注入", async (t) => {
+test("同 turn 重复触碰同一目录：第二次起只补一行指针，不再静默（dir-context-todo#10）", async (t) => {
   const project = makeProject();
   t.after(project.cleanup);
   const h = await startHarness(t, project.cwd);
 
-  const first = await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" } }));
+  const target = { toolName: "read" as const, toolInput: { path: "src/components/Button.tsx" } };
+  const first = await h.runner.emitToolResult(toolResult({ ...target, toolCallId: "call-1" }));
   assert.ok(first?.content, "首次必须注入");
-  const second = await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" } }));
-  assert.equal(second, undefined, "同文件重复读：handler 返回 undefined（透传原结果）");
+  assert.match(injectedText(first), /<dir-context path="src\/components\/AGENTS\.md">/, "首次给正文");
+
+  const second = await h.runner.emitToolResult(toolResult({ ...target, toolCallId: "call-2" }));
+  const pointer = injectedText(second);
+  assert.match(pointer, /<dir-context ref="src\/AGENTS\.md" /, "同 turn 的后续触碰：祖先链补指针");
+  assert.match(pointer, /<dir-context ref="src\/components\/AGENTS\.md" /);
+  assert.doesNotMatch(pointer, /src 约定|组件约定/, "指针不带正文（正文已在同一 turn 的另一个结果里）");
+  assert.equal(
+    h.seen.statuses.filter((text) => text !== undefined).length,
+    1,
+    "指针不进状态段计数（同一份文件只算一次）",
+  );
+});
+
+test("新 turn（turn_start）后同一目录：零注入（跨 turn 去重保留）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  assert.ok((await h.runner.emitToolResult(toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" } })))?.content);
+  await h.runner.emit({ type: "turn_start", turnIndex: 2, timestamp: Date.now() });
+  const next = await h.runner.emitToolResult(
+    toolResult({ toolName: "read", toolInput: { path: "src/components/Button.tsx" }, toolCallId: "call-2" }),
+  );
+  assert.equal(next, undefined, "跨 turn 已注入过 ⇒ 透传原结果（不再重复唠叨，也不出指针）");
+});
+
+test("同一条消息里的并发触碰：恰好一个结果拿正文、另一个拿指针（dir-context-todo#10）", async (t) => {
+  const project = makeProject();
+  t.after(project.cleanup);
+  const h = await startHarness(t, project.cwd);
+
+  const target = { toolName: "read" as const, toolInput: { path: "src/components/Button.tsx" } };
+  const [a, b] = await Promise.all([
+    h.runner.emitToolResult(toolResult({ ...target, toolCallId: "call-1" })),
+    h.runner.emitToolResult(toolResult({ ...target, toolCallId: "call-2" })),
+  ]);
+  const texts = [injectedText(a), injectedText(b)];
+  assert.equal(texts.filter((text) => text.includes('<dir-context path="src/AGENTS.md">')).length, 1, "恰好一个结果带正文");
+  assert.equal(texts.filter((text) => text.includes('<dir-context ref="src/AGENTS.md" ')).length, 1, "另一个结果必须带指针");
 });
 
 test("session_compact 后：缓存清空，同一文件可再次注入（= Claude 的按需重载）", async (t) => {
@@ -858,7 +897,7 @@ test("codemode 顶层结果：按 details.calls 一次注入并集，原 content
   assert.deepEqual(result?.details, details, "details 必须原样保留（宿主 runner 只替换显式返回的字段）");
 });
 
-test("codemode 与顶层共用同一份去重缓存：顶层注入过的文件在脚本里不再注入", async (t) => {
+test("codemode 与顶层共用同一份去重缓存：顶层注入过的文件在脚本里改出指针", async (t) => {
   const project = makeProject();
   t.after(project.cleanup);
   const h = await startHarness(t, project.cwd);
@@ -867,7 +906,10 @@ test("codemode 与顶层共用同一份去重缓存：顶层注入过的文件�
   const script = await h.runner.emitToolResult(
     toolResult({ toolName: "codemode", toolInput: { code: "…" }, details: codemodeDetails([{ name: "read", args: { path: "src/components/Button.tsx" } }]) }),
   );
-  assert.equal(script, undefined, "全部已注入过 ⇒ handler 返回 undefined（透传原结果）");
+  const text = injectedText(script);
+  assert.match(text, /<dir-context ref="src\/components\/AGENTS\.md" /, "同一 turn 内已注入 ⇒ 只补指针");
+  assert.doesNotMatch(text, /组件约定/, "不重复正文");
+  assert.equal(text.split("Loaded src/components/AGENTS.md").length - 1, 0, "指针不用 Loaded 前缀（正文计数保持可判）");
 
   await h.runner.emit({ type: "session_compact", compactionEntry: {} as never, fromExtension: false, reason: "manual", willRetry: false });
   assert.ok(

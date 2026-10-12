@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, buildInjection, truncateUtf8 } from "../inject.ts";
+import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, buildInjection, renderPointer, truncateUtf8 } from "../inject.ts";
 
 test("截断：未超限时原样返回", () => {
   assert.deepEqual(truncateUtf8("abc", 10), { text: "abc", truncated: false });
@@ -75,4 +75,15 @@ test("空列表：零注入、空文本", () => {
   const result = buildInjection([]);
   assert.deepEqual(result.injected, []);
   assert.equal(result.text, "");
+});
+
+/**
+ * 指针（dir-context-todo#10）：同 turn 内同链的后续触碰用的一行替代物。
+ * 这里锁两件宿主外也能断言的事：文本形态（自闭合标签 + 展示路径）与「单行、无正文」。
+ */
+test("指针：自闭合标签 + 展示路径，单行且与全量块的正文形态区分得开", () => {
+  const line = renderPointer("src/components/AGENTS.md");
+  assert.match(line, /^<dir-context ref="src\/components\/AGENTS\.md" note="[^"]+" \/>$/);
+  assert.equal(line.includes("\n"), false, "指针必须是一行（调用方按行拼接）");
+  assert.doesNotMatch(line, /<dir-context path=/, "不得用全量块的 path= 形态（模型会把文案误读成正文）");
 });
