@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 1c7c6d7
+> last verified @ 8fc56bc
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
@@ -37,8 +37,18 @@
   配套运行时守卫 `assertMarkerRootUsable`：锚文件不是普通文件时远端调用 fail-closed 报 `HOST_MARKER_CONFLICT`（本地分支零影响）。
 - **校验先于 ssh**：目标形态（前导 `-` / 空格 / 多 `@` / 内嵌端口）、端口范围、路径形态三者在任何 ssh 进程之前完成。
   绝对路径不需要远端 `$HOME` ⇒ 不为此多发一次 ssh（只有省略/相对路径才解析，且同目标只解析一次）。
-- **已知主机指纹 fail-closed**：`BatchMode=yes` + `StrictHostKeyChecking=yes`；未收录指纹/认证失败报
-  `SSH_CONNECT_FAILED` 并提示先在终端手工 ssh 一次，绝不 accept-new。
+- **主机指纹 TOFU**（`#15`，用户 2026-10-12 选定）：`BatchMode=yes` + `StrictHostKeyChecking=accept-new`——未知主机
+  首次连接由 **ssh 自己**把指纹写进 `known_hosts`（零人工前置，不再需要先手工 ssh / ssh-keyscan），
+  **已收录主机的指纹变更仍 fail-closed**（`REMOTE HOST IDENTIFICATION HAS CHANGED` 与 `Host key verification failed`
+  同归 `SSH_CONNECT_FAILED`，文案给 `ssh-keygen -R <host>` 的排查入口）；不自行跑 `ssh-keyscan`——自己抓公钥自证
+  并不比 TOFU 强，还多一条外部命令。代价：首次连接不校验对端身份（TOFU 固有）；命令行 `-o` 优先于 `ssh_config`，
+  所以想要回严格模式只能改代码（本条目 `reopen` 重议）。
+- **结果/报错文案不回灌宿主标记路径**（`#16`，用户 2026-10-12 实测）：宿主把自己的**入参 `path` 原样**插进成功
+  文案（`Successfully wrote to ${path}`）、`details.patch` 头（`generateUnifiedPatch(path, path, …)`）与一族报错
+  （`Could not edit file: ${path}`、`Could not find the exact text in ${path}`、read 的大行提示），而远端分支按标记
+  路径信道**必须**传宿主形态 ⇒ 模型会读到「写到了 `C:\…\pi-remote\…`」这种本地假路径。`tools.ts` 的
+  `withRemotePaths` 在出口处把**我们传进去的那个字符串**换回远端绝对路径（精确替换，不是猜文案格式），
+  同时作用于 content 文本、`details.patch`/`diff` 与抛出的错误；本地分支不走这条路径（逐字不变）。
 - **远端环境只给白名单**：转发 `PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`
   （与宿主 `resolveSpawnContext` 自己维护的那五个一致）。**不能用 `PI_` 前缀匹配**——实测环境里存在
   `PI_WEB_TOKEN` 这类宿主敏感变量，前缀匹配会把它们送进远端命令（`test/ops.test.ts` 锁住）。
@@ -110,10 +120,11 @@
 - `paths.ts` — 宿主路径空间 ↔ 远端 POSIX 路径空间的换算（`HOST_PATH_ROOT`/`toHostPath`/`toRemotePath`/`stripHostMarker`）
   + 标记根守卫（`assertMarkerRootUsable`：锚文件必须是普通文件）
   + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
+  + 文案改写 `rewriteHostPathInText`（宿主标记路径 → 远端路径，`#16`）
 - `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT` / `REMOTE_CONTEXT_FAILED` / `REMOTE_CONTEXT_UNREADABLE`（后两个是远端上下文能力的：通用失败 / 链上候选存在但读不出））
-- `test/` — 132 个：123 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(10) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(20) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 9 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `test/` — 137 个：127 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(11) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(23) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 10 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 

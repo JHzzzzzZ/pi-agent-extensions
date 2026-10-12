@@ -63,7 +63,7 @@
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 | [virtual-model-router](extensions/virtual-model-router.md) | 虚拟模型路由：注册 `opencode-go/router`，每次请求按宿主 `reason` 路由到物理模型（user→强档 / continuation→便宜快档 / retry→升档或溢出换长上下文档 / direct→固定档），零额外 LLM 调用；档位表与注册身份在 `config.ts` 单一表；真机验收清单 `virtual-model-router-checklist.md` |
 | [jev-safe-gate](extensions/jev-safe-gate.md) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只意味着「本扩展不弹框」，绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入；真机验收清单 `jev-safe-gate-checklist.md` |
-| [remote-tools](extensions/remote-tools.md) | 内置工具的 SSH 远程后端：七个内置工具加 `remote`/`remotePort`（bash 另有 `remoteCwd`），`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝；grep 因接缝覆盖不到 ripgrep 搜索而整份重写，缺 rg 时回退 GNU grep 并标注降级）；零运行时依赖，只转发白名单会话变量，路径在发 ssh 前 fail-closed |
+| [remote-tools](extensions/remote-tools.md) | 内置工具的 SSH 远程后端：七个内置工具加 `remote`/`remotePort`（bash 另有 `remoteCwd`），`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝；grep 因接缝覆盖不到 ripgrep 搜索而整份重写，缺 rg 时回退 GNU grep 并标注降级）；零运行时依赖，只转发白名单会话变量，路径在发 ssh 前 fail-closed；主机指纹 TOFU（`accept-new`：新主机首次零人工前置、变更仍拒绝），成功/报错文案回写远端路径 |
 | [dir-context](extensions/dir-context.md) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格位于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；由外向内、会话内去重、compact 后按需重载、cwd 之外零注入、带 `remote` 的远端调用零注入（不依赖 remote-tools）、码点安全截断 |
 
 ## 工具卡（非插件）

@@ -25,7 +25,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 ## 前提
 
 - 系统 PATH 里有 `ssh`（Windows 10+ 自带 OpenSSH 即可），**零 npm 运行时依赖**。
-- 目标主机已配好密钥 / ssh-agent，且指纹已在 `known_hosts` 里。本扩展非交互执行（`BatchMode=yes`）且拒绝未知指纹（`StrictHostKeyChecking=yes`）——首次连一台机器请先在终端手工 `ssh user@host` 一次。
+- 目标主机已配好密钥 / ssh-agent。本扩展非交互执行（`BatchMode=yes`）且指纹策略是 **TOFU**（`StrictHostKeyChecking=accept-new`，`#15`）：新主机首次连接由 ssh 自己把指纹写进 `known_hosts`，**不需要**先手工 `ssh user@host` 一次；已收录主机的**指纹变更仍然拒绝**（报 `SSH_CONNECT_FAILED`，清理旧条目用 `ssh-keygen -R <host>`）。
 - 远端有 `ripgrep` 时 `grep`/`find` 语义与本地一致（遵守 `.gitignore`）；没有则回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不生效）。
 
 ## 向 dir-context 提供远端上下文能力
@@ -37,6 +37,7 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 - **不自己复刻内置行为**：`read` / `write` / `edit` / `ls` / `find` / `bash` 都用宿主同一份 `createXxxToolDefinition` 配上远端 Operations 实现，因此截断、限流、渲染器、提示词片段与内置完全一致；`remote` 为空时直接调宿主本地实现（零漂移、绝不 spawn ssh）。
 - **只有 grep 整份重写**：宿主的 `GrepOperations` 覆盖不到真正的 ripgrep 搜索（`dist/core/tools/grep.js` 里是本地 `spawn`），远程搜索必须自己实现（远端 `rg --json` 优先，回退 GNU grep）。代价是 grep 的自定义 TUI 渲染器回落到宿主默认渲染。
 - **路径空间换算**（`paths.ts`）：Windows 上宿主 `path.resolve` 会给远端路径注入盘符（`/srv` → `C:\srv`）、`normalizeWindowsShellPath` 还会把单字母首段当 Git-Bash 盘符（`/s/x` → `S:\x`）。所以交给内置工具的路径一律带**标记根**前缀 `<扩展目录>/index.ts/pi-remote`（锚在一个已存在的普通文件下——本地**建不出**这个目录，宿主给的都是 ENOENT/ENOTDIR，它的变体探测没有可命中的文件），ops 层再剥离还原；锚文件不是普通文件时远端调用 fail-closed 报 `HOST_MARKER_CONFLICT`。
+- **结果文案里的路径也是远端路径**（`#16`）：宿主把自己的入参 `path` 原样插进成功文案、`details.patch` 头与一族报错，而远端分支必须传宿主标记形态（见上一条）——`tools.ts` 的 `withRemotePaths` 在出口处把它换回远端绝对路径，否则模型会以为写到了本机（形如 `C:\…\index.ts\pi-remote\srv\a.ts`）。
 - **可选端口要补齐**：宿主的 Operations 接缝里有可选端口（如 `ReadOperations.detectImageMimeType`），不实现它宿主就静默走另一条分支（远端 PNG 会被当文本读）——远端 read 的图片嗅探样本搭 `access` 的顺风车（`head -c 8192 | base64`，零额外往返），判定交回宿主同一份检测实现。
 - **ls / find 的错误自己拦**：远端 ls/find 在进宿主校验前先做一次 fail-closed 目录探针（不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒ `REMOTE_NOT_DIRECTORY`），否则宿主会用它自己的模板把内部标记路径（`C:\…\pi-remote\…`）写进错误消息回灌给模型；探针答案顺带缓存，ls 的往返数从 3 降到 2。
 - **与 timeout-bg 共存**：两个扩展都覆盖 `bash` 这个名字，而宿主对同名工具按扩展加载顺序 first-wins、无法包裹下层。本扩展在加载期把远端 bash 能力放进 timeout-bg 的 `pi.events` 收集盒子（`capability.ts`），由它合并参数并按参数分派——两个功能都保留；分派口径与加载顺序要求见 [`docs/cross/shell-tool-capability.md`](../../../docs/cross/shell-tool-capability.md)。
@@ -57,9 +58,9 @@ ls    path="/srv/app"                     remote="deploy@10.0.0.7"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-123 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（10，宿主路径往返、标记根的结构性断言与守卫）、
+127 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（11，宿主路径往返、标记根的结构性断言与守卫、文案改写）、
 `test/ops.test.ts`（20，发给 ssh 的命令构造、错误映射、图片嗅探、ls/find 目录探针与缓存）、`test/grep.test.ts`（13，rg 事件解析/降级/限流）、
-`test/tools.test.ts`（20，注册覆盖、本地保真对照、远端分派、ls/find 结构化错误与往返数、图片端到端、session 缓存）、
+`test/tools.test.ts`（23，注册覆盖、本地保真对照（含 write/edit 文案与 details 逐字对拍）、远端分派、ls/find 结构化错误与往返数、图片端到端、远端 write/edit/read 文案回写远端路径、session 缓存）、
 `test/capability.test.ts`（5，跨扩展能力载荷与订阅、job 托管端口索取与形状守卫）、
 `test/context-v2.test.ts`（6，协议 v2：**真 shell 往返**（真起 `bash -c` 跑命令再按协议解回；含 NUL 的内容仍只产出一个帧、字节级还原）、`\x02`/`\x03` 帧、路径归一）、
 `test/context.test.ts`（26，远端上下文能力：祖先链终点与深度上限、一趟 ssh 的命令拼装与分帧、
@@ -67,7 +68,7 @@ cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 `test/bash-timeout.test.ts`（9，托管路径的进程边界：不断连 + 日志 + settle、terminate 杀远端并断 ssh、无端口时的旧行为）、
 `test/shell-composition.test.ts`（3，真实加载 remote-tools + timeout-bg：能力合并、job 托管频道、反向顺序冲突可见）；`test/fixtures.ts` 提供真 PNG 等样本。
 
-另有一个**真机 opt-in** 文件 `test/remote-live.test.ts`（9 个，默认跳过，接真实 ssh 进程）：
+另有一个**真机 opt-in** 文件 `test/remote-live.test.ts`（10 个，默认跳过，接真实 ssh 进程）：
 
 ```bash
 # Git Bash 下必须加 MSYS2_ENV_CONV_EXCL='*'，否则 /home/… 会被改写成 C:/Program Files/Git/home/…
