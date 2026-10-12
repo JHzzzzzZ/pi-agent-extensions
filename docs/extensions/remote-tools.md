@@ -1,6 +1,6 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 8fc56bc
+> last verified @ 5e76c02
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
@@ -40,15 +40,20 @@
 - **主机指纹 TOFU**（`#15`，用户 2026-10-12 选定）：`BatchMode=yes` + `StrictHostKeyChecking=accept-new`——未知主机
   首次连接由 **ssh 自己**把指纹写进 `known_hosts`（零人工前置，不再需要先手工 ssh / ssh-keyscan），
   **已收录主机的指纹变更仍 fail-closed**（`REMOTE HOST IDENTIFICATION HAS CHANGED` 与 `Host key verification failed`
-  同归 `SSH_CONNECT_FAILED`，文案给 `ssh-keygen -R <host>` 的排查入口）；不自行跑 `ssh-keyscan`——自己抓公钥自证
+  同归 `SSH_CONNECT_FAILED`，文案给 `ssh-keygen -R <host>` 的排查入口；客户端不支持该选项（OpenSSH < 7.6 报
+  `Bad configuration option`）同样归 `SSH_CONNECT_FAILED`）；不自行跑 `ssh-keyscan`——自己抓公钥自证
   并不比 TOFU 强，还多一条外部命令。代价：首次连接不校验对端身份（TOFU 固有）；命令行 `-o` 优先于 `ssh_config`，
   所以想要回严格模式只能改代码（本条目 `reopen` 重议）。
 - **结果/报错文案不回灌宿主标记路径**（`#16`，用户 2026-10-12 实测）：宿主把自己的**入参 `path` 原样**插进成功
-  文案（`Successfully wrote to ${path}`）、`details.patch` 头（`generateUnifiedPatch(path, path, …)`）与一族报错
+  文案（`Successfully wrote to ${path}`）、`details.patch` 头（`edit.js:129` 的 `generateUnifiedPatch(path, baseContent, newContent)`，
+  其内部是 `Diff.createTwoFilesPatch(path, path, …)`）与一族报错
   （`Could not edit file: ${path}`、`Could not find the exact text in ${path}`、read 的大行提示），而远端分支按标记
   路径信道**必须**传宿主形态 ⇒ 模型会读到「写到了 `C:\…\pi-remote\…`」这种本地假路径。`tools.ts` 的
   `withRemotePaths` 在出口处把**我们传进去的那个字符串**换回远端绝对路径（精确替换，不是猜文案格式），
-  同时作用于 content 文本、`details.patch`/`diff` 与抛出的错误；本地分支不走这条路径（逐字不变）。
+  同时作用于 content 文本、`details.patch`/`diff`、`structuredContent`（宿主 `read.js` 末尾从改写前的 content
+  派生的第二个出口，codemode 消费方走它）与抛出的错误；本地分支不走这条路径（逐字不变）。
+  残留风险（已知可接受）：read 分支的改写作用于整个 content，所以**文件内容**里恰好出现该文件自身的宿主标记
+  路径时也会被换掉（概率可忽略，且标记形态本就是本扩展的私有信道）。
 - **远端环境只给白名单**：转发 `PI_SESSION_ID`/`PI_SESSION_FILE`/`PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`
   （与宿主 `resolveSpawnContext` 自己维护的那五个一致）。**不能用 `PI_` 前缀匹配**——实测环境里存在
   `PI_WEB_TOKEN` 这类宿主敏感变量，前缀匹配会把它们送进远端命令（`test/ops.test.ts` 锁住）。

@@ -50,7 +50,7 @@ Pi 的内置工具（`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls`）只操作
 
 - **进程边界用手写 fake**：`SshExec` 端口注入（`ssh.ts`），断言**实际发给 ssh 的命令字符串**——Windows 上宿主 `path` 解析会改写远端路径，只有命令字符串断言能守住那个 bug；真机行为由 opt-in 用例覆盖。
 - **本地保真对照宿主真实实现**：同一组参数分别打我们的定义与宿主 `createXxxToolDefinition`，在临时目录里比输出与真实文件副作用；`find`/`grep` 依赖宿主外部工具（fd/rg）时，两边给出**同一个错误**也算保真。
-- **真机 opt-in（默认跳过）**：`PI_REMOTE_TOOLS_TEST_TARGET=user@host` 开启后接真实 ssh，覆盖建连/`$HOME` 解析、bash 目录与退出码、ops 与**工具层**往返、远端图片走图片管线、降级、结构化错误码、不可达 fail-closed、远端 bash 真在远端跑 + ls/find 目录探针、干净 `known_hosts` 下 `accept-new` 首次连接成功（`#15`）、write/edit 文案回写远端路径（本机 WSL 实测 8/8）。
+- **真机 opt-in（默认跳过）**：`PI_REMOTE_TOOLS_TEST_TARGET=user@host` 开启后接真实 ssh，覆盖建连/`$HOME` 解析、bash 目录与退出码、ops 与**工具层**往返、远端图片走图片管线、降级、结构化错误码、不可达域名 fail-closed、远端 bash 真在远端跑 + ls/find 目录探针、干净 `known_hosts` 下 `accept-new` 首次连接成功并被 ssh 写入条目（`#15`）、工具层 write/edit 成功文案与 `details.patch` 头是远端路径（`#16`）；本机 WSL 历史实测 8/8（本次新增的两条待重跑）。
 - 计数与运行命令见插件 README（当前 127 个本地 + 10 个真机 opt-in）。
 - **跨扩展组合（`#9`/`#10`）另见 `docs/specs/shell-tool-composition.md`**：bash 能力协商（`pi.events` 盒子）、
   分派安全口径、加载顺序与冲突可见性、ls/find 目录探针与 `REMOTE_NOT_DIRECTORY`。
