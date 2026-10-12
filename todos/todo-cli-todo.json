@@ -371,6 +371,21 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 22,
+      "globalId": 386,
+      "text": "skills-todo#13/#14 的 globalId 重复 318（预先存在，来自 7d29492 收口 skills#14；任何写操作后 lint 恒红）：ADR-0008 之后发号下界 = max(计数器, 旧布局计数器, 全台账 max(id, globalId)+1) 本应自愈，需查为何仍发出重复号（是计数器被并发写坏、还是收口脚本绕过 CLI 写盘），再走 migrate global-id --repair 仲裁数据；验收：lint exit 0 + 该文件 globalId 唯一。来源：2026-10-12 general-todo#34 交付时 lint 实测",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-12T09:37:37.422Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
