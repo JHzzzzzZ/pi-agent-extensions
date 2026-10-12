@@ -9,7 +9,7 @@ Pi 编码助手的扩展工作区：17 个零构建 TypeScript ESM 插件（另�
 > 术语的服务对象：`docs/cross/composition-surfaces.md`（接触面清单）、`tools/composition-surfaces.mjs`（校验与配对）、`test/composition-*.test.ts`（L1/L2）与规格 `docs/specs/composition-test-matrix.md`。
 
 **接触面（Contact Surface）**:
-一个扩展占用的**宿主共享槽位**的集合——状态键 / widget / 工具与工具面 / `pi.events` 频道 / 宿主钩子 / 模型面 / 文件契约 / 命令 / 快捷键。回答"这个插件和谁可能互相影响"。
+一个扩展占用的**宿主共享槽位**的集合——状态键 / widget / 工具与工具面 / `pi.events` 频道 / 宿主钩子 / 模型面 / 文件契约 / 命令 / 快捷键。回答"这个插件和谁可能互相影响"；改它 ⇒ 走 composition 配对/L2 测试，且因同属契约面而**升 T3**。
 _Avoid_: 接口、能力面、API 面
 
 **槽位（Slot）**:
@@ -142,8 +142,16 @@ _Avoid_: 循环依赖（口语可，但报错与文档统一用「依赖环」�
 _Avoid_: 优先级（那是 todo 的 `priority` 软字段）、规模（不按行数分档）
 
 **契约面（contract surface，流程用语）**:
-改动的**对外承诺**面：`docs/cross/`、状态键/widget/工具名/频道/命令/模型面、错误码集、消息键、公开 API，以及流程定义文件（`AGENTS.md`/`docs/adr/`/`CONTEXT.md`/`GOAL.md`）。**碰它 → 升 T3**；composition 域的接触面则走配对/L2 测试那条线——两者枚举重叠，但一个回答「谁承安」，一个回答「谁占了宿主槽」。
+改动的**对外承诺**面：`docs/cross/`、状态键/widget/工具名/频道/命令/模型面、错误码集、消息键、公开 API，以及流程定义文件（`AGENTS.md`/`docs/adr/`/`CONTEXT.md`/`GOAL.md`）。**碰它 → 升 T3**；composition 域的接触面则走配对/L2 测试那条线——两者枚举重叠，但一个回答「谁对外承诺」，一个回答「谁占了宿主槽」。
 _Avoid_: 接触面（composition 域，语义不同）、接口面
+
+**行为代码（behavior code）**:
+会改变运行时可观察行为的代码（含测试的断言目标）；注释、文档、版本号、lock 文件都不是。T1/T2 的分界词：diff 里有它 ⇒ 至少 T2。
+_Avoid_: 逻辑代码、实现代码
+
+**行为面（behavior surface）**:
+评审用语：一个 finding 是否指向**运行时可观察行为的改变**（而不只是文档、计数、命名、测试写法）。红线 11 的 T2 单轮护栏以此为抳机——reviewer 必须显式回答「有无首轮未覆盖的行为面疑虑」。
+_Avoid_: 影响面、风险面
 
 **剂量测试（dosage test）**:
 分档规则的验真方式：接下来 3 条真实小改动按 T2 走，统计「被漏掉的问题是否都在首轮评审被抓住」；漏了就升档。链路上限只有实际数据能证伪。
