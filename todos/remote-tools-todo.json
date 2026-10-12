@@ -269,6 +269,49 @@
       "claimedAt": "2026-10-11T12:29:59.287Z",
       "completedAt": "2026-10-11T14:09:23.662Z",
       "alignedAt": "2026-10-11T12:32:19.341Z"
+    },
+    {
+      "id": 15,
+      "globalId": 383,
+      "text": "remote-tools 首次连接新主机必须先在终端手工 ssh 一次：BatchMode=yes + StrictHostKeyChecking=yes 下未知指纹直接 SSH_CONNECT_FAILED（用户 2026-10-12 反映这一步是纯摩擦，问能否去掉/有没有办法）。要求：去掉「先手工 ssh（或手工 ssh-keyscan 写 known_hosts）」这个前置步骤，同时不破坏 fail-closed 的本意——机制待对齐：A) StrictHostKeyChecking=accept-new（TOFU：首次自动记录，指纹变更仍拒绝，known_hosts 由 ssh 自己写）；B) 维持 yes，只把报错改写成一条可直接照抄的 ssh-keyscan + ssh-keygen -R 建议；C) accept-new 作默认 + 参数/环境开关回退 yes。验收：干净 known_hosts 的新主机上第一次带 remote 的调用直接成功（零人工前置）；指纹变更仍然失败且报 SSH_CONNECT_FAILED；ssh.test.ts 锁定 argv 形态；README/docs 卡/规格同步口径。",
+      "status": "done",
+      "branch": "feat/remote-tools-ssh-ux",
+      "tags": [
+        "ssh",
+        "known_hosts",
+        "ux"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "三轮跨厂商评审终轮无新意见（reviewer kimi-coding/k3-256k）；实现 accept-new（TOFU：首次零人工前置、指纹变更仍 fail-closed）+ 失败分类补 REMOTE HOST IDENTIFICATION HAS CHANGED / Bad configuration option；文档四处同步（卡/规格/两 README）+ 真机 opt-in 用例（临时 UserKnownHostsFile 验 accept-new 语义，因本机无 sshd 未实跑）；合入 50bf544"
+      ],
+      "createdAt": "2026-10-12T03:21:31.401Z",
+      "claimedAt": "2026-10-12T03:23:25.679Z",
+      "completedAt": "2026-10-12T10:27:32.980Z",
+      "alignedAt": "2026-10-12T03:24:35.324Z"
+    },
+    {
+      "id": 16,
+      "globalId": 384,
+      "text": "write/edit 远端分支把宿主标记路径当成功消息回灌（用户 2026-10-12 实测到「写入到某个 C: 缓存路径」的误导文案）：宿主实现硬编码 path 插值——write.js:50 `Successfully wrote to ${path}`、edit.js:134 `Successfully replaced N block(s) in ${path}.`——而我们传进去的是 toHostPath 形态（<扩展目录>/index.ts/pi-remote/srv/app/x.ts ⇒ Windows C:\\…\\remote-tools\\index.ts\\pi-remote\\srv\\app\\x.ts），模型与用户因此以为写到了本机某处。与 #10（ls/find 错误消息回灌宿主标记路径）同类，但这两条是成功路径且当时未覆盖。要求：远端分支的成功结果文本展示**远端真实绝对路径**（连同目标 [user@]host 更佳），本地分支逐字不变；不得靠改宿主 dist。验收：单测锁定远端 write/edit 结果文本不含宿主标记前缀且含远端绝对路径；本地分支回归逐字一致；docs 卡记录该口径。",
+      "status": "done",
+      "branch": "feat/remote-tools-ssh-ux",
+      "tags": [
+        "ux",
+        "write",
+        "edit",
+        "host-marker"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [
+        "三轮跨厂商评审终轮无新意见；withRemotePaths 统一改写 content 文本 + details.patch/diff + structuredContent 两形态 + 抛出的错误，本地分支逐字不变（对拍测试锁定）；测试 127 本地 + 10 真机 opt-in 全绿，typecheck 零错误；合入 50bf544"
+      ],
+      "createdAt": "2026-10-12T03:21:36.597Z",
+      "claimedAt": "2026-10-12T03:23:26.255Z",
+      "completedAt": "2026-10-12T10:27:33.598Z",
+      "alignedAt": "2026-10-12T03:24:36.300Z"
     }
   ]
 }
