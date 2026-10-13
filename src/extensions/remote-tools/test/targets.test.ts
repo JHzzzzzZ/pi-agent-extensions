@@ -158,11 +158,22 @@ test("入参本身就是某条目的别名时，那个条目优先——“名�
 	assert.equal(named.entry?.alias, "lab");
 	assert.equal(named.target.user, "deploy", "不能被 host:lab 的条目静默换掉 user");
 
-	// 两条同类命中且入参给了 user ⇒ 必歧义（无帮优级可用）
+	// 两条同类命中且入参给了 user ⇒ 必歧义（优先层与通用条目都用不上）
 	const sameUser = resolveTarget({ remote: "root@10.0.0.7" }, file(entry("a", "10.0.0.7", "root"), entry("b", "10.0.0.7", "root")));
 	assert.equal(sameUser.ok, false);
 	if (sameUser.ok) return;
 	assert.equal(sameUser.code, ErrorCodes.AMBIGUOUS_REMOTE_TARGET);
+	assert.match(sameUser.message, /补全 user@host/, "文案要可行动（列出候选别名 + 两条出路）");
+});
+
+test("主机形态入参（含 `.`）不走「同名别名」层：字面 IP 多命中时仍优先通用条目（第 3 轮评审 P2）", () => {
+	// 手改文件才能造出交叉态（登记期双向护栏已拦，见下一条）；这里锁解析层优先级。
+	const crossed = file(entry("10.0.0.7", undefined, "root"), entry("prod", "10.0.0.7"));
+	const result = resolveTarget({ remote: "10.0.0.7" }, crossed);
+	assert.equal(result.ok, true);
+	if (!result.ok || result.kind !== "resolved") return assert.fail("应命中");
+	assert.equal(result.entry?.alias, "prod", "字面 IP 不能被同名 IP 别名条目抢走");
+	assert.equal(result.target.user, undefined, "user 不得静默变成 root");
 });
 
 test("登记期拦住「像主机名/IP 的别名指向别的 host」（劫持面 fail-closed）；别名自己当 host 仍可登记", () => {
@@ -258,6 +269,12 @@ test("addTarget：首次登记追加；同名非 force 拒绝；force 覆盖不�
 	if (clash.ok) return;
 	assert.equal(clash.code, ErrorCodes.INVALID_REMOTE_TARGET);
 	assert.match(clash.message, /lab/);
+
+	// 护栏是**双向**的：新别名不许撞已有条目的 host（否则结果依赖登记顺序）。
+	const reversed = addTarget(file(entry("prod", "10.0.0.7")), { alias: "10.0.0.7", source: "agent" }, { nowIso: NOW, force: false });
+	assert.equal(reversed.ok, false);
+	if (reversed.ok) return;
+	assert.equal(reversed.code, ErrorCodes.INVALID_REMOTE_TARGET);
 });
 
 test("removeTarget / withStrict：删不存在的别名报 REMOTE_TARGET_UNKNOWN；strict 可开可关", () => {

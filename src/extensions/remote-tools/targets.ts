@@ -76,6 +76,11 @@ export function targetsFilePath(env: Record<string, string | undefined>): string
 
 // ── 形态校验（fail-closed：字段出现但非法一律报错，绝不静默忽略）──────────────
 
+/** 主机名/IP 形态（含 `.`）：用于“别名不得冒充主机”的护栏与命中优先层级。 */
+function looksLikeHostLiteral(value: string): boolean {
+	return value.includes(".");
+}
+
 /** 主机 / 用户 / 别名的公共形态：非空、无空白、不以 `-` 开头、不含 `@` 与 `:`。 */
 function plainName(value: unknown): string | null {
 	if (typeof value !== "string") return null;
@@ -136,7 +141,7 @@ export function validateTargetEntry(raw: unknown): { ok: true; value: RemoteTarg
 
 	// 别名不许「看起来像主机名/IP 却又指向别的 host」：那会让字面 host 的调用被别名劫持
 	// （静默连错机器；模型可登记 ⇒ 注入内容能构造这种条目）。单标签别名不受限（prod 是正常用法）。
-	if (host !== undefined && host !== alias && alias.includes(".")) {
+	if (host !== undefined && host !== alias && looksLikeHostLiteral(alias)) {
 		return failure(
 			ErrorCodes.INVALID_REMOTE_TARGET,
 			"别名看起来像主机名或 IP，却指向另一个 host：要么去掉 host（让别名自己当主机名），要么换一个不含 “.” 的别名。",
@@ -253,7 +258,8 @@ function pickByTarget(
 	const matches = entries.filter((entry) => matchesEntry(entry, target));
 	if (matches.length === 0) return { ok: true, entry: null };
 	if (matches.length === 1) return { ok: true, entry: matches[0] };
-	if (aliasName !== undefined) {
+	if (aliasName !== undefined && !looksLikeHostLiteral(aliasName)) {
+		// 名字形态的入参取同名条目；**主机形态的入参（含 `.`）不走这层**——否则字面 IP 多命中时会被同名 IP 条目静默换 user（第 3 轮评审 P2）。
 		const named = matches.find((entry) => entry.alias === aliasName);
 		if (named !== undefined) return { ok: true, entry: named };
 	}
@@ -337,13 +343,15 @@ export function addTarget(
 	if (index >= 0 && !options.force) {
 		return failure(ErrorCodes.REMOTE_TARGET_EXISTS, `别名 ${entry.alias} 已登记；要覆盖请用 /remote:add --force（模型侧不支持覆盖）。`);
 	}
-	// 名字空间护栏：某条目的 host 不许与**另一个**已登记别名同名。两套含义相撞会让「点名」与「主机」
-	// 不可区分（解析层有精确同名优先兼底，但登记期能直接拦下就别留到运行时）。
-	const clash = base.targets.find((existing) => existing.alias !== entry.alias && existing.alias === entryHost(entry));
+	// 名字空间护栏（**双向**）：别名与另一条目的 host 不许同名——两套含义相撞会让「点名」与「主机」
+	// 不可区分（解析层有同名优先层兼底，但登记期能直接拦下就别留到运行时）。
+	const clash = base.targets.find(
+		(existing) => existing.alias !== entry.alias && (existing.alias === entryHost(entry) || entryHost(existing) === entry.alias),
+	);
 	if (clash !== undefined) {
 		return failure(
 			ErrorCodes.INVALID_REMOTE_TARGET,
-			`host ${entryHost(entry)} 与已登记别名 ${clash.alias} 同名：请换一个 host，或改成给 ${clash.alias} 登记 user@host。`,
+			`别名 ${entry.alias} 与已登记条目 ${clash.alias} 的别名/host 相撞（两套含义不能同名）：请换一个别名或 host。`,
 		);
 	}
 	const targets = index >= 0 ? base.targets.map((existing, i) => (i === index ? entry : existing)) : [...base.targets, entry];
