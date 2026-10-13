@@ -1,6 +1,6 @@
 # 跨扩展横切契约：插件接触面清单（谁占了哪个槽）
 
-> last verified @ 2c18af9
+> last verified @ 399e3f3
 >
 > 本表回答**唯一一个问题**：「哪个插件占了宿主的哪个共享槽位」——状态键、widget 槽、
 > 内置工具名、`pi.events` 频道、拦截型宿主钩子、模型面、命令与快捷键。
@@ -242,15 +242,16 @@ events 订阅: -
 ### remote-tools
 状态键: -
 widget: -
-工具: -
+工具: remote_targets
 工具面: replace:read, replace:write, replace:edit, replace:ls, replace:find, replace:grep, replace:bash
 events 广播: -
 events 订阅: pi-extensions:shell-capability:v1, pi-extensions:dir-context-remote-context:v2
 宿主钩子: -
 模型面: -
-命令: -
+命令: remote:add, remote:list, remote:rm, remote:strict
+文件契约: PI_REMOTE_TARGETS_FILE（本扩展读写主人：登记表路径覆盖；默认 `~/.pi/agent/remote-targets.json`，无其它扩展消费）
 快捷键: -
-独占声明: -
+独占声明: remote_targets, remote:add, remote:list, remote:rm, remote:strict
 共享槽: replace:bash（远端分支经能力频道并入 timeout-bg 的 bash，见 shell-tool-capability.md）
 模式: -
 会话生命周期: 无钩子（加载期注册工具 + 订阅能力频道回填远端能力）

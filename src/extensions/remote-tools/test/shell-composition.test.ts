@@ -43,9 +43,15 @@ async function startHarness(t: TestContext, order: "timeout-bg-first" | "remote-
   // timeout-bg 的日志根在模块加载时读 env：指到临时目录，绝不动用户的 ~/.pi/agent。
   const previousLogRoot = process.env.PI_TIMEOUT_BG_DIR;
   process.env.PI_TIMEOUT_BG_DIR = logDir;
+  // 真实 index.ts 会读远端目标登记表（默认 ~/.pi/agent/remote-targets.json）：指到临时目录里的不存在文件，
+  // 否则开发机上的登记表（或它的损坏）会漏进测试——隔离口径与 PI_TIMEOUT_BG_DIR 一致。
+  const previousTargetsFile = process.env.PI_REMOTE_TARGETS_FILE;
+  process.env.PI_REMOTE_TARGETS_FILE = path.join(agentDir, "remote-targets.json");
   t.after(() => {
     if (previousLogRoot === undefined) delete process.env.PI_TIMEOUT_BG_DIR;
     else process.env.PI_TIMEOUT_BG_DIR = previousLogRoot;
+    if (previousTargetsFile === undefined) delete process.env.PI_REMOTE_TARGETS_FILE;
+    else process.env.PI_REMOTE_TARGETS_FILE = previousTargetsFile;
     for (const dir of [cwd, agentDir, logDir]) fs.rmSync(dir, { recursive: true, force: true });
   });
 

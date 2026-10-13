@@ -20,6 +20,8 @@ import {
 } from "../capability.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
+import type { CommandRegistration } from "./fixtures.ts";
+import { looseTargets } from "./fixtures.ts";
 
 const ID = "call-1";
 const REMOTE = "deploy@10.0.0.7";
@@ -33,13 +35,17 @@ function makeRecorder(handler: (request: SshExecRequest) => Partial<SshExecResul
 		return { exitCode: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, spawnFailed: false, ...handler(request) };
 	};
 	const bus = createEventBus();
+	const commands = new Map<string, CommandRegistration>();
 	const pi = {
 		registerTool(tool: ToolDefinition) {
 			tools.set(tool.name, tool);
 		},
+		registerCommand(name: string, options: CommandRegistration) {
+			commands.set(name, options);
+		},
 		events: bus,
 	} as unknown as ExtensionAPI;
-	registerRemoteTools(pi, { exec, cwd: process.cwd() });
+	registerRemoteTools(pi, { exec, cwd: process.cwd(), targets: looseTargets() });
 	return { tools, calls, bus };
 }
 
@@ -106,8 +112,8 @@ test("offerBashCapability：畸形盒子忽略、先到先得（不覆盖别的�
 	assert.ok((capability.guideline ?? "").length > 0);
 
 	// 没有事件总线（旧宿主 / 结构 fake）也必须能注册成功：协商不可用，自身 bash 仍在。
-	const pi = { registerTool: () => undefined } as unknown as ExtensionAPI;
-	assert.doesNotThrow(() => registerRemoteTools(pi, { exec: async () => ({ exitCode: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, spawnFailed: false }), cwd: process.cwd() }));
+	const pi = { registerTool: () => undefined, registerCommand: () => undefined } as unknown as ExtensionAPI;
+	assert.doesNotThrow(() => registerRemoteTools(pi, { exec: async () => ({ exitCode: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, spawnFailed: false }), cwd: process.cwd(), targets: looseTargets() }));
 });
 
 /** 一个最小合法端口：owner 侧的真实现在 timeout-bg 的 shell-job-host.ts 里单独测。 */

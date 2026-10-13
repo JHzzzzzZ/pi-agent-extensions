@@ -1,10 +1,12 @@
 # remote-tools — 内置工具的 SSH 远程后端
 
-> last verified @ 74e6222
+> last verified @ 399e3f3
 
 一句话：给 `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）、`remotePort`、
 `remoteCwd`（仅 bash）三个可选参数——**`remote` 非空即路由到远端主机，留空则与内置行为逐字一致**；另向 `dir-context` 提供「取远端目录上下文」跨扩展能力（`context.ts`）。
 需求与验收见 `todos/align/remote-tools-todo#1.md`。
+
+**远端目标具名化了（`#2`）**：目标登记表（用户级 `~/.pi/agent/remote-targets.json`，`targets.ts`）把目标变成别名，`remote_targets` 工具（模型可查、可登记）与 `/remote:add|list|rm|strict` 命令（人工）读写它；**strict 白名单默认开 ⇒ 未登记目标一律拒绝**。别名只是入口，命中按展开后的 `host/user/port` 三元组（`ssh_config` 别名也能登记：条目不给 `host` 即交给 ssh 自己解析）。需求与验收见 `todos/align/remote-tools-todo#2.md`。
 
 > **与 dir-context 的交叉面**：带 `remote` 的调用 `path` 在远端解析，所以 `dir-context` **默认不会**为它注入本机（甚至远端）的 `AGENTS.md`——它只看入参有没有 `remote` 字段，不 import 本插件任何模块。本插件另经 `pi.events` 向它提供一个「取远端目录上下文」能力（`context.ts`）：一条 ssh 取该目录祖先链上的 `AGENTS.md`/`CLAUDE.md`，**注入规则仍全在 dir-context**。契约见 [`docs/cross/remote-context-capability.md`](../cross/remote-context-capability.md)。
 
@@ -104,6 +106,13 @@
   - 命令自然结束时 `settle(id, 退出码)`（传输层中断记 `null`，不把 ssh 的 255 当命令退出码）。
   频道的形状/义务/失败口径见 `docs/cross/shell-tool-capability.md`。“不断连”的真机取证（标记文件在超时后
   仍写出）在 `test/remote-live.test.ts`。
+- **目标登记表（`#2`）三条硬口径**：① **本地调用绝不读登记表**（`hasRemoteIntent` 为假时不 read、不 write、不报错；登记表损坏不得弄坏本机工具——`test/targets-tool.test.ts` 用「read 计数」锁住）；② 有远端意图但读表失败/损坏 ⇒ fail-closed 报 `REMOTE_TARGETS_UNREADABLE`，**不静默当空表**（静默在 strict 下等于静默全拒）；③ strict 默认开，拒绝文案列已登记别名 + 两个修复入口（`/remote:add`、`remote_targets`），`/remote:strict off` 才回落成自由填写。
+- **别名解析只有一个接缝**：`resolveTarget`（`targets.ts`）在 `parseTarget` **之前**展开，展开结果仍喂给原有链路（校验/session 缓存/ssh 构造零改动）。命中口径 = `host` 相等且入参给了的 `user`/`port` 必须相等；显式 `remotePort` 优先于条目默认端口；条目不给 `host` ⇒ 别名本身当主机名交给 ssh（`~/.ssh/config` 兜底）；session 缓存键用**展开后**的目标 ⇒ 别名与字面写法共用同一份 `$HOME` 缓存。
+  **命中次序（第 1/2 轮评审加固）**：**主机匹配优先、别名兜底**——字面 host 的含义不能被同名别名劫持；同一主机多命中时，先看「入参自身是不是其中一条的别名」（**仅非 `.` 形态的名字**，是就用它，否则会静默换 user），再看「没写 user 的通用条目」，仍不唯一 ⇒ `AMBIGUOUS_REMOTE_TARGET` fail-closed（不按序静默挑）；登记期另拦两种撞名形态（双向）：「含 `.` 的别名指向另一个 host」与「别名/host 与已登记条目的别名/host 同名」。`user@别名` 不做别名匹配（别名只认裸名）。
+- **登记表文件不存在 = 空表（strict 开）**：全新机器上未登记目标同样被拒（Q1「默认开」在解析路径也成立），拒绝文案给「（空）」与登记入口，`/remote:list` 也显示「开」——避免“首次写入后才突然开始拒绝”的行为悬崖。
+- **登记表不存凭据**（只有 alias/host/user/port），模型可登记但**不可删除不可覆盖**（`force` 只在人工命令里），条目带 `source: human|agent` 供审计——所以它是**可发现性与审计**，不是安全边界（威胁模型见 ADR-0014）。
+- **模型面提示行是加载期快照**：已登记别名烘进 7 个工具的 `remote` 参数描述（`targetHintLine`；空表/读不出 ⇒ 不加此行），`/reload` 才刷新；实时清单走 `remote_targets` 工具（它是唯一权威）。
+- **测试与用户配置隔离**：真实 `index.ts` 的加载路径（`test/shell-composition.test.ts`）用 `PI_REMOTE_TARGETS_FILE` 指到临时目录，开发机上的登记表（或它的损坏）不得漏进测试；老用例默认注入 `strict: false` 的假登记表（= v1 自由填写语义）。写作校订（第 1 轮评审）：temp 名带随机后缀 + 失败路径尽力清残；`/remote:add` 的 `--port` 不再双重回退。
 
 ## 文件地图
 - `context.ts` — 跨扩展能力「取远端目录上下文」的提供方：祖先链计算（到 `$HOME` 或 `/` 为止、深度有上限、逃逸即空链）、一条 ssh 的 NUL 分帧命令、请求形状守卫、失败一律收敛成 `ok:false`；由 `tools.ts` 在 `registerRemoteTools` 里订阅收集频道填槽（复用同一个 `planSession` 与 session 缓存）
@@ -116,7 +125,9 @@
 - `tools.ts` — 7 个同名覆盖的接线：schema 拼接（内置参数 + remote 三件套）、本地/远端分派、
   `resolveToolPath`（校验 + $HOME 懒解析）、`remoteContext`（把内置定义的 `ctx.cwd` 换成远端基准）、
   `withRemotePaths` / `rewriteHostPathInStructured`（远端分支唯一后处理：结果/报错里的宿主标记路径回写，`#16`）、
-  session 缓存（同目标共享、`$HOME` 只解析一次）、`executeRemoteBash`（远端分支单一实现，供自身注册与能力载荷共用）
+  session 缓存（同目标共享、`$HOME` 只解析一次）、`executeRemoteBash`（远端分支单一实现，供自身注册与能力载荷共用）、
+  `remote_targets` 工具（登记表的模型面：`list`/`register`）与 `/remote:add|list|rm|strict` 命令（人工面），
+  `planSession` 里的别名解析接缝（先读表再 `resolveTarget`，**本地分支不读表**）
 - `ops.ts` — 远端 Operations 后端：read/write/edit/ls/find/bash 的远端原语（**目录分支在前**的 `if/elif` 一次往返区分
   「不存在/是目录/正常」——`-e` 对目录同样成立，顺序写反会把「是目录」误报成「不可读」；read 的 `access` 顺带取回图片嗅探样本，`detectImageMimeType` 消费）、
   `createRemoteSession`、ls/find 的 `probeDirectory` 探针（fail-closed 目录校验 + 答案缓存）、find 的 rg/find 双分支命令、`formatEnvPrefix` 白名单、
@@ -127,10 +138,14 @@
   + 标记根守卫（`assertMarkerRootUsable`：锚文件必须是普通文件）
   + 输入护栏（`assertModelPathInput`：拒宿主标记首段与 `~`）与缺省值字面量词表（`ABSENCE_LITERALS`/`isAbsenceLiteral`）
   + 文案改写 `rewriteHostPathInText`（宿主标记路径 → 远端路径，`#16`）
-- `ssh.ts` — 传输层与策略：`parseTarget`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
+- `ssh.ts` — 传输层与策略：`parseTarget`/`hasRemoteIntent`/`buildSshArgs`/`shellQuote`/`validateRemotePath`/`runSsh`/
   `classifySshFailure`/`createSpawnExec`（进程边界端口，测试注入手写 fake）
-- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT` / `REMOTE_CONTEXT_FAILED` / `REMOTE_CONTEXT_UNREADABLE`（后两个是远端上下文能力的：通用失败 / 链上候选存在但读不出））
-- `test/` — 137 个：127 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(11) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(23) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3)）+ 10 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `targets.ts` — 远端目标登记表（`#2`）：文件形态/条目校验（`parseTargetsFile`/`validateTargetEntry`）、
+  别名解析接缝（`resolveTarget`：strict 拒绝、三元组匹配、端口补齐、`ssh_config` 兜底）、
+  纯函数写路径（`addTarget`/`removeTarget`/`withStrict`）、展示（`targetHintLine`/`formatTargetsList`/`strictRejectionMessage`）、
+  文件端口 `createTargetsStore`（`read`/`write` 原子落盘/`readAtLoad` 同步快照；路径 `PI_REMOTE_TARGETS_FILE` > `~/.pi/agent/remote-targets.json`）
+- `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT` / `REMOTE_CONTEXT_FAILED` / `REMOTE_CONTEXT_UNREADABLE`（后两个是远端上下文能力的：通用失败 / 链上候选存在但读不出） / `UNKNOWN_REMOTE_TARGET` / `REMOTE_TARGETS_UNREADABLE` / `REMOTE_TARGET_EXISTS` / `REMOTE_TARGET_UNKNOWN` / `REMOTE_TARGETS_WRITE_FAILED` / `AMBIGUOUS_REMOTE_TARGET`（后六个是登记表的，`#2`））
+- `test/` — 167 个：157 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(11) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(23) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3) / `targets.test.ts`(22，登记表：解析与匹配口径/校验 fail-closed/登记删改/文件端口真实临时目录) / `targets-tool.test.ts`(8，工具与命令面/提示行与 guideline 文案/本地不读表)) + 10 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 
@@ -229,3 +244,4 @@ pi --print --no-session --no-extensions -e <本目录>/index.ts -e <timeout-bg �
   日志异步建不出来时不会「当场回退旧路径」（契约字面只覆盖同步失败，有 `error` 兜底不炸会话）；`session_shutdown` 的 terminate 是 fire-and-forget（Q3 已接受「尽力而为」）。
 - **坑（评审备注记录的边缘场景）**：若扩展目录路径**本身**含 U+00A0 之类的 unicode 空格，宿主的 `normalizePath` 会把它改写成普通空格 ⇒ 标记根前缀失配 ⇒ 远端调用 fail-closed 报 `REMOTE_PATH_NOT_ABSOLUTE`（是误报，不是静默放行；概率极低，记录不改）。
 - **评审记录（`#15`/`#16`，2026-10-12）**：三轮跨厂商评审（reviewer = `kimi-coding/k3-256k`；本轮开发模型属 DeepSeek 家族，跨厂商成立）。第 1 轮 = OK with notes（0 阻断 / 5 建议 / 5 备注）：① `structuredContent` 未改写（宿主 `read.js` 末尾从**改写前**的 content 派生它，codemode 消费方走这条渠道）——已补 `rewriteHostPathInStructured` 并锁测试；② `String.replace` 的替换串未防 `$&`/`$'`（POSIX 远端路径允许 `$`）——已改函数形态替换；③ `remote-live.test.ts` 残留「拒绝未知指纹」旧口径——已改 TOFU 口径；④ `accept-new` 需 OpenSSH ≥7.6 未文档化、老客户端 `Bad configuration option` 落不到分类——已补正则/文案/README；⑤ 真机 `written.includes(host)` 在 `HashKnownHosts yes` 下假失败——已改「文件非空」；另卡片 `generateUnifiedPatch` 签名失实、`index.ts` 错别字「逐字不劫」等已修（`5e76c02`/`529d26c`）。第 2 轮（复核第 1 轮 7 项：6 已修 / 1 部分）= OK with notes（0 阻断 / 2 建议 / 5 备注）：⑥ 真机新增阴性断言**一跑必假失败**——临时目录名 `.pi-remote-tools-tool-*` 自身含 `pi-remote`，合法远端路径被误判——已把四处临时目录改名 `.rt-*` 并把三条断言从裸子串换成 `HOST_PATH_ROOT`（标记根形态）；⑦ 图片形态 `structuredContent` 无测试锁定——已补 type/mimeType/data/note 断言（`74e6222`/`1e4aa62`）。第 3 轮（终轮，复核第 2 轮 7 项全落实）= **无新意见**（0 阻断 / 0 建议 / 2 非阻断备注）：① `HOST_PATH_ROOT` 阴性断言的残余盲区仅「改写本身失效 **且** 宿主翻转分隔符/大小写」这一种双重失效；② 图片 `structuredContent` 断言锁「形状保住」而非「note 真被改写」，而宿主 `toReadOutput` 的 note 永不含路径 ⇒ 该子情形生产不可达。两条均为残余盲区、非回归，按记录收口；按红线 11 的 3 轮上限，本轮即终轮（不再开第 4 轮）。
+- **评审记录（`#2`/`#18`，2026-10-13，T3）**：reviewer = `kimi-coding/k3-256k`（开发模型属 DeepSeek 家族，跨厂商成立）。第 1 轮 = **有阻断**（2 P1 / 3 P2 / 4 P3）：① 登记表文件不存在时 strict 实效为关，与 Q1「默认开」冲突——已加 `effectiveFile()`（文件缺失 = 空表）并补锁定用例；② 别名匹配无条件优先 ⇒ 撞名别名能把字面 IP 静默连到别的机器——已改为**主机优先、别名兜底**，并加登记期「点分别名不许指向别的 host」护栏；③ 同 host 多条目按数组序补 user——改为优先「入参本身的别名」与通用条目、仍不唯一则 `AMBIGUOUS_REMOTE_TARGET` fail-closed；④ `shell-composition.test.ts` 用真实 `index.ts` 却未隔离登记表——`startHarness` 设 `PI_REMOTE_TARGETS_FILE` 指临时目录；⑤ write 的 temp 名只用 pid 且失败留残——加随机后缀 + 尽力 `rm`。第 2 轮 = OK with notes（0 P1 / 1 P2 / 3 P3）：上一轮 6 条中 5 条确认已解决；新 P2（「入参本身就是某条目别名」与「另一条目 host 同名」时仍会静默换 user、歧义文案不可行动）已按建议加**精确同名优先层** + 登记期「新条目 host 不得与已登记别名同名」护栏；P3（`resolveTarget` 的 JSDoc 与实现相反、错误码清单漏 `AMBIGUOUS_REMOTE_TARGET`、`targets.test.ts`/`targets-tool.test.ts` 计数写串、根 README 漏改的「不做主机白名单（v1）」）全部已修。第 3 轮（终轮）= OK with notes（0 P1 / 1 P2 / 3 P3）：上一轮 6 条全部核实已解决；新 P2（「同名别名」层对**主机形态**入参也生效 ⇒ 字面 IP 多命中时被同名 IP 条目静默换 user）已按建议**加门控**（该层只对非 `.` 形态的名字生效），登记期护栏**双向化**（新别名也不许撞已有条目的 host，消除登记顺序依赖）；P3（歧义文案加断言、注释 typo、计数）已修。**评审轮数到顶**（红线 11 的 3 轮护栏）：本轮为终轮，两条残余取舍已记在 ADR-0014（登记表不是安全边界；交叉态只能来自手改文件，解析层按“主机优先 + 同名/通用优先级 + 歧义 fail-closed”确定处理）。

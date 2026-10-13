@@ -52,11 +52,22 @@ function normalizePort(value: unknown): number | undefined | "invalid" {
  * **本地模式完全忽略 remotePort**——没有远端意图的字段不得让调用失败。
  * 其余非法形态一律 fail-closed（目标形态、正数越界端口），绝不猜测。
  */
+/**
+ * 是否表达远端意图（与 `parseTarget` 同一口径，单源在这里）：非空、非缺省值字面量。
+ *
+ * 调用方（`tools.ts` 的 planSession）据此决定**要不要读目标登记表**——本地调用绝不碰登记表
+ * （remote-tools-todo#2 的零影响不变量：登记表损坏不得弄坏本机工具）。
+ */
+export function hasRemoteIntent(input: TargetInput): boolean {
+	const remote = typeof input.remote === "string" ? input.remote.trim() : "";
+	return remote !== "" && !isAbsenceLiteral(remote);
+}
+
 export function parseTarget(input: TargetInput): TargetParse {
 	const remote = typeof input.remote === "string" ? input.remote.trim() : "";
 
 	// 空串、纯空白与缺省值字面量（"null"/"undefined"/"nil"…）都是「没给」——不尝试 ssh。
-	if (remote === "" || isAbsenceLiteral(remote)) return { ok: true, target: null };
+	if (!hasRemoteIntent(input)) return { ok: true, target: null };
 
 	const port = normalizePort(input.remotePort);
 	if (port === "invalid") {
