@@ -67,13 +67,13 @@ ls    path="/srv/app"                     remote="prod"
 - **ls / find 的错误自己拦**：远端 ls/find 在进宿主校验前先做一次 fail-closed 目录探针（不存在 ⇒ `REMOTE_NOT_FOUND`、存在但不是目录 ⇒ `REMOTE_NOT_DIRECTORY`），否则宿主会用它自己的模板把内部标记路径（`C:\…\pi-remote\…`）写进错误消息回灌给模型；探针答案顺带缓存，ls 的往返数从 3 降到 2。
 - **与 timeout-bg 共存**：两个扩展都覆盖 `bash` 这个名字，而宿主对同名工具按扩展加载顺序 first-wins、无法包裹下层。本扩展在加载期把远端 bash 能力放进 timeout-bg 的 `pi.events` 收集盒子（`capability.ts`），由它合并参数并按参数分派——两个功能都保留；分派口径与加载顺序要求见 [`docs/cross/shell-tool-capability.md`](../../../docs/cross/shell-tool-capability.md)。
 - **远端超时转后台**：装上 timeout-bg 后，本扩展经 `pi.events` 的 **job 托管频道**（`pi-extensions:shell-job-host:v1`，与上方能力频道方向相反：由本侧索取、owner 填盒子）懒索取一次并缓存端口（`claimRemoteJobHost`，拿不到 = 没装 ⇒ 行为与今天逐字一致）。托管路径下远端 `bash` **不再把超时交给传输层**：自己计时、输出全程落本地 job 日志（`/bg` 里能看到）、命中超时交给 timeout-bg 登记；`/bg:kill` 先按命令前缀写在远端 `/tmp/pi-remote-job-<uuid>.pid` 的 pid 尽力杀远端进程组（TERM → KILL），再断开本地 ssh。
-- **安全不变量**：只转发白名单会话变量（`PI_SESSION_ID` / `PI_SESSION_FILE` / `PI_PROVIDER` / `PI_MODEL` / `PI_REASONING_LEVEL`），其它 `PI_*`（例如宿主自己的 `PI_WEB_TOKEN`）绝不送远端；不存任何凭据；错误消息全是静态模板，不把远端输出回灌进上下文。
+- **安全不变量**：只转发白名单会话变量（`PI_SESSION_ID` / `PI_SESSION_FILE` / `PI_PROVIDER` / `PI_MODEL` / `PI_REASONING_LEVEL`），其它 `PI_*`（例如宿主自己的 `PI_WEB_TOKEN`）绝不送远端；不存任何凭据；错误消息为静态模板，不把**远端**输出回灌进上下文（唯一插值本地内容的是目标登记表：strict 拒绝文案与清单里的别名，它经形态校验且来自本机文件，见 ADR-0014）。
 - 同目标（host:port）共享一个 session：远端 `$HOME` 只解析一次；绝对路径的调用完全不为此多发一次 ssh。
 
 ## 已知限制（v1 明确不做）
 
 - 不做整树同步 / 镜像，不做本地↔远端路径映射（远端路径由模型每次显式给出）。
-- 不做只读开关（远端写权限由远端账号决定），不做主机白名单（`remote` 自由填写）。
+- 不做只读开关（远端写权限由远端账号决定）。“主机白名单”已由目标登记表的 strict 模式提供：未登记目标默认拒绝（`/remote:strict off` 可关）。
 - 不覆盖 `powershell` 工具。
 - 远端 `bash` 的 Esc/Ctrl-C 中断只 kill 本地 ssh 进程，远端命令可能继续跑；远端进程组清理只对「超时转后台的 job」（`/bg:kill`）尽力做，且需要装 timeout-bg。
 
@@ -83,7 +83,7 @@ ls    path="/srv/app"                     remote="prod"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-127 个（node:test，全本地）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（11，宿主路径往返、标记根的结构性断言与守卫、文案改写）、
+165 个（node:test：155 个全本地 + 10 个真机 opt-in）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（11，宿主路径往返、标记根的结构性断言与守卫、文案改写）、
 `test/ops.test.ts`（20，发给 ssh 的命令构造、错误映射、图片嗅探、ls/find 目录探针与缓存）、`test/grep.test.ts`（13，rg 事件解析/降级/限流）、
 `test/tools.test.ts`（23，注册覆盖、本地保真对照（含 write/edit 文案与 details 逐字对拍）、远端分派、ls/find 结构化错误与往返数、图片端到端、远端 write/edit/read 文案回写远端路径、session 缓存）、
 `test/capability.test.ts`（5，跨扩展能力载荷与订阅、job 托管端口索取与形状守卫）、
@@ -91,7 +91,9 @@ cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 `test/context.test.ts`（26，远端上下文能力：祖先链终点与深度上限、一趟 ssh 的命令拼装与分帧、
 锚点/基准归一、请求与结果双向形状守卫、失败收敛与握手先到先得、读不出 ≠ 不存在的标记帧）、
 `test/bash-timeout.test.ts`（9，托管路径的进程边界：不断连 + 日志 + settle、terminate 杀远端并断 ssh、无端口时的旧行为）、
-`test/shell-composition.test.ts`（3，真实加载 remote-tools + timeout-bg：能力合并、job 托管频道、反向顺序冲突可见）；`test/fixtures.ts` 提供真 PNG 等样本。
+`test/shell-composition.test.ts`（3，真实加载 remote-tools + timeout-bg：能力合并、job 托管频道、反向顺序冲突可见）、
+`test/targets.test.ts`（19，目标登记表：解析与命中口径（含主机优先于别名、多命中歧义）、形态校验 fail-closed、登记/删改、文件端口真实临时目录）、
+`test/targets-tool.test.ts`（9，`remote_targets` 工具与 `/remote:*` 命令、模型面提示行与 guideline 文案、本地调用不读表）；`test/fixtures.ts` 提供真 PNG 等样本与登记表 fake。
 
 另有一个**真机 opt-in** 文件 `test/remote-live.test.ts`（10 个，默认跳过，接真实 ssh 进程）：
 

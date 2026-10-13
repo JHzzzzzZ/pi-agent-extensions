@@ -34,7 +34,7 @@ import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import type { TargetsStore } from "../targets.ts";
 import type { CommandRegistration } from "./fixtures.ts";
 import { createSessionCache, registerRemoteTools } from "../tools.ts";
-import { createMemoryTargetsStore, png1x1 } from "./fixtures.ts";
+import { looseTargets, png1x1 } from "./fixtures.ts";
 
 const ID = "call-1";
 const REMOTE = "deploy@10.0.0.7";
@@ -65,7 +65,7 @@ function recordTools(
 			commands.set(name, options);
 		},
 	} as unknown as ExtensionAPI;
-	registerRemoteTools(pi, { exec, cwd: process.cwd(), targets: extraDeps.targets ?? createMemoryTargetsStore(), ...extraDeps });
+	registerRemoteTools(pi, { exec, cwd: process.cwd(), targets: extraDeps.targets ?? looseTargets(), ...extraDeps });
 	return { tools, commands, calls };
 }
 

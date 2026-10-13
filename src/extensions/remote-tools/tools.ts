@@ -657,7 +657,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 					}
 					host = literal.target.host;
 					user = literal.target.user;
-					port = literal.target.port ?? parsed.value.port;
+					port = literal.target.port; // parseTarget 已经吃进 --port，不必再 ??
 				}
 				const added = addTarget(
 					file,

@@ -44,6 +44,8 @@ export const ErrorCodes = {
 	REMOTE_BACKGROUND_FAILED: "REMOTE_BACKGROUND_FAILED",
 	/** strict 白名单开着，而目标既不是已登记别名也不匹配任何条目的展开目标（remote-tools#2）。 */
 	UNKNOWN_REMOTE_TARGET: "UNKNOWN_REMOTE_TARGET",
+	/** 目标与多个已登记条目歧义（同一主机登记了多条且无法用 user/port 区分）——fail-closed，绝不按序挑一个。 */
+	AMBIGUOUS_REMOTE_TARGET: "AMBIGUOUS_REMOTE_TARGET",
 	/** 目标登记表读不出或形态非法——fail-closed，绝不静默当空表（那会静默全拒）。 */
 	REMOTE_TARGETS_UNREADABLE: "REMOTE_TARGETS_UNREADABLE",
 	/** 别名已存在（覆盖要显式 force；模型侧永远不 force）。 */

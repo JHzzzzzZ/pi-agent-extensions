@@ -34,7 +34,7 @@ import {
 import { HOST_PATH_ROOT } from "../paths.ts";
 import { buildSshArgs, createSpawnExec, parseTarget, runSsh } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
-import { createMemoryTargetsStore, png1x1 } from "./fixtures.ts";
+import { looseTargets, png1x1 } from "./fixtures.ts";
 import type { CommandRegistration } from "./fixtures.ts";
 
 const ID = "live-call";
@@ -120,7 +120,7 @@ test("真机：远端 read 图片走图片管线（真 PNG → image 块；文�
 				commands.set(name, options);
 			},
 		} as unknown as ExtensionAPI,
-		{ exec: createSpawnExec(), cwd: process.cwd(), targets: createMemoryTargetsStore() },
+		{ exec: createSpawnExec(), cwd: process.cwd(), targets: looseTargets() },
 	);
 	const ctx = {
 		cwd: process.cwd(),
@@ -170,7 +170,7 @@ test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → �
 				commands.set(name, options);
 			},
 		} as unknown as ExtensionAPI,
-		{ exec: createSpawnExec(), cwd: process.cwd(), targets: createMemoryTargetsStore() },
+		{ exec: createSpawnExec(), cwd: process.cwd(), targets: looseTargets() },
 	);
 	const ctx = {
 		cwd: process.cwd(),
@@ -269,7 +269,7 @@ test("真机：远端 bash 真在远端跑；ls/find 的不存在/传文件报�
 				commands.set(name, options);
 			},
 		} as unknown as ExtensionAPI,
-		{ exec: createSpawnExec(), cwd: process.cwd(), targets: createMemoryTargetsStore() },
+		{ exec: createSpawnExec(), cwd: process.cwd(), targets: looseTargets() },
 	);
 	const ctx = {
 		cwd: process.cwd(),

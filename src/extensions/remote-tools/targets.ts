@@ -17,7 +17,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
 
@@ -60,6 +60,11 @@ export interface RemoteTargetsFile {
 /** 空登记表（文件不存在时的语义）：strict 开、零目标。 */
 export function emptyTargetsFile(): RemoteTargetsFile {
 	return { version: TARGETS_VERSION, strict: true, targets: [] };
+}
+
+/** 生效的登记表：**文件不存在 = 空表（strict 开）**——Q1「strict 默认开」在解析路径也必须成立。 */
+function effectiveFile(file: RemoteTargetsFile | null): RemoteTargetsFile {
+	return file ?? emptyTargetsFile();
 }
 
 /** 登记表路径：`PI_REMOTE_TARGETS_FILE` > `~/.pi/agent/remote-targets.json`。 */
@@ -127,6 +132,15 @@ export function validateTargetEntry(raw: unknown): { ok: true; value: RemoteTarg
 	}
 	if (typeof record.createdAt !== "string" || record.createdAt.trim() === "") {
 		return failure(ErrorCodes.REMOTE_TARGETS_UNREADABLE, "createdAt 必须是非空字符串。");
+	}
+
+	// 别名不许「看起来像主机名/IP 却又指向别的 host」：那会让字面 host 的调用被别名劫持
+	// （静默连错机器；模型可登记 ⇒ 注入内容能构造这种条目）。单标签别名不受限（prod 是正常用法）。
+	if (host !== undefined && host !== alias && alias.includes(".")) {
+		return failure(
+			ErrorCodes.INVALID_REMOTE_TARGET,
+			"别名看起来像主机名或 IP，却指向另一个 host：要么去掉 host（让别名自己当主机名），要么换一个不含 “.” 的别名。",
+		);
 	}
 
 	// 与传输层同一口径：别名（或 host）拼出的目标必须能被 parseTarget 接受，否则 ssh 会拿到非法参数。
@@ -223,6 +237,25 @@ function matchesEntry(entry: RemoteTargetEntry, target: SshTarget): boolean {
 	return true;
 }
 
+/**
+ * 从条目里选唯一命中者：
+ *   - 0 命中 ⇒ `entry: null`（交给别名兜底或 strict 拒绝）；
+ *   - 1 命中 ⇒ 直接用它；
+ *   - 多命中 ⇒ 入参没给 user 时优先「没写 user 的条目」（那是该主机的通用条目，例如同时登记了
+ *     `prod` 与 `root-prod` 时应命中 `prod`）；仍不唯一则 fail-closed 报歧义——按数组序静默挑一个会静默换用户。
+ */
+function pickByTarget(entries: RemoteTargetEntry[], target: SshTarget): { ok: true; entry: RemoteTargetEntry | null } | RemoteToolsFailure {
+	const matches = entries.filter((entry) => matchesEntry(entry, target));
+	if (matches.length === 0) return { ok: true, entry: null };
+	if (matches.length === 1) return { ok: true, entry: matches[0] };
+	const generic = target.user === undefined ? matches.filter((entry) => entry.user === undefined) : [];
+	if (generic.length === 1) return { ok: true, entry: generic[0] };
+	return failure(
+		ErrorCodes.AMBIGUOUS_REMOTE_TARGET,
+		`目标 ${formatTarget(target)} 命中多个已登记条目（${matches.map((entry) => entry.alias).join(", ")}）：请直接点名别名。`,
+	);
+}
+
 /** strict 拒绝文案：静态模板 + 本地登记表的别名清单（本地内容，非远端回流）。 */
 export function strictRejectionMessage(file: RemoteTargetsFile | null): string {
 	const all = file?.targets ?? [];
@@ -248,10 +281,15 @@ export function resolveTarget(input: TargetInput, file: RemoteTargetsFile | null
 	const target = literal.target;
 	if (target === null) return { ok: true, kind: "local" };
 
-	const byAlias = target.user === undefined ? (file?.targets.find((entry) => entry.alias === target.host) ?? null) : null;
-	const match = byAlias ?? file?.targets.find((entry) => matchesEntry(entry, target)) ?? null;
+	// 文件不存在 = 空表（strict 开）：Q1 的「默认开」必须在解析路径也成立。
+	const file0 = effectiveFile(file);
+	// **主机匹配优先于别名**：字面 host 的含义不能被同名别名劫持（第 1 轮评审 P1）；别名只当兜底。
+	const byHost = pickByTarget(file0.targets, target);
+	if (!byHost.ok) return byHost;
+	const byAlias = target.user === undefined ? (file0.targets.find((entry) => entry.alias === target.host) ?? null) : null;
+	const match = byHost.entry ?? byAlias;
 	if (match === null) {
-		if (file?.strict === true) return failure(ErrorCodes.UNKNOWN_REMOTE_TARGET, strictRejectionMessage(file));
+		if (file0.strict) return failure(ErrorCodes.UNKNOWN_REMOTE_TARGET, strictRejectionMessage(file0));
 		return { ok: true, kind: "resolved", target, entry: null };
 	}
 	const resolved = entryTarget(match);
@@ -318,8 +356,9 @@ export function targetHintLine(file: RemoteTargetsFile | null): string {
 
 /** 人读清单（`/remote:list` 与 `remote_targets` 的 list 动作共用）。 */
 export function formatTargetsList(file: RemoteTargetsFile | null, filePath: string): string {
-	const targets = file?.targets ?? [];
-	const head = `远端目标（strict 白名单：${file?.strict === true ? "开" : "关"}）`;
+	const effective = effectiveFile(file);
+	const targets = effective.targets;
+	const head = `远端目标（strict 白名单：${effective.strict ? "开" : "关"}）`;
 	if (targets.length === 0) {
 		return `${head}\n（没有任何已登记目标）\n登记表：${filePath}\n登记：/remote:add <别名> [user@host] [--port N]`;
 	}
@@ -359,13 +398,20 @@ export function createTargetsStore(filePath: string): TargetsStore {
 			return parseTargetsFile(text);
 		},
 		async write(file: RemoteTargetsFile): Promise<{ ok: true } | RemoteToolsFailure> {
+			// temp 名带随机后缀：同进程内模型 register 与人工 /remote:add 并发时不会撞名。
+			const temporary = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 			try {
 				await mkdir(path.dirname(filePath), { recursive: true });
-				const temporary = `${filePath}.tmp-${process.pid}`;
 				await writeFile(temporary, serializeTargetsFile(file), "utf8");
 				await rename(temporary, filePath);
 				return { ok: true };
 			} catch {
+				// 尽力清掉临时文件（rename 失败时它不会自己消失）；清不掉也不改变结果。
+				try {
+					await rm(temporary, { force: true });
+				} catch {
+					/* 清理失败不改变结果 */
+				}
 				return failure(ErrorCodes.REMOTE_TARGETS_WRITE_FAILED, "登记表写入失败（检查目录权限）。");
 			}
 		},

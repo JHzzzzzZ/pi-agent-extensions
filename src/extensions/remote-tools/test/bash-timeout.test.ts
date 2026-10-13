@@ -23,7 +23,7 @@ import { createRemoteBashOps, createRemoteSession, type RemoteSession } from "..
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
 import type { CommandRegistration } from "./fixtures.ts";
-import { createMemoryTargetsStore } from "./fixtures.ts";
+import { looseTargets } from "./fixtures.ts";
 
 const TARGET = { host: "10.0.0.7", user: "deploy", port: undefined };
 const HOME = "/home/deploy";
@@ -294,7 +294,7 @@ test("工具层接线：真 registerRemoteTools + 真 event bus 索取端口（�
 		events: bus,
 	} as unknown as ExtensionAPI;
 	const ssh = new FakeSsh();
-	registerRemoteTools(pi, { exec: ssh.exec, cwd: process.cwd(), targets: createMemoryTargetsStore() });
+	registerRemoteTools(pi, { exec: ssh.exec, cwd: process.cwd(), targets: looseTargets() });
 	const ctx = {
 		cwd: process.cwd(),
 		hasUI: false,

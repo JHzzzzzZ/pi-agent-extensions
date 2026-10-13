@@ -10,7 +10,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
@@ -128,6 +128,57 @@ test("匹配严格：大小写敏感；条目没给 user 时 `root@host` 不命�
 
 	const rightUser = resolveTarget({ remote: "deploy@10.0.0.7" }, targets);
 	assert.equal(rightUser.ok, true);
+});
+
+test("无登记表文件 = 空表（strict 开）：未登记目标被拒，清单也显示「开」（Q1 默认开）", () => {
+	const result = resolveTarget({ remote: "10.0.0.9" }, null);
+	assert.equal(result.ok, false, "没有文件不等于自由填写");
+	if (result.ok) return;
+	assert.equal(result.code, ErrorCodes.UNKNOWN_REMOTE_TARGET);
+	assert.match(result.message, /（空）/, "空表时拒绝文案也应给出「已登记：（空）」");
+	assert.match(formatTargetsList(null, "C:\\cfg\\remote-targets.json"), /strict 白名单：开/);
+});
+
+test("主机匹配优先于别名：撞名别名不能把字面 host 劫持到别的机器（第 1 轮评审 P1）", () => {
+	// 手写文件可以造出这种条目（登记路径已被 validateTargetEntry 拦住，见下一条）——
+	// 此时字面 `10.0.0.7` 必须仍连 10.0.0.7，而不是别名 10.0.0.7 指向的 10.0.0.9。
+	const hand = file(entry("10.0.0.7", "10.0.0.9"), entry("prod", "10.0.0.7"));
+	const byHost = resolveTarget({ remote: "10.0.0.7" }, hand);
+	assert.equal(byHost.ok, true);
+	if (!byHost.ok || byHost.kind !== "resolved") return assert.fail("应命中");
+	assert.equal(byHost.target.host, "10.0.0.7");
+	assert.equal(byHost.entry?.alias, "prod");
+});
+
+test("登记期拦住「像主机名/IP 的别名指向别的 host」（劫持面 fail-closed）；别名自己当 host 仍可登记", () => {
+	const hijack = validateTargetEntry(entry("10.0.0.7", "10.0.0.9"));
+	assert.equal(hijack.ok, false);
+	if (hijack.ok) return;
+	assert.equal(hijack.code, ErrorCodes.INVALID_REMOTE_TARGET);
+
+	assert.equal(validateTargetEntry(entry("srv.lan", "10.0.0.7")).ok, false, "点分别名同口径拒绝");
+	assert.equal(validateTargetEntry({ alias: "srv.lan", source: "human", createdAt: NOW }).ok, true, "别名自己当主机名（ssh_config 兜底）放行");
+	assert.equal(validateTargetEntry(entry("prod", "10.0.0.7")).ok, true, "单标签别名是正常用法");
+});
+
+test("多命中：入参没给 user 时优先通用条目；仍歧义则 fail-closed（不按数组序挑）", () => {
+	const withRoot = file(entry("prod", "10.0.0.7"), entry("root-prod", "10.0.0.7", "root"));
+	const generic = resolveTarget({ remote: "10.0.0.7" }, withRoot);
+	assert.equal(generic.ok, true);
+	if (!generic.ok || generic.kind !== "resolved") return assert.fail("应命中通用条目");
+	assert.equal(generic.entry?.alias, "prod");
+	assert.equal(generic.target.user, undefined);
+
+	const byUser = resolveTarget({ remote: "root@10.0.0.7" }, withRoot);
+	assert.equal(byUser.ok, true);
+	if (!byUser.ok || byUser.kind !== "resolved") return assert.fail("给了 user 应命中 root-prod");
+	assert.equal(byUser.entry?.alias, "root-prod");
+
+	const ambiguous = resolveTarget({ remote: "10.0.0.7" }, file(entry("a", "10.0.0.7"), entry("b", "10.0.0.7")));
+	assert.equal(ambiguous.ok, false);
+	if (ambiguous.ok) return;
+	assert.equal(ambiguous.code, ErrorCodes.AMBIGUOUS_REMOTE_TARGET);
+	assert.match(ambiguous.message, /a, b/);
 });
 
 test("parseTargetsFile：非法 JSON / 版本 / 未知字段 / 条目非法 / 重复别名都 fail-closed 并给码", () => {
@@ -257,4 +308,11 @@ test("文件端口（真实临时目录）：不存在 ⇒ null；写读往返�
 	assert.equal(failed.ok, false);
 	if (failed.ok) return;
 	assert.equal(failed.code, ErrorCodes.REMOTE_TARGETS_WRITE_FAILED);
+
+	// rename 失败路径（目标位是个目录）：临时文件必须被尽力清掉，不留在目录里。
+	const asDirectory = path.join(dir, "as-directory");
+	await mkdir(asDirectory, { recursive: true });
+	const renameBlocked = await createTargetsStore(asDirectory).write(file());
+	assert.equal(renameBlocked.ok, false);
+	assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".tmp-")), [], "失败路径不留临时文件");
 });

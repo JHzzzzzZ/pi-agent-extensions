@@ -93,6 +93,16 @@ export function textSample(): Buffer {
 }
 
 /**
+ * 老用例的默认登记表：**strict 关 + 空表**（= v1 的自由填写语义）。
+ *
+ * 为什么不是 `createMemoryTargetsStore()`（= 无文件）：无文件的生效语义是「strict 开 + 零目标」
+ * （Q1「strict 默认开」在解析路径也成立），那会让所有用字面 host 的既有用例集体变红。
+ */
+export function looseTargets(): MemoryTargetsStore {
+	return createMemoryTargetsStore({ version: 1, strict: false, targets: [] });
+}
+
+/**
  * 目标登记表端口的手写 fake（进程边界替身，remote-tools#2）。
  *
  * 为什么要显式注入而不是让生产 store 去读真实 `~/.pi/agent/remote-targets.json`：
