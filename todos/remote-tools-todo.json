@@ -27,18 +27,20 @@
       "id": 2,
       "globalId": 352,
       "text": "remote-tools 后续：remote 参数加主机白名单/别名（如 /remote add prod user@host，模型只能引用已登记目标）——v1 自由填写的风险是命令输出可诱导模型连任意主机",
-      "status": "aligned",
-      "branch": null,
+      "status": "done",
+      "branch": "feat/remote-targets-alias",
       "tags": [
         "follow-up",
         "security"
       ],
       "priority": 7,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付：merge 96e0fec？见 merge commit；别名登记表 + strict 白名单 + remote_targets 工具 + /remote:* 命令 + 模型面偏好；三轮跨厂商评审（kimi-coding/k3-256k）整改全部落地，终轮 OK with notes + 轮数到顶（残余取舍记入 ADR-0014）；166→见 dev-laptop 的 remote-tools 测试 157 本地 + 10 真机 opt-in，全仓 24/24 套件绿"
+      ],
       "createdAt": "2026-10-10T16:24:07.973Z",
       "claimedAt": "2026-10-13T06:49:02.139Z",
-      "completedAt": null,
+      "completedAt": "2026-10-13T08:33:29.124Z",
       "alignedAt": "2026-10-13T06:54:43.203Z"
     },
     {
@@ -334,15 +336,17 @@
       "id": 18,
       "globalId": 392,
       "text": "模型面偏好：目标是远端主机时优先给内置工具传 remote，而不是在 bash 里拼 ssh（bash+ssh 过一层本地 shell，丢结构化文件工具/路径安全信道/远端超时托管）；只在连接诊断（ssh -v / ssh-keygen / 端口探测）时才拼 ssh。",
-      "status": "open",
+      "status": "done",
       "branch": null,
       "tags": [],
       "priority": 8,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "由 remote-tools-todo#2 一并交付（模型面偏好已含在 #2 范围：REMOTE_GUIDELINE 偏好文案 + 7 个工具的已登记目标提示行）"
+      ],
       "createdAt": "2026-10-13T06:49:08.537Z",
       "claimedAt": null,
-      "completedAt": null,
+      "completedAt": "2026-10-13T08:33:29.574Z",
       "alignedAt": null
     }
   ]
