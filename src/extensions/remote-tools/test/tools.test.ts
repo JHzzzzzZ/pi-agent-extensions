@@ -31,8 +31,10 @@ import {
 import { ErrorCodes } from "../errors.ts";
 import { DEGRADED_MARKER } from "../ops.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
+import type { TargetsStore } from "../targets.ts";
+import type { CommandRegistration } from "./fixtures.ts";
 import { createSessionCache, registerRemoteTools } from "../tools.ts";
-import { png1x1 } from "./fixtures.ts";
+import { createMemoryTargetsStore, png1x1 } from "./fixtures.ts";
 
 const ID = "call-1";
 const REMOTE = "deploy@10.0.0.7";
@@ -40,11 +42,16 @@ const HOME = "/home/deploy";
 
 interface Recorder {
 	tools: Map<string, ToolDefinition>;
+	commands: Map<string, CommandRegistration>;
 	calls: SshExecRequest[];
 }
 
-function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult> = () => ({}), extraDeps: { markerAnchor?: string | undefined } = {}): Recorder {
+function recordTools(
+	handler: (request: SshExecRequest) => Partial<SshExecResult> = () => ({}),
+	extraDeps: { markerAnchor?: string | undefined; targets?: TargetsStore } = {},
+): Recorder {
 	const tools = new Map<string, ToolDefinition>();
+	const commands = new Map<string, CommandRegistration>();
 	const calls: SshExecRequest[] = [];
 	const exec: SshExec = async (request) => {
 		calls.push(request);
@@ -54,9 +61,12 @@ function recordTools(handler: (request: SshExecRequest) => Partial<SshExecResult
 		registerTool(tool: ToolDefinition) {
 			tools.set(tool.name, tool);
 		},
+		registerCommand(name: string, options: CommandRegistration) {
+			commands.set(name, options);
+		},
 	} as unknown as ExtensionAPI;
-	registerRemoteTools(pi, { exec, cwd: process.cwd(), ...extraDeps });
-	return { tools, calls };
+	registerRemoteTools(pi, { exec, cwd: process.cwd(), targets: extraDeps.targets ?? createMemoryTargetsStore(), ...extraDeps });
+	return { tools, commands, calls };
 }
 
 function ctxFor(cwd: string): ExtensionToolContext {
@@ -105,7 +115,8 @@ function homeProbeAware(inner: (request: SshExecRequest) => Partial<SshExecResul
 
 test("注册覆盖：七个内置工具名都被接管，且都带 remote/remotePort（bash 另有 remoteCwd）", () => {
 	const { tools } = recordTools();
-	assert.deepEqual([...tools.keys()].sort(), ["bash", "edit", "find", "grep", "ls", "read", "write"]);
+	// remote_targets 是本插件自己注册的新工具（登记表的模型面，remote-tools#2），不在内置覆盖名单里。
+	assert.deepEqual([...tools.keys()].sort(), ["bash", "edit", "find", "grep", "ls", "read", "remote_targets", "write"]);
 
 	for (const name of ["read", "write", "edit", "ls", "find", "grep"]) {
 		const properties = (tools.get(name)?.parameters as { properties?: Record<string, unknown> }).properties ?? {};

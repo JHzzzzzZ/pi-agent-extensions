@@ -10,6 +10,10 @@
  * 另外把远端 bash 能力放上 `pi.events` 的收集频道，供 shell 工具 owner（timeout-bg）组合
  * （契约见 docs/cross/shell-tool-capability.md；两个扩展不互相 import）。
  *
+ * 目标名不再只能自由填写：目标登记表（`targets.ts` + 用户级 `~/.pi/agent/remote-targets.json`）
+ * 把目标变成具名的别名，`remote_targets` 工具与 `/remote:add|list|rm|strict` 命令读写它；
+ * strict 白名单默认开，未登记目标一律拒绝（remote-tools#2）。
+ *
  * 做法是把内置工具的 **公开 Operations 接缝**换成远端实现（官方 Gondolin 扩展同思路），
  * 而不是自己复刻内置行为：read/write/edit/ls/find/bash 全都复用宿主的定义（截断、限流、
  * 渲染器、提示词片段一致），只有 grep 必须整份重写（宿主的 GrepOperations 覆盖不到真正的
@@ -30,8 +34,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { createSpawnExec } from "./ssh.ts";
+import { createTargetsStore, targetsFilePath } from "./targets.ts";
 import { registerRemoteTools } from "./tools.ts";
 
 export default function remoteToolsExtension(pi: ExtensionAPI): void {
-	registerRemoteTools(pi, { exec: createSpawnExec(), cwd: process.cwd() });
+	registerRemoteTools(pi, {
+		exec: createSpawnExec(),
+		cwd: process.cwd(),
+		// 远端目标登记表（别名 + strict 白名单，remote-tools#2）：用户级文件，
+		// 路径可经 PI_REMOTE_TARGETS_FILE 覆盖；本地调用不会读它。
+		targets: createTargetsStore(targetsFilePath(process.env)),
+	});
 }

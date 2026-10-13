@@ -22,6 +22,7 @@ import type {
 	EditToolDetails,
 	EditToolInput,
 	ExtensionAPI,
+	ExtensionCommandContext,
 	ExtensionToolContext,
 	FindToolDetails,
 	FindToolInput,
@@ -65,10 +66,27 @@ import {
 } from "./ops.ts";
 import { createRemoteContextCapability, offerRemoteContextCapability } from "./context.ts";
 import { assertMarkerRootUsable, assertModelPathInput, rewriteHostPathInText, toHostPath } from "./paths.ts";
-import { type SshExec, type SshTarget, formatTarget, parseTarget, validateRemotePath } from "./ssh.ts";
+import { type SshExec, type SshTarget, formatTarget, hasRemoteIntent, parseTarget, validateRemotePath } from "./ssh.ts";
+import {
+	type RemoteTargetsFile,
+	type TargetsStore,
+	addTarget,
+	emptyTargetsFile,
+	formatEntry,
+	formatTargetsList,
+	removeTarget,
+	resolveTarget,
+	targetHintLine,
+	withStrict,
+} from "./targets.ts";
 
 const REMOTE_GUIDELINE =
-	"远端工具（remote-tools）：给 read/write/edit/bash/grep/find/ls 传 remote=\"[user@]host\"（可选 remotePort）即在远端主机执行，此时 path 在远端主机解析（省略或相对路径按远端 $HOME，绝对 POSIX 路径直接用）；remote 省略或留空表示本机执行。";
+	"远端工具（remote-tools）：给 read/write/edit/bash/grep/find/ls 传 remote=\"[user@]host\"（可选 remotePort）即在远端主机执行，此时 path 在远端主机解析（省略或相对路径按远端 $HOME，绝对 POSIX 路径直接用）；remote 省略或留空表示本机执行。" +
+	"目标是远端主机时**优先传 remote，不要在 bash 里拼 ssh**（拼 ssh 要过一层本地 shell，丢结构化文件工具、路径回写与远端超时托管）；只有连接诊断（ssh -v / ssh-keygen / 端口探测）才用 bash+ssh。" +
+	"strict 白名单开着时只能引用已登记目标（remote_targets 工具可查、可登记）。";
+
+const TARGETS_GUIDELINE =
+	"远端目标是具名的：用 remote_targets 看已登记目标（别名 → user@host:port），再把它作为内置工具的 remote 参数引用；strict 白名单开着时未登记目标会被拒绝，需要先登记（action=register）。登记表是用户级文件（~/.pi/agent/remote-targets.json），删除只走人工命令 /remote:rm。";
 
 export interface RemoteToolsDeps {
 	/** 进程边界端口：生产用 createSpawnExec，测试注入手写 fake。 */
@@ -77,6 +95,10 @@ export interface RemoteToolsDeps {
 	cwd: string;
 	/** 标记根锚定的文件（默认真实扩展目录里的 index.ts；测试接缝）。 */
 	markerAnchor?: string | undefined;
+	/** 远端目标登记表端口（别名 + strict 白名单）——**本地调用绝不读它**（remote-tools#2）。 */
+	targets: TargetsStore;
+	/** 时钟（登记时间戳）；测试注入固定值。 */
+	now?: (() => string) | undefined;
 }
 
 type RemoteTargetParams = { remote?: string | undefined; remotePort?: number | undefined };
@@ -89,20 +111,29 @@ interface RemotePlan {
 
 type SessionPlan = { kind: "local" } | ({ kind: "remote" } & RemotePlan);
 
-const remoteTargetProperties = {
-	remote: Type.Optional(
-		Type.String({
-			description: '远端 SSH 目标 "[user@]host"（可选 remotePort）；省略或留空 = 在本机执行。给值时 path 在远端主机解析（相对路径按远端 $HOME）。',
-		}),
-	),
-	remotePort: Type.Optional(Type.Number({ description: "远端 SSH 端口（1-65535，省略用 ssh 默认或 ~/.ssh/config）" })),
-};
+/**
+ * remote 参数片段：模型面把已登记别名烘进描述（对齐文档 Q5 方案 a——加载期读一次登记表，
+ * 零额外上下文；空表/读不出 ⇒ 不加提示行。`/reload` 刷新）。
+ */
+function remoteTargetProperties(hint: string) {
+	const tail = hint === "" ? "" : ` ${hint}`;
+	return {
+		remote: Type.Optional(
+			Type.String({
+				description: `远端 SSH 目标 "[user@]host"（可选 remotePort）；省略或留空 = 在本机执行。给值时 path 在远端主机解析（相对路径按远端 $HOME）。${tail}`,
+			}),
+		),
+		remotePort: Type.Optional(Type.Number({ description: "远端 SSH 端口（1-65535，省略用 ssh 默认或 ~/.ssh/config）" })),
+	};
+}
 
 /** bash 的远端参数片段：自己的注册与跨扩展能力载荷共用同一份 schema（不许两份）。 */
-const remoteBashProperties = {
-	remoteCwd: Type.Optional(Type.String({ description: "远端工作目录（省略或相对路径 = 远端 $HOME）" })),
-	...remoteTargetProperties,
-};
+function remoteBashProperties(targetProperties: ReturnType<typeof remoteTargetProperties>) {
+	return {
+		remoteCwd: Type.Optional(Type.String({ description: "远端工作目录（省略或相对路径 = 远端 $HOME）" })),
+		...targetProperties,
+	};
+}
 
 /** 同名同端口共享一个 session：远端 $HOME 只解析一次，不给每次调用都加一轮 ssh。 */
 export function createSessionCache(exec: SshExec): (target: SshTarget) => RemoteSession {
@@ -245,8 +276,71 @@ const EMPTY_HOST_CONTEXT = {
 	thinkingLevel: undefined,
 };
 
+/** 命令面名字（与 /bg:kill、/team:run 同惯例）。 */
+export const REMOTE_COMMANDS = { add: "remote:add", list: "remote:list", remove: "remote:rm", strict: "remote:strict" } as const;
+
+export interface AddTargetArgs {
+	alias: string;
+	/** `[user@]host`；省略 = 用 ssh_config 里的同名别名。 */
+	target: string | undefined;
+	port: number | undefined;
+	force: boolean;
+}
+
+/** `/remote:add <别名> [user@host] [--port N] [--force]` 的解析（纯函数，越界与未知选项明确报错）。 */
+export function parseAddTargetArgs(args: string): { ok: true; value: AddTargetArgs } | { ok: false; message: string } {
+	const tokens = args.trim().split(/\s+/).filter((token) => token !== "");
+	if (tokens.length === 0) return { ok: false, message: "用法：/remote:add <别名> [user@host] [--port N] [--force]" };
+	const positional: string[] = [];
+	let port: number | undefined;
+	let force = false;
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (token === "--force") {
+			force = true;
+			continue;
+		}
+		if (token === "--port") {
+			const raw = tokens[index + 1];
+			const parsed = raw === undefined ? Number.NaN : Number(raw);
+			if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) return { ok: false, message: "--port 必须是 1-65535 的整数" };
+			port = parsed;
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--")) return { ok: false, message: `不认识的选项：${token}（支持 --port / --force）` };
+		positional.push(token);
+	}
+	if (positional.length === 0) return { ok: false, message: "缺少别名。用法：/remote:add <别名> [user@host] [--port N] [--force]" };
+	if (positional.length > 2) return { ok: false, message: "位置参数只接受 <别名> [user@host]" };
+	return { ok: true, value: { alias: positional[0], target: positional[1], port, force } };
+}
+
+/** 模型面工具与命令面共用的最小文本结果。 */
+function textResult(text: string): AgentToolResult<undefined> {
+	return { content: [{ type: "text", text }], details: undefined };
+}
+
+/** 命令面通知（异常隔离：UI 异常不破坏会话）。 */
+function notifyCommand(ctx: ExtensionCommandContext, message: string): void {
+	try {
+		if (ctx.hasUI) ctx.ui.notify(message, "info");
+	} catch {
+		/* UI 异常不破坏会话 */
+	}
+}
+
+/** `error` 可能是非 Error（跨边界抛），统一成可展示文本。 */
+function describeError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): void {
 	const sessionFor = createSessionCache(deps.exec);
+	const now = deps.now ?? (() => new Date().toISOString());
+	// 模型面：已登记别名烘进 7 个工具的 remote 参数描述（加载期一次，零额外上下文）。
+	const targetProperties = remoteTargetProperties(targetHintLine(deps.targets.readAtLoad()));
+	const bashProperties = remoteBashProperties(targetProperties);
 	// job 托管端口懒索取（首次要用时 emit 一次并缓存）：
 	//   - 索取放在首次使用而不是加载期，是因为加载顺序不保证 owner 的订阅已就位；
 	//   - 拿不到（没装 timeout-bg）就永远是 null ⇒ 远端超时沿用宿主 kill 语义（今天的行为）。
@@ -256,13 +350,25 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		return claimedJobHost;
 	};
 
+	/**
+	 * 读登记表（只在有远端意图时调用）。读不出/损坏 ⇒ 抛出类型化错误（fail-closed），
+	 * 因为此时按“空表 + strict”继续会把事情说得更糟（静默全拒）。
+	 */
+	async function loadTargets(): Promise<RemoteTargetsFile | null> {
+		const read = await deps.targets.read();
+		if (!read.ok) throw new Error(`${read.code}: ${read.message}`);
+		return read.value;
+	}
+
 	async function planSession(params: RemoteTargetParams): Promise<SessionPlan> {
-		const parsed = parseTarget({ remote: params.remote, remotePort: params.remotePort });
-		if (!parsed.ok) throw new Error(`${parsed.code}: ${parsed.message}`);
-		if (parsed.target === null) return { kind: "local" };
+		// 零影响不变量：本地调用**不读登记表**（登记表损坏不得弄坏本机工具）。
+		const file = hasRemoteIntent(params) ? await loadTargets() : null;
+		const resolution = resolveTarget({ remote: params.remote, remotePort: params.remotePort }, file);
+		if (!resolution.ok) throw new Error(`${resolution.code}: ${resolution.message}`);
+		if (resolution.kind === "local") return { kind: "local" };
 		// 信道前提的运行时守卫：锚文件不是普通文件时本地就可能真的存在标记根，先 fail-closed（在发 ssh 之前）。
 		assertMarkerRootUsable(deps.markerAnchor);
-		const session = sessionFor(parsed.target);
+		const session = sessionFor(resolution.target);
 		return { kind: "remote", session, home: () => session.home() };
 	}
 
@@ -272,7 +378,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		...readBase,
 		description: `${readBase.description} 传 remote 时改在远端主机读取（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(readBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
-		parameters: Type.Object({ ...readBase.parameters.properties, ...remoteTargetProperties }),
+		parameters: Type.Object({ ...readBase.parameters.properties, ...targetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<ReadToolDetails | undefined>> {
 			const plan = await planSession(params);
 			const rest = stripRemoteFields<ReadToolInput & RemoteTargetParams>(params);
@@ -294,7 +400,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		...writeBase,
 		description: `${writeBase.description} 传 remote 时改在远端主机写入（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(writeBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
-		parameters: Type.Object({ ...writeBase.parameters.properties, ...remoteTargetProperties }),
+		parameters: Type.Object({ ...writeBase.parameters.properties, ...targetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<undefined>> {
 			const plan = await planSession(params);
 			const rest = stripRemoteFields<WriteToolInput & RemoteTargetParams>(params);
@@ -316,7 +422,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		...editBase,
 		description: `${editBase.description} 传 remote 时改在远端主机编辑（path 在远端主机解析，相对路径按远端 $HOME）。`,
 		promptGuidelines: [...(editBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
-		parameters: Type.Object({ ...editBase.parameters.properties, ...remoteTargetProperties }),
+		parameters: Type.Object({ ...editBase.parameters.properties, ...targetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<EditToolDetails | undefined>> {
 			const plan = await planSession(params);
 			const rest = stripRemoteFields<EditToolInput & RemoteTargetParams>(params);
@@ -338,7 +444,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		...lsBase,
 		description: `${lsBase.description} 传 remote 时改列远端主机目录（path 省略或相对路径 = 远端 $HOME）。`,
 		promptGuidelines: [...(lsBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
-		parameters: Type.Object({ ...lsBase.parameters.properties, ...remoteTargetProperties }),
+		parameters: Type.Object({ ...lsBase.parameters.properties, ...targetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<LsToolDetails | undefined>> {
 			const plan = await planSession(params);
 			const rest = stripRemoteFields<LsToolInput & RemoteTargetParams>(params);
@@ -361,7 +467,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		...findBase,
 		description: `${findBase.description} 传 remote 时改在远端主机搜索（path 省略或相对路径 = 远端 $HOME）。`,
 		promptGuidelines: [...(findBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
-		parameters: Type.Object({ ...findBase.parameters.properties, ...remoteTargetProperties }),
+		parameters: Type.Object({ ...findBase.parameters.properties, ...targetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<FindToolDetails | undefined>> {
 			const plan = await planSession(params);
 			const rest = stripRemoteFields<FindToolInput & RemoteTargetParams>(params);
@@ -419,7 +525,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 
 	// 跨扩展能力协商（remote-tools-todo#9）：timeout-bg 若在 session_start 重注册 bash，会把这份能力并进去。
 	offerBashCapability(pi.events, {
-		parameters: remoteBashProperties,
+		parameters: bashProperties,
 		isRemoteCall: isRemoteBashCall,
 		executeRemote: executeRemoteBash,
 		guideline: BASH_REMOTE_GUIDELINE,
@@ -444,7 +550,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		...bashBase,
 		description: `${bashBase.description} 传 remote 时改在远端主机执行（cwd = remoteCwd 或远端 $HOME）。`,
 		promptGuidelines: [...(bashBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
-		parameters: Type.Object({ ...bashBase.parameters.properties, ...remoteBashProperties }),
+		parameters: Type.Object({ ...bashBase.parameters.properties, ...bashProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<BashToolDetails | undefined>> {
 			const rest = stripRemoteFields<BashToolInput & RemoteTargetParams & { remoteCwd?: string | undefined }>(params);
 			if (!isRemoteBashCall(params)) {
@@ -462,7 +568,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 			"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars. 传 remote 时改在远端主机搜索（path 省略或相对路径 = 远端 $HOME）；远端缺 ripgrep 时回退 GNU grep 并在结果里标注降级。",
 		promptSnippet: "Search file contents for patterns (respects .gitignore)",
 		promptGuidelines: [REMOTE_GUIDELINE],
-		parameters: Type.Object({ ...remoteGrepSchema.properties, ...remoteTargetProperties }),
+		parameters: Type.Object({ ...remoteGrepSchema.properties, ...targetProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<GrepToolDetails | undefined>> {
 			const plan = await planSession(params);
 			const rest = stripRemoteFields<Parameters<typeof executeRemoteGrep>[1] & RemoteTargetParams>(params);
@@ -471,6 +577,141 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 			}
 			const path = await resolveToolPath(plan, rest.path);
 			return executeRemoteGrep({ session: plan.session, baseDir: path.baseDir }, { ...rest, path: path.remotePath }, signal);
+		},
+	});
+
+	// ── remote_targets（登记表的模型面：可查、可登记；删除与覆盖只走人工命令）───
+	async function targetsText(): Promise<string> {
+		return formatTargetsList(await loadTargets(), deps.targets.path);
+	}
+
+	pi.registerTool({
+		name: "remote_targets",
+		label: "remote_targets",
+		description:
+			"远端目标登记表（别名白名单）：列出已登记目标，或登记一个新目标。远端调用时把别名传给内置工具的 remote 参数即可。",
+		promptSnippet: "List or register named remote SSH targets (aliases for the `remote` parameter)",
+		promptGuidelines: [TARGETS_GUIDELINE],
+		parameters: Type.Object({
+			action: Type.Union([Type.Literal("list"), Type.Literal("register")], {
+				description: "list = 查看已登记目标；register = 登记新别名",
+			}),
+			alias: Type.Optional(Type.String({ description: "register 必填：别名（非空、无空白、不含 @ 或 :）" })),
+			host: Type.Optional(Type.String({ description: "可选主机名；省略 = 别名本身当主机名（交给 ~/.ssh/config 解析）" })),
+			user: Type.Optional(Type.String({ description: "可选 SSH 用户" })),
+			port: Type.Optional(Type.Number({ description: "可选 SSH 端口（1-65535）" })),
+			note: Type.Optional(Type.String({ description: "可选备注（≤200 字符）" })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<undefined>> {
+			if (params.action !== "register") return textResult(await targetsText());
+			const read = await deps.targets.read();
+			if (!read.ok) throw new Error(`${read.code}: ${read.message}`);
+			// 模型侧永远 force=false（同名拒绝）：删除/覆盖只留给人工命令（对齐文档 Q2）。
+			const added = addTarget(
+				read.value,
+				{ alias: params.alias, host: params.host, user: params.user, port: params.port, note: params.note, source: "agent" },
+				{ nowIso: now(), force: false },
+			);
+			if (!added.ok) throw new Error(`${added.code}: ${added.message}`);
+			const written = await deps.targets.write(added.value);
+			if (!written.ok) throw new Error(`${written.code}: ${written.message}`);
+			notifyTool(ctx, `已登记远端目标 ${added.entry.alias} → ${formatEntry(added.entry)}（来源 agent）`);
+			return textResult(`已登记 ${added.entry.alias} → ${formatEntry(added.entry)}（source=agent）\n${formatTargetsList(added.value, deps.targets.path)}`);
+		},
+	});
+
+	// ── /remote:*（人工面：登记 / 清单 / 删除 / 白名单开关）───────────────────
+	pi.registerCommand(REMOTE_COMMANDS.list, {
+		description: "列出已登记的远端目标（别名白名单）",
+		handler: async (_args, ctx) => {
+			try {
+				notifyCommand(ctx, await targetsText());
+			} catch (error) {
+				notifyCommand(ctx, describeError(error));
+			}
+		},
+	});
+
+	pi.registerCommand(REMOTE_COMMANDS.add, {
+		description: "登记远端目标：/remote:add <别名> [user@host] [--port N] [--force]",
+		handler: async (args, ctx) => {
+			const parsed = parseAddTargetArgs(args);
+			if (!parsed.ok) {
+				notifyCommand(ctx, parsed.message);
+				return;
+			}
+			try {
+				const file = await loadTargets();
+				let host: string | undefined;
+				let user: string | undefined;
+				let port = parsed.value.port;
+				if (parsed.value.target !== undefined) {
+					const literal = parseTarget({ remote: parsed.value.target, remotePort: parsed.value.port });
+					if (!literal.ok) {
+						notifyCommand(ctx, `${literal.code}: ${literal.message}`);
+						return;
+					}
+					if (literal.target === null) {
+						notifyCommand(ctx, "目标不能为空（省略 user@host 时用别名当主机名）");
+						return;
+					}
+					host = literal.target.host;
+					user = literal.target.user;
+					port = literal.target.port ?? parsed.value.port;
+				}
+				const added = addTarget(
+					file,
+					{ alias: parsed.value.alias, host, user, port, source: "human" },
+					{ nowIso: now(), force: parsed.value.force },
+				);
+				if (!added.ok) {
+					notifyCommand(ctx, `${added.code}: ${added.message}`);
+					return;
+				}
+				const written = await deps.targets.write(added.value);
+				notifyCommand(ctx, written.ok ? `已登记 ${added.entry.alias} → ${formatEntry(added.entry)}` : `${written.code}: ${written.message}`);
+			} catch (error) {
+				notifyCommand(ctx, describeError(error));
+			}
+		},
+	});
+
+	pi.registerCommand(REMOTE_COMMANDS.remove, {
+		description: "删除一个已登记的远端目标：/remote:rm <别名>",
+		handler: async (args, ctx) => {
+			const alias = args.trim();
+			if (alias === "") {
+				notifyCommand(ctx, "用法：/remote:rm <别名>");
+				return;
+			}
+			try {
+				const removed = removeTarget((await loadTargets()) ?? emptyTargetsFile(), alias);
+				if (!removed.ok) {
+					notifyCommand(ctx, `${removed.code}: ${removed.message}`);
+					return;
+				}
+				const written = await deps.targets.write(removed.value);
+				notifyCommand(ctx, written.ok ? `已删除远端目标 ${alias}` : `${written.code}: ${written.message}`);
+			} catch (error) {
+				notifyCommand(ctx, describeError(error));
+			}
+		},
+	});
+
+	pi.registerCommand(REMOTE_COMMANDS.strict, {
+		description: "开关 strict 白名单（只接受已登记目标）：/remote:strict on|off",
+		handler: async (args, ctx) => {
+			const value = args.trim().toLowerCase();
+			if (value !== "on" && value !== "off") {
+				notifyCommand(ctx, "用法：/remote:strict on|off");
+				return;
+			}
+			try {
+				const written = await deps.targets.write(withStrict(await loadTargets(), value === "on"));
+				notifyCommand(ctx, written.ok ? `strict 白名单已${value === "on" ? "开启（只接受已登记目标）" : "关闭（自由填写恢复可用）"}` : `${written.code}: ${written.message}`);
+			} catch (error) {
+				notifyCommand(ctx, describeError(error));
+			}
 		},
 	});
 }

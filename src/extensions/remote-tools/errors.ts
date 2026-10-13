@@ -42,6 +42,16 @@ export const ErrorCodes = {
 	REMOTE_JOB_PORT_INVALID: "REMOTE_JOB_PORT_INVALID",
 	/** 远端超时转后台失败（登记 job 时端口抛错）：已断开本地 ssh，远端命令可能仍在运行。 */
 	REMOTE_BACKGROUND_FAILED: "REMOTE_BACKGROUND_FAILED",
+	/** strict 白名单开着，而目标既不是已登记别名也不匹配任何条目的展开目标（remote-tools#2）。 */
+	UNKNOWN_REMOTE_TARGET: "UNKNOWN_REMOTE_TARGET",
+	/** 目标登记表读不出或形态非法——fail-closed，绝不静默当空表（那会静默全拒）。 */
+	REMOTE_TARGETS_UNREADABLE: "REMOTE_TARGETS_UNREADABLE",
+	/** 别名已存在（覆盖要显式 force；模型侧永远不 force）。 */
+	REMOTE_TARGET_EXISTS: "REMOTE_TARGET_EXISTS",
+	/** 要删/要改的别名不在登记表里。 */
+	REMOTE_TARGET_UNKNOWN: "REMOTE_TARGET_UNKNOWN",
+	/** 登记表落盘失败（目录权限等）。 */
+	REMOTE_TARGETS_WRITE_FAILED: "REMOTE_TARGETS_WRITE_FAILED",
 } as const;
 
 export type RemoteToolsErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

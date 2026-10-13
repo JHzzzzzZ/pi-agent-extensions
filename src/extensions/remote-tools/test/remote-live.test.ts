@@ -34,7 +34,8 @@ import {
 import { HOST_PATH_ROOT } from "../paths.ts";
 import { buildSshArgs, createSpawnExec, parseTarget, runSsh } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
-import { png1x1 } from "./fixtures.ts";
+import { createMemoryTargetsStore, png1x1 } from "./fixtures.ts";
+import type { CommandRegistration } from "./fixtures.ts";
 
 const ID = "live-call";
 
@@ -109,13 +110,17 @@ test("真机：write → read → edit → ls 往返（临时目录，结束清�
 test("真机：远端 read 图片走图片管线（真 PNG → image 块；文本文件不受影响）", { skip }, async () => {
 	// 这条是真机才验得了的：样本要经真 ssh 以 base64 回来、真 PNG 再交给宿主的 processImage。
 	const tools = new Map<string, ToolDefinition>();
+	const commands = new Map<string, CommandRegistration>();
 	registerRemoteTools(
 		{
 			registerTool(tool: ToolDefinition) {
 				tools.set(tool.name, tool);
 			},
+			registerCommand(name: string, options: CommandRegistration) {
+				commands.set(name, options);
+			},
 		} as unknown as ExtensionAPI,
-		{ exec: createSpawnExec(), cwd: process.cwd() },
+		{ exec: createSpawnExec(), cwd: process.cwd(), targets: createMemoryTargetsStore() },
 	);
 	const ctx = {
 		cwd: process.cwd(),
@@ -155,13 +160,17 @@ test("真机：远端 read 图片走图片管线（真 PNG → image 块；文�
 test("真机：工具层端到端（注册覆盖 → Windows 路径往返 → 远端 write/read/ls/grep/find/bash）", { skip }, async () => {
 	// 这一条才走完整链路：同名覆盖 → resolveToolPath 的标记根前缀 → 宿主 path 解析 → ops 还原 → 真 ssh。
 	const tools = new Map<string, ToolDefinition>();
+	const commands = new Map<string, CommandRegistration>();
 	registerRemoteTools(
 		{
 			registerTool(tool: ToolDefinition) {
 				tools.set(tool.name, tool);
 			},
+			registerCommand(name: string, options: CommandRegistration) {
+				commands.set(name, options);
+			},
 		} as unknown as ExtensionAPI,
-		{ exec: createSpawnExec(), cwd: process.cwd() },
+		{ exec: createSpawnExec(), cwd: process.cwd(), targets: createMemoryTargetsStore() },
 	);
 	const ctx = {
 		cwd: process.cwd(),
@@ -250,13 +259,17 @@ test("真机：不可达域名 fail-closed（ssh 参数含 BatchMode 与 StrictH
 
 test("真机：远端 bash 真在远端跑；ls/find 的不存在/传文件报结构化错误且不泄露宿主标记路径（remote-tools#9/#10）", { skip }, async () => {
 	const tools = new Map<string, ToolDefinition>();
+	const commands = new Map<string, CommandRegistration>();
 	registerRemoteTools(
 		{
 			registerTool(tool: ToolDefinition) {
 				tools.set(tool.name, tool);
 			},
+			registerCommand(name: string, options: CommandRegistration) {
+				commands.set(name, options);
+			},
 		} as unknown as ExtensionAPI,
-		{ exec: createSpawnExec(), cwd: process.cwd() },
+		{ exec: createSpawnExec(), cwd: process.cwd(), targets: createMemoryTargetsStore() },
 	);
 	const ctx = {
 		cwd: process.cwd(),
