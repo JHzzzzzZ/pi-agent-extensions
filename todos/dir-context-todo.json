@@ -235,6 +235,21 @@
       "claimedAt": null,
       "completedAt": null,
       "alignedAt": null
+    },
+    {
+      "id": 13,
+      "globalId": 393,
+      "text": "文案误导（用户 2026-10-13 实测）：带 remote 的 bash（多命令行）/grep/find 不在远端上下文触发面上，首次结果却打印 REMOTE_NOTICE「远端目录的 AGENTS.md / CLAUDE.md 约定这次没有自动注入」，用户据此判断「远端注入退回去了/不工作」——实际能力在（同会话的 ls/read 对远端目录注入正常，已用真机取证）。要求：文案与时机区分三态——① 本次调用取不到路径（非触发面）不打印这条误导提示，或换成中性文案（如「该工具不参与远端上下文自动注入」）；② 仅真·能力缺席/取失败时才说「取不到」。验收：bash 多命令行与 grep/find 带 remote 的首次结果不再出现「没有自动注入」式误导，而取不到（含 unreadable 专属提示）与每会话去重口径不变；单测锁定。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-13T13:08:20.613Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
