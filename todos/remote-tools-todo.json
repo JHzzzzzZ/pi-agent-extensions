@@ -27,7 +27,7 @@
       "id": 2,
       "globalId": 352,
       "text": "remote-tools 后续：remote 参数加主机白名单/别名（如 /remote add prod user@host，模型只能引用已登记目标）——v1 自由填写的风险是命令输出可诱导模型连任意主机",
-      "status": "open",
+      "status": "aligned",
       "branch": null,
       "tags": [
         "follow-up",
@@ -37,9 +37,9 @@
       "dependsOn": [],
       "notes": [],
       "createdAt": "2026-10-10T16:24:07.973Z",
-      "claimedAt": null,
+      "claimedAt": "2026-10-13T06:49:02.139Z",
       "completedAt": null,
-      "alignedAt": null
+      "alignedAt": "2026-10-13T06:54:43.203Z"
     },
     {
       "id": 3,
@@ -312,6 +312,38 @@
       "claimedAt": "2026-10-12T03:23:26.255Z",
       "completedAt": "2026-10-12T10:27:33.598Z",
       "alignedAt": "2026-10-12T03:24:36.300Z"
+    },
+    {
+      "id": 17,
+      "globalId": 391,
+      "text": "/remote:setup 引导配置：首次接入一个远端环境时按层引导——本机 ssh 有无 → 连通性探针（BatchMode + ConnectTimeout，失败按 网络/认证/指纹 分层给结论）→ 免密登录（生成 key 自动；装公钥到远端 authorized_keys 是唯一人工步，现场用 wizard skill 生成 bash 脚本）→ 远端 ripgrep 可选项 → 登记目标 + ls 冒烟自证。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 8,
+      "dependsOn": [
+        "remote-tools-todo#2"
+      ],
+      "notes": [],
+      "createdAt": "2026-10-13T06:49:08.167Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
+    },
+    {
+      "id": 18,
+      "globalId": 392,
+      "text": "模型面偏好：目标是远端主机时优先给内置工具传 remote，而不是在 bash 里拼 ssh（bash+ssh 过一层本地 shell，丢结构化文件工具/路径安全信道/远端超时托管）；只在连接诊断（ssh -v / ssh-keygen / 端口探测）时才拼 ssh。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 8,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-13T06:49:08.537Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
