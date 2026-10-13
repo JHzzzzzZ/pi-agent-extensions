@@ -83,7 +83,7 @@ ls    path="/srv/app"                     remote="prod"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-165 个（node:test：155 个全本地 + 10 个真机 opt-in）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（11，宿主路径往返、标记根的结构性断言与守卫、文案改写）、
+166 个（node:test：156 个全本地 + 10 个真机 opt-in）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（11，宿主路径往返、标记根的结构性断言与守卫、文案改写）、
 `test/ops.test.ts`（20，发给 ssh 的命令构造、错误映射、图片嗅探、ls/find 目录探针与缓存）、`test/grep.test.ts`（13，rg 事件解析/降级/限流）、
 `test/tools.test.ts`（23，注册覆盖、本地保真对照（含 write/edit 文案与 details 逐字对拍）、远端分派、ls/find 结构化错误与往返数、图片端到端、远端 write/edit/read 文案回写远端路径、session 缓存）、
 `test/capability.test.ts`（5，跨扩展能力载荷与订阅、job 托管端口索取与形状守卫）、
@@ -92,8 +92,8 @@ cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 锚点/基准归一、请求与结果双向形状守卫、失败收敛与握手先到先得、读不出 ≠ 不存在的标记帧）、
 `test/bash-timeout.test.ts`（9，托管路径的进程边界：不断连 + 日志 + settle、terminate 杀远端并断 ssh、无端口时的旧行为）、
 `test/shell-composition.test.ts`（3，真实加载 remote-tools + timeout-bg：能力合并、job 托管频道、反向顺序冲突可见）、
-`test/targets.test.ts`（19，目标登记表：解析与命中口径（含主机优先于别名、多命中歧义）、形态校验 fail-closed、登记/删改、文件端口真实临时目录）、
-`test/targets-tool.test.ts`（9，`remote_targets` 工具与 `/remote:*` 命令、模型面提示行与 guideline 文案、本地调用不读表）；`test/fixtures.ts` 提供真 PNG 等样本与登记表 fake。
+`test/targets.test.ts`（21，目标登记表：解析与命中口径（含主机优先于别名、多命中歧义）、形态校验 fail-closed、登记/删改、文件端口真实临时目录）、
+`test/targets-tool.test.ts`（8，`remote_targets` 工具与 `/remote:*` 命令、模型面提示行与 guideline 文案、本地调用不读表）；`test/fixtures.ts` 提供真 PNG 等样本与登记表 fake。
 
 另有一个**真机 opt-in** 文件 `test/remote-live.test.ts`（10 个，默认跳过，接真实 ssh 进程）：
 

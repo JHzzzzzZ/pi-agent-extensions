@@ -140,14 +140,29 @@ test("无登记表文件 = 空表（strict 开）：未登记目标被拒，清�
 });
 
 test("主机匹配优先于别名：撞名别名不能把字面 host 劫持到别的机器（第 1 轮评审 P1）", () => {
-	// 手写文件可以造出这种条目（登记路径已被 validateTargetEntry 拦住，见下一条）——
-	// 此时字面 `10.0.0.7` 必须仍连 10.0.0.7，而不是别名 10.0.0.7 指向的 10.0.0.9。
+	// 这条锁的是**解析层的防御纵深**：真实文件路径上这种条目会被 parseTargetsFile + validateTargetEntry 拦下
+	// （含 `.` 的别名指向别的 host ⇒ 整表 UNREADABLE），所以只能来自内存注入/手改后未重解析。
 	const hand = file(entry("10.0.0.7", "10.0.0.9"), entry("prod", "10.0.0.7"));
 	const byHost = resolveTarget({ remote: "10.0.0.7" }, hand);
 	assert.equal(byHost.ok, true);
 	if (!byHost.ok || byHost.kind !== "resolved") return assert.fail("应命中");
 	assert.equal(byHost.target.host, "10.0.0.7");
 	assert.equal(byHost.entry?.alias, "prod");
+});
+
+test("入参本身就是某条目的别名时，那个条目优先——“名字 vs 主机”撞名不静默换 user（第 2 轮评审 P2）", () => {
+	const crossed = file(entry("lab", undefined, "deploy"), entry("lab2", "lab"));
+	const named = resolveTarget({ remote: "lab" }, crossed);
+	assert.equal(named.ok, true);
+	if (!named.ok || named.kind !== "resolved") return assert.fail("应命中");
+	assert.equal(named.entry?.alias, "lab");
+	assert.equal(named.target.user, "deploy", "不能被 host:lab 的条目静默换掉 user");
+
+	// 两条同类命中且入参给了 user ⇒ 必歧义（无帮优级可用）
+	const sameUser = resolveTarget({ remote: "root@10.0.0.7" }, file(entry("a", "10.0.0.7", "root"), entry("b", "10.0.0.7", "root")));
+	assert.equal(sameUser.ok, false);
+	if (sameUser.ok) return;
+	assert.equal(sameUser.code, ErrorCodes.AMBIGUOUS_REMOTE_TARGET);
 });
 
 test("登记期拦住「像主机名/IP 的别名指向别的 host」（劫持面 fail-closed）；别名自己当 host 仍可登记", () => {
@@ -216,7 +231,7 @@ test("validateTargetEntry：host 带 @ / user 带空白 / note 过长都拒绝",
 	assert.equal(validateTargetEntry({ ...entry("p", "h"), source: "robot" }).ok, false);
 });
 
-test("addTarget：首次登记追加；同名非 force 拒绝；force 覆盖不增条目；非法别名拒绝", () => {
+test("addTarget：首次登记追加；同名非 force 拒绝；force 覆盖不增条目；非法别名与“host 撞已登记别名”都拒绝", () => {
 	const added = addTarget(null, { alias: "prod", host: "10.0.0.7", user: "deploy", port: 2222, source: "agent" }, { nowIso: NOW, force: false });
 	assert.equal(added.ok, true);
 	if (!added.ok) return;
@@ -236,6 +251,13 @@ test("addTarget：首次登记追加；同名非 force 拒绝；force 覆盖不�
 
 	const bad = addTarget(null, { alias: "a b", source: "human" }, { nowIso: NOW, force: false });
 	assert.equal(bad.ok, false);
+
+	// 名字空间护栏：host 与已登记别名同名 ⇒ 拒（否则“点名”与“主机”两套含义相撞）。
+	const clash = addTarget(file(entry("lab")), { alias: "lab2", host: "lab", source: "human" }, { nowIso: NOW, force: false });
+	assert.equal(clash.ok, false);
+	if (clash.ok) return;
+	assert.equal(clash.code, ErrorCodes.INVALID_REMOTE_TARGET);
+	assert.match(clash.message, /lab/);
 });
 
 test("removeTarget / withStrict：删不存在的别名报 REMOTE_TARGET_UNKNOWN；strict 可开可关", () => {

@@ -238,21 +238,30 @@ function matchesEntry(entry: RemoteTargetEntry, target: SshTarget): boolean {
 }
 
 /**
- * 从条目里选唯一命中者：
+ * 从条目里选唯一命中者（`aliasName` = 入参本身当作别名看时的那个名字）：
  *   - 0 命中 ⇒ `entry: null`（交给别名兜底或 strict 拒绝）；
  *   - 1 命中 ⇒ 直接用它；
- *   - 多命中 ⇒ 入参没给 user 时优先「没写 user 的条目」（那是该主机的通用条目，例如同时登记了
- *     `prod` 与 `root-prod` 时应命中 `prod`）；仍不唯一则 fail-closed 报歧义——按数组序静默挑一个会静默换用户。
+ *   - 多命中 ⇒ 优先「入参本身就是它的别名」的那个条目（名字优先于“主机与它同名的别的条目”，
+ *     否则会静默换用户）；再优先「没写 user 的通用条目」（例如同时登记了 `prod` 与 `root-prod` 时应命中 `prod`）；
+ *     仍不唯一则 fail-closed 报歧义——按数组序静默挑一个会静默换用户/换主机。
  */
-function pickByTarget(entries: RemoteTargetEntry[], target: SshTarget): { ok: true; entry: RemoteTargetEntry | null } | RemoteToolsFailure {
+function pickByTarget(
+	entries: RemoteTargetEntry[],
+	target: SshTarget,
+	aliasName: string | undefined,
+): { ok: true; entry: RemoteTargetEntry | null } | RemoteToolsFailure {
 	const matches = entries.filter((entry) => matchesEntry(entry, target));
 	if (matches.length === 0) return { ok: true, entry: null };
 	if (matches.length === 1) return { ok: true, entry: matches[0] };
+	if (aliasName !== undefined) {
+		const named = matches.find((entry) => entry.alias === aliasName);
+		if (named !== undefined) return { ok: true, entry: named };
+	}
 	const generic = target.user === undefined ? matches.filter((entry) => entry.user === undefined) : [];
 	if (generic.length === 1) return { ok: true, entry: generic[0] };
 	return failure(
 		ErrorCodes.AMBIGUOUS_REMOTE_TARGET,
-		`目标 ${formatTarget(target)} 命中多个已登记条目（${matches.map((entry) => entry.alias).join(", ")}）：请直接点名别名。`,
+		`目标 ${formatTarget(target)} 命中多个已登记条目（${matches.map((entry) => entry.alias).join(", ")}）：请改用其中一个别名，或补全 user@host。`,
 	);
 }
 
@@ -270,8 +279,8 @@ export function strictRejectionMessage(file: RemoteTargetsFile | null): string {
 }
 
 /**
- * 解析远端目标：本地模式原样返回；远端模式先按别名精确匹配，再按展开后的三元组匹配；
- * strict 且未命中 ⇒ 结构化拒绝，非 strict 且未命中 ⇒ 回落成今天的自由填写（逐字不变）。
+ * 解析远端目标：本地模式原样返回；远端模式**先按展开后的主机匹配**（入参同名别名优先于同主机的其它条目），
+ * 没有主机命中才查别名；strict 且都没命中 ⇒ 结构化拒绝，非 strict ⇒ 回落成今天的自由填写（逐字不变）。
  *
  * 调用方保证：`hasRemoteIntent(input)` 为假时不读登记表（本地分支零影响不变量）。
  */
@@ -284,9 +293,10 @@ export function resolveTarget(input: TargetInput, file: RemoteTargetsFile | null
 	// 文件不存在 = 空表（strict 开）：Q1 的「默认开」必须在解析路径也成立。
 	const file0 = effectiveFile(file);
 	// **主机匹配优先于别名**：字面 host 的含义不能被同名别名劫持（第 1 轮评审 P1）；别名只当兜底。
-	const byHost = pickByTarget(file0.targets, target);
+	const aliasName = target.user === undefined ? target.host : undefined;
+	const byHost = pickByTarget(file0.targets, target, aliasName);
 	if (!byHost.ok) return byHost;
-	const byAlias = target.user === undefined ? (file0.targets.find((entry) => entry.alias === target.host) ?? null) : null;
+	const byAlias = aliasName === undefined ? null : (file0.targets.find((entry) => entry.alias === aliasName) ?? null);
 	const match = byHost.entry ?? byAlias;
 	if (match === null) {
 		if (file0.strict) return failure(ErrorCodes.UNKNOWN_REMOTE_TARGET, strictRejectionMessage(file0));
@@ -326,6 +336,15 @@ export function addTarget(
 	const index = base.targets.findIndex((existing) => existing.alias === entry.alias);
 	if (index >= 0 && !options.force) {
 		return failure(ErrorCodes.REMOTE_TARGET_EXISTS, `别名 ${entry.alias} 已登记；要覆盖请用 /remote:add --force（模型侧不支持覆盖）。`);
+	}
+	// 名字空间护栏：某条目的 host 不许与**另一个**已登记别名同名。两套含义相撞会让「点名」与「主机」
+	// 不可区分（解析层有精确同名优先兼底，但登记期能直接拦下就别留到运行时）。
+	const clash = base.targets.find((existing) => existing.alias !== entry.alias && existing.alias === entryHost(entry));
+	if (clash !== undefined) {
+		return failure(
+			ErrorCodes.INVALID_REMOTE_TARGET,
+			`host ${entryHost(entry)} 与已登记别名 ${clash.alias} 同名：请换一个 host，或改成给 ${clash.alias} 登记 user@host。`,
+		);
 	}
 	const targets = index >= 0 ? base.targets.map((existing, i) => (i === index ? entry : existing)) : [...base.targets, entry];
 	return { ok: true, value: { ...base, targets }, entry };
