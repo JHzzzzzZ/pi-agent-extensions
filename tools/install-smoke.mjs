@@ -120,7 +120,7 @@ export const EXTENSION_EXPECTATIONS = {
   // 无命令扩展：只能以启动期 TUI 写入或"加载不抛错"证明。
   "run-timer": { commands: [], uiKeys: ["widget-band"] },
   "virtual-model-router": { commands: [], uiKeys: [] },
-  "remote-tools": { commands: [], uiKeys: [] },
+  "remote-tools": { commands: ["remote:add", "remote:list", "remote:rm", "remote:strict"], uiKeys: [] },
   // 无命令扩展：注入发生后才写状态段（启动期只清登记，因此不能列成启动期 TUI 键）。
   "dir-context": { commands: ["dir-context", "dir-context:status"], uiKeys: [] },
   "stream-token-speed": { commands: [], uiKeys: ["50:stream-token-speed"] },

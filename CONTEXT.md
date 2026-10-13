@@ -268,6 +268,26 @@ owner 合并参数并按参数分派（本地走自己的超时→后台 ops，�
 没有提供方（没装 remote-tools / 没有事件总线）⇒ 行为与各自单装时逐字一致。契约与双方义务见 `docs/cross/shell-tool-capability.md`。
 _Avoid_: 插件桥、全局槽、覆盖链（都表达不了「两个功能都保留 + 没有对端时行为不变」）
 
+**远端目标（remote target）**:
+一次远端调用的**具名身份**：登记表里的 `alias` + 展开目标 `host`/`user`/`port`（三者就是传输层的 `SshTarget`）。别名只是入口——
+命中按**展开后的三元组**判定（`host` 相等且入参给了的 `user`/`port` 必须相等；条目补齐入参没给的部分），所以 `prod`、`10.0.0.7`、`deploy@10.0.0.7`
+可以命中同一条目；条目不给 `host` 时别名本身当主机名交给 `~/.ssh/config` 解析（"ssh_config 兜底"）。
+_Avoid_: 主机、server（那只是三元组的一部分）、连接（连接是每次调用的事，目标是它指向的具名对象）
+
+**目标登记表（target registry）**:
+远端目标的持久化名单：**用户级**文件 `~/.pi/agent/remote-targets.json`（`PI_REMOTE_TARGETS_FILE` 可覆盖），
+`{version, strict, targets[{alias, host?, user?, port?, source, createdAt, note?}]}`——只存定位信息，**从不存凭据**。
+写入入口只有两个：人工命令 `/remote:add|rm|strict`（带 `--force` 才覆盖）与模型工具 `remote_targets`（只能 `register`，落盘 `source: "agent"`，同名拒绝、无删除）。
+文件形态 fail-closed：未知字段/非法形态/重复别名一律报错，不静默忽略。决策与代价见 ADR-0014。
+_Avoid_: 白名单、配置文件（前者只是 `strict` 一种用法，后者说不清它是运行时状态还是手写配置）
+
+**strict 白名单（strict whitelist）**:
+目标登记表上的一个布尔模式（**默认开**）：入参的远端目标既不是已登记别名、也不匹配任何条目的展开目标 ⇒ 结构化拒绝
+（`UNKNOWN_REMOTE_TARGET`，文案列已登记别名 + 两个登记入口）。`/remote:strict off` 才回落成 v1 的自由填写（逐字不变）。
+它买的是**可发现性 + 审计**（每条远端调用追得到具名条目与 `source`），**不是安全边界**——模型可登记，注入内容同样能诱导它登记。
+与本地模式无关：`remote` 为空时**根本不读登记表**（登记表损坏不得弄坏本机工具）。
+_Avoid_: 权限、沙箱、访问控制（都不成立：它不拦得住有登记权限的人或模型）
+
 ### 状态条与 widget 契约（跨插件）
 
 **widget 排序带（widget band）**:

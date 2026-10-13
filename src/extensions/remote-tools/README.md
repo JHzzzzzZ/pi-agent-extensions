@@ -2,29 +2,54 @@
 
 给 Pi 的七个内置工具加远程能力：**调用时带 `remote` 就在远端主机执行，不带就与今天完全一致**。
 
+远端目标现在**具名**（登记表里的别名）：先登记一次，之后传别名就行（strict 白名单默认开着，未登记目标会被拒绝）。
+
 ```
-read  path="/srv/app/src/index.ts"        remote="deploy@10.0.0.7"
-grep  pattern="TODO" path="/srv/app"      remote="deploy@10.0.0.7" remotePort=2222
-bash  command="git status --short"        remote="deploy@10.0.0.7" remoteCwd="/srv/app"
-write path="/srv/app/new.ts" content="…"  remote="deploy@10.0.0.7"
-edit  path="/srv/app/a.ts" edits=[…]      remote="deploy@10.0.0.7"
-find  pattern="**/*.ts" path="/srv/app"   remote="deploy@10.0.0.7"
-ls    path="/srv/app"                     remote="deploy@10.0.0.7"
+/remote:add prod deploy@10.0.0.7 --port 2222     # 人工登记一次（也可由模型用 remote_targets 工具登记）
+/remote:list                                     # 看已登记目标（/remote:rm 删、/remote:strict off 关白名单）
+
+read  path="/srv/app/src/index.ts"        remote="prod"
+grep  pattern="TODO" path="/srv/app"      remote="prod"
+bash  command="git status --short"        remote="prod" remoteCwd="/srv/app"
+write path="/srv/app/new.ts" content="…"  remote="prod"
+edit  path="/srv/app/a.ts" edits=[…]      remote="prod"
+find  pattern="**/*.ts" path="/srv/app"   remote="prod"
+ls    path="/srv/app"                     remote="prod"
 ```
+
+字面目标同样能用（只要它与某个已登记条目同源）：登记了 `prod → deploy@10.0.0.7:2222` 后，`remote="10.0.0.7"`、`remote="deploy@10.0.0.7"` 与 `remote="prod"` 命中同一条目。
 
 ## 参数
 
 | 参数 | 适用工具 | 说明 |
 | --- | --- | --- |
-| `remote` | 全部 7 个 | 远端 SSH 目标 `"[user@]host"`；**省略或留空 = 在本机执行**（与内置行为一致）。缺省值字面量 `null`/`undefined`/`nil`/`none`/`n/a` 也当没给（agent 常把 JSON null 写成字符串），但 `local`/`false` 等自由字符串仍当主机名 |
+| `remote` | 全部 7 个 | 远端 SSH 目标 `"[user@]host"`（通常是登记表里的**别名**）；**省略或留空 = 在本机执行**（与内置行为一致）。缺省值字面量 `null`/`undefined`/`nil`/`none`/`n/a` 也当没给（agent 常把 JSON null 写成字符串），但 `local`/`false` 等自由字符串仍当主机名 |
 | `remotePort` | 全部 7 个 | 远端 SSH 端口 1-65535；省略用 `~/.ssh/config` / ssh 默认。**噪声容错**：`null`/非数字/`0`/负数一律当作未指定，不会报错 |
 | `remoteCwd` | 仅 `bash` | 远端工作目录；省略 = 远端 `$HOME` |
 
 远端路径规则：绝对 POSIX 路径（`/srv/app/src/a.ts`）直接用；省略 `path`（`ls`/`find`/`grep`）或不给 `remoteCwd` 时用远端 `$HOME`，**相对路径同样按远端 `$HOME` 解析**。Windows 盘符路径（`C:/…`）与 `~` 开头会被拒绝。
 
+## 远端目标登记表（别名 + strict 白名单）
+
+登记表是**用户级文件** `~/.pi/agent/remote-targets.json`（路径可经 `PI_REMOTE_TARGETS_FILE` 覆盖），只存 `alias`/`host`/`user`/`port`/`source`/`createdAt`/`note`——**从不存凭据**（仍然只用系统密钥 / ssh-agent）。
+
+| 谁 | 入口 | 能做什么 |
+| --- | --- | --- |
+| 人 | `/remote:add <别名> [user@host] [--port N] [--force]` / `/remote:list` / `/remote:rm <别名>` / `/remote:strict on\|off` | 增删改、开关白名单 |
+| 模型 | `remote_targets` 工具（`action=list` / `action=register`） | 只能查与登记（`source: agent`），**不能删除、不能覆盖同名** |
+
+判定口径：
+
+- **strict 默认开**：`remote` 既不是已登记别名、也不匹配任何条目的展开目标 ⇒ 结构化拒绝（`UNKNOWN_REMOTE_TARGET`，文案会列出可用别名与两个登记入口）。关掉就回到今天的自由填写（逐字不变）。
+- **别名只是入口**：命中按展开后的 `host`/`user`/`port` 三元组比——条目的 `user`/`port` 会**补齐**入参没给的部分，显式 `remotePort` 优先于条目默认端口。
+- **`ssh_config` 别名也能登记**：`/remote:add lab`（不给 `user@host`）⇒ `remote="lab"` 交给 ssh 自己的 `~/.ssh/config` 解析 user/port。
+- **本地调用完全不碰登记表**：`remote` 为空时的行为与内置逐字一致，登记表损坏也弄不坏本机工具（远端调用则 fail-closed 报 `REMOTE_TARGETS_UNREADABLE`，不静默当空表）。
+- 模型面的提示行（“已登记目标：…”）是**加载期快照**，`/reload` 才刷新；实时清单走 `remote_targets`。
+
 ## 前提
 
 - 系统 PATH 里有 `ssh`（Windows 10+ 自带 OpenSSH 即可；`accept-new` 需 **OpenSSH ≥ 7.6**），**零 npm 运行时依赖**。
+- **远端目标已登记**（strict 默认开）：首次用某个目标前 `/remote:add` 一次；或者 `/remote:strict off` 关掉白名单恢复自由填写。
 - 目标主机已配好密钥 / ssh-agent。本扩展非交互执行（`BatchMode=yes`）且指纹策略是 **TOFU**（`StrictHostKeyChecking=accept-new`，`#15`）：新主机首次连接由 ssh 自己把指纹写进 `known_hosts`，**不需要**先手工 `ssh user@host` 一次；已收录主机的**指纹变更仍然拒绝**（报 `SSH_CONNECT_FAILED`，清理旧条目用 `ssh-keygen -R <host>`）。
 - 远端有 `ripgrep` 时 `grep`/`find` 语义与本地一致（遵守 `.gitignore`）；没有则回退远端 `grep -r` / `find`，并在结果里标注降级（`.gitignore` 不生效）。
 

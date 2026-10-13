@@ -25,7 +25,8 @@
 | shell 工具跨扩展组合（bash 归属：能力协商频道/载荷/分派安全口径/加载顺序与冲突可见） | `cross/shell-tool-capability.md` + `specs/shell-tool-composition.md` + `extensions/timeout-bg.md` + `extensions/remote-tools.md` |
 | 远端目录上下文自动注入（能力协商频道/载荷/双方义务/一环 ssh 的祖先链为何到 `$HOME` 或 `/` 停/失败降级与提示三态） | `cross/remote-context-capability.md` + `extensions/dir-context.md` + `extensions/remote-tools.md` |
 | tool_call 前置的 Jev 风险判断门（候选筛 / 分类器判定 / fail-open 可观测 / solo 豁免）与真机验收步骤 | `extensions/jev-safe-gate.md` + `jev-safe-gate-checklist.md` |
-| 把内置工具（read/write/edit/bash/grep/find/ls）改道到远端主机（remote/remotePort/remoteCwd 参数、Operations 接缝覆盖、Windows 路径空间换算、rg 降级） | `extensions/remote-tools.md` |
+| 把内置工具（read/write/edit/bash/grep/find/ls）改道到远端主机（remote/remotePort/remoteCwd 参数、Operations 接缝覆盖、Windows 路径空间换算、rg 降级） | `extensions/remote-tools.md` + `specs/remote-targets.md` |
+| 远端目标登记表（别名 + strict 白名单：命中口径、ssh_config 兜底、为何模型可登记/不可删除、为何它不是安全边界） | `adr/0014-remote-target-registry.md` + `extensions/remote-tools.md` + `specs/remote-targets.md` |
 | 远端工具的架构决策：为什么复用宿主定义只换 Operations（grep 例外）、为什么把远端路径编码进本地路径命名空间当信道、该信道的根因与硬化取舍 | `adr/0010-remote-tools-host-operations-seam.md` + `extensions/remote-tools.md` |
 | 目录作用域上下文注入（嵌套 AGENTS.md 何时触发 / 注入通道与顺序 / cwd 边界 fail-closed / 每 turn 一次正文与同 turn 指针（并行调用）/ compact 重载 / 截断预算） | `extensions/dir-context.md` + `adr/0011-dir-context-scoped-injection.md` |
 | codemode 脚本里触碰目录算不算触发（嵌套调用为何不注入 / 顶层结果代偿与嵌套触碰缓冲 / `details.calls` 截断预览为何只作兜底 / 落地偏差） | `adr/0012-dir-context-codemode.md` + `extensions/dir-context.md` |
@@ -64,7 +65,7 @@
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 | [virtual-model-router](extensions/virtual-model-router.md) | 虚拟模型路由：注册 `opencode-go/router`，每次请求按宿主 `reason` 路由到物理模型（user→强档 / continuation→便宜快档 / retry→升档或溢出换长上下文档 / direct→固定档），零额外 LLM 调用；档位表与注册身份在 `config.ts` 单一表；真机验收清单 `virtual-model-router-checklist.md` |
 | [jev-safe-gate](extensions/jev-safe-gate.md) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只意味着「本扩展不弹框」，绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入；真机验收清单 `jev-safe-gate-checklist.md` |
-| [remote-tools](extensions/remote-tools.md) | 内置工具的 SSH 远程后端：七个内置工具加 `remote`/`remotePort`（bash 另有 `remoteCwd`），`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝；grep 因接缝覆盖不到 ripgrep 搜索而整份重写，缺 rg 时回退 GNU grep 并标注降级）；零运行时依赖，只转发白名单会话变量，路径在发 ssh 前 fail-closed；主机指纹 TOFU（`accept-new`：新主机首次零人工前置、变更仍拒绝），成功/报错文案回写远端路径 |
+| [remote-tools](extensions/remote-tools.md) | 内置工具的 SSH 远程后端：七个内置工具加 `remote`/`remotePort`（bash 另有 `remoteCwd`），`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝；grep 因接缝覆盖不到 ripgrep 搜索而整份重写，缺 rg 时回退 GNU grep 并标注降级）；**远端目标登记表**（别名 + strict 白名单默认开，`remote_targets` 工具 + `/remote:add|list|rm|strict` 命令）；零运行时依赖，只转发白名单会话变量，路径在发 ssh 前 fail-closed；主机指纹 TOFU（`accept-new`：新主机首次零人工前置、变更仍拒绝），成功/报错文案回写远端路径 |
 | [dir-context](extensions/dir-context.md) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格位于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；由外向内、每 turn 一次正文（同 turn 内同链的其余触碰补一行指针，并行调用不静默）、compact 后按需重载、cwd 之外零注入、带 `remote` 的远端调用零注入（不依赖 remote-tools）、码点安全截断 |
 
 ## 工具卡（非插件）
