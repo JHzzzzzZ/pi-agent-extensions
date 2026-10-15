@@ -6,15 +6,17 @@
       "id": 1,
       "globalId": 398,
       "text": "新插件 btw：类 Claude Code /btw 的旁路对话——主对话运行中可提问了解当前进展，不影响主会话（不写主上下文、不打断主 run）。实现路径：/btw 命令读当前分支尾部 → ctx.modelRegistry.streamSimple() 直调模型（goal 评估器同款，含虚拟模型路由）→ 回答在独立面板展示、支持连续追问。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/btw-sidechat",
       "tags": [],
       "priority": 5,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付：merge 9bda61f（feat/btw-sidechat，8 提交；主干全量 25/25 套件 2642 用例 pass 2625/fail 0 + typecheck 零错误）。真机 opt-in 2/2（真实 pi RPC + glm-5.3-flash：空闲 /btw 出答案且 disposition=handled、主 agent 流式跑 bash sleep 25 期间照样作答 notify 先于 agent_settled、两种情况会话零写入）；安装冒烟 18 扩展无新增问题。三轮跨厂商评审（zai-coding-cn/glm-5.3-flash，异厂商）第 3 轮 PASS 且无新意见；第 1/2 轮 9+5 条意见全部处理（零写入计数面 8+5+3 全计数、源码守卫 24 条、预算含分隔与标注头、会话代际号三条腿含 /btw:clear、provider 收尾无条件、系统提示防注入句）。对齐文档 todos/align/btw-todo#1.md 人确已过（用户「按推荐」→「确认」）。上游遗留：general#35（kimi-coding 目录缓存 404，默认 reviewer 用不了）。"
+      ],
       "createdAt": "2026-10-15T08:28:02.916Z",
       "claimedAt": "2026-10-15T08:31:39.494Z",
-      "completedAt": null,
+      "completedAt": "2026-10-15T10:30:36.935Z",
       "alignedAt": "2026-10-15T08:38:56.802Z"
     }
   ]
