@@ -101,7 +101,7 @@
       "id": 6,
       "globalId": 396,
       "text": "后台任务完成通知改为中途送达（不等 agent 收工）：deliverExit 的 deliverAs 从 followUp 改 steer。现状：agent 连续工作时外层循环到不了「agent 要停」检查点，通知压在 agent followUp 队列里、transcript 无痕，直到本轮工作结束才弹出；steer 在当前 turn 的工具批结束后立刻进上下文（不 streaming 时行为不变：triggerTurn 直接起新 turn）。同变更需同步：README 完成通知口径、docs/extensions/timeout-bg.md 卡、index.ts 头注释、模型指南文案（\"follow-up message arrives\"）、test/index.test.ts 的 deliverAs 断言。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/timeout-bg-steer-notice",
       "tags": [
         "通知",
@@ -109,10 +109,12 @@
       ],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "merge bb5208a（T2）。deliverExit 改 deliverAs: steer；followUpText→exitNoticeText；新增 delivery-semantics 用例接宿主真 Agent+真 convertToLlm+pi-ai faux（steer 第 2 次请求即带通知 / followUp 第 3 次才带）；测试 70+2、typecheck 零错误、全量门 24/24 套件 2570 用例 fail 0（首跑 todo-cli 并发 flaky 已记 incidents 并基线对照）。两轮跨厂商评审（kimi-coding/k3-256k）：轮1 1 P1+2 P2 已整改/驳回，加评轮无 P1。docs/cross 旧口径顺延 docs-todo#9（T3）。"
+      ],
       "createdAt": "2026-10-15T06:57:10.132Z",
       "claimedAt": "2026-10-15T06:57:14.715Z",
-      "completedAt": null,
+      "completedAt": "2026-10-15T08:08:40.320Z",
       "alignedAt": "2026-10-15T06:57:47.440Z"
     }
   ]
