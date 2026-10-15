@@ -1,10 +1,10 @@
 # loop — /loop 会话定时任务（循环 / 提醒 / 后台 agent）
 
-> last verified @ 6c93a70
+> last verified @ 0aa4f0c
 
 ## 职责与边界
 
-`/loop` 与 agent 工具 `loop_create/list/delete` 创建四类定时任务：固定间隔循环、daily 每天定时、window 每日时间窗口、一次性提醒；到期经 followUp 注入当前会话，`--bg` 则拉起独立子 pi 后台执行（会话落盘可 resume；v1.4.0 起 `--bg` 支持可选 `--model <provider/id>` 透传子 pi 模型指定，仅后台模式支持，前台带 model 显式报错——fail-closed 而非静默忽略）。**v1.8.0 起同一任务的后台轮次允许重叠、不设并发上限**（曾为「上一轮在跑就跳过」）。**不做**：跨会话共享任务与轮次历史（任务随会话快照存亡，轮次条目随会话文件存亡）、补跑错过的触发点、持久化脚本编排（那是 pwr）、provider 层模型预检（未知模型由子 pi 报错、任务标记 failed——引 provider registry 违背零依赖）。
+`/loop` 与 agent 工具 `loop_create/list/delete` 创建四类定时任务：固定间隔循环、daily 每天定时、window 每日时间窗口、一次性提醒；到期经 steer 注入当前会话（v1.11.0：agent 正在响应时在当前工具批结束就送达，不再等它收工），`--bg` 则拉起独立子 pi 后台执行（会话落盘可 resume；v1.4.0 起 `--bg` 支持可选 `--model <provider/id>` 透传子 pi 模型指定，仅后台模式支持，前台带 model 显式报错——fail-closed 而非静默忽略）。**v1.8.0 起同一任务的后台轮次允许重叠、不设并发上限**（曾为「上一轮在跑就跳过」）。**不做**：跨会话共享任务与轮次历史（任务随会话快照存亡，轮次条目随会话文件存亡）、补跑错过的触发点、持久化脚本编排（那是 pwr）、provider 层模型预检（未知模型由子 pi 报错、任务标记 failed——引 provider registry 违背零依赖）。
 
 ## 文件地图
 
@@ -12,7 +12,7 @@
 - `tasks.ts` — 任务状态机与全部上限常量（`MAX_TASKS`/`MAX_TASK_LEN`/`RECURRING_TTL_MS`/`MAX_BG_SUMMARY_LEN`/`BG_HISTORY_DISPLAY`）、白名单快照序列化（`loop-tasks-v1`，只装运行中轮次）。改调度语义或快照格式必看。
 - `runner.ts` — 后台子 `pi --mode json -p` 契约与超时/强杀策略；`getPiInvocation` 解析 pi 可执行入口（`piEntry` 覆盖供真机冒烟在 node 下直接调用）。
 - `tools.ts` — 三个 agent 工具，经 `LoopToolDeps` 操作 index.ts 注入的任务状态（persist / refreshWidget 回调）。**pi 1.0 工具面契约（v1.10）**：`loop_create` / `loop_delete` 标 `exposure: "model-only"`（脚本不可调，codemode 里只能由模型发起的建/删任务不落到脚本手里）；`loop_list` 保持缺省 `direct` 并声明 `outputSchema` + `structuredContent`（稳定契约 `LoopTaskView`：`tasks[]` 的 id / kind / schedule / task / nextAt / background / running / recentRuns，字段取自 `LoopTask` 与 widget 口径，**不镜像内部 `details`**）；三工具同属 `namespace: loop`，`annotations` 按 general-todo#21 映射表。
-- `index.ts` — 对齐秒节拍刷新（`aligned-ticker.ts`）、followUp 送达、widget 渲染、生命周期（session_start / shutdown / 模块级 dispose）。
+- `index.ts` — 对齐秒节拍刷新（`aligned-ticker.ts`）、steer 送达、widget 渲染、生命周期（session_start / shutdown / 模块级 dispose）。
 - `aligned-ticker.ts` — 对齐秒边界节拍器（每插件一份，跨插件契约见 `docs/cross/status-bar.md`）。
 - `widget-band.ts` — widget 排序带（每插件一份，跨插件契约同上卡）：只登记 band key `30:loop` 的逻辑行，由 band key 最小的可见段当 owner 一次写宿主单键 `widget-band`（宿主每次 setWidget 都 delete+set，各写各键会逐秒换位）。`test/widget-band.test.ts` 锁本拷贝的语义（合并顺序 / owner 移交 / 卸载 / 文本指纹 / 异常隔离）。
 
@@ -20,7 +20,7 @@
 
 1. `/loop …` 或 `loop_create` → 解析为 CreateSpec → `createTask` 校验上限 → 全量快照写 `loop-tasks-v1` 自定义条目（不进 LLM 上下文）。
 2. index.ts 按对齐秒节拍扫到期任务 → 到期推进 `nextDueAt`（错过的时间点不补跑，只触发一次）。widget 倒计时文本指纹未变时跳过写 widget（>1h 时 formatCountdown 只到分钟，每秒若无变化就不重绘），写入走 `writeWidgetBand(30:loop, …)`（宿主键 `widget-band`；无任务时清本段登记 → 全空时宿主键卸载）。
-3. 前台：任务文本以 `loop-task-due` 自定义类型经 `pi.sendMessage(deliverAs: "followUp")` 送达——空闲开新 turn，agent 正在响应则排队到当前 turn 结束。
+3. 前台：任务文本以 `loop-task-due` 自定义类型经 `pi.sendMessage({ triggerTurn: true, deliverAs: "steer" })` 送达（v1.11.0，口径同 timeout-bg）——空闲开新 turn；agent 正在响应则在**当前工具批结束**的回合边界进上下文（不等它收工）。正文首行标明「独立任务」，抵销插话被读成当前任务追加要求的语义漂移。
 4. 后台：`runner.ts` 拉起 `pi --mode json -p --name loop-<id>-<HHMM>`（**不带 --no-session**；任务带 model 时附 `--model <provider/id>`）；JSON stdout 首行 session 头捕获会话 id（运行中即回调写进轮次记录，`/loop:list` 的运行中行可直接 resume），最后一条 assistant 文本截断为摘要。
 5. 轮次记录（v1.8）：任务内存态 `runs` 装本会话全部轮次；**快照只持久化 `status==="running"` 的轮次**（`activeRuns`），已结束轮次逐条写 append-only 会话条目 `loop-run-v1`。`session_start` 回放条目重建历史，并把快照里恢复出的轮次（旧 `lastRun` / 宿主中途退出留下的在途轮次）补写为条目——不补写则重启即丢。
 6. 会话恢复时从快照水合任务（暂停任务恢复后错过的间隔直接跳过）；关闭时终止全部在途轮次并逐轮写 `interrupted` 条目。
@@ -41,6 +41,7 @@
 - 调度不依赖 UI：session_start 无论 `hasUI` 都启动计时器；widget 走 `hasUI` 守卫且传纯无样式字符串（`ExtensionUIContext` 无 theme 字段），写入经 `widget-band.ts`（本插件不写自己的宿主键）。
 - **工具面契约（v1.10）与内部结构分离**：`loop_list` 的 `structuredContent` 是给脚本的稳定契约（codemode 脚本拿到它而不是文本），`details`（现为 `{ count }`）继续只作内部/测试口径——两者同源但**不得互相镜像**；快照序列化（`loop-tasks-v1`）与 widget 渲染一律用任务内部结构，不读 `structuredContent`，所以快照格式不因契约字段变化而变。
 - 契约里的 `kind` 与 `schedule` 两种口径同源：`kind` 取 `recurring`/`LoopTask.schedule.kind`（`once`/`interval`/`daily`/`window`），`schedule` 用 `describeRecurrence` 的文本（与 `/loop:list` 一致）；暂停任务不给 `nextAt`（widget 的 — 口径）；轮次上限不新造：运行中全部 + 最近 `BG_HISTORY_DISPLAY`（10）条已完成，截断常量仍在 tasks.ts。
+- **前台送达必须用 `deliverAs: "steer"`（loop-todo#12 / v1.11.0，先例 timeout-bg#6）**：宿主 agent loop 只在**外层循环「agent 本来要停」的检查点**消费 followUp 队列，而 steer 在内层循环每轮工具批结束后取——agent 连着干活时 followUp 任务会一直压在队列里、转录里无痕迹，直到它收工才弹出。空闲（非流式）时两分支等价：`triggerTurn: true` 直接起一轮。代价（有意接受）：任务插进当前工作流，可能改变 agent 当前计划，故正文带「独立任务」提示。别改回 followUp（`test/delivery-semantics.test.ts` 用宿主真实 `Agent` + faux provider 锁的就是这个时机差）。
 - 时钟一律注入 `nowMs`，代码里禁止直接 `Date.now()`（仓库时钟约定，见 docs/cross/deps-ports.md）。
 
 ## 已知坑
@@ -54,9 +55,9 @@
 
 ## 改动清单
 
-- 必跑：`cd src/extensions/loop && npm install && npm test`（222 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（插件与根版本成对 bump，沿用历史配对模式，不在此写死数字）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
+- 必跑：`cd src/extensions/loop && npm install && npm test`（224 个）+ `npm run typecheck`；触碰根 package.json 时同步 bump 版本（插件与根版本成对 bump，沿用历史配对模式，不在此写死数字）。仓库级：`npm run test:all`（本套件已登记，见 docs/tools/test-all.md）。
 - 工具面契约测试在 `test/index.test.ts` 的两组：「工具面契约」断言 exposure / annotations / namespace，「loop_list 结构化结果」断言字段并让 typebox `Value.Check` 按 `outputSchema` 校验（空会话也要过）；测试文件 import `typebox/value` ⇒ `npm test` 需先 `npm install`（同 pwr 套件）。改契约字段时 `tools.ts` 的 `LoopTaskView` / outputSchema / 本卡契约段三处同改。
 - opt-in 真机冒烟（需鉴权 + 网络，不进 npm test）：`node src/extensions/loop/test/bg-overlap-smoke.mjs`——真实 pi 子进程两轮并发，校对各自 session id/会话文件与并发峰值。
-- 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台并发重叠/阈值提示/interrupted + 工具面契约；widget 断言按宿主键 `widget-band`）、test/widget-band.test.ts（排序带语义）、test/tasks.test.ts（调度推进、7 天过期边界与轮次快照/回放）、test/runner.test.ts（子进程契约 + label/onSessionId/piEntry）、test/parse.test.ts（语法与闭区间窗口）。
+- 必看测试：test/index.test.ts（生命周期 + tick 送达 + 后台并发重叠/阈值提示/interrupted + 工具面契约；widget 断言按宿主键 `widget-band`）、test/delivery-semantics.test.ts（宿主真实 `Agent` + `convertToLlm` + faux provider 锁投递时机：steer 下一轮请求就带上 / followUp 要等收工）、test/widget-band.test.ts（排序带语义）、test/tasks.test.ts（调度推进、7 天过期边界与轮次快照/回放）、test/runner.test.ts（子进程契约 + label/onSessionId/piEntry）、test/parse.test.ts（语法与闭区间窗口）。
 - fake 模式：进程边界手写 fake child + fake spawn（runner.test.ts，参照 deps-ports.md fake 选型规则 1）；时钟经 nowMs 注入手动推进，不引 mock 库。
 - 改调度语义：parse.ts 与 tasks.ts 的推进逻辑两端同看，并补 parse.test.ts 边界用例（午夜 / 窗口端点 / 已过时刻排明天）。

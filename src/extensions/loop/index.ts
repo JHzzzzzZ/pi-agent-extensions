@@ -12,8 +12,10 @@
  * agent 工具（tools.ts）：loop_create / loop_list / loop_delete，
  * 供模型用自然语言创建与管理定时任务。
  *
- * 到期任务经 pi.sendMessage(deliverAs: "followUp") 在回合间送达：
- * agent 空闲则开新 turn，正在响应则排队到当前 turn 结束。
+ * 到期任务经 pi.sendMessage(deliverAs: "steer") 送达（loop-todo#12，口径同 timeout-bg#6）：
+ * agent 空闲则开新 turn；正在响应则在该回合的工具批结束后进上下文（不等它收工）——
+ * followUp 只在 agent「本来要停」的检查点被消费，连着干活时任务会一直被压着。
+ * 代价（有意接受）：消息插进当前工作流，故正文首行标明「独立任务」，请 agent 先收尾手上的工作。
  * 任务以全量快照持久化为自定义会话条目（loop-tasks-v1），随会话恢复；
  * 自定义条目不进入 LLM 上下文。
  *
@@ -243,11 +245,11 @@ export default function (pi: ExtensionAPI, overrides?: LoopBgOverrides) {
         pi.sendMessage(
           {
             customType: LOOP_DUE_CUSTOM_TYPE,
-            content: `[loop ${t.id}] 定时任务触发，请执行：\n\n${t.task}`,
+            content: `[loop ${t.id}] 定时任务触发（独立任务：先收尾手上的工作，再处理本条）\n\n${t.task}`,
             display: true,
             details: { loopId: t.id, recurring: t.recurring },
           },
-          { triggerTurn: true, deliverAs: "followUp" },
+          { triggerTurn: true, deliverAs: "steer" },
         );
       } catch {
         // 单条送达失败不影响其余任务

@@ -384,10 +384,12 @@ describe("到期触发", () => {
     const { message, options } = fake._sent[0]!;
     assert.equal(message.customType, LOOP_DUE_CUSTOM_TYPE);
     assert.ok(String(message.content).includes("喝水提醒"));
+    // 插话语义的补偿（loop-todo#12）：正文标明这是独立任务，别读成当前任务的追加要求
+    assert.ok(String(message.content).includes("独立任务"));
     assert.equal(message.display, true);
     const details = message.details as { loopId: string };
     assert.ok(typeof details.loopId === "string" && details.loopId.length > 0);
-    assert.deepEqual(options, { triggerTurn: true, deliverAs: "followUp" });
+    assert.deepEqual(options, { triggerTurn: true, deliverAs: "steer" });
 
     // 已落盘为空（自删）
     const last = fake._persisted[fake._persisted.length - 1]!.data as { tasks: LoopTask[] };
