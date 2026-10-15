@@ -9,6 +9,7 @@
       "status": "open",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -23,6 +24,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "：11 张卡 + INDEX + 3 份 cross + incidents 全部落盘，主代理硬校审 + subagent 交叉校对通过",
@@ -47,6 +49,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "硬原则：只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄代码、不列 API；每份 ≤100 行、bullet 为主。",
@@ -64,6 +67,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -78,6 +82,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "@ 5c217ab，2026-09-09，来源：定时任务调研 history/2026-09-09.md"
@@ -94,6 +99,7 @@
       "status": "open",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [],
       "createdAt": null,
@@ -108,6 +114,7 @@
       "status": "done",
       "branch": null,
       "tags": [],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "@ 84636e8/merge 25d5d10，2026-09-10，用户直接指令；登记补录于收尾门"
@@ -128,6 +135,7 @@
         "安装",
         "按需"
       ],
+      "priority": 5,
       "dependsOn": [],
       "notes": [
         "完成 feat/docs-readme-ondemand-install → dev-laptop merge 831f09d：README 安装节新增「只装其中几个扩展（按需安装）」小节（推荐 pi config [-l]/Tab 交互勾选；备选 packages 对象形式过滤：普通路径白名单 / -path 精确排除 / [] 全禁 / !glob / 「只写 +path 不收窄」陷阱；备选手动复制指向方式二；尾注「只决定加载哪些资源，克隆与依赖仍按整仓」），并把「安装后由 pi 统一管理」里 pi config 一条交叉引用到新节。自测：根三自检绿（contract 3/3、smoke 21/21、todo 44/44）+ install-smoke 12/12@51 命令 + 真机过滤实测（文档示例 pwr+solo-mode：20 扩展命令（总 21 含内置 llama）、uiKeys 30:pwr/pwr-runs/40:solo-mode；对照：字符串源 51 命令、纯 + 两条仍 51 命令、- 排除 10 条 5 命令）；纯文档改动未跑各扩展套件。"
@@ -135,6 +143,24 @@
       "createdAt": "2026-09-14T14:12:10.009Z",
       "claimedAt": "2026-09-14T14:12:13.235Z",
       "completedAt": "2026-09-14T14:14:32.840Z",
+      "alignedAt": null
+    },
+    {
+      "id": 9,
+      "globalId": 397,
+      "text": "docs/cross/composition-surfaces.md 的 timeout-bg 行旧口径：会话生命周期段仍写「另经 pi.sendMessage（deliverAs followUp）回送后台完成消息」，timeout-bg#6 起已改 steer（中途送达）。注意：docs/cross/ 属契约面 ⇒ 改它要从严取档 T3（哪怕只改一句散文），所以不在 T2 条目里顺手改。顺带核对 docs/specs/direct-background.md:11,35 的同类旧口径（#5 时点规格，或按「时点文档」明确不改）。来源：timeout-bg#6 第 1 轮跨厂商评审 P2。",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "契约文档",
+        "timeout-bg"
+      ],
+      "priority": 4,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-15T07:37:06.178Z",
+      "claimedAt": null,
+      "completedAt": null,
       "alignedAt": null
     }
   ]

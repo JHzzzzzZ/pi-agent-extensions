@@ -96,6 +96,24 @@
       "claimedAt": "2026-10-15T03:31:45.324Z",
       "completedAt": "2026-10-15T06:21:18.977Z",
       "alignedAt": "2026-10-15T03:51:29.798Z"
+    },
+    {
+      "id": 6,
+      "globalId": 396,
+      "text": "后台任务完成通知改为中途送达（不等 agent 收工）：deliverExit 的 deliverAs 从 followUp 改 steer。现状：agent 连续工作时外层循环到不了「agent 要停」检查点，通知压在 agent followUp 队列里、transcript 无痕，直到本轮工作结束才弹出；steer 在当前 turn 的工具批结束后立刻进上下文（不 streaming 时行为不变：triggerTurn 直接起新 turn）。同变更需同步：README 完成通知口径、docs/extensions/timeout-bg.md 卡、index.ts 头注释、模型指南文案（\"follow-up message arrives\"）、test/index.test.ts 的 deliverAs 断言。",
+      "status": "processing",
+      "branch": "feat/timeout-bg-steer-notice",
+      "tags": [
+        "通知",
+        "投递语义"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-15T06:57:10.132Z",
+      "claimedAt": "2026-10-15T06:57:14.715Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-15T06:57:47.440Z"
     }
   ]
 }
