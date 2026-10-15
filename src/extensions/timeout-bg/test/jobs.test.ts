@@ -144,3 +144,16 @@ test("list：最近登记在前；clear：只清已结束的记录", () => {
     ["bg-2"],
   );
 });
+
+test("origin：缺省为 timeout（既有调用点零改动），主动后台显式标 background", () => {
+  const h = makeHarness();
+  const byTimeout = h.registry.background({ id: "bg-1", pid: 1, command: "a", logPath: "/tmp/1.log" });
+  h.tickClock(10);
+  const byRequest = h.registry.background({ id: "bg-2", pid: 2, command: "b", logPath: "/tmp/2.log", origin: "background" });
+  assert.equal(byTimeout.origin, "timeout");
+  assert.equal(byRequest.origin, "background");
+  assert.deepEqual(
+    h.registry.list().map((j) => j.origin),
+    ["background", "timeout"],
+  );
+});

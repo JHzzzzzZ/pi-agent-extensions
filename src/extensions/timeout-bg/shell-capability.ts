@@ -12,6 +12,7 @@
  */
 
 import type { EventBus, ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { requestsRunInBackground } from "./params.ts";
 
 /** 收集频道（跨扩展契约；形状升级用新频道 v2，不做版本字段）。 */
 export const SHELL_CAPABILITY_CHANNEL = "pi-extensions:shell-capability:v1";
@@ -24,6 +25,8 @@ export interface ShellCapability {
 	isRemoteCall(params: unknown): boolean;
 	/** 远端执行（与本扩展自己的 execute 同签名）。 */
 	executeRemote(id: string, params: unknown, signal: unknown, onUpdate: unknown, ctx: unknown): Promise<unknown>;
+	/** 远端分支是否支持 `run_in_background`（timeout-bg-todo#5；缺席/非布尔 = 不支持）。 */
+	runInBackground: boolean;
 	/** 附给模型的远端指南。 */
 	guideline?: string | undefined;
 }
@@ -57,7 +60,7 @@ export function collectBashCapability(events: EventBus | undefined): ShellCapabi
 
 function toShellCapability(value: unknown): ShellCapability | null {
 	if (typeof value !== "object" || value === null) return null;
-	const { parameters, isRemoteCall, executeRemote, guideline } = value as Record<string, unknown>;
+	const { parameters, isRemoteCall, executeRemote, guideline, runInBackground } = value as Record<string, unknown>;
 	if (typeof parameters !== "object" || parameters === null) return null;
 	if (typeof isRemoteCall !== "function" || typeof executeRemote !== "function") return null;
 	if (guideline !== undefined && typeof guideline !== "string") return null;
@@ -65,6 +68,8 @@ function toShellCapability(value: unknown): ShellCapability | null {
 		parameters: parameters as Record<string, unknown>,
 		isRemoteCall: (params: unknown) => isRemoteCall(params) === true,
 		executeRemote: (id, params, signal, onUpdate, ctx) => executeRemote(id, params, signal, onUpdate, ctx),
+		// 加法式扩展：缺席或非布尔一律当「不支持」（不因新字段判整份载荷畸形——旧提供方照常可用）。
+		runInBackground: runInBackground === true,
 		guideline: typeof guideline === "string" && guideline.length > 0 ? guideline : undefined,
 	};
 }
@@ -100,10 +105,14 @@ export interface BashDispatchDeps {
 /**
  * 把本扩展的默认超时套用到远端参数上：只补缺省，**不碰模型显式给的值**
  * （哪怕它非法——合法性由远端分支按宿主同一句文案拒绝）。
+ *
+ * `run_in_background: true` 时**不注入**：后台任务不受超时约束，注入只会让远端多一个
+ * 永远不会响的定时器（timeout-bg-todo#5）。
  */
 export function applyDefaultTimeout(params: unknown, defaultSeconds: number | undefined): unknown {
 	if (defaultSeconds === undefined) return params;
 	if (typeof params !== "object" || params === null) return params;
+	if (requestsRunInBackground(params)) return params;
 	const source = params as { timeout?: unknown };
 	if (source.timeout !== undefined) return params;
 	return { ...(source as object), timeout: defaultSeconds };
@@ -124,6 +133,12 @@ export function createBashDispatch(deps: BashDispatchDeps): ToolDefinition["exec
 			throw new Error("远端 shell 能力判定失败：本次调用已拒绝执行。");
 		}
 		if (!remote) return deps.local(id, params, signal, onUpdate, ctx);
+		// 远端分支不支持主动后台时 fail-closed（timeout-bg-todo#5）：静默按前台等待跑，
+		// 模型只会以为「它自己没转后台」，而用户要的让路没有发生。
+		if (requestsRunInBackground(params) && !deps.capability.runInBackground) {
+			deps.notify(ctx, "远端 shell 不支持直接转后台（对端版本不支持该参数）：本次调用按错误结束。");
+			throw new Error("远端 shell 不支持直接转后台：为避免悄悄退化成前台等待，本次调用已拒绝。");
+		}
 		const forwarded = applyDefaultTimeout(params, deps.defaultTimeoutSeconds);
 		try {
 			const result = await deps.capability.executeRemote(id, forwarded, signal, onUpdate, ctx);

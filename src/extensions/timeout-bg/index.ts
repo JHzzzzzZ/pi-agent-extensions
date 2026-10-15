@@ -1,11 +1,12 @@
 /**
- * timeout-bg — shell 工具超时转后台 + 默认超时（timeout-bg-todo#1）
+ * timeout-bg — shell 工具超时转后台 + 默认超时 + 主动转后台（timeout-bg-todo#1 / #5）
  *
  * 宿主 `bash` / `powershell` 工具的 `timeout` 语义是「超时即整树 kill」，且缺省
- * 没有超时。本扩展经公开接缝改两件事：
+ * 没有超时。本扩展经公开接缝改三件事：
  *   ① 命中超时（显式或默认 300s）不再杀进程，转入后台继续运行，输出继续写日志，
  *      本次 tool call 立刻以「已转后台 + jobId + 日志路径」的结果结束；
- *   ② 未显式传 timeout 时施加默认超时（`PI_TIMEOUT_BG_DEFAULT` 秒覆盖，0 = 关闭）。
+ *   ② 未显式传 timeout 时施加默认超时（`PI_TIMEOUT_BG_DEFAULT` 秒覆盖，0 = 关闭）；
+ *   ③ `run_in_background: true` 时不等超时，进程一启动就转入后台（timeout-bg-todo#5）。
  *
  * 后台任务只活在本会话（session_shutdown 全部杀掉）；自然结束时经
  * `pi.sendMessage(..., { deliverAs: "followUp", triggerTurn: true })` 送一条结果。
@@ -33,7 +34,8 @@ import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolDefinition
 import { resolveDefaultTimeout } from "./config.ts";
 import { createJobRegistry, type JobRecord } from "./jobs.ts";
 import { pruneJobLogs, resolveJobLogPath, tailFileSync } from "./logs.ts";
-import { createTimeoutOps, type ShellConfig, type SpawnLike } from "./shell-ops.ts";
+import { createRunInBackgroundDispatch, withOwnParamDescriptions } from "./params.ts";
+import { createTimeoutOps, type ShellConfig, type SpawnLike, type TimeoutMode, type TimeoutOpsDeps } from "./shell-ops.ts";
 import {
   collectBashCapability,
   createBashDispatch,
@@ -44,13 +46,13 @@ import {
 import { createRemoteJobPort, offerRemoteJobPort } from "./shell-job-host.ts";
 import { writeBand } from "./status-band.ts";
 import {
+  backgroundResultText,
   followUpText,
   formatJobList,
   jobPlace,
   shellToolDescription,
   statusBandText,
   TIMEOUT_BG_CUSTOM_TYPE,
-  timeoutParamDescription,
   timeoutResultText,
 } from "./text.ts";
 
@@ -96,20 +98,6 @@ export function killProcessTree(pid: number): void {
       /* 进程可能已退出 */
     }
   }
-}
-
-/** 只改 timeout 参数说明（宿主原文写着 "no default timeout"，与插件语义冲突）。 */
-function withTimeoutParamDescription(parameters: unknown, defaultSeconds: number | undefined): unknown {
-  if (typeof parameters !== "object" || parameters === null) return parameters;
-  const source = parameters as { properties?: Record<string, unknown> };
-  const properties = source.properties;
-  if (typeof properties !== "object" || properties === null) return parameters;
-  const timeoutSchema = properties.timeout;
-  if (typeof timeoutSchema !== "object" || timeoutSchema === null) return parameters;
-  return {
-    ...source,
-    properties: { ...properties, timeout: { ...(timeoutSchema as object), description: timeoutParamDescription(defaultSeconds) } },
-  };
 }
 
 function notify(ctx: ExtensionContext, text: string): void {
@@ -171,6 +159,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
       logPathFor: (id) => resolveJobLogPath(deps.logRoot, id),
       registry,
       timeoutText: timeoutResultText,
+      backgroundText: backgroundResultText,
     });
     let detachJobPortOffer: () => void = () => undefined;
 
@@ -213,7 +202,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
     const registerShellTool = (kind: ShellKind, ctx: ExtensionContext): void => {
       if (registered.has(kind)) return;
       registered.add(kind);
-      const operations = createTimeoutOps({
+      const opsDeps: Omit<TimeoutOpsDeps, "mode"> = {
         spawn: deps.spawn,
         shellConfig: () => deps.shellConfig(kind),
         shellName: kind,
@@ -223,17 +212,24 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
         logRoot: deps.logRoot,
         defaultTimeoutSeconds: defaultTimeout.seconds,
         platform: deps.platform ?? process.platform,
-      });
-      const base =
-        kind === "bash"
+      };
+      // 两份宿主工具定义共享同一套 ops 依赖，唯一差别是模式（timeout-bg-todo#5）：
+      // 宿主 execute 只把 command/timeout/env 交给 ops，新参数到不了那里，所以按参数选定义。
+      const createShellTool = (mode: TimeoutMode) => {
+        const operations = createTimeoutOps(mode === "background" ? { ...opsDeps, mode } : opsDeps);
+        return kind === "bash"
           ? createBashTool(process.cwd(), { operations })
           : createPowerShellTool(process.cwd(), { operations });
+      };
+      const base = createShellTool("timeout");
+      const backgroundBase = createShellTool("background");
       const description = shellToolDescription(kind, defaultTimeout.seconds);
       const own: BashOverrides = {
-        parameters: withTimeoutParamDescription(base.parameters, defaultTimeout.seconds),
-        execute: base.execute,
+        parameters: withOwnParamDescriptions(base.parameters, defaultTimeout.seconds),
+        execute: createRunInBackgroundDispatch({ timeout: base.execute, background: backgroundBase.execute }),
         guidelines: [
           ...((base as { promptGuidelines?: string[] }).promptGuidelines ?? []),
+          `Use ${kind} with run_in_background: true for long commands (builds, full test runs, downloads, long polls): the call returns at once, the command keeps running in the background and a follow-up message arrives when it finishes.`,
           `Use ${kind} with an explicit timeout for long commands: on timeout the command is moved to the background (log path in the result) instead of being killed.`,
         ],
       };
@@ -292,7 +288,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
     });
 
     pi.registerCommand(BG_COMMANDS.list, {
-      description: "列出本会话超时转入后台的任务",
+      description: "列出本会话转入后台的任务（命中超时 / 主动要求）",
       handler: async (_args, ctx) => {
         notify(ctx, formatJobList(registry.list(), now()));
       },

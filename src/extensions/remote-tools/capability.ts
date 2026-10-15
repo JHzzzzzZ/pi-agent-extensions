@@ -53,6 +53,19 @@ export interface RemoteJobPort {
     tail: string;
     terminate: () => void;
   }): string;
+  /**
+   * 调用方主动要求后台（remote-tools#19 新增；载荷同上但没有生效超时秒数）。
+   * **可选**：旧版 owner 没有这个方法 ⇒ 调用方 fail-closed（`REMOTE_BACKGROUND_UNSUPPORTED`），
+   * 绝不静默按前台等待跑。
+   */
+  registerBackground?(job: {
+    id: string;
+    logPath: string;
+    command: string;
+    target: string;
+    tail: string;
+    terminate: () => void;
+  }): string;
   /** 命令自然结束（远端 shell 退出）：更新退出码并触发完成通知。 */
   settle(id: string, exitCode: number | null): void;
 }
@@ -62,6 +75,8 @@ export interface RemoteBashParams extends BashToolInput {
 	remote?: unknown;
 	remotePort?: unknown;
 	remoteCwd?: unknown;
+	/** owner 的合并 schema 声明的「直接转后台」（remote-tools#19，**不是**宿主的参数）。 */
+	run_in_background?: unknown;
 }
 
 /** owner 合并进来的能力载荷（本扩展是唯一提供方，形状由本模块保证）。 */
@@ -78,13 +93,15 @@ export interface RemoteBashCapability {
 		onUpdate: AgentToolUpdateCallback<BashToolDetails | undefined> | undefined,
 		ctx: ExtensionToolContext | undefined,
 	): Promise<AgentToolResult<BashToolDetails | undefined>>;
+	/** 远端分支是否支持 `run_in_background`（remote-tools#19；owner 据此 fail-closed）。 */
+	runInBackground: boolean;
 	/** 追加给模型的远端指南（owner 拼进 promptGuidelines）。 */
 	guideline: string;
 }
 
 /** 能力载荷里的 bash 指南：owner 的文案负责本地语义，这条负责远端语义。 */
 export const BASH_REMOTE_GUIDELINE =
-	"bash 传 remote 时在远端主机执行（cwd = remoteCwd 或远端 $HOME），remote 省略或留空时走本机（默认超时与超时转后台仍然生效）。";
+	"bash 传 remote 时在远端主机执行（cwd = remoteCwd 或远端 $HOME），remote 省略或留空时走本机（默认超时与超时转后台仍然生效）；run_in_background: true 在远端同样生效（ssh 一启动即转入后台）。";
 
 /**
  * 远端意图判定（owner 的分派闸门）：
@@ -102,9 +119,9 @@ export function isRemoteBashCall(params: unknown): boolean {
 /** 盒子里的端口来自别的扩展：形状不符合契约就当「没有 owner」，绝不因畸形端口破坏会话。 */
 function toRemoteJobPort(value: unknown): RemoteJobPort | null {
 	if (typeof value !== "object" || value === null) return null;
-	const { allocate, register, settle } = value as Record<string, unknown>;
+	const { allocate, register, settle, registerBackground } = value as Record<string, unknown>;
 	if (typeof allocate !== "function" || typeof register !== "function" || typeof settle !== "function") return null;
-	return {
+	const port: RemoteJobPort = {
 		allocate: () => {
 			const ticket = allocate() as { id?: unknown; logPath?: unknown } | null | undefined;
 			if (typeof ticket !== "object" || ticket === null || typeof ticket.id !== "string" || typeof ticket.logPath !== "string") {
@@ -121,6 +138,16 @@ function toRemoteJobPort(value: unknown): RemoteJobPort | null {
 			settle(id, exitCode);
 		},
 	};
+	// 加法式扩展（remote-tools#19）：旧版 owner 没有这个方法 ⇒ 字段保持缺席（调用方探测不到
+	// 就 fail-closed）；存在但形状坏（返回值不是字符串）才当场报错。
+	if (typeof registerBackground === "function") {
+		port.registerBackground = (job) => {
+			const text = registerBackground(job);
+			if (typeof text !== "string") throw new Error(`${ErrorCodes.REMOTE_JOB_PORT_INVALID}: job 托管端口未返回后台结果文本。`);
+			return text;
+		};
+	}
+	return port;
 }
 
 /**

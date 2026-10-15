@@ -16,7 +16,7 @@ import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { resolveTimeoutMs } from "./config.ts";
 import type { JobRegistry } from "./jobs.ts";
 import { resolveJobLogPath, stripControlChars } from "./logs.ts";
-import { firstLine, timeoutResultText } from "./text.ts";
+import { backgroundResultText, firstLine, timeoutResultText } from "./text.ts";
 
 /** 与宿主 `ShellConfig` 同形（自带定义，避免依赖宿主内部模块路径）。 */
 export interface ShellConfig {
@@ -45,6 +45,9 @@ export interface SpawnedProcess {
 
 export type SpawnLike = (file: string, args: readonly string[], options: SpawnOptions) => SpawnedProcess;
 
+/** 进后台注册表的来源：命中超时（既有语义）或调用方主动要求（timeout-bg-todo#5）。 */
+export type JobOrigin = "timeout" | "background";
+
 /** 进后台注册表所需的最小信息（本地 job 只填前四项；远端 job 另有目标主机与终止钩子）。 */
 export interface BackgroundJob {
   id: string;
@@ -53,6 +56,8 @@ export interface BackgroundJob {
   logPath: string;
   target?: string | undefined;
   terminate?: (() => void) | undefined;
+  /** 来源（缺省 `"timeout"`：既有调用点无需改动，展示口径不变）。 */
+  origin?: JobOrigin | undefined;
 }
 
 export interface TimeoutOpsDeps {
@@ -68,7 +73,17 @@ export interface TimeoutOpsDeps {
   /** 未显式传 timeout 时的默认秒数；undefined = 不施加默认超时。 */
   defaultTimeoutSeconds: number | undefined;
   platform: NodeJS.Platform;
+  /**
+   * 本 ops 实例的模式（构造期固定；缺省 `"timeout"` = 既有语义）：
+   *   - `"timeout"`：命中超时（显式或默认）才转后台；
+   *   - `"background"`：spawn 成功即登记转后台，本次调用立刻结束（`run_in_background: true`）。
+   * 模式由 index.ts 的两份工具定义各持一份，**不用哨兵值**（`timeout: 0` 在本插件里已是
+   * 「关闭默认超时」，`-1` 是魔法数；对齐文档 `todos/align/timeout-bg-todo#5.md`）。
+   */
+  mode?: TimeoutMode | undefined;
 }
+
+export type TimeoutMode = "timeout" | "background";
 
 /** 超时结果里附带的最近输出上限（字节）。 */
 export const TIMEOUT_TAIL_BYTES = 2000;
@@ -157,9 +172,33 @@ export function createTimeoutOps(deps: TimeoutOpsDeps): BashOperations {
       });
 
       child.on("error", (error) => {
+        // 已转后台（超时或主动）：本次 tool call 早已结束（settle 是 no-op）⇒ 必须自己收口。
+        // spawn 异步失败（shell 二进制 ENOENT/EACCES 等）只发 error、不保证发 exit，
+        // 不收口就会留下永久 running 的僵尸 job（状态条卡住、永远没有完成通知）——
+        // 主动后台把登记提前到 spawn 之后，这条路径从「罕见」变成「必然要处理」。
+        if (backgrounded && !exitSeen) {
+          // 收口同样等日志 flush（与 exit 分支同口径）：通知里的尾部输出靠 tailFileSync 现读日志。
+          logStream.end(() => deps.registry.markExited(jobId, null));
+          return;
+        }
         logStream.end();
         settle(() => reject(error));
       });
+
+      // 主动后台（timeout-bg-todo#5）：不等超时。handler 先挂完再登记——exit 事件在同一 tick 内
+      // 不可能被派发，因此登记一定早于任何退出处理（否则 job 会永久停在 running）。
+      if (deps.mode === "background") {
+        backgrounded = true;
+        const job = deps.registry.background({
+          id: jobId,
+          pid: child.pid ?? null,
+          command: firstLine(command, 400),
+          logPath,
+          origin: "background",
+        });
+        settle(() => reject(new Error(backgroundResultText(job))));
+        return;
+      }
 
       if (timeoutMs !== undefined) {
         timer = setTimeout(() => {

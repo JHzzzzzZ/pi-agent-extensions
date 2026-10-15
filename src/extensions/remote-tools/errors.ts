@@ -42,6 +42,11 @@ export const ErrorCodes = {
 	REMOTE_JOB_PORT_INVALID: "REMOTE_JOB_PORT_INVALID",
 	/** 远端超时转后台失败（登记 job 时端口抛错）：已断开本地 ssh，远端命令可能仍在运行。 */
 	REMOTE_BACKGROUND_FAILED: "REMOTE_BACKGROUND_FAILED",
+	/**
+	 * 远端直接转后台失败（remote-tools#19）：没装 timeout-bg / 端口是旧版 / 后台日志建不出——
+	 * fail-closed，绝不静默前台跑。
+	 */
+	REMOTE_BACKGROUND_UNSUPPORTED: "REMOTE_BACKGROUND_UNSUPPORTED",
 	/** strict 白名单开着，而目标既不是已登记别名也不匹配任何条目的展开目标（remote-tools#2）。 */
 	UNKNOWN_REMOTE_TARGET: "UNKNOWN_REMOTE_TARGET",
 	/** 目标与多个已登记条目歧义（同一主机登记了多条且无法用 user/port 区分）——fail-closed，绝不按序挑一个。 */

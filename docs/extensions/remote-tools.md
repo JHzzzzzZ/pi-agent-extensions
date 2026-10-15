@@ -106,6 +106,13 @@
   - 命令自然结束时 `settle(id, 退出码)`（传输层中断记 `null`，不把 ssh 的 255 当命令退出码）。
   频道的形状/义务/失败口径见 `docs/cross/shell-tool-capability.md`。“不断连”的真机取证（标记文件在超时后
   仍写出）在 `test/remote-live.test.ts`。
+- **远端主动后台（`#19`，与 timeout-bg 组合时）**：`bash` 带 `run_in_background: true` 时不等超时 ——
+  ssh 一启动就 `registerBackground`（同 `terminate` 钩子、同日志、同 `/bg` 面与结束通知），本次 tool call 立刻
+  以 owner 返回的「⏸ 已直接转入后台」文本结束。**fail-closed 不回退**：拿不到托管端口（没装 timeout-bg）/ 端口是旧版
+  （没有 `registerBackground`）/ 后台日志建不出来 ⇒ `REMOTE_BACKGROUND_UNSUPPORTED` 且**不 spawn**（也绝不在本机跑）；
+  旧路径（单装本扩展）不声明这个参数，所以不存在「假装支持」。
+  参数由 owner 声明、随 `params` 到这里，读完立即随 `stripRemoteFields` 剥掉（**不能**透传给宿主内置 bash 定义）；
+  后台模式不装计时器（显式 `timeout` 仍按宿主同句文案校验）。频道路径见 `capability.ts` 的 `RemoteJobPort.registerBackground`。
 - **目标登记表（`#2`）三条硬口径**：① **本地调用绝不读登记表**（`hasRemoteIntent` 为假时不 read、不 write、不报错；登记表损坏不得弄坏本机工具——`test/targets-tool.test.ts` 用「read 计数」锁住）；② 有远端意图但读表失败/损坏 ⇒ fail-closed 报 `REMOTE_TARGETS_UNREADABLE`，**不静默当空表**（静默在 strict 下等于静默全拒）；③ strict 默认开，拒绝文案列已登记别名 + 两个修复入口（`/remote:add`、`remote_targets`），`/remote:strict off` 才回落成自由填写。
 - **别名解析只有一个接缝**：`resolveTarget`（`targets.ts`）在 `parseTarget` **之前**展开，展开结果仍喂给原有链路（校验/session 缓存/ssh 构造零改动）。命中口径 = `host` 相等且入参给了的 `user`/`port` 必须相等；显式 `remotePort` 优先于条目默认端口；条目不给 `host` ⇒ 别名本身当主机名交给 ssh（`~/.ssh/config` 兜底）；session 缓存键用**展开后**的目标 ⇒ 别名与字面写法共用同一份 `$HOME` 缓存。
   **命中次序（第 1/2 轮评审加固）**：**主机匹配优先、别名兜底**——字面 host 的含义不能被同名别名劫持；同一主机多命中时，先看「入参自身是不是其中一条的别名」（**仅非 `.` 形态的名字**，是就用它，否则会静默换 user），再看「没写 user 的通用条目」，仍不唯一 ⇒ `AMBIGUOUS_REMOTE_TARGET` fail-closed（不按序静默挑）；登记期另拦两种撞名形态（双向）：「含 `.` 的别名指向另一个 host」与「别名/host 与已登记条目的别名/host 同名」。`user@别名` 不做别名匹配（别名只认裸名）。
@@ -145,7 +152,7 @@
   纯函数写路径（`addTarget`/`removeTarget`/`withStrict`）、展示（`targetHintLine`/`formatTargetsList`/`strictRejectionMessage`）、
   文件端口 `createTargetsStore`（`read`/`write` 原子落盘/`readAtLoad` 同步快照；路径 `PI_REMOTE_TARGETS_FILE` > `~/.pi/agent/remote-targets.json`）
 - `errors.ts` — 错误码单源（`INVALID_REMOTE_TARGET` / `INVALID_REMOTE_PORT` / `REMOTE_PATH_NOT_ABSOLUTE` / `SSH_CONNECT_FAILED` / `SSH_TIMEOUT` / `REMOTE_NOT_FOUND` / `REMOTE_NOT_DIRECTORY` / `REMOTE_NOT_READABLE` / `REMOTE_NOT_WRITABLE` / `REMOTE_WRITE_FAILED` / `REMOTE_COMMAND_FAILED` / `HOST_MARKER_CONFLICT` / `REMOTE_CONTEXT_FAILED` / `REMOTE_CONTEXT_UNREADABLE`（后两个是远端上下文能力的：通用失败 / 链上候选存在但读不出） / `UNKNOWN_REMOTE_TARGET` / `REMOTE_TARGETS_UNREADABLE` / `REMOTE_TARGET_EXISTS` / `REMOTE_TARGET_UNKNOWN` / `REMOTE_TARGETS_WRITE_FAILED` / `AMBIGUOUS_REMOTE_TARGET`（后六个是登记表的，`#2`））
-- `test/` — 167 个：157 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(11) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(23) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(9) / `shell-composition.test.ts`(3) / `targets.test.ts`(22，登记表：解析与匹配口径/校验 fail-closed/登记删改/文件端口真实临时目录) / `targets-tool.test.ts`(8，工具与命令面/提示行与 guideline 文案/本地不读表)) + 10 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过）
+- `test/` — 176 个：165 个纯本地（`context-v2.test.ts`(6，协议 v2：真 shell 往返含 NUL 内容 / `\x02` `\x03` 帧 / 路径归一) / `ssh.test.ts`(11) / `paths.test.ts`(11) / `ops.test.ts`(20) / `grep.test.ts`(13) / `tools.test.ts`(23) / `capability.test.ts`(5) / `context.test.ts`(26，远端上下文能力：祖先链/分帧/锚点与基准归一/双向形状守卫/读不出≠不存在/握手) / `bash-timeout.test.ts`(17，含主动后台：立即登记/缺端口与旧端口 fail-closed/不装计时器/日志建不出/工具层剥参/登记失败归因/rejection 收口) / `shell-composition.test.ts`(3) / `targets.test.ts`(22，登记表：解析与匹配口径/校验 fail-closed/登记删改/文件端口真实临时目录) / `targets-tool.test.ts`(8，工具与命令面/提示行与 guideline 文案/本地不读表)) + 11 个**真机 opt-in**（`remote-live.test.ts`，未设 `PI_REMOTE_TOOLS_TEST_TARGET` 时跳过；含主动后台：ssh 一启动即登记 / 立即返回 / terminate 杀远端进程组）
 
 ## 真机验收（2026-10-10，`#9`/`#10` 后复跑）
 

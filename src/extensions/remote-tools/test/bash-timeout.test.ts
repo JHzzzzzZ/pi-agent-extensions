@@ -19,7 +19,7 @@ import { type ExtensionAPI, type ExtensionToolContext, type ToolDefinition, crea
 
 import { type RemoteJobPort, SHELL_JOB_HOST_CHANNEL } from "../capability.ts";
 import { ErrorCodes } from "../errors.ts";
-import { createRemoteBashOps, createRemoteSession, type RemoteSession } from "../ops.ts";
+import { REMOTE_BACKGROUND_REQUEST_FAILED, createRemoteBashOps, createRemoteSession, type RemoteSession } from "../ops.ts";
 import type { SshExec, SshExecRequest, SshExecResult } from "../ssh.ts";
 import { registerRemoteTools } from "../tools.ts";
 import type { CommandRegistration } from "./fixtures.ts";
@@ -82,8 +82,9 @@ interface RecordedRegistration {
 	terminate: () => void;
 }
 
-function makeFakeOwner(logDir: string) {
+function makeFakeOwner(logDir: string, options: { withBackground?: boolean } = {}) {
 	const registrations: RecordedRegistration[] = [];
+	const backgroundRegistrations: Array<Omit<RecordedRegistration, "timeoutSeconds">> = [];
 	const settled: Array<{ id: string; exitCode: number | null }> = [];
 	const host: RemoteJobPort = {
 		allocate: () => ({ id: "bg-7", logPath: path.join(logDir, "bg-7.log") }),
@@ -93,7 +94,14 @@ function makeFakeOwner(logDir: string) {
 		},
 		settle: (id, exitCode) => settled.push({ id, exitCode }),
 	};
-	return { host, registrations, settled };
+	// 旧版 owner（timeout-bg ≤ 1.2）没有 registerBackground：默认给上，要测旧版时显式关掉。
+	if (options.withBackground !== false) {
+		host.registerBackground = (job) => {
+			backgroundRegistrations.push(job);
+			return `⏸ 后台文本 ${job.id}`;
+		};
+	}
+	return { host, registrations, backgroundRegistrations, settled };
 }
 
 function makeHarness() {
@@ -207,6 +215,7 @@ test("register 抛错（端口异常）：断开本地 ssh + 带错误码的结�
 	await assert.rejects(() => pending, new RegExp(ErrorCodes.REMOTE_BACKGROUND_FAILED));
 	assert.equal(h.ssh.main.signal?.aborted, true, "转后台失败必须断开本地 ssh（不能留下看不见的孤儿）");
 	assert.equal(notified.length, 1, "失败要可见（notify 一次）");
+	assert.match(notified[0] ?? "", /超时转后台失败/, "超时路径的归因不变");
 	// 登记没成功 ⇒ 绝不能对未登记的 id 调 settle（契约只保证「kill 过的忽略」，不保证「未登记的忽略」）。
 	await new Promise((resolve) => setTimeout(resolve, 20));
 	assert.deepEqual(settledIds, []);
@@ -314,4 +323,158 @@ test("工具层接线：真 registerRemoteTools + 真 event bus 索取端口（�
 		.execute("call-2", { command: "sleep 400", remote: "deploy@10.0.0.7", remoteCwd: "/srv/app", timeout: 0.05 }, undefined, undefined, ctx);
 	await assert.rejects(() => second, /超时文本 bg-7/);
 	assert.equal(offers, 1, "缓存命中：不重复索取");
+});
+
+test("主动后台（run_in_background）：ssh 一启动就登记，本次调用以 owner 的文本结束；跑完 settle 记退出码", async () => {
+	const h = makeHarness();
+	const ops = createRemoteBashOps(h.session, { jobHost: () => h.owner.host, runInBackground: true });
+	const message = await ops
+		.exec("npm run build", HOME, { onData: () => {}, env: {} })
+		.then(
+			() => "",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+	assert.equal(message, "⏸ 后台文本 bg-7", "结果文本由 owner 单源提供（提供方不自己拼）");
+	assert.equal(h.owner.backgroundRegistrations.length, 1, "不等超时就登记");
+	assert.deepEqual(h.owner.registrations, [], "不得走超时登记");
+	assert.equal(h.ssh.main.timeoutMs, undefined, "托管路径自己计时；后台更是完全没有计时器");
+	assert.match(h.ssh.main.args.at(-1) ?? "", /pi_remote_job_pidfile/, "后台 job 仍要写 pid 文件（/bg:kill 靠它）");
+	assert.deepEqual(h.owner.settled, [], "命令还在跑，不能提前 settle");
+
+	h.ssh.finish({ exitCode: 0 });
+	await waitFor(() => h.owner.settled.length === 1, "跑完 settle");
+	assert.deepEqual(h.owner.settled, [{ id: "bg-7", exitCode: 0 }]);
+});
+
+test("主动后台：拿不到托管端口（没装 timeout-bg）⇒ fail-closed，不 spawn 也不退回旧路径", async () => {
+	const h = makeHarness();
+	const ops = createRemoteBashOps(h.session, { jobHost: () => null, runInBackground: true });
+	await assert.rejects(
+		() => ops.exec("npm run build", HOME, { onData: () => {}, env: {} }),
+		new RegExp(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED),
+	);
+	assert.equal(h.ssh.requests.length, 0, "拒绝执行：不 spawn、不前台等待");
+});
+
+test("主动后台：端口是旧版（没有 registerBackground）⇒ fail-closed", async () => {
+	const h = makeHarness();
+	const legacy = makeFakeOwner(h.logDir, { withBackground: false });
+	const ops = createRemoteBashOps(h.session, { jobHost: () => legacy.host, runInBackground: true });
+	await assert.rejects(
+		() => ops.exec("npm run build", HOME, { onData: () => {}, env: {} }),
+		new RegExp(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED),
+	);
+	assert.equal(h.ssh.requests.length, 0);
+	assert.deepEqual(legacy.registrations, [], "旧端口不能收到登记");
+});
+
+test("主动后台：显式 timeout 仍按宿主同文案校验（非法值 fail-closed）；合法值不装计时器", async () => {
+	const invalid = makeHarness();
+	const invalidOps = createRemoteBashOps(invalid.session, { jobHost: () => invalid.owner.host, runInBackground: true });
+	await assert.rejects(
+		() => invalidOps.exec("echo hi", HOME, { onData: () => {}, timeout: 0, env: {} }),
+		/Invalid timeout: must be a finite number of seconds/,
+	);
+	assert.equal(invalid.ssh.requests.length, 0, "非法 timeout 先于 spawn 拒绝");
+
+	const ok = makeHarness();
+	const okOps = createRemoteBashOps(ok.session, { jobHost: () => ok.owner.host, runInBackground: true });
+	await okOps.exec("sleep 400", HOME, { onData: () => {}, timeout: 0.05, env: {} }).catch(() => undefined);
+	assert.equal(ok.owner.backgroundRegistrations.length, 1);
+	await new Promise((resolve) => setTimeout(resolve, 80));
+	assert.deepEqual(ok.owner.settled, [], "0.05s 早已过去，但后台不装计时器");
+});
+
+test("主动后台 + 日志建不出来：fail-closed（不 spawn、不回退旧路径的前台等待）", async () => {
+	const h = makeHarness();
+	const blocker = path.join(h.logDir, "not-a-dir");
+	fs.writeFileSync(blocker, "x");
+	const host: RemoteJobPort = {
+		allocate: () => ({ id: "bg-9", logPath: path.join(blocker, "bg-9.log") }),
+		register: () => "text",
+		registerBackground: () => "text",
+		settle: () => {},
+	};
+	const ops = createRemoteBashOps(h.session, { jobHost: () => host, runInBackground: true });
+	await assert.rejects(
+		() => ops.exec("npm run build", HOME, { onData: () => {}, env: {} }),
+		new RegExp(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED),
+	);
+	assert.equal(h.ssh.requests.length, 0, "拒绝执行（不留孤儿 ssh）");
+});
+
+test("工具层接线：run_in_background 抵达远端登记（剥掉的只是宿主定义那一份），本地分支不受影响", async () => {
+	const bus = createEventBus();
+	const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-bash-wire-bg-"));
+	const owner = makeFakeOwner(logDir);
+	bus.on(SHELL_JOB_HOST_CHANNEL, (box) => {
+		(box as { host?: unknown }).host = owner.host;
+	});
+
+	const tools = new Map<string, ToolDefinition>();
+	const pi = {
+		registerTool(tool: ToolDefinition) {
+			tools.set(tool.name, tool);
+		},
+		registerCommand: () => undefined,
+		events: bus,
+	} as unknown as ExtensionAPI;
+	const ssh = new FakeSsh();
+	registerRemoteTools(pi, { exec: ssh.exec, cwd: process.cwd(), targets: looseTargets() });
+	const ctx = {
+		cwd: process.cwd(),
+		hasUI: false,
+		sessionManager: { getSessionId: () => "test-session", getSessionFile: () => undefined },
+	} as unknown as ExtensionToolContext;
+
+	await assert.rejects(
+		() =>
+			tools
+				.get("bash")!
+				.execute("call-1", { command: "npm run build", remote: "deploy@10.0.0.7", remoteCwd: "/srv/app", run_in_background: true }, undefined, undefined, ctx),
+		/⏸ 后台文本 bg-7/,
+	);
+	assert.equal(owner.backgroundRegistrations.length, 1, "参数经工具层一路抵达远端登记");
+	assert.match(ssh.main.args.at(-1) ?? "", /npm run build/);
+});
+
+test("主动后台：登记失败的通知与错误文本都按「主动后台」归因（不复用超时文案）", async () => {
+	const h = makeHarness();
+	const notified: string[] = [];
+	const brokenHost: RemoteJobPort = {
+		allocate: () => ({ id: "bg-9", logPath: path.join(h.logDir, "bg-9.log") }),
+		register: () => "不该走超时登记",
+		registerBackground: () => {
+			throw new Error("port boom");
+		},
+		settle: () => {},
+	};
+	const ops = createRemoteBashOps(h.session, { jobHost: () => brokenHost, notify: (message) => notified.push(message), runInBackground: true });
+	const message = await ops
+		.exec("npm run build", HOME, { onData: () => {}, env: {} })
+		.then(
+			() => "",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+	assert.match(message, /直接转后台失败/, "错误文本按主动后台归因");
+	assert.doesNotMatch(message, /超时转后台失败/, "不得读成超时事故");
+	assert.deepEqual(notified, [REMOTE_BACKGROUND_REQUEST_FAILED], "notify 与错误文本同口径");
+	assert.equal(h.ssh.main.signal?.aborted, true, "登记失败仍要断开本地 ssh");
+});
+
+test("主动后台：传输层 reject（防御路径）也要收口 settle 一次，不留 running 的 job", async () => {
+	const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-bash-reject-"));
+	const owner = makeFakeOwner(logDir);
+	// 生产传送层（createSpawnExec）不会 reject；这里直接替身出一个 rejected promise，锁住防御分支。
+	const session = createRemoteSession({ target: TARGET, exec: () => Promise.reject(new Error("ssh boom")), homeDir: HOME });
+	const ops = createRemoteBashOps(session, { jobHost: () => owner.host, runInBackground: true });
+
+	await assert.rejects(
+		() => ops.exec("npm run build", HOME, { onData: () => {}, env: {} }),
+		/⏸ 后台文本 bg-7/,
+	);
+	await waitFor(() => owner.settled.length === 1, "rejection 也要收口（否则 job 停在 running）");
+	assert.deepEqual(owner.settled, [{ id: "bg-7", exitCode: null }], "退出码未知就记 null，不编造");
+	assert.deepEqual(owner.registrations, [], "不得走超时登记");
+	fs.rmSync(logDir, { recursive: true, force: true });
 });

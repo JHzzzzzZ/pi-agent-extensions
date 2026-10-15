@@ -4,6 +4,7 @@
 
 一句话：覆盖内置 `bash` / `powershell` 工具，把「超时即 `killProcessTree` 整树杀」改成「超时转后台继续跑」，
 并在未显式传 `timeout` 时施加默认 300 秒（`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 关闭）。
+另提供 `run_in_background: true`（`#5`）：**不等超时**，进程一启动就转后台（远端同语义）。
 
 ## 为什么这么做
 
@@ -14,7 +15,18 @@
 
 ## 不变量（改代码前必须知道）
 
-- **超时 ≠ 取消**：abort（Esc）仍然 `killTree`；只有计时器命中才转后台。
+- **超时 ≠ 取消**：abort（Esc）仍然 `killTree`；只有计时器命中（或主动后台）才转后台。
+- **主动后台（`#5`）靠模式、不靠哨兵值**：宿主 `execute` 只把 `command`/`timeout`/`env` 交给 `operations.exec`，
+  新参数到不了 ops ⇒ 注册时按模式各建一份宿主工具定义（`timeout` / `background`），`params.ts` 的
+  `createRunInBackgroundDispatch` 按参数选一份（**不用**共享可变状态，**不用** `timeout: 0/-1`——
+  `PI_TIMEOUT_BG_DEFAULT=0` 在本插件里已是「关闭默认超时」，同词反义）。
+- **两种转后台的差别只有「何时登记」**：超时路径在定时器命中时登记，主动后台在 spawn 成功后同一 tick 登记；
+  之后日志流、`registry.markExited`、followUp 通知、`/bg` 面、状态条段全部是同一条路径。
+  主动后台**不装计时器**（`timeout` 被忽略；显式非法值仍按宿主同句文案拒绝）；
+  登记始终早于任何 exit 分发（wire 完才登记，同 tick 安全），否则 job 会永久停在 `running`。
+- **来源标记 `origin`**：`timeout`（缺省）/ `background`，只影响 `/bg` 行的 `[超时]` / `[后台]`。
+- **主动后台的结果文本不复用超时文案**（「⏸ 已直接转入后台」）：说自己“超时”会把主动行为读成事故；
+  同样以**错误**结束（`resolve` 会让结构化结果谎报 `exit_code: 0` + `wall_time_seconds: ~0`）。
 - **转后台 = 本次 tool call 以错误结束**：宿主 `exec` 契约只有 resolve/reject，我们以 `Error(超时结果文本)` 结束调用。
   宿主的 OutputAccumulator 会丢弃非 `timeout:` 前缀错误的累积文本，所以结果里的「最近输出」取自 ops 自己的内存尾部缓冲
   （`TIMEOUT_TAIL_BYTES`），**不能**现读日志文件（写入流可能尚未 flush）。
@@ -79,11 +91,12 @@
   `mergeBashParameters`（只能新增参数，撞名整份拒绝）、`createBashDispatch`（按参数分派 + 两条安全口径 + notify）、
   `describeForeignBash`/`describeLostBashRegistration`（归属冲突可见性）
 - `shell-ops.ts` — `BashOperations.exec` 实现：spawn → 计时 → 输出落盘 → 退出/超时/abort 分流
-- `shell-job-host.ts` — 远端 job 托管端口（频道常量、`allocate/register/settle`、应答索取与形状守卫）
+- `shell-job-host.ts` — 远端 job 托管端口（频道常量、`allocate/register/registerBackground/settle`、应答索取与形状守卫）
 - `status-band.ts` — footer 段前缀协调（跨插件契约的本地拷贝；本扩展那份不跨插件 import）
-- `jobs.ts` — 后台任务注册表（`running` → `exited` / `killed`，注入 `now` / `killTree` / `onExit` / `onChange`；远端 job 另有 `target` 与 `terminate`）
+- `jobs.ts` — 后台任务注册表（`running` → `exited` / `killed`，注入 `now` / `killTree` / `onExit` / `onChange`；远端 job 另有 `target`、`origin` 与 `terminate`）
 - `logs.ts` — 日志尾部读取、控制字符剔除、保留策略（7 天 / 50 个）
 - `config.ts` — 默认超时解析（env）与 timeout 毫秒校验（非法文案与宿主逐字一致）
+- `params.ts` — `run_in_background` 的读取/剥离/schema 描述注入/按模式分派（`#5`；与宿主参数面的唯一翻译点）
 - `text.ts` — 面向模型/人的静态文本模板（超时结果 / followUp / `/bg` 列表）
 
 ## 坑
@@ -99,11 +112,12 @@
 
 ## 测试与验证
 
-- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（53 个：config(6) / jobs(8) / logs(6) /
-  shell-ops(8) / shell-capability(4) / shell-job-host(9) / index 接线(12)，其中 2 条锁 codemode 视角的结构化结果、
-  3 条锁跨扩展组合（合并 schema + 分派、畸形/抛错回退可见、未知接管与顺序覆盖 notify）、2 条锁远端侧
-  （默认超时注入、托管端口 → /bg + 状态条段 + followUp）、7 条锁托管端口与注册表语义（发号/登记/完成/畸形载荷/terminate/onChange））
+- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（68 个：config(6) / params(4) / jobs(9) / logs(6) /
+  shell-ops(11) / shell-capability(8) / shell-job-host(11) / index 接线(13)，其中 2 条锁 codemode 视角的结构化结果、
+  4 条锁跨扩展组合（合并 schema + 分派、远端不支持主动后台时 fail-closed、畸形/抛错回退可见、未知接管与顺序覆盖 notify）、
+  2 条锁远端侧（默认超时注入、托管端口 → /bg + 状态条段 + followUp）、10 条锁托管端口与注册表语义（发号/登记/主动后台登记/完成/畸形载荷/terminate/onChange））
 - 进程边界测试只 fake `spawn` 与 `killTree`，真实读写临时目录日志、真实毫秒级计时器；工具本体用宿主真实 `createBashTool`。
+- **真机 opt-in**：`test/live.test.ts`（2 个，`PI_TIMEOUT_BG_TEST_LIVE=1` 才跑）用真实 spawn + 真实计时器验「立即返回 / 进程续跑 / 日志续长 / 通知一次」与超时路径同链路；远端那半在 `remote-tools/test/remote-live.test.ts`。
 - **评审记录（`#4`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 5 建议 / 6 备注）：涉及本卡的建议 ②（`shell-job-host.ts` 注释与契约都声称 register 前清洗 command，实现只洗了 tail）已修——现在 `command` 经 `firstLine(stripControlChars(...), 400)`、`target` 也剔控制字符（与本地 job 进 `/bg` 的口径一致），并补了单测；建议 ④（`/bg:kill` 对远端 job 打印 `pid ?`）已改为按 `jobPlace` 展示 `remote <host>`（与 `/bg` 列表、通知同源）。备注（记录不改）与 remote-tools 卡同轮：旧实例订阅残留（已用会话级登记/退订缓解）、`terminate` 缺失、未超时也烧号落盘、异步建不出日志、shutdown 的 terminate fire-and-forget。
 - **评审记录（`#4`，2026-10-11）**：第 2 轮（复核第 1 轮 5 条修复）= OK with notes（0 阻断 / 2 新建议 P2 / 3 备注）：5 条全部核实为已修；建议 ①（三张卡的 `last verified` 应指向动过代码的修复提交）已处理；建议 ②（契约卡漏记「会话启动登记 / 关闭退订」）已在 `docs/cross/shell-tool-capability.md` 补「订阅生命周期」一节，并把 `settle` 的幂等口径写成「kill 过或未登记的 id」。备注中两条顺手改掉：`register` 失败路径复位 `backgrounded`（不再对未登记的 id 调 settle，并加断言）；端口守卫的 `REMOTE_JOB_PORT_INVALID` 原样保留给失败文本（不再被统一改成转后台失败码）；`formatJobLine` 与 `jobPlace` 的位置逻辑重复记录不改。
 - **评审记录（`#4`，2026-10-11）**：第 3 轮（终轮）= **无新意见**（0 阻断 / 0 建议 / 1 非阻断备注）：第 2 轮的 2 建议 + 3 备注均复核通过，merge `dev-laptop` 后测试数口径（本卡 53 / remote-tools 91 本地 + 9 真机 / dir-context 97）与 `pi.extensions` 顺序自洽；唯一备注（端口错误码透传无测试）已在 remote-tools 侧补用例。三轮上限到，全轮无 P0/P1。
