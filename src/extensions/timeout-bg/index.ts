@@ -138,8 +138,9 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
             details: { jobId: job.id, exitCode: job.exitCode, logPath: job.logPath },
           },
           // steer（不是 followUp）：取证与决策见 timeout-bg-todo#6 —— 流式中 followUp 要等 agent
-          // 「本来要停」才会被 loop 取出，长期连续干活的会话里等于压在队列里不送达；steer 在下一个
-          // 工具批结束时立刻注入。空闲时两者等价（triggerTurn 直接起一轮）。
+          // 「本来要停」才会被 loop 取出，长期连续干活的会话里等于压在队列里不送达；steer 在内层
+          // 循环每轮工具批结束后取（text-only 回合则在回合结束时取），所以通知总在当前这一步结束时就到。
+          // 空闲时两者等价（triggerTurn 直接起一轮）。
           { deliverAs: "steer", triggerTurn: true },
         );
       } catch {
