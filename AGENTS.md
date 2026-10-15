@@ -45,7 +45,7 @@ Pi 编码助手的扩展工作区（文档/注释为中文，代码为英文）�
 
 - `docs/` — agent 知识库，入口是 [`docs/INDEX.md`](docs/INDEX.md) 路由表：`extensions/<插件名>.md` 每插件一卡、`cross/` 横切契约、`tools/<工具名>.md` 仓库工具卡、`adr/` 决策记录、`specs/` 规格（红线 3）、`incidents.md` 事故与教训。卡片只写代码读不出来的知识（决策原因/不变量/契约/坑），不抄 API；每卡 ≤100 行、头部带 `last verified @ <commit>`，改代码须同步对应卡片与该行。
 - `test/` — 仓库根自检（状态条契约 / 安装冒烟纯逻辑 / lock 版本漂移守门）；todo CLI 的测试随工具住在 `.agents/skills/todo-cli/todo-cli/test/`，由根脚本 `npm run test:todo` 指向该 glob（命令见下节）。
-- `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 15 扩展加载）、`composition-surfaces.mjs`（接触面清单校验 + 组合配对生成，`general-todo#32`）。用法见脚本头与 `docs/tools/`。
+- `tools/` — 仓库级工具：`install-smoke.mjs`（全新临时配置目录 + 真实 `pi --mode rpc`，验 18 扩展加载）、`composition-surfaces.mjs`（接触面清单校验 + 组合配对生成，`general-todo#32`）。用法见脚本头与 `docs/tools/`。
 - `.agents/skills/todo-cli/` — 仓库内项目级 skill：`SKILL.md`（命令参考卡）+ `scripts/todo.sh` 包装器 + `todo-cli/`（todo CLI 入口与实现同居，任意 git 仓库任意 cwd 可用；仓库根解析 = `--root` > `git rev-parse --show-toplevel`，见 `docs/tools/todo-cli.md`）。
 - `src/extensions/<插件名>/` — 18 个自包含插件（`index.ts` 入口 + 就地测试）；模块地图、不变量与坑见 `docs/extensions/<名>.md` 与各自 README；pwr 的完整架构/安全不变量/版本历史在 `src/extensions/pwr/DELIVERY.md`。
 - `agent-manager/` — 独立 Node 工具，**非扩展**：不 import 宿主 SDK、不注册 pi 扩展点、已从根 `pi.extensions` 注销，仅 listen `127.0.0.1`；边界与数据流见 `docs/tools/agent-manager.md`。
@@ -73,7 +73,7 @@ npm run test:contract   # 状态条契约（doc → docs/cross/status-bar.md）
 npm run test:smoke      # 安装冒烟工具的纯逻辑单测
 npm run test:todo       # todo CLI 单测（随工具住在 .agents/skills/todo-cli/todo-cli/test/，含进程边界 E2E）
 node .agents/skills/todo-cli/todo-cli/todo.mjs summary # todo 全量盘点
-node tools/install-smoke.mjs                           # 端到端：临时配置目录 + 真实 pi，验 15 扩展加载（需已装 pi）
+node tools/install-smoke.mjs                           # 端到端：临时配置目录 + 真实 pi，验 18 扩展加载（需已装 pi）
 node tools/install-smoke.mjs --task                    # 追加真实模型任务（需鉴权 + 网络）
 node tools/install-smoke.mjs --install <pi install 源> # 真跑 README 推荐安装路径（联网）
 ```
@@ -98,7 +98,7 @@ cd src/extensions/deep-init && npm install && npm test && npm run typecheck
 cd src/extensions/jev-safe-gate && npm install && npm test && npm run typecheck   # 50 个（含宿主事件路径：真实加载 + ExtensionRunner）
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck   # 157 个（含本地保真对照、Windows 路径往返、标记根结构性断言、输入护栏、采样器噪声、缺省值字面量、图片嗅探、ls/find 目录探针、远端超时托管、跨扩展组合、目标登记表（别名解析/strict 白名单/模型面提示行/命令面/本地不读表）、远端上下文能力（祖先链/一趟 ssh/协议 v2 分帧（伪造-proof）/形状守卫/路径归一/降级/读不出 ≠ 不存在））+ 10 个真机 opt-in
 cd src/extensions/dir-context && npm install && npm test && npm run typecheck   # 123 个（含真实 ExtensionRunner 宿主事件路径：触发面/turn 边界去重与并行调用指针/compact 重载/cwd 边界 fail-closed/codemode 嵌套事件主来源代偿/远端调用零注入/远端目录自动注入与降级/空内容归 nothing/按码分流提示/预算丢弃不标记）
-cd src/extensions/btw && npm install && npm test && npm run typecheck   # 59 个 + 2 真机 opt-in（PI_BTW_E2E_MODEL；含真实发现加载 + 真实 ExtensionRunner 命令路径：零写入计数器/源码结构守卫/面板几何与键位/上下文预算/侧线程追问/超时看门狗/无 UI 不静默）
+cd src/extensions/btw && npm install && npm test && npm run typecheck   # 61 个 + 2 真机 opt-in（PI_BTW_E2E_MODEL；含真实发现加载 + 真实 ExtensionRunner 命令路径：零写入计数器/源码结构守卫/面板几何与键位/上下文预算/侧线程追问/超时看门狗/无 UI 不静默）
 ```
 
 ## 代码约定与常见模式

@@ -1,6 +1,6 @@
 # btw — 旁路对话（不影响主对话的侧问答）
 
-> last verified @ ffbff7f
+> last verified @ 4849da6
 
 一句话：`/btw <问题>` 在主对话运行中开一条**只读主会话、零写入**的侧对话——读当前分支尾部作上下文，经 `ctx.modelRegistry.streamSimple()` 直调模型，答案落只读覆盖面板；侧问答**不进主上下文、不打断主 run**（参考 Claude Code 的 `/btw`）。
 
@@ -33,7 +33,8 @@
 
 ## 测试与验证
 
-- `cd src/extensions/btw && npm install && npm test && npm run typecheck`（61 个：context 12 / side-call 9 / panel 13 / index-unit 11 / index-host 10 + 结构守卫 + 2 真机 opt-in）
+- `cd src/extensions/btw && npm install && npm test && npm run typecheck`（63 个：context 13 / side-call 10 / panel 16 / index-unit 12 / index-host 10 + 2 真机 opt-in）
+- **零写入守卫的计数面必须是宿主的全部写入口**（评审第 1 轮 P2）：`ExtensionActions` 除 appendEntry/sendMessage/sendUserMessage 外还有 setSessionName/setLabel/setModel/setThinkingLevel/setActiveTools，命令上下文另有 newSession/fork/navigateTree/switchSession/reload；只数三个会把未来回归整段漏过。测试里它们全部计数并逐项断言 0，源码结构守卫同口径（19 条字符串）。
 - **真机 opt-in**：`PI_BTW_E2E_MODEL=<provider/id> node --test test/real-pi.test.ts`（未设环境变量时 skip）。起真实 `pi --mode rpc --extension <本目录 index.ts>`（临时 agent 目录 + 拷入 auth.json，跑完即删，不碰用户配置），断言：① 空闲 `/btw` 出真实模型回答且 `disposition=handled`（命令被宿主直接处理、不进主对话）；② 主 agent 流式跑 `sleep 25` 期间 `/btw` 仍能作答（notify 先于 `agent_settled`）；③ 两种情况会话文件都零 `user`/`assistant` 条目（真机零写入证据）。
 - 宿主路径测试走**真实发现+加载（jiti 走 `index.ts`）+ 真实 `ExtensionRunner` + `runner.createCommandContext()`**，只 fake `streamSimple`（网络边界）、`sessionManager`（本扩展只读两个方法）、`ExtensionActions`（计数写调用）、`ui`（记录组件 / notify）。
 - 面板渲染的**单物理行契约**（每行恰好 width 显示列，CJK 双宽）在 `panel.test.ts` 逐行用 `visibleWidth` 断言；真实宿主渲染管线本身由 agent-team `viewer-host.test.ts` 覆盖，不在此重复。
