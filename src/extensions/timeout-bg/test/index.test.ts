@@ -131,7 +131,13 @@ function makeFakePi(activeTools: string[], seed: FakePiSeed = {}) {
   return { api, fire, run, tools, commands, sent, notices, statuses, uiCtx: ctx };
 }
 
-function makeExtension(activeTools: string[], env: Record<string, string> = {}, child = new FakeChild(), seed: FakePiSeed = {}) {
+function makeExtension(
+  activeTools: string[],
+  env: Record<string, string> = {},
+  child = new FakeChild(),
+  seed: FakePiSeed = {},
+  logRoot?: string,
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "timeout-bg-idx-"));
   const killCalls: number[] = [];
   let spawnCalls = 0;
@@ -146,7 +152,7 @@ function makeExtension(activeTools: string[], env: Record<string, string> = {}, 
     }) as never,
     now: () => 1_000,
     killTree: (pid) => killCalls.push(pid),
-    logRoot: path.join(dir, "bg-jobs"),
+    logRoot: logRoot ?? path.join(dir, "bg-jobs"),
     shellConfig: () => ({ shell: "bash", args: ["-lc"] }),
   });
   factory(fakePi.api);
@@ -230,6 +236,30 @@ test("主动后台（run_in_background）：不等超时就登记，工具立即
   await wait(50);
   assert.equal(ext.sent.length, 1, "结束照旧送一条通知（复用超时路径的通知）");
   assert.match(String(ext.sent[0]!.message.content), /退出码 0/);
+});
+
+test("伪 reload（timeout-bg#7）：新实例接着现有最大号续号，不写进同名旧日志", async () => {
+  const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "timeout-bg-reload-"));
+  const sessionDir = path.join(logRoot, String(process.pid));
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const oldLog = path.join(sessionDir, "bg-1.log");
+  fs.writeFileSync(oldLog, "OLD-OUTPUT\n");
+
+  // 同一个 logRoot 上再建一个实例 = `/reload` 后新实例（计数器归零的那个）
+  const ext = makeExtension(["bash"], {}, new FakeChild(), {}, logRoot);
+  await ext.fire("session_start");
+  const tool = ext.tools.get("bash")!;
+  const error = await tool
+    .execute("call-1", { command: "sleep 400", timeout: 0.05 }, undefined, undefined, toolCtx(ext.dir))
+    .then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+
+  assert.ok(error instanceof Error, "超时结束本次 tool call");
+  assert.match(error.message, /bg-2/, "新 job 拿现有最大号 + 1，而不是重排回 bg-1");
+  assert.equal(fs.readFileSync(oldLog, "utf8"), "OLD-OUTPUT\n", "旧 job 的日志一字节不被写脏");
+  assert.deepEqual(fs.readdirSync(sessionDir).sort(), ["bg-1.log", "bg-2.log"]);
 });
 
 test("命令面：/bg 列出后台任务，/bg:kill 杀进程树，/bg:clear 清已结束记录", async () => {

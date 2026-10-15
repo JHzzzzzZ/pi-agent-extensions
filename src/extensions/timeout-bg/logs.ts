@@ -22,9 +22,37 @@ export function stripControlChars(text: string): string {
   return text.replace(CONTROL_CHARS, "");
 }
 
+/** 本会话的日志目录：`<logRoot>/<pi pid>`（一个 pi 进程一个子目录，多会话互不覆盖）。 */
+export function sessionLogDir(logRoot: string): string {
+  return path.join(logRoot, String(process.pid));
+}
+
 /** 日志路径的唯一算法：`<logRoot>/<pi pid>/<jobId>.log`（本地 job 与远端 job 同布局）。 */
 export function resolveJobLogPath(logRoot: string, jobId: string): string {
-  return path.join(logRoot, String(process.pid), `${jobId}.log`);
+  return path.join(sessionLogDir(logRoot), `${jobId}.log`);
+}
+
+/**
+ * 下一个可用 job 编号：本会话目录里现有 `bg-<n>.log` 的最大 n + 1（取不到 → 1）。
+ *
+ * 为什么要扫盘（timeout-bg#7）：编号计数器是**实例内**状态，`/reload` 后从 1 重排，而日志是 append
+ * 打开的——不接着旧最大号，新 job 就会写进同名旧日志，把两条命令的输出混进一个文件（通知的
+ * 「末尾输出」也跟着混）。同一 pid 目录只属一个进程、实例内编号顺序分配，所以扫一次即无竞争。
+ */
+export function nextJobSeq(logRoot: string, pid: number = process.pid): number {
+  let names: string[];
+  try {
+    names = fs.readdirSync(path.join(logRoot, String(pid)));
+  } catch {
+    return 1;
+  }
+  let max = 0;
+  for (const name of names) {
+    const matched = /^bg-(\d+)\.log$/.exec(name);
+    if (matched === null) continue;
+    max = Math.max(max, Number(matched[1]));
+  }
+  return max + 1;
 }
 
 /** 读文件尾部最多 maxBytes 字节，剔除控制字符、丢掉可能被截断的首行。 */
@@ -56,14 +84,19 @@ export function tailFileSync(filePath: string, maxBytes: number): string {
 /**
  * 清理后台日志：超过保留期或超出数量上限的文件被删除；空目录一并收掉。
  * 返回删除的文件数。
+ *
+ * `keepDir`（本会话目录的绝对路径）内的文件**不吃数量上限**、只按保留期清：通知/`/bg` 里的日志路径
+ * 只有在会话还活着时才有人用，而每条命令（含前台）都占一个文件，50 个上限一次 `/reload` 就清掉整段历史
+ *（timeout-bg#7）。别的会话目录没有活引用，照旧按数量 + 保留期清；名次只数非豁免文件，否则本会话文件会把别家挤光。
  */
 export function pruneJobLogs(
   logRoot: string,
   nowMs: number,
-  options: { retentionMs?: number; keepMax?: number } = {},
+  options: { retentionMs?: number; keepMax?: number; keepDir?: string } = {},
 ): number {
   const retentionMs = options.retentionMs ?? LOG_RETENTION_MS;
   const keepMax = options.keepMax ?? LOG_KEEP_MAX;
+  const keepDir = options.keepDir;
   let sessionDirs: string[];
   try {
     sessionDirs = fs.readdirSync(logRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
@@ -93,16 +126,20 @@ export function pruneJobLogs(
 
   files.sort((a, b) => b.mtimeMs - a.mtimeMs);
   let removed = 0;
-  files.forEach((entry, index) => {
+  let rank = 0;
+  for (const entry of files) {
+    const exempt = keepDir !== undefined && path.dirname(entry.file) === keepDir;
+    const withinCap = exempt || rank < keepMax;
+    if (!exempt) rank += 1;
     const tooOld = nowMs - entry.mtimeMs > retentionMs;
-    if (!tooOld && index < keepMax) return;
+    if (withinCap && !tooOld) continue;
     try {
       fs.rmSync(entry.file, { force: true });
       removed += 1;
     } catch {
       /* 删不掉不影响会话 */
     }
-  });
+  }
 
   for (const dir of sessionDirs) {
     const dirPath = path.join(logRoot, dir);

@@ -35,7 +35,7 @@ import {
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resolveDefaultTimeout } from "./config.ts";
 import { createJobRegistry, type JobRecord } from "./jobs.ts";
-import { pruneJobLogs, resolveJobLogPath, tailFileSync } from "./logs.ts";
+import { nextJobSeq, pruneJobLogs, resolveJobLogPath, sessionLogDir, tailFileSync } from "./logs.ts";
 import { createRunInBackgroundDispatch, withOwnParamDescriptions } from "./params.ts";
 import { createTimeoutOps, type ShellConfig, type SpawnLike, type TimeoutMode, type TimeoutOpsDeps } from "./shell-ops.ts";
 import {
@@ -114,8 +114,14 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
   return (pi) => {
     const now = deps.now ?? Date.now;
     const defaultTimeout = resolveDefaultTimeout(deps.env);
-    let jobSeq = 0;
-    const newJobId = (): string => `bg-${++jobSeq}`;
+    let jobSeq: number | undefined;
+    // 懒扫一次现有日志再续号：实例内计数器随 `/reload` 归零，不续号会写进同名旧日志（timeout-bg#7）。
+    const newJobId = (): string => {
+      jobSeq ??= nextJobSeq(deps.logRoot);
+      const id = `bg-${jobSeq}`;
+      jobSeq += 1;
+      return id;
+    };
     /** 本会话的 UI 上下文（footer 状态条段写入口；headless / 会话外为 undefined）。 */
     let uiContext: ExtensionUIContext | undefined;
     const registered = new Set<ShellKind>();
@@ -259,7 +265,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
 
     pi.on("session_start", (_event, ctx) => {
       try {
-        pruneJobLogs(deps.logRoot, now());
+        pruneJobLogs(deps.logRoot, now(), { keepDir: sessionLogDir(deps.logRoot) });
       } catch {
         /* 清理失败不影响会话 */
       }
