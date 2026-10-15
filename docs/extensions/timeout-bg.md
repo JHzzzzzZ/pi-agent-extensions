@@ -118,7 +118,7 @@
   2 条锁远端侧（默认超时注入、托管端口 → /bg + 状态条段 + followUp）、10 条锁托管端口与注册表语义（发号/登记/主动后台登记/完成/畸形载荷/terminate/onChange））
 - 进程边界测试只 fake `spawn` 与 `killTree`，真实读写临时目录日志、真实毫秒级计时器；工具本体用宿主真实 `createBashTool`。
 - **真机 opt-in**：`test/live.test.ts`（2 个，`PI_TIMEOUT_BG_TEST_LIVE=1` 才跑）用真实 spawn + 真实计时器验「立即返回 / 进程续跑 / 日志续长 / 通知一次」与超时路径同链路；远端那半在 `remote-tools/test/remote-live.test.ts`。
-- **真机 opt-in**：`test/live.test.ts`（2 个，`PI_TIMEOUT_BG_TEST_LIVE=1` 才跑）真实 spawn + 真实计时器验「立即返回 / 进程续跑 / 日志续长 / 通知一次」与超时路径同链路；远端那半在 `remote-tools/test/remote-live.test.ts`。
+
 - **评审记录（`#4`，2026-10-11）**：第 1 轮（kimi-coding/k3-256k）= OK with notes（0 阻断 / 5 建议 / 6 备注）：涉及本卡的建议 ②（`shell-job-host.ts` 注释与契约都声称 register 前清洗 command，实现只洗了 tail）已修——现在 `command` 经 `firstLine(stripControlChars(...), 400)`、`target` 也剔控制字符（与本地 job 进 `/bg` 的口径一致），并补了单测；建议 ④（`/bg:kill` 对远端 job 打印 `pid ?`）已改为按 `jobPlace` 展示 `remote <host>`（与 `/bg` 列表、通知同源）。备注（记录不改）与 remote-tools 卡同轮：旧实例订阅残留（已用会话级登记/退订缓解）、`terminate` 缺失、未超时也烧号落盘、异步建不出日志、shutdown 的 terminate fire-and-forget。
 - **评审记录（`#4`，2026-10-11）**：第 2 轮（复核第 1 轮 5 条修复）= OK with notes（0 阻断 / 2 新建议 P2 / 3 备注）：5 条全部核实为已修；建议 ①（三张卡的 `last verified` 应指向动过代码的修复提交）已处理；建议 ②（契约卡漏记「会话启动登记 / 关闭退订」）已在 `docs/cross/shell-tool-capability.md` 补「订阅生命周期」一节，并把 `settle` 的幂等口径写成「kill 过或未登记的 id」。备注中两条顺手改掉：`register` 失败路径复位 `backgrounded`（不再对未登记的 id 调 settle，并加断言）；端口守卫的 `REMOTE_JOB_PORT_INVALID` 原样保留给失败文本（不再被统一改成转后台失败码）；`formatJobLine` 与 `jobPlace` 的位置逻辑重复记录不改。
 - **评审记录（`#4`，2026-10-11）**：第 3 轮（终轮）= **无新意见**（0 阻断 / 0 建议 / 1 非阻断备注）：第 2 轮的 2 建议 + 3 备注均复核通过，merge `dev-laptop` 后测试数口径（本卡 53 / remote-tools 91 本地 + 9 真机 / dir-context 97）与 `pi.extensions` 顺序自洽；唯一备注（端口错误码透传无测试）已在 remote-tools 侧补用例。三轮上限到，全轮无 P0/P1。

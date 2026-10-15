@@ -675,12 +675,14 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 					// 登记失败：本次 tool call 已结束（backgrounded 复位，ssh 退出时不再对未登记的 id settle）。
 					backgrounded = false;
 					controller.abort();
-					jobDeps?.notify?.(registration.reason === "background" ? REMOTE_BACKGROUND_REQUEST_FAILED : REMOTE_BACKGROUND_FAILED);
+					// 归因按触发方分流：主动后台不得被读成「超时转后台失败」（notify 与错误文本同口径）。
+					const fallback = registration.reason === "background" ? REMOTE_BACKGROUND_REQUEST_FAILED : REMOTE_BACKGROUND_FAILED;
+					jobDeps?.notify?.(fallback);
 					// 错误自己带了错误码（端口形状 / 能力不支持）时原样保留，不把归因吞掉。
 					const own =
 						error instanceof Error &&
 						(error.message.includes(ErrorCodes.REMOTE_JOB_PORT_INVALID) || error.message.includes(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED));
-					const message = own ? (error as Error).message : `${ErrorCodes.REMOTE_BACKGROUND_FAILED}: ${REMOTE_BACKGROUND_FAILED}`;
+					const message = own ? (error as Error).message : `${ErrorCodes.REMOTE_BACKGROUND_FAILED}: ${fallback}`;
 					settleOnce(() => reject(new Error(message)));
 					return;
 				}
@@ -713,17 +715,20 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 					});
 				},
 				(error: unknown) => {
-					logStream.end();
-					// 已转后台时本次 tool call 早已结束（settleOnce 是 no-op）：必须收口，
-					// 否则 job 停在 running。生产传送层（createSpawnExec）不会 reject，这是与本地同型的防御。
 					if (backgrounded) {
-						try {
-							host.settle(ticket.id, null);
-						} catch {
-							/* 收尾观察者异常不破坏会话 */
-						}
+						// 已转后台时本次 tool call 早已结束（settleOnce 是 no-op）：必须收口，
+						// 否则 job 停在 running。生产传送层（createSpawnExec）不会 reject，这是与本地同型的防御；
+						// 同样等日志 flush 后再 settle（与 exit 分支同口径）。
+						logStream.end(() => {
+							try {
+								host.settle(ticket.id, null);
+							} catch {
+								/* 收尾观察者异常不破坏会话 */
+							}
+						});
 						return;
 					}
+					logStream.end();
 					settleOnce(() => reject(error instanceof Error ? error : new Error(String(error))));
 				},
 			);

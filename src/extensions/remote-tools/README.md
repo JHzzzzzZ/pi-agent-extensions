@@ -84,7 +84,7 @@ ls    path="/srv/app"                     remote="prod"
 cd src/extensions/remote-tools && npm install && npm test && npm run typecheck
 ```
 
-174 个（node:test：163 个全本地 + 11 个真机 opt-in）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（11，宿主路径往返、标记根的结构性断言与守卫、文案改写）、
+176 个（node:test：165 个全本地 + 11 个真机 opt-in）：`test/ssh.test.ts`（11，传输/目标解析/失败分类）、`test/paths.test.ts`（11，宿主路径往返、标记根的结构性断言与守卫、文案改写）、
 `test/ops.test.ts`（20，发给 ssh 的命令构造、错误映射、图片嗅探、ls/find 目录探针与缓存）、`test/grep.test.ts`（13，rg 事件解析/降级/限流）、
 `test/tools.test.ts`（23，注册覆盖、本地保真对照（含 write/edit 文案与 details 逐字对拍）、远端分派、ls/find 结构化错误与往返数、图片端到端、远端 write/edit/read 文案回写远端路径、session 缓存）、
 `test/capability.test.ts`（5，跨扩展能力载荷与订阅、job 托管端口索取与形状守卫）、
