@@ -86,13 +86,14 @@ export function tailFileSync(filePath: string, maxBytes: number): string {
   return text.trimEnd();
 }
 
-/** 进程是否还在（`kill(pid, 0)`：ESRCH = 死；EPERM/EACCES = 活着但无权探测）。 */
+/** 进程是否还在（`kill(pid, 0)`：ESRCH = 死；EPERM/EACCES = 活着但无权探测，两个码都认）。 */
 export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "EPERM" || code === "EACCES";
   }
 }
 

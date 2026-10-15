@@ -249,16 +249,19 @@ test("伪 reload（timeout-bg#7）：新实例接着现有最大号续号，不�
   const ext = makeExtension(["bash"], {}, new FakeChild(), {}, logRoot);
   await ext.fire("session_start");
   const tool = ext.tools.get("bash")!;
-  const error = await tool
-    .execute("call-1", { command: "sleep 400", timeout: 0.05 }, undefined, undefined, toolCtx(ext.dir))
-    .then(
-      () => null,
-      (e: unknown) => e as Error,
-    );
+  const running = tool.execute("call-1", { command: "sleep 400", timeout: 0.05 }, undefined, undefined, toolCtx(ext.dir));
+  ext.child.emitData("NEW-OUTPUT\n");
+  const error = await running.then(
+    () => null,
+    (e: unknown) => e as Error,
+  );
+  ext.child.exit(0); // 收尾日志流，让本次输出确实落到 bg-2 的文件里
+  await wait(50);
 
   assert.ok(error instanceof Error, "超时结束本次 tool call");
   assert.match(error.message, /bg-2/, "新 job 拿现有最大号 + 1，而不是重排回 bg-1");
   assert.equal(fs.readFileSync(oldLog, "utf8"), "OLD-OUTPUT\n", "旧 job 的日志一字节不被写脏");
+  assert.match(fs.readFileSync(path.join(sessionDir, "bg-2.log"), "utf8"), /NEW-OUTPUT/, "本次输出进自己的文件");
   assert.deepEqual(fs.readdirSync(sessionDir).sort(), ["bg-1.log", "bg-2.log"]);
 });
 

@@ -133,6 +133,23 @@ test("pruneJobLogs：活着的会话目录不吃数量上限（含并发的第�
   assert.equal(fs.existsSync(deadLogs[1]!), true);
 });
 
+test("pruneJobLogs：不注入 isAlive 时按真实进程判活（本进程目录不吃数量上限）", () => {
+  const root = tmp();
+  const now = Date.now();
+  const mine = path.join(root, String(process.pid));
+  fs.mkdirSync(mine, { recursive: true });
+  const files = ["bg-1", "bg-2"].map((name, index) => {
+    const file = path.join(mine, `${name}.log`);
+    fs.writeFileSync(file, "x");
+    const stamp = new Date(now - (2 - index) * 1_000);
+    fs.utimesSync(file, stamp, stamp);
+    return file;
+  });
+  // 真实接线（options.isAlive ?? isProcessAlive）也得被判活：keepMax=1 下两条都留。
+  assert.equal(pruneJobLogs(root, now, { keepMax: 1 }), 0);
+  for (const file of files) assert.equal(fs.existsSync(file), true);
+});
+
 test("pruneJobLogs：空目录被收掉、不存在的根目录不报错", () => {
   const root = tmp();
   const empty = path.join(root, "9999");

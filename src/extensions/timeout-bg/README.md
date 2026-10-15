@@ -27,14 +27,14 @@ shell 工具（`bash` / `powershell`）的**超时语义改写 + 主动转后台
 - 后台任务**只活在本会话**，`session_shutdown` 时全部杀掉；不做跨会话守护。headless（`pi --print`）一次性会话里，会话一结束（pi 退出）后台任务即被杀、日志停在那刻——跨进程「等它跑完再 cat 日志」永远等不到；同会话内验收要「先转后台，再用前台命令等一会儿」。
 - 对端不支持主动后台（没装 remote-tools 的远端分支 / 旧版端口）时，该组合 **fail-closed 报错**——
   不静默退化成前台等待、不在本机执行远端意图的命令。
-- 日志：`<PI_TIMEOUT_BG_DIR 或 ~/.pi/agent/bg-jobs>/<pi pid>/<jobId>.log`；每条命令都落一份（前台命令也落，换超时那刻的完整历史）。本会话目录只按 7 天清、不吃 50 个上限（通知里的路径在会话内仍有效）；别的会话目录保留最近 50 个 / 7 天。编号从现有日志最大号 + 1 续起（`/reload` 后不重排，避免与同名旧日志混写）。
+- 日志：`<PI_TIMEOUT_BG_DIR 或 ~/.pi/agent/bg-jobs>/<pi pid>/<jobId>.log`；每条命令都落一份（前台命令也落，换超时那刻的完整历史）。活着的会话目录只按 7 天清、不吃 50 个上限（通知里的路径在会话内仍有效；并发的另一个 pi 也不会删你）；别的会话目录保留最近 50 个 / 7 天。编号从现有日志最大号 + 1 续起（`/reload` 后不重排，避免与同名旧日志混写）。
 - codemode 脚本视角：`tools.bash` 的结构化结果（`output` 1 MiB 上限 / `truncated` / `full_output_path` /
   `exit_code` / `wall_time_seconds`）与内置一致；转后台那次调用以错误结束（脚本能 catch 到 jobId 文本）。
 
 ## 用法与开发
 
 ```bash
-cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 73 个测试（+2 真机 opt-in：PI_TIMEOUT_BG_TEST_LIVE=1）
+cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 75 个测试（+2 真机 opt-in：PI_TIMEOUT_BG_TEST_LIVE=1）
 ```
 
 安装：把本目录复制到 `~/.pi/agent/extensions/timeout-bg/` 或 `<项目>/.pi/extensions/timeout-bg/`，Pi 内 `/reload`。
