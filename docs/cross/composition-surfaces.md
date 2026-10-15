@@ -1,6 +1,6 @@
 # 跨扩展横切契约：插件接触面清单（谁占了哪个槽）
 
-> last verified @ 399e3f3
+> last verified @ 6410309
 >
 > 本表回答**唯一一个问题**：「哪个插件占了宿主的哪个共享槽位」——状态键、widget 槽、
 > 内置工具名、`pi.events` 频道、拦截型宿主钩子、模型面、命令与快捷键。
@@ -82,6 +82,23 @@ events 订阅: -
 共享槽: -
 模式: cockpit, leader
 会话生命周期: `session_start` 水合历史 run、协调残留 running 状态文件、按数据挂 widget；`session_shutdown` 停协调器 + 清 widget，并删除全局双加载守卫 `__piAgentTeamExtensionLoaded`（不复位则 `/reload` 后工具全消失）
+无注册面: -
+
+### btw
+状态键: -
+widget: -
+工具: -
+工具面: -
+events 广播: -
+events 订阅: -
+宿主钩子: session_start, session_shutdown
+模型面: -
+命令: btw, btw:clear, btw:model
+快捷键: -
+独占声明: btw, btw:clear, btw:model
+共享槽: -
+模式: -
+会话生命周期: `session_start` / `session_shutdown` 都只重置内存态（侧对话线 + `/btw:model` 覆盖）；侧调用经 `ctx.modelRegistry.streamSimple` 直调（宿主路由/鉴权，本扩展只读），**零写入主会话**（不 appendEntry / 不 sendMessage / 不碰主 run）
 无注册面: -
 
 ### chatanywhere-provider

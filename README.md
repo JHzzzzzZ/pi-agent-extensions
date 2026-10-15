@@ -1,6 +1,6 @@
 # Pi Coding Agent 扩展集
 
-本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十六个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台、虚拟模型路由、危险命令判断门、内置工具远程后端、目录作用域上下文注入）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
+本目录是 Pi 编码助手的扩展工作区：**PWR**（本地工作流编排）加十七个独立扩展（多 agent 团队、模型提供商、额度查询、流式计量、运行计时、定时任务、会话目标循环、本地代理桥、深度初始化、人工介入通知、免审批模式、shell 超时转后台、虚拟模型路由、危险命令判断门、内置工具远程后端、目录作用域上下文注入、旁路对话）；另有独立工具 **agent-manager**（带浏览器前端的 agent 管理工具，独立 Node 进程、非 Pi 扩展、agent 不感知，见 [agent-manager](#agent-manager--独立-agent-管理工具非扩展)）。全部为**零构建 TypeScript ESM**，由 Node ≥ 22.18 原生 type-stripping 直接执行，运行时无 npm 依赖。同屏状态条（footer 状态行与输入栏上下 widget）统一对齐秒节拍刷新、按固定顺序排列；各段文本已瘦身，**最靠前的可见段行首定格（无前导分隔符）**，其余段以 `│ ` 分隔；编辑器上方三段 widget（pwr / run-timer / loop）由**widget 排序带**合并成宿主单键 `widget-band`（顺序 = band key 升序，刷新不再换位；契约见 `docs/cross/status-bar.md`）。
 
 | 扩展 | 作用 | 测试 |
 | --- | --- | --- |
@@ -21,6 +21,7 @@
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
 | [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；**远端目标登记表：别名 + strict 白名单（默认开），未登记目标一律拒绝**——`remote_targets` 工具给模型查/登记，`/remote:add|list|rm|strict` 给人用，别名与字面目标同源命中、`ssh_config` 别名也能登记；零运行时依赖（系统 `ssh`），不做路径映射/只读开关；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面；`run_in_background: true` 时远端同样一启动即转后台，不支持时 fail-closed），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链；**分帧用 base64 载荷**——内容含 NUL 也无法伪造出假路径块；读到写不出的候选或远端缺 base64 时明确报失败）；**主机指纹走 TOFU（`accept-new`）：新主机首次连接零人工前置、指纹变更仍 fail-closed**；**成功/失败文案一律展示远端路径**（不把内部标记路径 `C:\…\pi-remote\…` 回灌给模型） | 165 个（+11 真机 opt-in） |
 | [`src/extensions/dir-context/`](#dir-context--目录作用域上下文注入) | 目录作用域上下文注入：模型触碰某目录（`read`/`write`/`edit`/`ls`/bash 单文件读，含 codemode 脚本里的 `tools.*`）时，把该目录到 cwd 之间严格处于 cwd 之下的 `AGENTS.override.md`/`AGENTS.md`/`CLAUDE.md` 追加到当次工具结果（pi 原生只加载 cwd 及祖先链）；codemode 走「顶层结果代偿」（主来源 = 嵌套事件的完整入参、`details.calls` 截断预览降级兜底）；带 `remote` 的调用**默认零注入**（只读入参字段，绝不按本地 cwd 解远端路径），装了 remote-tools 时经 `pi.events` 协商**自动注入远端那条祖先链**（块头标来源，取不到才退回一行提示）；**同一文件每 turn 只给一次正文，同 turn 内同条目录链的其余触碰结果补一行指针**（宿主并发执行同一条消息里的多个调用、hook 按完成顺序触发 ⇒ 并行 read 时读大文件的那个结果不再静默无标记）；compact 后按需重载、cwd 之外零注入、码点安全截断（32 KiB/文件，128 KiB/次）；**空内容的约定文件不注入空块也不标记**（随后写入内容同会话即可拿到），**读不出时给权限专属提示** | 123 个（node:test） |
+| [`src/extensions/btw/`](#btw--旁路对话) | 旁路对话：`/btw <问题>` 在主对话**运行中**开一条只读主会话、**零写入**的侧问答（参考 Claude Code 的 `/btw`）——读当前分支尾部（压缩感知，30k 字符预算、逐块截断）作上下文，经 `ctx.modelRegistry.streamSimple()`（宿主路由/鉴权/虚拟模型/sessionId 会话头）直调模型，答案落只读覆盖面板（流式上屏、可滚动、`Esc` 关闭即 abort）；不进主上下文、不打断主 run、session 文件零新增条目；同会话内保留追问（最多 4 轮，仅扩展内存；`/btw:clear` 清空）、`/btw:model` 会话内切换侧模型；单飞 + 120 秒看门狗；RPC 降级 notify、`print`/`json` 写 stderr 不静默 | 59 个（node:test） |
 
 ## 安装
 
@@ -30,7 +31,7 @@
 
 ### 方式一：pi install（推荐）
 
-> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（17 个扩展）。不带 ref 的安装会装到 master 旧包。
+> **带 `@dev-laptop`**：默认分支 `master` 是历史发布线（v1.0.0，仅 5 个扩展）；活跃开发线是 `dev-laptop`（18 个扩展）。不带 ref 的安装会装到 master 旧包。
 
 ```bash
 # 全局安装（写入 ~/.pi/agent/settings.json，跟踪 dev-laptop 分支）
@@ -70,7 +71,7 @@ pi install ./pi-agent-extensions
 
 ### 只装其中几个扩展（按需安装）
 
-默认安装会把根 `package.json` `pi.extensions` 里的 17 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
+默认安装会把根 `package.json` `pi.extensions` 里的 18 个扩展**全部加载**。只想留其中几个（例如 pwr + solo-mode）时，推荐用 `pi config` 勾选——不用换安装方式，包仍在，随时可勾回来：
 
 ```bash
 pi config        # 全局作用域（~/.pi/agent/settings.json）
@@ -103,7 +104,7 @@ pi config -l     # 项目作用域（.pi/settings.json），也可在里面按 T
 
 ### 安装自检（可选）
 
-不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 17 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
+不确定装上没有？在仓库根跑一次全新安装冒烟：把 `pi.extensions` 清单里的 18 个扩展复制到一个**全新的临时配置目录**，拉起真实 `pi --mode rpc` 进程，核对每个扩展的命令是否注册、启动期状态条/widget 是否写入。不碰你现有的 `~/.pi/agent/` 配置。
 
 ```bash
 node tools/install-smoke.mjs        # ✓ = 15/15 扩展在干净目录下加载成功；✗ 时打印问题清单
@@ -702,6 +703,31 @@ cd src/extensions/dir-context && npm install && npm test && npm run typecheck   
 
 ---
 
+## btw — 旁路对话
+
+主对话跑长任务时，想随时问「现在在干啥 / 为什么这么改 / 进度如何」——`/btw <问题>` 开一条**只读主会话、零写入**的侧对话（参考 Claude Code 的 `/btw`）：读当前分支尾部作上下文，经 `ctx.modelRegistry.streamSimple()`（宿主机路由 / 鉴权 / 虚拟模型 / `sessionId` 会话头）直调模型，答案落只读覆盖面板，**不进主上下文、不打断主 run**。
+
+```text
+/btw 现在在干啥                      （主 agent 正在流式跑工具）
+→ 面板：btw 旁路对话 · 已完成
+        ❯ 现在在干啥
+        它在读 panel.ts 并补测试，刚才那轮把上下文预算从 20k 调到 30k……
+Esc 关闭 → 主对话照常继续，侧问答在会话文件里零痕迹
+```
+
+- 硬不变量**零写入**：不 `appendEntry`、不 `sendMessage`、不碰主 run；宿主路径测试用写调用计数器 + 源码结构守卫双锁，真机验收看 session JSONL 零新增条目
+- 上下文：当前分支（压缩感知）按 30k 字符预算由新到旧装填，工具结果 / 助手文本逐块截断，丢多少条如实标注；**正在流式、尚未落盘的那条看不到**（已知限制）
+- 同一会话内保留追问（最多 4 轮，仅扩展内存）；`/btw:clear` 清空；`/btw:model [provider/id|default]` 查看 / 切换侧模型（默认跟随主会话）
+- 单飞 + 120 秒看门狗（与 abort 竞速，provider 挂住也有界结束）；面板 `Esc`/`q`/`ctrl+c` 关闭即中止侧调用
+- RPC 模式降级为通知（正文截断）；`print`/`json` 无 UI 时写一行 stderr 不静默
+- **不做**：面板内输入框、侧模型带工具、侧线程持久化、把答案送回主对话的出口（都留 v2，真需要再登记）
+
+```bash
+cd src/extensions/btw && npm install && npm test && npm run typecheck   # 59 个测试
+```
+
+---
+
 ## todo-cli
 
 `todos/` 工作流的**仓库内 skill + CLI 工具**（非 Pi 插件、无 pi 依赖）：登记 / 领取 / 对齐 / 完成 / 撤销 / 盘点 / 交接扫描从「agent 手写 grep + edit」升级为有测试锁定的原子操作。存储为 **`todos/<名>.json` 唯一权威**（方案 C，决策记录见 [`docs/adr/0002-todos-json-storage.md`](docs/adr/0002-todos-json-storage.md)：无 markdown、无 sqlite 索引、无降级路径；状态/文本/注记/分支引用/标签/优先级/依赖/时间戳都是原生字段；schema v4）。**统一全局 id**（`globalId` 全台账唯一、永不回收的机器主键；计数器与它的 id 锁住在 **git 公共目录** `<git-common-dir>/todo-cli/`，主工作区与所有 worktree 共享同一份号源与同一把锁，非 git 根 fail-soft 回退 `todos/.todo-cli/next-id`；发号下界 `max(计数器, 旧布局计数器, 全台账 max(条目 id, globalId)+1)` 兜住跨 clone/合并进来的号；`文件#id` 展示/引用/对齐文档命名双轨不变；存量旧台账先 `migrate global-id`、已发生的重复号用 `migrate global-id --repair` 仲裁重发（首见保留、其余重发），迁移前六个写命令报 `GLOBAL_ID_PENDING`；见 [`docs/adr/0008-todo-global-id.md`](docs/adr/0008-todo-global-id.md)）——让跨文件重号与合并仲裁有唯一机器身份。**对齐门**（五态 `open → aligning → aligned → processing → done`，见 [`docs/adr/0003-todo-align-gate.md`](docs/adr/0003-todo-align-gate.md)）：首次 `claim` 只进 aligning（写 `todos/align/<名>#<id>.md` 对齐文档、经人工确认），`align` 校验通过才进 aligned，再次 `claim` 进 processing（此后无人值守）。**回退通道 `reopen`**（见 [`docs/adr/0007-todo-reopen.md`](docs/adr/0007-todo-reopen.md)）：在途条目（aligning/aligned/processing）退回 `open` 池（清 branch/claimedAt/alignedAt，注记留痕，陈旧对齐文档归档为 `.reopened-<UTC 紧凑>.md`），从对齐阶段撤销必带 `--note`、done 拒绝、已是 open 幂等——修的是「状态说在途、事实从未开工」的虚空 processing。**依赖门**（`dependsOn` 规范引用 `文件#id`，见 [`docs/adr/0005-todo-depends-on.md`](docs/adr/0005-todo-depends-on.md)）：依赖未 done（含悬空）时第二次 `claim` fail-closed（`DEP_BLOCKED`），`list` 行尾标阻塞、`triage` 列明细；写路径拒绝悬空/自引用/环，`lint` 另做全量图扫描兑合并产物。**优先级 `priority`**（1-10，10 最高，见 [`docs/adr/0009-todo-priority-soft-field.md`](docs/adr/0009-todo-priority-soft-field.md)）：`add --priority` 写入（缺省 5、非法 fail-closed），`list` 行内 `[pN]` 标记、`--sort priority` 降序排、`--json` 带字段；全版本可选软字段、不占版本位（版本位 v3→v4 归 globalId 姊妹单）、不进状态机/依赖门。工具住在仓库内的项目级 skill 目录 `.agents/skills/todo-cli/`（`SKILL.md` 命令参考卡 + `scripts/todo.sh` 包装器），唯一入口是 `node .agents/skills/todo-cli/todo-cli/todo.mjs`（入口与实现同居：实现源 `todo-cli/schema|align|depends|lock|query|migrate|globalid|core.ts`）。**仓库根按 cwd 发现**：`--root <dir>` 优先，否则 `git rev-parse --show-toplevel`；都拿不到就 fail-closed 报错——任意 git 仓库任意 cwd 都作用于该仓库的 `todos/`（在 `.worktrees/<名>` 里调用作用于该 worktree 的台账）。
@@ -749,7 +775,7 @@ npm run test:e2e                               # opt-in 真机 e2e（4 个；需
 
 ## 开发约定
 
-全仓测试一条命令（24 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
+全仓测试一条命令（25 套件、逐条计时、失败聚合；套件清单与实测对照见 [`docs/tools/test-all.md`](docs/tools/test-all.md)）：
 
 ```bash
 npm run test:all                  # 默认 --jobs 2（--jobs 1 全串行对照 / --jobs 4 更高并发）
