@@ -10,7 +10,7 @@
 | [`src/extensions/chatanywhere-provider/`](#chatanywhere-provider) | ChatAnywhere 双 provider（OpenAI 兼容 + Anthropic API），运行时自动发现模型 | 32 个 |
 | [`src/extensions/provider-quota/`](#provider-quota) | provider 账户额度/余额查询 | 38 个（node:test） |
 | [`src/extensions/run-timer/`](#run-timer) | 任务/回合/会话耗时计时 | 59 个（node:test） |
-| [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令；工具面遵循 pi 1.0 契约：`loop_list` 结构化结果） | 222 个（node:test） |
+| [`src/extensions/loop/`](#loop) | /loop 定时任务：固定间隔 / 每天定时 / 每日窗口循环 + 一次性提醒 + --bg 后台 agent 模式（可选模型指定；同一任务多轮可重叠；管理走 `/loop:*` 冒号子命令；工具面遵循 pi 1.0 契约：`loop_list` 结构化结果） | 224 个（node:test） |
 | [`src/extensions/goal/`](#goal) | 会话目标循环：`/goal` 设定条件，agent 跨回合自动推进直至评估器判定达成（清除非阻塞项走 `/goal:*` 冒号子命令） | 63 个 |
 | [`src/extensions/deep-init/`](#deep-init) | 深度初始化：`/deep-init` 扫描仓库并生成层级 AGENTS.md 项目知识库 | 37 个（node:test） |
 | [`src/extensions/opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
@@ -404,7 +404,7 @@ node --experimental-strip-types --test src/extensions/run-timer/run-timer.test.t
 
 ## loop
 
-定时任务扩展（精简版，参考 Claude Code `/loop`）：固定间隔循环 + 每天定时循环 + 每日时间窗口循环 + 一次性提醒 + 后台 agent 模式。到期任务经 `deliverAs: "followUp"` 在回合间送达——agent 空闲则开新 turn，正在响应则排队到当前 turn 结束；错过的时间点不补跑。任务以全量快照持久化为会话条目（`loop-tasks-v1`，不进 LLM 上下文），随会话恢复；重复任务 7 天过期、每会话上限 50 个、widget 显示下次倒计时（按对齐秒节拍刷新，文本无变化时跳过重绘）。
+定时任务扩展（精简版，参考 Claude Code `/loop`）：固定间隔循环 + 每天定时循环 + 每日时间窗口循环 + 一次性提醒 + 后台 agent 模式。到期任务经 `deliverAs: "steer"` 送达——agent 空闲则开新 turn，正在响应则在**当前工具批结束**的回合边界进上下文（不等它收工；v1.11.0 前用 followUp，会被一直压到 agent 收工）；正文标明「独立任务」以抵销插话的语义漂移；错过的时间点不补跑。任务以全量快照持久化为会话条目（`loop-tasks-v1`，不进 LLM 上下文），随会话恢复；重复任务 7 天过期、每会话上限 50 个、widget 显示下次倒计时（按对齐秒节拍刷新，文本无变化时跳过重绘）。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -443,7 +443,7 @@ daily/window 调度与固定间隔共用同一套语义：错过的时间点不�
 ```bash
 cd src/extensions/loop
 npm install        # 仅 devDependencies（typescript、pi-coding-agent 类型、typebox）
-npm test           # 222 个测试（node:test）
+npm test           # 224 个测试（node:test）
 npm run typecheck  # tsc --noEmit（strict，0 错误）
 ```
 
