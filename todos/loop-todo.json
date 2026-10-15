@@ -188,6 +188,45 @@
       "claimedAt": "2026-10-03T17:06:45.483Z",
       "completedAt": "2026-10-04T01:02:39.116Z",
       "alignedAt": "2026-10-03T17:15:28.158Z"
+    },
+    {
+      "id": 12,
+      "globalId": 401,
+      "text": "前台 loop 任务到期送达从 followUp 改 steer（用户 2026-09-15 直接决定）：现状 pi.sendMessage({customType: loop-task-due},{triggerTurn: true, deliverAs: followUp})，agent 连着干活时任务压在宿主 followUp 队列里、要等它收工才注入；改 steer 后在当前工具批结束的回合边界进上下文（宿主内层循环消费点，先例 timeout-bg-todo#6）。范围待 align 细化：前台任务全量统一，--bg 后台路径与其它插件 followUp 通道不动；test/index.test.ts:390 的字面量断言需同步；建议照 timeout-bg/test/delivery-semantics.test.ts 用真实宿主 Agent + faux provider 锁时机差（字面量断言挡不住宿主挪消费点）。档位预判 T2。",
+      "status": "processing",
+      "branch": "feat/loop-steer-delivery",
+      "tags": [
+        "delivery",
+        "steer",
+        "host-semantics"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [
+        "对齐文档 todos/align/loop-todo#12.md 通过结构校验；用户 2026-10-15 回复「都同意」确认三轮问答结论与 T2 档位"
+      ],
+      "createdAt": "2026-10-15T14:03:00.196Z",
+      "claimedAt": "2026-10-15T14:03:04.179Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-15T14:08:33.640Z"
+    },
+    {
+      "id": 13,
+      "globalId": 402,
+      "text": "loop 送达语义的宿主映射层缺守卫（首轮跨厂商评审 kimi-coding/k3 的 P3，来源 loop-todo#12）：新测试 test/delivery-semantics.test.ts 只锁 pi-agent-core 的 Agent 层队列消费时机（内层 steering 消费点 vs 外层 followUp 消费点）；AgentSession.sendCustomMessage 那 6 行映射（流式中 + triggerTurn≠false ⇒ agent.steer / 非流式 + triggerTurn ⇒ 起一轮，与 deliverAs 无关）是读码核实、无测试覆盖——搭 AgentSession 脚手架（model runtime / session manager / resource loader）成本远超本条改动。要求：升级 pi-coding-agent devDep（现 ^1.0.0）时把「人工重核这 6 行映射」变成可执行动作——二选一：① docs/extensions/loop.md 不变量条写明升级检查项；② 补一条最小 AgentSession 级测试锁映射。",
+      "status": "open",
+      "branch": null,
+      "tags": [
+        "review-p3",
+        "host-semantics"
+      ],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-15T14:30:39.533Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
