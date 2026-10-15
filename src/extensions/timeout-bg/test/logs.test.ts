@@ -9,7 +9,16 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LOG_KEEP_MAX, LOG_RETENTION_MS, nextJobSeq, pruneJobLogs, sessionLogDir, stripControlChars, tailFileSync } from "../logs.ts";
+import {
+  LOG_KEEP_MAX,
+  LOG_RETENTION_MS,
+  isProcessAlive,
+  nextJobSeq,
+  pruneJobLogs,
+  sessionLogDir,
+  stripControlChars,
+  tailFileSync,
+} from "../logs.ts";
 
 function tmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "timeout-bg-log-"));
@@ -90,29 +99,38 @@ test("sessionLogDir / nextJobSeq：目录缺失或没有 bg-N.log 时从 1 起�
   assert.equal(nextJobSeq(root, 4242), 12, "取现有 bg-<n>.log 的最大号 + 1（文件名数字序，不是字典序）");
 });
 
-test("pruneJobLogs：keepDir（本会话目录）不吃数量上限，别家照旧；保留期对本会话目录仍生效", () => {
+test("isProcessAlive：本进程活着；不存在的 pid 判死", () => {
+  assert.equal(isProcessAlive(process.pid), true);
+  assert.equal(isProcessAlive(999_999_999), false, "超大 pid 在任何平台都不存在（ESRCH）");
+});
+
+test("pruneJobLogs：活着的会话目录不吃数量上限（含并发的第二个 pi），死目录照旧；保留期对所有目录生效", () => {
   const root = tmp();
   const now = Date.now();
-  const mine = path.join(root, "1111");
-  const other = path.join(root, "2222");
-  fs.mkdirSync(mine, { recursive: true });
-  fs.mkdirSync(other, { recursive: true });
-  const write = (file: string, ageMs: number): string => {
+  const mine = path.join(root, "1111");       // 本进程的会话目录
+  const otherLive = path.join(root, "2222");  // 并发的第二个 pi（另一个终端 / pi --print / 子 agent）
+  const dead = path.join(root, "3333");       // 已退出会话的目录
+  for (const dir of [mine, otherLive, dead]) fs.mkdirSync(dir, { recursive: true });
+  const write = (dir: string, name: string, ageMs: number): string => {
+    const file = path.join(dir, name);
     fs.writeFileSync(file, "x");
     const stamp = new Date(now - ageMs);
     fs.utimesSync(file, stamp, stamp);
     return file;
   };
-  const mineLogs = ["bg-1", "bg-2", "bg-3"].map((name, index) => write(path.join(mine, `${name}.log`), (3 - index) * 1_000));
-  const stale = write(path.join(mine, "bg-9.log"), LOG_RETENTION_MS + 60_000);
-  const otherLogs = ["bg-1", "bg-2"].map((name, index) => write(path.join(other, `${name}.log`), (2 - index) * 1_000));
+  const mineLogs = ["bg-1", "bg-2", "bg-3"].map((name, index) => write(mine, `${name}.log`, (3 - index) * 1_000));
+  const otherLogs = ["bg-1", "bg-2"].map((name, index) => write(otherLive, `${name}.log`, (2 - index) * 1_000));
+  const staleLive = write(otherLive, "bg-9.log", LOG_RETENTION_MS + 60_000);
+  const deadLogs = ["bg-1", "bg-2"].map((name, index) => write(dead, `${name}.log`, (2 - index) * 1_000));
+  const isAlive = (pid: number): boolean => pid === 1111 || pid === 2222;
 
-  // keepMax=1：本会话 3 条新鲜日志都留（否则通知里的路径会变成死链），别家只留最新 1 条，过期的一条本会话日志仍删。
-  assert.equal(pruneJobLogs(root, now, { keepMax: 1, keepDir: mine }), 2);
-  for (const file of mineLogs) assert.equal(fs.existsSync(file), true, `${path.basename(file)} 应保留（本会话不吃数量上限）`);
-  assert.equal(fs.existsSync(stale), false, "保留期对本会话目录仍生效");
-  assert.equal(fs.existsSync(otherLogs[0]!), false, "别家最旧的仍被数量上限删");
-  assert.equal(fs.existsSync(otherLogs[1]!), true);
+  // keepMax=1：两个活目录的新鲜日志全留（通知里的路径还在被引用；只看「是不是自己」不够——别的活会话也一样），
+  // 死目录只留最新 1 条，过期文件连活目录也被清。
+  assert.equal(pruneJobLogs(root, now, { keepMax: 1, isAlive }), 2);
+  for (const file of [...mineLogs, ...otherLogs]) assert.equal(fs.existsSync(file), true, `${file} 应保留（活会话不吃数量上限）`);
+  assert.equal(fs.existsSync(staleLive), false, "保留期对活会话目录仍生效");
+  assert.equal(fs.existsSync(deadLogs[0]!), false, "死目录最旧的仍被数量上限删");
+  assert.equal(fs.existsSync(deadLogs[1]!), true);
 });
 
 test("pruneJobLogs：空目录被收掉、不存在的根目录不报错", () => {

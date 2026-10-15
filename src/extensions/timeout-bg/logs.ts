@@ -2,8 +2,9 @@
  * timeout-bg — 后台日志文件的落盘与清理（timeout-bg-todo#1）
  *
  * 布局：`<logRoot>/<pi pid>/<jobId>.log`（每次 pi 会话一个子目录，多会话互不覆盖）。
- * 保留策略：7 天 / 最多 50 个（按 mtime 新的优先），在 session_start 与每次新开
- * 后台任务时清理——否则日志会无限增长。
+ * 保留策略：7 天 / 最多 50 个（按 mtime 新的优先），**只在 session_start 清理**（index.ts 唯一调用点）；
+ * 活着的会话目录（包括本进程自己）不吃数量上限，只按保留期清——否则并发会话的 prune 会删掉别人正被
+ * 通知引用的日志（timeout-bg#7）；死会话目录按数量 + 保留期清，避免陈年日志堆积。
  *
  * 读日志尾部：给超时结果与完成通知附最近输出；二进制控制字符直接剔除，
  * 不让终端控制序列进模型上下文。
@@ -38,12 +39,16 @@ export function resolveJobLogPath(logRoot: string, jobId: string): string {
  * 为什么要扫盘（timeout-bg#7）：编号计数器是**实例内**状态，`/reload` 后从 1 重排，而日志是 append
  * 打开的——不接着旧最大号，新 job 就会写进同名旧日志，把两条命令的输出混进一个文件（通知的
  * 「末尾输出」也跟着混）。同一 pid 目录只属一个进程、实例内编号顺序分配，所以扫一次即无竞争。
+ *
+ * 残留窗口：旧实例刚 spawn 的 job 还来不及把文件落到盘上（`createWriteStream` 异步打开）时，
+ * 新实例的扫描是看不到它的——需要「spawn → reload → 新命令」挤进几毫秒内，且后果不差于本修复前。
  */
 export function nextJobSeq(logRoot: string, pid: number = process.pid): number {
   let names: string[];
   try {
     names = fs.readdirSync(path.join(logRoot, String(pid)));
   } catch {
+    // 读不出（ENOENT / EACCES / EMFILE…）都按「没有历史」从 1 起：宁可拿一个号，也不让命令失败。
     return 1;
   }
   let max = 0;
@@ -81,22 +86,34 @@ export function tailFileSync(filePath: string, maxBytes: number): string {
   return text.trimEnd();
 }
 
+/** 进程是否还在（`kill(pid, 0)`：ESRCH = 死；EPERM/EACCES = 活着但无权探测）。 */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /**
  * 清理后台日志：超过保留期或超出数量上限的文件被删除；空目录一并收掉。
  * 返回删除的文件数。
  *
- * `keepDir`（本会话目录的绝对路径）内的文件**不吃数量上限**、只按保留期清：通知/`/bg` 里的日志路径
- * 只有在会话还活着时才有人用，而每条命令（含前台）都占一个文件，50 个上限一次 `/reload` 就清掉整段历史
- *（timeout-bg#7）。别的会话目录没有活引用，照旧按数量 + 保留期清；名次只数非豁免文件，否则本会话文件会把别家挤光。
+ * **活着的会话目录**（目录名是 pid 且进程还在，含本进程自己）只按保留期清、**不吃数量上限**：
+ * 它的通知/`/bg` 还在引用这些路径，而每条命令（含前台）都占一个文件，50 上限会被迅速吃满。
+ * 这一条必须按「进程是否活着」判，不能只看「是不是自己的目录」——并发的第二个 pi（另一个终端、
+ * `pi --print`、子 agent）在它自己的 session_start 里看到的我们同样是「别家目录」（timeout-bg#7 评审）。
+ * 死会话目录没有活引用，按数量 + 保留期清；名次只数非豁免文件，否则活会话的文件会把死目录的挤光。
  */
 export function pruneJobLogs(
   logRoot: string,
   nowMs: number,
-  options: { retentionMs?: number; keepMax?: number; keepDir?: string } = {},
+  options: { retentionMs?: number; keepMax?: number; isAlive?: (pid: number) => boolean } = {},
 ): number {
   const retentionMs = options.retentionMs ?? LOG_RETENTION_MS;
   const keepMax = options.keepMax ?? LOG_KEEP_MAX;
-  const keepDir = options.keepDir;
+  const isAlive = options.isAlive ?? isProcessAlive;
   let sessionDirs: string[];
   try {
     sessionDirs = fs.readdirSync(logRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
@@ -125,12 +142,13 @@ export function pruneJobLogs(
   }
 
   files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const liveDirs = new Set(sessionDirs.filter((dir) => /^\d+$/.test(dir) && isAlive(Number(dir))));
   let removed = 0;
   let rank = 0;
   for (const entry of files) {
-    const exempt = keepDir !== undefined && path.dirname(entry.file) === keepDir;
-    const withinCap = exempt || rank < keepMax;
-    if (!exempt) rank += 1;
+    const live = liveDirs.has(path.basename(path.dirname(entry.file)));
+    const withinCap = live || rank < keepMax;
+    if (!live) rank += 1;
     const tooOld = nowMs - entry.mtimeMs > retentionMs;
     if (withinCap && !tooOld) continue;
     try {

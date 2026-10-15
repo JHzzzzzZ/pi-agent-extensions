@@ -35,7 +35,7 @@ import {
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resolveDefaultTimeout } from "./config.ts";
 import { createJobRegistry, type JobRecord } from "./jobs.ts";
-import { nextJobSeq, pruneJobLogs, resolveJobLogPath, sessionLogDir, tailFileSync } from "./logs.ts";
+import { nextJobSeq, pruneJobLogs, resolveJobLogPath, tailFileSync } from "./logs.ts";
 import { createRunInBackgroundDispatch, withOwnParamDescriptions } from "./params.ts";
 import { createTimeoutOps, type ShellConfig, type SpawnLike, type TimeoutMode, type TimeoutOpsDeps } from "./shell-ops.ts";
 import {
@@ -265,7 +265,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
 
     pi.on("session_start", (_event, ctx) => {
       try {
-        pruneJobLogs(deps.logRoot, now(), { keepDir: sessionLogDir(deps.logRoot) });
+        pruneJobLogs(deps.logRoot, now());
       } catch {
         /* 清理失败不影响会话 */
       }
