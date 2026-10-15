@@ -193,7 +193,7 @@
       "id": 12,
       "globalId": 401,
       "text": "前台 loop 任务到期送达从 followUp 改 steer（用户 2026-09-15 直接决定）：现状 pi.sendMessage({customType: loop-task-due},{triggerTurn: true, deliverAs: followUp})，agent 连着干活时任务压在宿主 followUp 队列里、要等它收工才注入；改 steer 后在当前工具批结束的回合边界进上下文（宿主内层循环消费点，先例 timeout-bg-todo#6）。范围待 align 细化：前台任务全量统一，--bg 后台路径与其它插件 followUp 通道不动；test/index.test.ts:390 的字面量断言需同步；建议照 timeout-bg/test/delivery-semantics.test.ts 用真实宿主 Agent + faux provider 锁时机差（字面量断言挡不住宿主挪消费点）。档位预判 T2。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/loop-steer-delivery",
       "tags": [
         "delivery",
@@ -203,11 +203,12 @@
       "priority": 5,
       "dependsOn": [],
       "notes": [
-        "对齐文档 todos/align/loop-todo#12.md 通过结构校验；用户 2026-10-15 回复「都同意」确认三轮问答结论与 T2 档位"
+        "对齐文档 todos/align/loop-todo#12.md 通过结构校验；用户 2026-10-15 回复「都同意」确认三轮问答结论与 T2 档位",
+        "merge 5d86015（分支 feat/loop-steer-delivery）· loop v1.11.0 · 224/224 + typecheck 零错误 · 全量 24/25（唯一红为 root:todo Windows 并发 EPERM，复跑绿）· 跨厂商评审 kimi-coding/k3：P1 无 / P2 补齐 todos 记账 / P3 转 #13 · 交付前手动真机验一次待用户执行"
       ],
       "createdAt": "2026-10-15T14:03:00.196Z",
       "claimedAt": "2026-10-15T14:03:04.179Z",
-      "completedAt": null,
+      "completedAt": "2026-10-15T14:31:29.060Z",
       "alignedAt": "2026-10-15T14:08:33.640Z"
     },
     {
