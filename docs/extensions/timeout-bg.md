@@ -1,6 +1,6 @@
 # timeout-bg — shell 工具超时转后台 + 默认超时
 
-> last verified @ 6c9b556
+> last verified @ f66aa46
 
 一句话：覆盖内置 `bash` / `powershell` 工具，把「超时即 `killProcessTree` 整树杀」改成「超时转后台继续跑」，
 并在未显式传 `timeout` 时施加默认 300 秒（`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 关闭）。
@@ -129,6 +129,11 @@
   P3：测试 2 补长度断言 + 注释改「当前这一步结束」（已改）；三件套锁步归 `general-todo` 既有条目；
   `docs/specs/direct-background.md` 为 #5 时点文档（不改）。`docs/cross/composition-surfaces.md:326` 的旧口径**不在本轮改**：
   该文件是契约面，改它要从严取档 T3，已开新条目（`docs-todo`）单独走。
+- 第 2 轮（加评轮，终轮）= **无 P1**；新 P2 一条（称 docs-todo 登记不存在）经核对为视角差异——条目开在主工作区的
+  `todos/docs-todo.json`（未提交时 worktree 里看不到），随记账提交落主干后自洽；新 P3 一条（扩展 README 测试数 68 → 70）已改。
+  reviewer 复核结论：P1 整改真闭环（注入宿主真 `convertToLlm`、抓的是转换后的请求载荷，且反证过断言恒真的两条路径），
+  P2② 驳回成立且证据更硬（宿主绑定点自己 `sendCustomMessage(...).catch(emitError)`，扩展侧拿到的闭包就是 `undefined`）；
+  行为面未再发现压住/丢失/重复路径，改名无遗漏。
 - **评审记录（`#5`/`#19`，2026-10-15，T3）**：reviewer = `kimi-coding/k3-256k`（跨厂商，三轮上限）。
 - 第 1 轮 = OK with notes（0 阻断 / 2 P2 / 4 组 P3）：P2 逐条处理 —— ① 本地主动后台遇 spawn 异步失败（只发 `error`、不保证发 `exit`）会留下永久 running 的僵尸 job（状态条卡住 + 无通知）⇒ `error` handler 在 `backgrounded && !exitSeen` 时自己 `markExited(id, null)`（远端 rejection 分支加对称加固），补「只发 error 不发 exit」单测；② 对齐承诺的 opt-in 真机用例补齐（`timeout-bg/test/live.test.ts` 2 条 + `remote-tools/test/remote-live.test.ts` 主动后台 1 条）。P3：`/bg` 命令描述、远端主动后台失败的归因文案、规格名词与分文件计数。修复 `2b99263`。
 - 第 2 轮 = OK with notes（0 P1/P2 / 5 条新 P3）：归因分流同时落到 notify 与工具错误文本并加断言；两处新收口路径改到 `logStream.end` 回调里（与 exit 分支的「日志先落盘再收尾」同口径）；卡片去重与计数同步。修复 `35e043f`。

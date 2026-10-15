@@ -34,7 +34,7 @@ shell 工具（`bash` / `powershell`）的**超时语义改写 + 主动转后台
 ## 用法与开发
 
 ```bash
-cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 68 个测试（+2 真机 opt-in：PI_TIMEOUT_BG_TEST_LIVE=1）
+cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 70 个测试（+2 真机 opt-in：PI_TIMEOUT_BG_TEST_LIVE=1）
 ```
 
 安装：把本目录复制到 `~/.pi/agent/extensions/timeout-bg/` 或 `<项目>/.pi/extensions/timeout-bg/`，Pi 内 `/reload`。
