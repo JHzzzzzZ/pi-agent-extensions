@@ -116,6 +116,26 @@
       "claimedAt": "2026-10-15T06:57:14.715Z",
       "completedAt": "2026-10-15T08:08:40.320Z",
       "alignedAt": "2026-10-15T06:57:47.440Z"
+    },
+    {
+      "id": 7,
+      "globalId": 399,
+      "text": "timeout-bg 日志两个现场实证缺陷（用户报障 + 真机复现）：① 日志串味——/reload 后实例内 jobSeq 归零、日志以 append 打开，新 job 追加进同名旧日志（实测 bg-1.log = 上个实例 182 字节旧输出 + 本次 27 字节，通知「末尾输出」混了两条命令）；② 通知路径死链——pruneJobLogs 只在 session_start 跑、按 50 个上限跨会话目录保留最新，而每条命令（含前台）都占一格 ⇒ 一次 reload 就删掉旧 job 日志（实测 bg-37 的通知 16:05 到达、文件 16:10 已被删）。修法（用户已确认「修复」）：编号起点 = 现有日志最大号 + 1（消除串味，保持 bg-N 短 id 不变）；prune 跳过本会话目录的数量上限（本会话日志不被自己删，仍按 7 天保留期清；别的会话目录按 50/7 天照旧）。测试：nextJobSeq 单测 + 「伪 reload」集成断言（新实例起在 max+1、旧文件内容不被写脏）+ prune keepDir 语义。",
+      "status": "done",
+      "branch": "feat/timeout-bg-log-integrity",
+      "tags": [
+        "日志",
+        "保留策略"
+      ],
+      "priority": 7,
+      "dependsOn": [],
+      "notes": [
+        "merge 96e629f（T2）。两缺陷实证：①串味（reload 后 jobSeq 归零 + append ⇒ bg-1.log 混两条命令）→ nextJobSeq 续号；②通知路径死链（每条命令一格 + 50 上限跨目录 + 只在 session_start 跑 ⇒ 一次 reload 删掉整段）→ prune 按 isProcessAlive 豁免活会话目录的数量上限。测试 75 + 2 opt-in、typecheck 零错误、全量门 24/24 套件 2577 用例 fail 0。评审两轮（zai-coding-cn/glm-5.3，因 kimi-coding 当时 404）：轮1 P1（并发第二 pi 仍删活会话日志）已改、加评轮无 P1/P2。远端真机验收仍缺可达 ssh 目标。"
+      ],
+      "createdAt": "2026-10-15T08:32:36.314Z",
+      "claimedAt": "2026-10-15T08:32:36.680Z",
+      "completedAt": "2026-10-15T09:18:09.252Z",
+      "alignedAt": "2026-10-15T08:33:12.805Z"
     }
   ]
 }
