@@ -353,7 +353,7 @@
       "id": 19,
       "globalId": 395,
       "text": "remote-tools 侧：远端 bash 支持 timeout-bg 发起的「直接转后台」（run_in_background=true，配套 timeout-bg#5，同一变更交付，不设 dep）。需求：① 远端 bash 收到该参数时不等超时——ssh 一启动就经托管端口登记 job（复用 register/terminate：尽力杀远端进程组 + 断本地 ssh），输出继续落本地 job 日志，tool call 立即以「已直接转入后台」文本结束；② 托管端口载荷扩展（登记区分「超时转后台」与「直接转后台」两种结果文本，文本仍由 timeout-bg 单源持有）与能力载荷「对端是否支持后台」的可见性同步 docs/cross/shell-tool-capability.md；③ 对端不支持/未装 timeout-bg 时 fail-closed 报错，不静默降级为前台等待；④ 组合测试 + opt-in 真机用例。",
-      "status": "processing",
+      "status": "done",
       "branch": "feat/direct-background",
       "tags": [
         "功能",
@@ -362,10 +362,12 @@
       ],
       "priority": 6,
       "dependsOn": [],
-      "notes": [],
+      "notes": [
+        "交付（merge 5613957，与 timeout-bg#5 同一变更）：远端 bash 收 run_in_background: true 时 ssh 一启动即 host.registerBackground（同 terminate 钩子/日志/通知），立即以「已直接转入后台」文本结束；exec 入口对「无托管端口 / 端口缺 registerBackground / 后台日志建不出」三种形态 fail-closed（REMOTE_BACKGROUND_UNSUPPORTED，不 spawn、不前台等待、不在本机跑）；stripRemoteFields 剥掉该参数；能力载荷声明 runInBackground: true；新增 REMOTE_BACKGROUND_REQUEST_FAILED 归因文案并让错误文本与 notify 同口径。测试 157→165（+11 真机 opt-in，含远端主动后台用例：立即返回/terminate 杀远端进程组）。跨厂商评审 3 轮 0 阻断。"
+      ],
       "createdAt": "2026-10-15T03:31:52.430Z",
       "claimedAt": "2026-10-15T03:32:12.250Z",
-      "completedAt": null,
+      "completedAt": "2026-10-15T06:21:19.892Z",
       "alignedAt": "2026-10-15T03:51:30.242Z"
     }
   ]
