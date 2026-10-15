@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-timeout-bg",
   "private": true,
-  "version": "1.3.1",
+  "version": "1.3.2",
   "type": "module",
   "description": "timeout-bg — shell 工具超时转后台 + 默认超时 + 主动转后台：命中 timeout 不再 kill，进程转入后台继续运行（输出落盘、结束后通知中途送达、/bg 命令面管理）；未显式传 timeout 时施加默认 300s（PI_TIMEOUT_BG_DEFAULT 可覆盖，0 = 关闭）；run_in_background: true 时不等超时、进程一启动就转后台（本地与远端同语义）",
   "engines": {
