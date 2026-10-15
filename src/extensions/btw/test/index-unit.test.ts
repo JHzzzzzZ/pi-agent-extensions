@@ -242,6 +242,30 @@ test("会话重置发生在飞行中：旧调用落定不得写进新线程，�
   assert.ok(!prompts[1]!.includes("旧答案"), "旧答案不得出现在新会话线程里");
 });
 
+test("/btw:clear 发生在飞行中：旧调用落定不得写回已清空的线程", async () => {
+  const h = makeHarness();
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const prompts: string[] = [];
+  const { ctx } = makeCtx({
+    streamSimple: (_model, context) => {
+      prompts.push(promptOf(context));
+      return (async function* () {
+        await gate;
+        yield { type: "done", message: { content: [{ type: "text", text: "旧答案" }] } };
+      })();
+    },
+  });
+  const first = h.run("btw", "旧问题", ctx);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await h.run("btw:clear", "", ctx);
+  release?.();
+  await first;
+  await h.run("btw", "新问题", ctx);
+  assert.ok(!prompts[1]!.includes("SIDE CHAT SO FAR"), "clear 后旧轮次不得被写回");
+  assert.ok(!prompts[1]!.includes("旧答案"), "旧答案不得出现在已清空的线程里");
+});
+
 test("/btw:model：无参数显示当前值；命中则覆盖；default 恢复跟随", async () => {
   const h = makeHarness();
   const models: unknown[] = [];

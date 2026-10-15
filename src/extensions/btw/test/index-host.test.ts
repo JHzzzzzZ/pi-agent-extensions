@@ -96,6 +96,9 @@ const WRITE_KEYS = [
   "setThinkingLevel",
   "setActiveTools",
   "sessionControl",
+  "compact",
+  "abort",
+  "shutdown",
 ] as const;
 type WriteKey = (typeof WRITE_KEYS)[number];
 
@@ -167,11 +170,17 @@ async function startHarness(t: TestContext, options: HarnessOptions = {}): Promi
     isIdle: () => true,
     isProjectTrusted: () => true,
     getSignal: () => undefined,
-    abort: () => {},
+    abort: () => {
+      writes.abort += 1;
+    },
     hasPendingMessages: () => false,
-    shutdown: () => {},
+    shutdown: () => {
+      writes.shutdown += 1;
+    },
     getContextUsage: () => undefined,
-    compact: () => {},
+    compact: () => {
+      writes.compact += 1;
+    },
     getSystemPrompt: () => "",
   };
 
@@ -376,6 +385,11 @@ test("结构守卫：btw 源码不出现任何写会话 API（条目 / 消息 / 
       "appendCompaction(",
       "appendUsage(",
       "appendContextEdit(",
+      "appendThinkingLevelChange(",
+      "appendModelChange(",
+      "appendSessionInfo(",
+      "appendLabelChange(",
+      "appendBranchSummary(",
       "newSession(",
       "switchSession(",
       "navigateTree(",

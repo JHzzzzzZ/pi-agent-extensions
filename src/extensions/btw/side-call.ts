@@ -55,7 +55,8 @@ export type SideCallResult = BtwResult<{ text: string }>;
 function clamp(text: string, max: number): string {
   const chars = Array.from(text);
   if (chars.length <= max) return text;
-  return chars.slice(0, Math.max(1, max - 1)).join("") + "…";
+  if (max <= 1) return "…"; // 与 context.ts 同口径：极端预算只留省略号，绝不超 max
+  return chars.slice(0, max - 1).join("") + "…";
 }
 
 /**
@@ -148,15 +149,14 @@ export async function runSideCall(
         }
       }
     } finally {
-      if (input.signal.aborted) {
-        // 不 await：provider 挂住时 return()／cleanup 自身也可能永不落定（实测形态），
-        // await 会把超时/关闭路径重新挂住；只尽力发一个清理信号。
-        try {
-          const cleanup = iterator.return?.();
-          if (cleanup && typeof cleanup.catch === "function") void cleanup.catch(() => {});
-        } catch {
-          /* provider 清理失败不改变语义 */
-        }
+      // 无论正常结束 / error 事件 / abort，都尽力让 provider 收尾——手写 while
+      // 循环没有 for-await 的隐式 return()；且**绝不 await**（挂住的 provider
+      // 其 cleanup 自身也可能永不落定，await 会把关闭路径重新挂住）。
+      try {
+        const cleanup = iterator.return?.();
+        if (cleanup && typeof cleanup.catch === "function") void cleanup.catch(() => {});
+      } catch {
+        /* provider 清理失败不改变语义 */
       }
     }
   } catch (error) {

@@ -283,6 +283,9 @@ export function createBtwExtension(pi: ExtensionAPI, deps: BtwDeps = {}): void {
   pi.registerCommand(BTW_CLEAR_COMMAND, {
     description: "清空 btw 侧对话线（只动扩展内存，不碰主会话）",
     handler: async (_args, ctx) => {
+      // 代际号自增：RPC 模式下 clear 可与飞行中的旧调用并发，旧调用落定后
+      // 不得把旧问答写回已清空的线程（同 session_start/shutdown 的口径）。
+      generation += 1;
       thread = [];
       notify(ctx, "侧对话线已清空。");
     },
