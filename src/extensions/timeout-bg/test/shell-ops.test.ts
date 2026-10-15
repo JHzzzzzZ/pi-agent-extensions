@@ -212,6 +212,23 @@ test("主动后台（run_in_background）：不等超时就登记，本次调用
   assert.deepEqual(h.exits.map((j) => j.id), [job.id], "结束触发一次完成通知");
 });
 
+test("主动后台：spawn 异步失败（只发 error、不发 exit）不得留下僵尸 job", async () => {
+  const h = harnessWithChild({ mode: "background" });
+  const error = await h.ops.exec("nope", h.dir, { onData: () => {}, env: {} }).then(
+    () => null,
+    (e: unknown) => e as Error,
+  );
+  assert.match(error?.message ?? "", /已直接转入后台运行/, "灾难发生前本次调用已经报过「已转后台」——所以必须收口");
+  assert.equal(h.jobs.get("bg-1")!.status, "running");
+
+  // shell 二进制 ENOENT/EACCES 这类 spawn 失败只发 'error'，exit「可能不发」。
+  h.child.emit("error", new Error("spawn ENOENT"));
+  await wait(30);
+  assert.equal(h.jobs.get("bg-1")!.status, "exited", "必须自己收口（否则永久 running + 状态条卡住 + 永远没通知）");
+  assert.equal(h.jobs.get("bg-1")!.exitCode, null, "没拿到退出码就记未知，不编一个");
+  assert.deepEqual(h.exits.map((j) => j.id), ["bg-1"], "收口要发完成通知");
+});
+
 test("主动后台：显式 timeout 仍然校验（非法值不静默吞掉），合法值只是不装计时器", async () => {
   const invalid = harnessWithChild({ mode: "background" });
   const error = await invalid.ops.exec("ls", invalid.dir, { onData: () => {}, timeout: 0, env: {} }).then(

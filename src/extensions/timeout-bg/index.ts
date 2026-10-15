@@ -288,7 +288,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
     });
 
     pi.registerCommand(BG_COMMANDS.list, {
-      description: "列出本会话超时转入后台的任务",
+      description: "列出本会话转入后台的任务（命中超时 / 主动要求）",
       handler: async (_args, ctx) => {
         notify(ctx, formatJobList(registry.list(), now()));
       },

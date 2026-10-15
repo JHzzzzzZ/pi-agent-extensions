@@ -17,7 +17,7 @@
 | 参数归属 | timeout-bg 单源声明（合并后的 bash schema）；remote-tools 单独生效时不声明该参数（不装 owner 就没有后台能力，不给假装支持的空承诺） |
 | 与 `timeout` 同时给 | 后台优先，`timeout` 忽略（写进参数说明）；远端分派的默认超时补齐也跳过（不注入） |
 | 结果形态 | 本次 tool call **以文本错误结束**（`reject`），文案「⏸ 已直接转入后台…」+ jobId + 日志路径 + 「结束时发通知、不要重跑」 |
-| `/bg` 展示 | job 记录带来源（`[主动]` / `[超时]`），混合列表能一眼分清 |
+| `/bg` 展示 | job 记录带来源（`[后台]` / `[超时]`），混合列表能一眼分清 |
 | 远端组合 | ssh 一启动即经既有 job 托管端口登记；`terminate` 钩子复用（杀远端进程组 + 断 ssh） |
 | 版本/能力不匹配 | 对端不支持（没装 owner / 旧版端口）⇒ **fail-closed 报错**，不静默退化成前台等待、不在本机执行 |
 
@@ -31,8 +31,8 @@
 
 ## 实现决策
 
-- **本地传递路径（关键）**：宿主的 `createBashTool().execute` 只把 `command`/`timeout`/`env` 传进 `options`，**新参数到不了 `operations.exec`**。所以 timeout-bg 在注册时按模式各建一份宿主工具定义（`normal` / `background`），自己的 `execute` 包一层：`params.run_in_background === true` ⇒ 用 background 版定义执行（转后台 ops），否则用原版。**不用**共享可变状态、不用哨兵值透传。
-- **本地 ops**：`createTimeoutOps` 增 `backgroundNow` 布尔（构造期固定，per 定义实例）。为真时 spawn 成功后**同 tick** 内登记 job 并 settle（`reject` 后台结果文本）；exit 处理照旧走既有 `backgrounded` 分支（`registry.markExited` → followUp）。不装定时器（`timeout` 忽略）。登记先于任何 exit 回调可能到达的时序（wire 完成后才登记，同 tick 安全）。
+- **本地传递路径（关键）**：宿主的 `createBashTool().execute` 只把 `command`/`timeout`/`env` 传进 `options`，**新参数到不了 `operations.exec`**。所以 timeout-bg 在注册时按模式各建一份宿主工具定义（`timeout` / `background`），自己的 `execute` 包一层：`params.run_in_background === true` ⇒ 用 background 版定义执行（转后台 ops），否则用原版。**不用**共享可变状态、不用哨兵值透传。
+- **本地 ops**：`createTimeoutOps` 增 `mode: "timeout" | "background"`（构造期固定，per 定义实例；不用布尔标志）。`background` 模式 spawn 成功后**同 tick** 内登记 job 并 settle（`reject` 后台结果文本）；exit 处理照旧走既有 `backgrounded` 分支（`registry.markExited` → followUp）。不装定时器（`timeout` 忽略）。登记先于任何 exit 回调可能到达的时序（wire 完成后才登记，同 tick 安全）。
 - **来源字段**：`JobRecord` 增 `origin: "timeout" | "background"`（默认 `"timeout"`，既有调用点零改动），只影响 `/bg` 行渲染。
 - **远端传递路径**：分派把 `params` 原样转给 capability 的 `executeRemote`，`run_in_background` 随之到达 remote-tools；`execHosted` 立即登记（与超时分支共用一段登记代码）；`stripRemoteFields` 必须剔掉该字段——不能透传给宿主内置 bash 定义（未知参数会被静默忽略 = 悄悄变前台）。
 - **契约（加法式扩展，不开新频道）**：job 托管端口（owner 侧 = timeout-bg）新增方法 `registerBackground(job)`（与 `register` 同载荷去掉 `timeoutSeconds`），返回结果文本；提供方（remote-tools）**探测方法存在性**——不存在即 fail-closed。旧提供方不调用新方法、新提供方缺方法即报错，双向都安全，故不需要 v2 频道。
@@ -48,7 +48,8 @@
 - **本地**：`run_in_background: true` ⇒ 调用立即 settle（不等 fake 子进程 exit）、job 已在注册表且 `origin: "background"`、结果文本含 jobId + 日志路径且**不含**「超时」；显式 `timeout: 9999` 并存时同样立即返回（后台优先）；子进程 exit 后走 `markExited` + 通知（复用既有断言）。
 - **文本/schema**：`backgroundResultText` 模板；参数注入后 `parameters.properties` 含 `run_in_background`（且 `timeout` 描述仍被改写）；描述与 guidelines 提到新参数。
 - **远端（remote-tools 侧）**：假 ssh（既有 fake `exec`）⇒ `run_in_background: true` 时立即登记（`registerBackground` 被调用一次）、结果文本来自端口；端口缺 `registerBackground` / 无托管端口 ⇒ 报 `REMOTE_BACKGROUND_UNSUPPORTED` 且不 spawn（无托管时）或不登记；`stripRemoteFields` 剔除该字段（断言宿主定义收到的 params 无此键）。
-- **组合**：跨扩展集成测试（真 event bus + 真双扩展接线）断言 owner 在有/无 `runInBackground` 能力时不支持 ⇒ fail-closed、支持 ⇒ 转交远端且不改本地行为。
+- **组合**：跨扩展集成测试（真 event bus + 真实加载两扩展 + 真 `ExtensionRunner`）断言「有 `runInBackground` ⇒ 带后台参数的远端调用确实进远端分支、不 fail-closed」；「无 `runInBackground`（旧提供方）⇒ fail-closed」由分派层的 fake capability 单测锁定（真实加载路径下两侧都是本仓当前版本，造不出旧提供方）。
+- **真机 opt-in**：`timeout-bg/test/live.test.ts`（`PI_TIMEOUT_BG_TEST_LIVE=1`，真实 spawn + 真实计时器：立即返回 / 进程续跑 / 日志续长 / 通知一次；超时路径同链路）与 `remote-tools/test/remote-live.test.ts` 的主动后台用例（`PI_REMOTE_TOOLS_TEST_TARGET`：ssh 一启动即登记、立即返回、terminate 杀远端进程组）——对齐文档验收 1/3 的可重复形态。
 - **零回归**：既有 timeout-bg 53 例 + remote-tools 全量用例逐字不动地通过。
 
 ## 范围外

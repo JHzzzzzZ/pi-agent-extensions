@@ -173,6 +173,14 @@ export function createTimeoutOps(deps: TimeoutOpsDeps): BashOperations {
 
       child.on("error", (error) => {
         logStream.end();
+        // 已转后台（超时或主动）：本次 tool call 早已结束（settle 是 no-op）⇒ 必须自己收口。
+        // spawn 异步失败（shell 二进制 ENOENT/EACCES 等）只发 error、不保证发 exit，
+        // 不收口就会留下永久 running 的僵尸 job（状态条卡住、永远没有完成通知）——
+        // 主动后台把登记提前到 spawn 之后，这条路径从「罕见」变成「必然要处理」。
+        if (backgrounded && !exitSeen) {
+          deps.registry.markExited(jobId, null);
+          return;
+        }
         settle(() => reject(error));
       });
 

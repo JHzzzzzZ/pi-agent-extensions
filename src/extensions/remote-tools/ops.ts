@@ -461,6 +461,9 @@ export const REMOTE_KILL_TIMEOUT_MS = 15_000;
 /** 转后台失败的静态文案（notify 用；tool error 另加错误码前缀）。 */
 export const REMOTE_BACKGROUND_FAILED = "远端超时转后台失败：已断开本地 ssh（远端命令可能仍在运行）。";
 
+/** 同上，但归因是「主动要求的后台」而不是超时（timeout-bg-todo#5 / remote-tools#19）。 */
+export const REMOTE_BACKGROUND_REQUEST_FAILED = "远端直接转后台失败：已断开本地 ssh（远端命令可能仍在运行）。";
+
 /**
  * 显式 timeout 的校验：与宿主 `resolveTimeoutMs` 同一句文案（托管路径下计时器在本地，
  * 宿主的计时逻辑够不着这里，校验得自己做）。
@@ -672,7 +675,7 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 					// 登记失败：本次 tool call 已结束（backgrounded 复位，ssh 退出时不再对未登记的 id settle）。
 					backgrounded = false;
 					controller.abort();
-					jobDeps?.notify?.(REMOTE_BACKGROUND_FAILED);
+					jobDeps?.notify?.(registration.reason === "background" ? REMOTE_BACKGROUND_REQUEST_FAILED : REMOTE_BACKGROUND_FAILED);
 					// 错误自己带了错误码（端口形状 / 能力不支持）时原样保留，不把归因吞掉。
 					const own =
 						error instanceof Error &&
@@ -711,6 +714,16 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 				},
 				(error: unknown) => {
 					logStream.end();
+					// 已转后台时本次 tool call 早已结束（settleOnce 是 no-op）：必须收口，
+					// 否则 job 停在 running。生产传送层（createSpawnExec）不会 reject，这是与本地同型的防御。
+					if (backgrounded) {
+						try {
+							host.settle(ticket.id, null);
+						} catch {
+							/* 收尾观察者异常不破坏会话 */
+						}
+						return;
+					}
 					settleOnce(() => reject(error instanceof Error ? error : new Error(String(error))));
 				},
 			);

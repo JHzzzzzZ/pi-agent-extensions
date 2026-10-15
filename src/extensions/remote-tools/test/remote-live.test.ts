@@ -390,6 +390,56 @@ test("真机：远端超时不断连（命令跑到结束）；/bg:kill 杀掉�
 	}
 });
 
+test("真机：主动后台（run_in_background）ssh 一启动就登记、立即返回；terminate 杀掉远端进程组", { skip }, async () => {
+	const session = makeSession();
+	const baseDir = baseDirInput ?? (await session.home());
+	const target = makeTarget();
+	const marker = `${baseDir}/.pi-remote-bg-${Date.now()}`;
+	const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-live-bg-"));
+	const background: Array<{ id: string; terminate: () => void }> = [];
+	const settled: Array<number | null> = [];
+	const host: RemoteJobPort = {
+		allocate: () => ({ id: "bg-live", logPath: path.join(logDir, "bg-live.log") }),
+		register: () => "不该走超时登记（主动后台必须调 registerBackground）",
+		registerBackground: (job) => {
+			background.push({ id: job.id, terminate: job.terminate });
+			return `已转后台：job ${job.id}`;
+		},
+		settle: (_id, exitCode) => settled.push(exitCode),
+	};
+	const ops = createRemoteBashOps(session, { jobHost: () => host, runInBackground: true });
+	const remoteRead = async (command: string): Promise<string> => {
+		const result = await runSsh(session.exec, target, command, { timeoutMs: 15_000 });
+		return result.stdout.toString("utf8").trim();
+	};
+
+	try {
+		// ① 立即返回：命令要跑 30 秒，但调用不能等它（验收 1）。
+		const started = Date.now();
+		await assert.rejects(
+			() => ops.exec(`sleep 30; printf 'BG-DONE' > '${marker}'`, baseDir, { onData: () => {}, env: {} }),
+			/已转后台/, // 假 owner 的文本；真 owner 的文案在 timeout-bg 的单测里锁
+		);
+		const elapsed = Date.now() - started;
+		assert.ok(elapsed < 5_000, `必须立刻返回而不是等 30 秒（实际 ${elapsed}ms）`);
+		assert.equal(background.length, 1, "ssh 一启动就登记（不等超时）");
+
+		// ② terminate（= /bg:kill）：杀掉远端进程组，命令不得写出标记（验收 3）。
+		background[0]!.terminate();
+		// 字符类写法（sleep 3[0]）：轮询命令自己的命令行不含可匹配的字面串，免得自匹配。
+		await waitUntil(async () => (await remoteRead("pgrep -f 'sleep 3[0]' | wc -l")) === "0", "远端进程组被终止");
+		const after = await remoteRead(`cat '${marker}' 2>/dev/null || true`);
+		assert.equal(after, "", "被 terminate 的命令不得继续跑到结束");
+
+		// ③ 收尾照旧：ssh 断开后 settle 一次（退出码未知，不编造）。
+		await waitUntil(async () => settled.length === 1, "断开后 settle 一次");
+		assert.equal(settled[0], null, "传输层中断记未知，不把 ssh 的 255 当命令退出码");
+	} finally {
+		await remoteRead(`rm -f '${marker}'`);
+		fs.rmSync(logDir, { recursive: true, force: true });
+	}
+});
+
 test("真机：干净 known_hosts 下首次连接成功、指纹由 ssh 自己写入（accept-new，remote-tools#15）", { skip }, async () => {
 	const target = makeTarget();
 	// 生产 argv 必须带 accept-new（防无声回退到 yes）；再挂一个隔离的 UserKnownHostsFile 观察「谁写了指纹」。
