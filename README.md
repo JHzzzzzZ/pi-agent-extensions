@@ -16,7 +16,7 @@
 | [`src/extensions/opencode-bridge/`](#opencode-bridge--本地代理桥http-connect--socks5) | 随 Pi 启动拉起本地 HTTP CONNECT → SOCKS5 代理桥（独立 helper 进程，多实例复用；裸 `/opencode-bridge` 状态 + 冒号子命令 `/opencode-bridge:sync [port]`、`:restore`、`:status` 确认式修改 httpProxy 与备份恢复，均可撤销） | 114 个 |
 | [`src/extensions/human-notify/`](#human-notify) | 人工介入 Windows Toast 通知：审批/输入/等人工具等待与 agent 结束时把人叫回终端；用户取消回合后不弹完成通知（Linux / macOS no-op） | 37 个 |
 | [`src/extensions/solo-mode/`](#solo-mode) | `/solo` 免审批模式：审批摩擦门（PWR 批准卡 / bridge 确认 / deep-init 二次确认）自动按批准路径通过，仅当前会话（开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启） | 22 个 |
-| [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时 + 主动转后台：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束 followUp 通知、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭）；`run_in_background: true` 时**不等超时**、进程一启动就转后台（本地与远端同语义）；bash 与 remote-tools 经 `pi.events` 组合（能力协商，两个功能都保留），**远端 bash 超时同样不杀 ssh、转后台并进统一 job 面**（`/bg`、`/bg:kill`、底部状态条段），`/bg:kill` 尽力杀远端进程组 | 68 个 + 2 真机 opt-in（node:test） |
+| [`src/extensions/timeout-bg/`](#timeout-bg) | shell 工具超时转后台 + 默认超时 + 主动转后台：`bash` / `powershell` 命中 timeout 不再 kill，进程转后台继续跑（输出落盘、结束通知中途送达、`/bg` 命令面管理）；未显式传 timeout 时默认 300s（`PI_TIMEOUT_BG_DEFAULT` 覆盖，0 = 关闭）；`run_in_background: true` 时**不等超时**、进程一启动就转后台（本地与远端同语义）；bash 与 remote-tools 经 `pi.events` 组合（能力协商，两个功能都保留），**远端 bash 超时同样不杀 ssh、转后台并进统一 job 面**（`/bg`、`/bg:kill`、底部状态条段），`/bg:kill` 尽力杀远端进程组 | 70 个 + 2 真机 opt-in（node:test） |
 | [`src/extensions/virtual-model-router/`](#virtual-model-router) | 虚拟模型路由：注册一个可选中的虚拟模型 `opencode-go/router`，每次请求按宿主 `reason` 现场选物理模型（`user` → 强档 / `continuation` → 便宜快档 / `retry` → 升档或按溢出信号换长上下文档 / `direct` → 固定档），零额外 LLM 调用、零额外延迟；档位表与注册身份全在 `config.ts` 单一表 | 20 个（node:test） |
 | [`src/extensions/jev-safe-gate/`](#jev-safe-gate) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 分类器判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只等于「本扩展不弹框」、绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入 | 50 个（node:test） |
 | [`src/extensions/remote-tools/`](#remote-tools) | 内置工具的 SSH 远程后端：`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls` 加 `remote`（`"[user@]host"`）+ `remotePort`（bash 另有 `remoteCwd`）三个可选参数，`remote` 非空即路由到远端、留空与内置逐字一致（复用宿主 Operations 接缝，只有 grep 因接缝覆盖不到 ripgrep 搜索而整份重写）；**远端目标登记表：别名 + strict 白名单（默认开），未登记目标一律拒绝**——`remote_targets` 工具给模型查/登记，`/remote:add|list|rm|strict` 给人用，别名与字面目标同源命中、`ssh_config` 别名也能登记；零运行时依赖（系统 `ssh`），不做路径映射/只读开关；bash 经 `pi.events` 与 timeout-bg 组合（远端超时转后台、统一 job 面；`run_in_background: true` 时远端同样一启动即转后台，不支持时 fail-closed），未装 timeout-bg 时超时语义与内置一致；**经 `pi.events` 向 dir-context 提供「取远端目录上下文」能力**（`context.ts`，一条 ssh 取完整条祖先链；**分帧用 base64 载荷**——内容含 NUL 也无法伪造出假路径块；读到写不出的候选或远端缺 base64 时明确报失败）；**主机指纹走 TOFU（`accept-new`）：新主机首次连接零人工前置、指纹变更仍 fail-closed**；**成功/失败文案一律展示远端路径**（不把内部标记路径 `C:\…\pi-remote\…` 回灌给模型） | 165 个（+11 真机 opt-in） |
@@ -551,10 +551,10 @@ shell 工具（`bash` / `powershell`）的**超时语义改写**：命中 `timeo
 
 - **超时转后台** — 超时那一刻本次 tool call 立刻结束，结果里给 `job: bg-N`、pid 与日志路径；进程继续跑、输出继续写进日志，agent 用 `read` / `bash tail` 就能看中间结果。**不要重跑超时的命令**
 - **默认超时** — 未传 `timeout` 时用 300s；`PI_TIMEOUT_BG_DEFAULT=<秒>` 覆盖（`0` = 关闭默认超时，回到宿主「不设超时」行为；非法值回退 300s 并在会话里提示一次）
-- **完成通知** — 后台任务自然结束时注入一条 followUp（jobId / 退出码 / 耗时 / 末尾输出），agent 无需轮询
+- **完成通知** — 后台任务自然结束时给会话送一条通知（jobId / 退出码 / 耗时 / 末尾输出），agent 无需轮询。投递用 `deliverAs: "steer"`：agent 连着干活时也在**当前工具批结束**就进上下文，不等它收工；空闲时直接起一轮（`#6` 之前的 followUp 只在 agent「本来要停」才被消费，连着干活时通知一直被压着）
 - **主动转后台** — `run_in_background: true` 时**不等超时**：进程一启动就转后台，本次调用立刻返回（含 jobId + 日志路径），其余与超时转后台完全同一条路径（同一日志、`/bg` 列表、结束通知、状态条段）。`/bg` 列表里用 `[后台]` / `[超时]` 标出来源；对长任务（构建 / 全量测试 / 下载 / 长轮询）用它来代替「给一个很小的 timeout」。参数说明写明：与 `timeout` 同时给时后台优先
 - **与 remote-tools 共存** — 两个扩展都要覆盖 `bash`，而宿主对同名工具按扩展加载顺序 first-wins、无法包裹下层：本扩展在注册前用 `pi.events` 收集「shell 能力」，把 remote-tools 的远端参数并进合并后的 `bash`（`remote`/`remotePort`/`remoteCwd` + 超时语义同时在）；没装 remote-tools 时行为与今天逐字一致。要求 `timeout-bg` 先于 `remote-tools` 加载（仓库 `package.json` 顺序即如此），顺序相反时会提示冲突而不是静默。契约见 [`docs/cross/shell-tool-capability.md`](docs/cross/shell-tool-capability.md)
-- **远端超时也转后台** — 装了 remote-tools 时，远端 `bash` 命中超时**不再杀本地 ssh**：命令继续跑、输出继续落本地 job 日志，本次调用返回 jobId + 日志路径，结束时同样发 followUp；远端任务进同一个 `/bg` 列表、`/bg:kill`（尽力杀远端进程组）、`/bg:clear` 与状态条段；远端未显式给 `timeout` 时沿用同一个默认 300s；**`run_in_background: true` 在远端同样生效**（ssh 一启动即登记）；对端是旧版/没装时该组合 fail-closed 报错，不静默退化成前台等待
+- **远端超时也转后台** — 装了 remote-tools 时，远端 `bash` 命中超时**不再杀本地 ssh**：命令继续跑、输出继续落本地 job 日志，本次调用返回 jobId + 日志路径，结束时同样送通知；远端任务进同一个 `/bg` 列表、`/bg:kill`（尽力杀远端进程组）、`/bg:clear` 与状态条段；远端未显式给 `timeout` 时沿用同一个默认 300s；**`run_in_background: true` 在远端同样生效**（ssh 一启动即登记）；对端是旧版/没装时该组合 fail-closed 报错，不静默退化成前台等待
 - **命令面** — `/bg`（列表：状态 / pid / 命令首行 / 日志路径）、`/bg:kill <jobId>`（杀整棵进程树）、`/bg:clear`（清已结束记录）
 - **边界** — 只覆盖**当前启用**的 shell 工具（active 里没有的不注册，不凭空加工具）；用户手敲的 `!` 命令与其它带 `timeoutMs` 的工具（agent-team / pwr / subagent 等，属调度语义）不受影响；**Esc 主动取消仍然 kill**（超时 ≠ 取消）；后台任务**只活在本会话**，`session_shutdown` 时全部杀掉——headless（`pi --print`）一次性会话尤为明显：会话一结束任务即被杀，日志停在被杀那一刻；想在**同一次会话内**验收后台链路，要「先转后台，再用前台命令等一会儿」再看日志/通知
 - **codemode 脚本视角** — 脚本调 `tools.bash` 拿到的就是本扩展注册的工具，结构化结果（`output` 1 MiB 上限 / `truncated` / `full_output_path` / `exit_code` / `wall_time_seconds`）与内置一致（原样透传宿主 `outputSchema`，只改写 description 与 timeout 参数说明）；超时那次 call 仍以错误结束（结果文本带 jobId / 日志路径）
@@ -562,7 +562,7 @@ shell 工具（`bash` / `powershell`）的**超时语义改写**：命中 `timeo
 - **状态条** — 底部状态条出现 `⏱ <N> bg`（N = 运行中的后台任务数，本地 + 远端同一个注册表），没有运行中的任务时不占位置
 
 ```bash
-cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 68 个测试（+2 真机 opt-in：PI_TIMEOUT_BG_TEST_LIVE=1）
+cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck   # 70 个测试（+2 真机 opt-in：PI_TIMEOUT_BG_TEST_LIVE=1）
 ```
 
 ---
