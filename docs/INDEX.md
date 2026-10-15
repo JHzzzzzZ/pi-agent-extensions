@@ -61,7 +61,7 @@
 | provider-quota | 余额/额度状态 widget + `/quota`，多供应商适配 |
 | run-timer | 会话/任务/回合计时 widget |
 | solo-mode | `/solo` 免审批模式：审批摩擦门自动按批准路径通过（仅当前会话）；开关/状态走 `/solo:on|:off|:status`；`pi --solo` 启动即开启 |
-| timeout-bg | shell 工具超时转后台 + 默认超时：`bash`/`powershell` 命中 timeout 不再 kill，进程转后台继续跑（日志落盘 + 完成 followUp + `/bg` 命令面）；未传 timeout 时默认 300s |
+| timeout-bg | shell 工具超时转后台 + 默认超时：`bash`/`powershell` 命中 timeout 不再 kill，进程转后台继续跑（日志落盘 + 完成通知（steer 中途送达）+ `/bg` 命令面）；未传 timeout 时默认 300s |
 | stream-token-speed | TTFT + 实时 tokens/s 状态 widget |
 | [virtual-model-router](extensions/virtual-model-router.md) | 虚拟模型路由：注册 `opencode-go/router`，每次请求按宿主 `reason` 路由到物理模型（user→强档 / continuation→便宜快档 / retry→升档或溢出换长上下文档 / direct→固定档），零额外 LLM 调用；档位表与注册身份在 `config.ts` 单一表；真机验收清单 `virtual-model-router-checklist.md` |
 | [jev-safe-gate](extensions/jev-safe-gate.md) | tool_call 前置的 Jev 风险判断门：只拦 `bash`，先过便宜正则候选筛（非候选零分类调用），候选交给内置 `typesafe/jev-latest` 判断，可疑/拿不准弹一次确认（拒绝即拦、同意即原样执行）；判定安全只意味着「本扩展不弹框」，绝不授予权限；fail-open（抛错/超时/无分类器/无 UI）但每次放行都上状态条 + 首次 notify + 日志；solo 开启时完全不介入；真机验收清单 `jev-safe-gate-checklist.md` |

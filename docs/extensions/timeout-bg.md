@@ -119,6 +119,16 @@
 
 ## 测试与验证
 
+- **评审记录（`#6`，2026-12-12，T2 单轮 + 行为面加评）**：reviewer = `kimi-coding/k3-256k`（跨厂商）。
+- 第 1 轮 = OK with notes（0 阻断 / 1 P1 / 2 P2 / 4 P3）；reviewer 显式回答「**有**本轮未覆盖的行为面疑虑」⇒ 按 P1 处理并加评一轮。
+  P1（测试停在裸 `Agent` 层，未锁「模型真看到通知」与会话映射层）已改：测试改接宿主真品 `convertToLlm`（custom → user）
+  + 包装 `streamFn` 抓每次请求载荷，断言「steer ⇒ 第 2 次请求就带通知 / followUp ⇒ 第 3 次才带」；
+  会话映射层按「未锁」注记（见上节）。P2 ①`docs/INDEX.md` 旧口径已改；②`deliverExit` 吞异步拒绝**驳回**——
+  `ExtensionAPI.sendMessage` 在扩展面就是同步 `void`（`extensions/types.d.ts`；返回 `Promise<void>` 的是
+  `ReplacedSessionContext.sendMessage`，我们不用那个对象），加 `.catch()` 反而破假 pi 契约。
+  P3：测试 2 补长度断言 + 注释改「当前这一步结束」（已改）；三件套锁步归 `general-todo` 既有条目；
+  `docs/specs/direct-background.md` 为 #5 时点文档（不改）。`docs/cross/composition-surfaces.md:326` 的旧口径**不在本轮改**：
+  该文件是契约面，改它要从严取档 T3，已开新条目（`docs-todo`）单独走。
 - **评审记录（`#5`/`#19`，2026-10-15，T3）**：reviewer = `kimi-coding/k3-256k`（跨厂商，三轮上限）。
 - 第 1 轮 = OK with notes（0 阻断 / 2 P2 / 4 组 P3）：P2 逐条处理 —— ① 本地主动后台遇 spawn 异步失败（只发 `error`、不保证发 `exit`）会留下永久 running 的僵尸 job（状态条卡住 + 无通知）⇒ `error` handler 在 `backgrounded && !exitSeen` 时自己 `markExited(id, null)`（远端 rejection 分支加对称加固），补「只发 error 不发 exit」单测；② 对齐承诺的 opt-in 真机用例补齐（`timeout-bg/test/live.test.ts` 2 条 + `remote-tools/test/remote-live.test.ts` 主动后台 1 条）。P3：`/bg` 命令描述、远端主动后台失败的归因文案、规格名词与分文件计数。修复 `2b99263`。
 - 第 2 轮 = OK with notes（0 P1/P2 / 5 条新 P3）：归因分流同时落到 notify 与工具错误文本并加断言；两处新收口路径改到 `logStream.end` 回调里（与 exit 分支的「日志先落盘再收尾」同口径）；卡片去重与计数同步。修复 `35e043f`。
@@ -130,6 +140,9 @@
   2 条锁远端侧（默认超时注入、托管端口 → /bg + 状态条段 + 结束通知）、10 条锁托管端口与注册表语义（发号/登记/主动后台登记/完成/畸形载荷/terminate/onChange））
 - `delivery-semantics.test.ts` 接的是**宿主真实实现**：pi-agent-core 的 `Agent` + pi-ai 的 faux provider（官方测试用假模型流），
   只把模型输出换成脚本化假流——锁「steer 在下一轮助手响应之前注入 / followUp 排在第 2 轮助手响应之后」的时机差（纯断言 `deliverAs` 字面量挡不住宿主改消费点）。
+  - **未锁的一层（读码核实，不假装已锁）**：`AgentSession.sendCustomMessage` 的 6 行映射——流式中 + `triggerTurn ≠ false`
+    ⇒ `agent.steer`；非流式 + `triggerTurn` ⇒ `_runAgentPrompt` 起一轮（与 deliverAs 无关）。搭 AgentSession 脚手架
+    （model runtime / session manager / resource loader）成本远超本条改动；宿主改这层时测试不会红，靠本注記提醒复查。
   代价：新增两个**测试专用** devDependencies（`@earendil-works/pi-agent-core` / `pi-ai`，`^1.2.0` = 当时 pi 运行时同版）——
   宿主升级到别的版本时这两个要一起核对，否则测的是另一个 loop。
 - 进程边界测试只 fake `spawn` 与 `killTree`，真实读写临时目录日志、真实毫秒级计时器；工具本体用宿主真实 `createBashTool`。
