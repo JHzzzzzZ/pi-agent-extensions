@@ -1,0 +1,26 @@
+{
+  "name": "pi-extension-btw",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "btw — 旁路对话：主对话运行中也能问「现在在干啥」，侧模型只读当前分支尾部作答，答案落独立只读面板、同会话内可连续追问；零写入主会话（不 appendEntry、不 sendMessage、不碰主 run），对话线只在扩展内存里；模型默认跟随主会话，/btw:model 会话内切换，/btw:clear 清空对话线",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^1.0.0",
+    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@earendil-works/pi-tui": "^1.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}

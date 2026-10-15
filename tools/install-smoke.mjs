@@ -61,6 +61,7 @@ export const REPO_ROOT = path.resolve(HERE, "..");
  * widget 键：编辑器上方三段（pwr / run-timer / loop）走仓库内「widget 排序带」
  * 合并后只写宿主单键 `widget-band`（契约 docs/cross/status-bar.md），故不再
  * 各自出现 pwr-runs / run-timer；loop 无任务时不挂 widget（启动期无写入）。
+ * btw 不写任何 UI 键（旁路面板只在用户主动 `/btw` 时出现），只以命令注册证明加载。
  */
 export const EXTENSION_EXPECTATIONS = {
   pwr: {
@@ -126,6 +127,8 @@ export const EXTENSION_EXPECTATIONS = {
   "stream-token-speed": { commands: [], uiKeys: ["50:stream-token-speed"] },
   "human-notify": { commands: [], uiKeys: [] },
   "chatanywhere-provider": { commands: [], uiKeys: [] },
+  // 无状态条/widget：仅有命令面（命令注册即加载成功的证据）。
+  btw: { commands: ["btw", "btw:clear", "btw:model"], uiKeys: [] },
 };
 
 /** 读取根 package.json 的 pi.extensions 清单（加载冒烟的复制清单）。 */

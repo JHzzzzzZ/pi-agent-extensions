@@ -1,6 +1,6 @@
 # 跨扩展横切契约：注入端口（Deps）与测试 fake 模式
 
-> last verified @ 6676d8a
+> last verified @ 6410309
 >
 > 仓库统一模式：**依赖注入经 deps 对象**，不用 mock 库、无全局注入。fake 只替进程/IO/时钟边界，不做被测行为的"纸面替身"。
 
@@ -20,6 +20,7 @@
 | jev-safe-gate | `GatePorts`（gate.ts：solo 读取 / hasUI / 候选筛 / classify / confirm / release——判定层的全部外界面）、`JevSafeGateDeps`（index.ts：solo 读取 / 判断超时 / 日志出口）、`ClassifierRegistryLike`（`ctx.modelRegistry` 里真正用到的那一小面） | 分类器网络调用、宿主 UI、solo 状态文件、时钟（超时计时器） |
 | remote-tools | `SshExec`（ssh.ts，进程边界口：`{ file, args, stdin, timeoutMs, signal, onData }` → `{ exitCode, stdout, stderr, timedOut, spawnFailed }`）、`RemoteToolsDeps = { exec, cwd, markerAnchor?, targets, now? }`（tools.ts 入口；`markerAnchor` 是标记根守卫的测试接缝，`targets` 是目标登记表文件口）、`TargetsStore`（targets.ts：`read`/`write`/`readAtLoad`；测试用 `createMemoryTargetsStore` / `looseTargets` 手写 fake）、`RemoteSession`（target + exec，$HOME 懒解析与失败不毒化） | 系统 `ssh` 子进程与登记表文件（测试用手写 fake，断言**实际发给 ssh 的命令字符串**与**是否读过登记表**：test/tools.test.ts、test/ops.test.ts、test/targets*.test.ts） |
 | dir-context | **无注入端口（有意）**——被测行为就是「真实路径语义 + 宿主事件契约」本身：路径/realpath/链接/包含校验用**真实临时目录树**，宿主交互用**真实 `discoverAndLoadExtensions` + 真实 `ExtensionRunner.emitToolResult`**（只 fake `sessionManager`/`modelRegistry`/actions 这些本扩展不读的对象） | 文件系统与宿主事件分发（两者都不是「纸面替身」能代表的边界） |
+| btw | `BtwDeps`（index.ts：`nowMs` 时钟 + `timeoutMs` 看门狗时长）、`StreamSimplePort`（side-call.ts：`ctx.modelRegistry` 里真正用到的那一小面——只有 `streamSimple` 一个方法） | 模型调用（网络/鉴权边界；宿主路径测试只 fake `streamSimple`，真 provider 调用只能真机验）与看门狗时长；面板渲染用真实组件，只 fake 终端（`ui` 记录组件/notify） |
 
 ## 时钟约定
 
