@@ -45,7 +45,15 @@
 
 ```bash
 # 安装：整目录复制到 ~/.pi/agent/extensions/btw/ 或 <项目>/.pi/extensions/，Pi 内 /reload
-cd src/extensions/btw && npm install && npm test && npm run typecheck   # 59 个测试
+cd src/extensions/btw && npm install && npm test && npm run typecheck   # 59 个 + 2 真机 opt-in
 ```
 
-真机验收（需要真实模型）：主 agent 流式运行中执行 `/btw 现在在干啥` → 面板出答案、主 run 不中断、会话文件零新增条目。
+真机验收（验收标准 1–2，需真实模型 + 凭据）——可以直接跑 opt-in 用例，也可以手动：
+
+```bash
+PI_BTW_E2E_MODEL=zai-coding-cn/glm-5.3-flash node --test test/real-pi.test.ts
+# 它起真实 pi --mode rpc（只加载本扩展、临时 agent 目录、跑完即删）并断言：
+#   ① 空闲会话 /btw 出真实模型回答且 dispose=handled（不进主对话）；
+#   ② 主 agent 流式跑工具时 /btw 仍能作答（notify 先于 agent_settled）；
+#   ③ 两种情况下会话文件都零 user/assistant 条目。
+```
