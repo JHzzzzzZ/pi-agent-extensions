@@ -571,6 +571,21 @@
       "claimedAt": "2026-10-12T03:44:04.784Z",
       "completedAt": "2026-10-12T09:36:47.982Z",
       "alignedAt": "2026-10-12T03:44:36.373Z"
+    },
+    {
+      "id": 35,
+      "globalId": 400,
+      "text": "kimi-coding provider 全 404：宿主目录缓存问题——~/.pi/agent/models-store.json 把 kimi-coding 刷成 openai-completions + 内置 baseUrl（https://api.kimi.com/coding，缺 /v1）⇒ 请求打到 /coding/chat/completions ⇒ 404 resource_not_found_error。实测对照：隔离 agent 目录（无缓存）同一 key 正常；原始 API /coding/v1/chat/completions 与 /coding/v1/messages(?beta=true) 均 200、/coding/chat/completions 404。动作：① 按 docs/pi-*-issue.md 惯例写上游 issue 稿（目录合并不应把 provider 的 baseUrl 与 api 拆开取）；② 本机缓解（备份后删 models-store 缓存键，或 models.json 显式覆盖）需用户逐次同意。发现于 btw#1 交付（默认 reviewer 用不了）。",
+      "status": "open",
+      "branch": null,
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-15T10:20:33.708Z",
+      "claimedAt": null,
+      "completedAt": null,
+      "alignedAt": null
     }
   ]
 }
