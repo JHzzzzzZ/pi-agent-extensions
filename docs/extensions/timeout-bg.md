@@ -1,6 +1,6 @@
 # timeout-bg — shell 工具超时转后台 + 默认超时
 
-> last verified @ c5e0d94
+> last verified @ 174d351
 
 一句话：覆盖内置 `bash` / `powershell` 工具，把「超时即 `killProcessTree` 整树杀」改成「超时转后台继续跑」，
 并在未显式传 `timeout` 时施加默认 300 秒（`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 关闭）。
@@ -46,10 +46,11 @@
   而日志是 append 打开的——不续号就会把新 job 追加进同名旧日志（实测：通知的「末尾输出」混了两条命令）。
   不用 `flags: "wx"` + 重试：同一 pid 目录只属一个进程、实例内编号顺序分配，扫一次即无竞争；`wx` 只会在文件
   意外存在时把命令直接打挂。
-- **保留策略分两类**（timeout-bg#7）：别的会话目录按 7 天 / 50 个清（名次只数非豁免文件，否则本会话会把别家挤光）；
-  **本会话目录（`sessionLogDir(logRoot)`，`pruneJobLogs` 的 `keepDir`）只按 7 天清、不吃数量上限**——
-  通知/`/bg` 里的路径只有在会话还活着时才有人用，而 50 个上限会被一条命令一个文件迅速吃满，
-  一次 `/reload` 就清掉整段历史（实测：`bg-37` 的通知 16:05 到达、16:10 被 prune 删）。prune 仍在 `session_start` 跑。
+- **保留策略分两类**（timeout-bg#7）：别的会话目录按 7 天 / 50 个清（名次只数非豁免文件，否则活会话会把死目录挤光）；
+  **活着的会话目录只按 7 天清、不吃数量上限**——豁免必须按「目录名的 pid 还在不在」判（`isProcessAlive`），
+  不能只看「是不是自己的目录」：并发的第二个 pi（另一终端 / `pi --print` / 子 agent）在自己 session_start 里
+  看到的我们同样是「别家目录」（首轮评审的 P1）。理由：通知/`/bg` 里的路径只有在会话还活着时才有人用，
+  而 50 个上限会被「一条命令一个文件」迅速吃满，一次 `/reload` 就清掉整段历史（实测：`bg-37` 的通知 16:05 到达、16:10 被删）。prune 仍在 `session_start` 跑。
 - **会话级生命周期**：`session_shutdown` 杀光本会话遗留的后台任务；不做跨会话守护、不写 pid 文件。
   含义在 headless（`pi --print`）里最直观：pi 一退后台任务即被杀，日志停在被杀那一刻——验收这类链路必须**在同一会话内**等它结束（先转后台，再用前台命令等一会儿），跨进程等待永远看不到尾部输出。
 - **killTree 自实现**：宿主的 `killProcessTree` 不在包导出面。Windows 用 `taskkill /pid <pid> /T /F`；
@@ -109,7 +110,7 @@
 - `shell-job-host.ts` — 远端 job 托管端口（频道常量、`allocate/register/registerBackground/settle`、应答索取与形状守卫）
 - `status-band.ts` — footer 段前缀协调（跨插件契约的本地拷贝；本扩展那份不跨插件 import）
 - `jobs.ts` — 后台任务注册表（`running` → `exited` / `killed`，注入 `now` / `killTree` / `onExit` / `onChange`；远端 job 另有 `target`、`origin` 与 `terminate`）
-- `logs.ts` — 日志尾部读取、控制字符剔除、编号续号（`nextJobSeq`）、会话日志目录（`sessionLogDir`）、保留策略（7 天 / 50 个，本会话目录豁免数量上限）
+- `logs.ts` — 日志尾部读取、控制字符剔除、编号续号（`nextJobSeq`）、会话日志目录（`sessionLogDir`）、进程存活探测（`isProcessAlive`）、保留策略（7 天 / 50 个，活会话目录豁免数量上限）
 - `config.ts` — 默认超时解析（env）与 timeout 毫秒校验（非法文案与宿主逐字一致）
 - `params.ts` — `run_in_background` 的读取/剥离/schema 描述注入/按模式分派（`#5`；与宿主参数面的唯一翻译点）
 - `text.ts` — 面向模型/人的静态文本模板（超时结果 / 结束通知 / `/bg` 列表）
@@ -127,6 +128,16 @@
 
 ## 测试与验证
 
+- **评审记录（`#7`，2026-12-12，T2 单轮 + 行为面加评）**：reviewer = `zai-coding-cn/glm-5.3`（跨厂商；
+  当时 `kimi-coding/k3*` 全 404、`glm-5.3-highspeed` 无套餐权限，故改用同厂商主力档）。
+- 第 1 轮 = OK with notes（1 P1 / 0 P2 / 5 P3）；reviewer 显式回答「**有**本轮未覆盖的行为面疑虑」⇒ 按 P1 处理并加评一轮。
+  P1：`keepDir` 只豁免「调用方自己的目录」——并发的第二个 pi（另一终端 / `pi --print` / 子 agent，共享同一个
+  `bg-jobs`）在自己的 `session_start` 里仍会把活着的会话目录当「别家」按 50 上限删 ⇒ 改成按 `isProcessAlive(pid)` 判活
+  （活目录只吃 7 天保留期、不吃上限；死目录照旧）。P3：头注释失实、`nextJobSeq` 读目录失败口径、`createWriteStream`
+  异步打开的毫秒级窗口、超长数字名——前三条已随手补正/补注，末条记录不改。
+- 第 2 轮（加评轮，终轮）= **无 P1/P2**；两条 warning（注释承诺 EACCES 而实现只认 EPERM、文档未提交且计数不符）
+  与两条测试加固建议已在 `174d351` 收口（认 EACCES + 补「真实接线」用例 + 伪 reload 用例让 FakeChild 发输出，
+  使内容断言不依赖「append 不写就不脏」的巧合）。T2 两轮上限到。
 - **评审记录（`#6`，2026-12-12，T2 单轮 + 行为面加评）**：reviewer = `kimi-coding/k3-256k`（跨厂商）。
 - 第 1 轮 = OK with notes（0 阻断 / 1 P1 / 2 P2 / 4 P3）；reviewer 显式回答「**有**本轮未覆盖的行为面疑虑」⇒ 按 P1 处理并加评一轮。
   P1（测试停在裸 `Agent` 层，未锁「模型真看到通知」与会话映射层）已改：测试改接宿主真品 `convertToLlm`（custom → user）
@@ -147,7 +158,7 @@
 - 第 2 轮 = OK with notes（0 P1/P2 / 5 条新 P3）：归因分流同时落到 notify 与工具错误文本并加断言；两处新收口路径改到 `logStream.end` 回调里（与 exit 分支的「日志先落盘再收尾」同口径）；卡片去重与计数同步。修复 `35e043f`。
 - 第 3 轮（终轮）= OK with notes（0 P1/P2；唯一 note 是删重复条目留下的空行，已删 `484ff8b`）；reviewer 显式回答「**无**本轮未覆盖的行为面疑虑」（并实证 `logStream` 写失败时 `end` 回调仍触发、`markExited` 对未知 id 幂等）。三轮全轮无 P0/P1，交付 merge `5613957`。
 - **已知有意保留**：远端真机用例在本机无可用 ssh 目标（`127.0.0.1:22` 拒绝连接），只能 opt-in 待跑；本地真机层（`live.test.ts`）与真实 `pi --print` 进程内模型面调用已实跑通过。
-- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（73 个：config(6) / params(4) / jobs(9) / logs(8) /
+- `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（75 个：config(6) / params(4) / jobs(9) / logs(10) /
   shell-ops(11) / shell-capability(8) / shell-job-host(11) / index 接线(14) / delivery-semantics(2)，其中 2 条锁 codemode 视角的结构化结果、
   4 条锁跨扩展组合（合并 schema + 分派、远端不支持主动后台时 fail-closed、畸形/抛错回退可见、未知接管与顺序覆盖 notify）、
   2 条锁远端侧（默认超时注入、托管端口 → /bg + 状态条段 + 结束通知）、10 条锁托管端口与注册表语义（发号/登记/主动后台登记/完成/畸形载荷/terminate/onChange））
