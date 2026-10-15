@@ -213,3 +213,10 @@
 - 根因（两条叠加，**都不是被测代码的缺陷**）：① **`pi update` 默认跳过扩展**（实测输出 `Extensions are skipped. Run pi update --extensions to update extensions.`），只刷了 pi 本体——若验收止步于此，跑的是**上一个提交**的扩展（包缓存 clone 的 HEAD 仍是旧 commit），要么假绿要么假红；必须 `pi update --extensions`，并用 `git -C ~/.pi/agent/git/github.com/<owner>/<repo> rev-parse HEAD` 与目标提交对账。② 后台任务的生命周期是**会话级**（`session_shutdown` 杀光，见 `docs/extensions/timeout-bg.md` 不变量）——headless 一次性会话里 pi 退出即杀任务，于是「跨进程等 12 秒再 cat 日志」永远看不到尾部输出；会话内等待的那一轮（转后台后用前台命令等一会儿）日志与结束通知都正常。
 - 处置：验收设计改为「同会话内等待」并复跑通过；两条语义写进 README（`timeout-bg` 边界段）与卡片（会话级生命周期条）；`pi update --extensions` 记进本文件与 `docs/tools/install-smoke.md` 同源的刷新口径。
 - 教训：① **验收先证明「跑的是哪份代码」**——`pi update` 不刷扩展、包缓存 clone 可能落后，验收第一步固定为「推送 + `pi update --extensions` + 对账缓存 HEAD」，否则后面所有结论都可能作用在旧代码上（本仓 2026-09-15 已有一次同型事故）。② **验收断言不能与产品的已声明语义冲突**——「后台任务只活在本会话」是本插件的既有不变量，用跨进程等待去断言它，测出来的是「会话结束了」，不是「功能坏了」；写验收用例前先把待测语义读一遍。③ 独立验收的价值在于它**不共享实现者的假设**，所以它踩出的「假 FAIL」也要当正经产出处理：写进文档与事故记录，下次就不会重复烧一轮。
+
+## Windows 下 todo CLI 并发用例偶发 EPERM（全量门假红，timeout-bg #6 收尾，2026-12-12）
+
+- 症状：`npm run test:all` 首跑红在 `root:todo`，随后单独重跑 `npm run test:todo` 仍红、再重跑转绿；两次红是**不同用例**（「并发写：6 个子进程 add」「并发跨文件 add：3+3」）但同一报错——子进程 `add` 退出 1，stderr 为 `Error: EPERM: operation not permitted, rename '…\Temp\todo-cli-concurrency-*\todos\.todo-cli\tmp\general-todo.json.<pid>'`。
+- 根因：台账落盘走「临时文件 → rename 覆盖」；Windows 上对这一路径的 rename 会被瞬时句柄（Defender 实时扫描 / 搜索索引 / 刚释放的读句柄）拒绝，与 todo CLI 的 `id.lock` 语义无关——不是并发正确性缺陷，是测试环境的时间窗口。
+- 处置：主干基线（`dev-laptop`，**不含**本次改动）`npm run test:todo` 复现同一红、重跑转绿，据此判为环境 flaky；全量门重跑 `24/24 套件 · 2570 用例 · fail 0`。
+- 教训：① 见到该报错先做两件事——换到主干基线套件复现（证明与改动无关）+ 重跑（证明是窗口），别先怀疑自己的 diff；② 取证三件套（报错原文 / 基线对照 / 重跑结果）写进交付记录，别只写「重跑绿了」；③ 若日后频繁，在测试侧对 rename 加 Windows 专属重试，**不要**去动锁语义。
