@@ -76,6 +76,24 @@
       "claimedAt": "2026-10-11T05:41:23.087Z",
       "completedAt": "2026-10-11T06:45:42.598Z",
       "alignedAt": "2026-10-11T05:41:23.321Z"
+    },
+    {
+      "id": 5,
+      "globalId": 394,
+      "text": "timeout-bg 支持「直接转后台」：工具调用不等待，命令一启动就转入后台继续运行（复用现有转后台路径：jobId + 日志落盘 + 结束 followUp 通知 + /bg 管理 + footer 状态条），长任务（构建/全量测试/下载/长轮询）不必等超时才让路。触发面待对齐：候选 A 显式布尔参数 run_in_background；候选 B timeout 哨兵（0 或 -1）。远端 bash（remote + 后台）是否同批支持待定。",
+      "status": "processing",
+      "branch": "feat/direct-background",
+      "tags": [
+        "功能",
+        "超时"
+      ],
+      "priority": 6,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-15T03:28:08.551Z",
+      "claimedAt": "2026-10-15T03:31:45.324Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-15T03:51:29.798Z"
     }
   ]
 }
