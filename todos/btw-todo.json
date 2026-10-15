@@ -1,0 +1,21 @@
+{
+  "version": 4,
+  "title": "btw-todo TODO",
+  "entries": [
+    {
+      "id": 1,
+      "globalId": 398,
+      "text": "新插件 btw：类 Claude Code /btw 的旁路对话——主对话运行中可提问了解当前进展，不影响主会话（不写主上下文、不打断主 run）。实现路径：/btw 命令读当前分支尾部 → ctx.modelRegistry.streamSimple() 直调模型（goal 评估器同款，含虚拟模型路由）→ 回答在独立面板展示、支持连续追问。",
+      "status": "processing",
+      "branch": "feat/btw-sidechat",
+      "tags": [],
+      "priority": 5,
+      "dependsOn": [],
+      "notes": [],
+      "createdAt": "2026-10-15T08:28:02.916Z",
+      "claimedAt": "2026-10-15T08:31:39.494Z",
+      "completedAt": null,
+      "alignedAt": "2026-10-15T08:38:56.802Z"
+    }
+  ]
+}
