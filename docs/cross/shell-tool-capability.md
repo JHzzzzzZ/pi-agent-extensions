@@ -1,6 +1,6 @@
 # 跨扩展横切契约：shell 工具能力协商（bash）
 
-> last verified @ f53c85a
+> last verified @ 5613957
 >
 > 背景：`bash` 是两个扩展共享的名字——timeout-bg 在 `session_start` 重注册它（默认超时 + 超时转后台），
 > remote-tools 在加载期重注册它（远端 ssh 后端）。宿主 `pi.registerTool` 对同名工具是
@@ -92,6 +92,13 @@ timeout-bg ⇒ 远端超时沿用宿主 kill 语义，行为与今天逐字一�
   两端都不得把「让路」默默变成前台等待。
 - **参数归属与本地一致**：`run_in_background` 由 owner 单源声明（不装 owner 时该参数不存在——不给假装支持的空承诺）；
   远端分派的默认超时注入对后台调用**跳过**（后台不受超时约束）；显式 `timeout` 仍按宿主同文案校验，但后台模式不装计时器。
+
+## 主动转后台的一致性（`#5`/`#19` 后追加的必读项）
+
+`run_in_background` 是**加法式**能力：owner 声明参数、提供方执行。改动任一侧时必须同时维持三条不变量——
+① 对端探测不到能力（capability 缺 `runInBackground` / 端口缺 `registerBackground`）一律 **fail-closed**，绝不静默退化成前台等待；
+② 该参数**不得**透传给宿主内置定义（owner 侧 `stripRunInBackground`、提供方侧 `stripRemoteFields` 各剥一次）；
+③ 后台调用不受超时约束（owner 不注入默认超时、提供方不装计时器），但显式非法 `timeout` 仍按宿主同句文案拒绝。
 
 ## 谁在哪实现（改任一侧先读本卡）
 

@@ -58,6 +58,7 @@ junction / 符号链接复用 `node_modules` 是明令禁止的（`git worktree 
 - 失败即收集不中断：某套件失败不影响其它套件跑完，退出码聚合非 0；失败套件尾部输出随汇总打印。
 - serial 独占是硬语义（`test/test-all.test.ts` 用真实子进程 start/end 标记文件锁死顺序），不因 `--jobs` 放大而放松。
 - 缺 `node_modules` 时默认只提示（`! 缺少 node_modules：…`），**不自动安装**——避免测试命令隐式联网。
+- **坑：`node_modules` 存在但落后于 lock**（`--install` 之外的手工安装 / 长期未更新的主干工作区）不会触发上面的提示，症状是 `root:composition` 直接报 `@earendil-works/pi-ai does not provide an export named 'getCurrentTools'` 一类宿主包解析错（2026-10-15 实测：主干 0.85.1 安装 vs lock 1.0.1/1.1.0）。解法同样是 `node tools/test-all.mjs --install`；它按 lock 重装，不改仓库文件。
 - 单套件默认 600s 超时（`--timeout <ms>` 可调），超时杀进程并记为失败。
 - 已知既有失败（非本工具引入）：`agent-team` 的 `failure-delivery.test.ts` 第 3 例依赖「`os.tmpdir()` 不在任何 git 仓库内」，本机 HOME 自带 `.git` 时必失败（基线同样失败）——登记 `agent-team-todo#69`；本工具照实报 fail，不掩盖。
 - 改套件命令 / 新增扩展时必须同步 `DEFAULT_SUITES`，否则覆盖率测试会红。

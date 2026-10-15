@@ -1,6 +1,6 @@
 # timeout-bg — shell 工具超时转后台 + 默认超时
 
-> last verified @ f53c85a
+> last verified @ 5613957
 
 一句话：覆盖内置 `bash` / `powershell` 工具，把「超时即 `killProcessTree` 整树杀」改成「超时转后台继续跑」，
 并在未显式传 `timeout` 时施加默认 300 秒（`PI_TIMEOUT_BG_DEFAULT` 覆盖，`0` = 关闭）。
@@ -112,6 +112,11 @@
 
 ## 测试与验证
 
+- **评审记录（`#5`/`#19`，2026-10-15，T3）**：reviewer = `kimi-coding/k3-256k`（跨厂商，三轮上限）。
+- 第 1 轮 = OK with notes（0 阻断 / 2 P2 / 4 组 P3）：P2 逐条处理 —— ① 本地主动后台遇 spawn 异步失败（只发 `error`、不保证发 `exit`）会留下永久 running 的僵尸 job（状态条卡住 + 无通知）⇒ `error` handler 在 `backgrounded && !exitSeen` 时自己 `markExited(id, null)`（远端 rejection 分支加对称加固），补「只发 error 不发 exit」单测；② 对齐承诺的 opt-in 真机用例补齐（`timeout-bg/test/live.test.ts` 2 条 + `remote-tools/test/remote-live.test.ts` 主动后台 1 条）。P3：`/bg` 命令描述、远端主动后台失败的归因文案、规格名词与分文件计数。修复 `2b99263`。
+- 第 2 轮 = OK with notes（0 P1/P2 / 5 条新 P3）：归因分流同时落到 notify 与工具错误文本并加断言；两处新收口路径改到 `logStream.end` 回调里（与 exit 分支的「日志先落盘再收尾」同口径）；卡片去重与计数同步。修复 `35e043f`。
+- 第 3 轮（终轮）= OK with notes（0 P1/P2；唯一 note 是删重复条目留下的空行，已删 `484ff8b`）；reviewer 显式回答「**无**本轮未覆盖的行为面疑虑」（并实证 `logStream` 写失败时 `end` 回调仍触发、`markExited` 对未知 id 幂等）。三轮全轮无 P0/P1，交付 merge `5613957`。
+- **已知有意保留**：远端真机用例在本机无可用 ssh 目标（`127.0.0.1:22` 拒绝连接），只能 opt-in 待跑；本地真机层（`live.test.ts`）与真实 `pi --print` 进程内模型面调用已实跑通过。
 - `cd src/extensions/timeout-bg && npm install && npm test && npm run typecheck`（68 个：config(6) / params(4) / jobs(9) / logs(6) /
   shell-ops(11) / shell-capability(8) / shell-job-host(11) / index 接线(13)，其中 2 条锁 codemode 视角的结构化结果、
   4 条锁跨扩展组合（合并 schema + 分派、远端不支持主动后台时 fail-closed、畸形/抛错回退可见、未知接管与顺序覆盖 notify）、
