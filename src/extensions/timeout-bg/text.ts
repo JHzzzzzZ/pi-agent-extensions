@@ -21,8 +21,8 @@ export function shellToolDescription(shellName: string, defaultSeconds: number |
   return [
     `Execute a ${shellName} command in the current working directory. Returns stdout and stderr.`,
     `Output is truncated to the last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file.`,
-    `Optionally provide a timeout in seconds (${defaultText}). On timeout the process is NOT killed: it keeps running in the background and its output keeps going to a log file — the result tells you the log path and a follow-up message arrives when it finishes. Do not re-run a command that timed out; read its log instead.`,
-    `Set run_in_background to true to skip waiting altogether: the command starts in the background immediately (no timeout applies), the result tells you the job id and log path, and a follow-up message arrives when it finishes. Use it for long work (builds, full test runs, downloads, long polls) instead of giving a tiny timeout.`,
+    `Optionally provide a timeout in seconds (${defaultText}). On timeout the process is NOT killed: it keeps running in the background and its output keeps going to a log file — the result tells you the log path and its completion notice arrives as soon as the current step finishes. Do not re-run a command that timed out; read its log instead.`,
+    `Set run_in_background to true to skip waiting altogether: the command starts in the background immediately (no timeout applies), the result tells you the job id and log path, and its completion notice arrives as soon as the current step finishes. Use it for long work (builds, full test runs, downloads, long polls) instead of giving a tiny timeout.`,
   ].join(" ");
 }
 
@@ -37,7 +37,7 @@ export function timeoutParamDescription(defaultSeconds: number | undefined): str
 
 /** `run_in_background` 参数说明（新增参数，本扩展独有）。 */
 export function runInBackgroundParamDescription(): string {
-  return "Move the command to the background immediately instead of waiting for it: the call returns at once with a job id and log path, and a follow-up message arrives when it finishes. Use for long work (builds, full test runs, downloads, long polls). When true, timeout is ignored.";
+  return "Move the command to the background immediately instead of waiting for it: the call returns at once with a job id and log path, and its completion notice arrives as soon as the current step finishes. Use for long work (builds, full test runs, downloads, long polls). When true, timeout is ignored.";
 }
 
 /** job 的位置描述：本地给 pid，远端给目标主机（远端 job 没有本地 pid）。 */
@@ -71,8 +71,13 @@ export function backgroundResultText(job: JobRecord): string {
   ].join("\n");
 }
 
-/** 后台任务自然结束时注入会话的 followUp。 */
-export function followUpText(job: JobRecord, tail: string): string {
+/**
+ * 后台任务自然结束时注入会话的完成通知。
+ *
+ * 以 `deliverAs: "steer"` 送达（timeout-bg-todo#6）：agent 流式中 followUp 要等它「本来要停」
+ * 才被取出，连续干活的会话里通知会一直被压着；steer 在当前工具批结束时进上下文。
+ */
+export function exitNoticeText(job: JobRecord, tail: string): string {
   const duration = job.endedAtMs === null ? "" : `（耗时 ${Math.max(0, Math.round((job.endedAtMs - job.startedAtMs) / 1000))}s）`;
   const head = [
     `[timeout-bg ${job.id}] 后台命令已结束，退出码 ${job.exitCode ?? "未知"}${duration}`,

@@ -177,7 +177,7 @@ test("只覆盖当前启用的 shell 工具：active 里没有的工具不注册
   assert.deepEqual([...both.tools.keys()].sort(), ["bash", "powershell"]);
 });
 
-test("超时：工具以错误结束并给出日志路径；进程随后退出 → 收到 followUp 通知", async () => {
+test("超时：工具以错误结束并给出日志路径；进程随后退出 → 收到 steer 完成通知", async () => {
   const ext = makeExtension(["bash"]);
   await ext.fire("session_start");
   const tool = ext.tools.get("bash")!;
@@ -193,9 +193,9 @@ test("超时：工具以错误结束并给出日志路径；进程随后退出 �
 
   ext.child.exit(0);
   await wait(50);
-  assert.equal(ext.sent.length, 1, "后台任务结束送一条 followUp");
+  assert.equal(ext.sent.length, 1, "后台任务结束送一条通知");
   assert.equal(ext.sent[0]!.message.customType, "timeout-bg");
-  assert.equal(ext.sent[0]!.options?.deliverAs, "followUp");
+  assert.equal(ext.sent[0]!.options?.deliverAs, "steer", "steer：不等 agent 收工（timeout-bg-todo#6）");
   assert.equal(ext.sent[0]!.options?.triggerTurn, true);
   assert.match(String(ext.sent[0]!.message.content), /退出码 0|exit code 0/);
 });
@@ -228,7 +228,7 @@ test("主动后台（run_in_background）：不等超时就登记，工具立即
 
   ext.child.exit(0);
   await wait(50);
-  assert.equal(ext.sent.length, 1, "结束照旧送一条 followUp（复用超时路径的通知）");
+  assert.equal(ext.sent.length, 1, "结束照旧送一条通知（复用超时路径的通知）");
   assert.match(String(ext.sent[0]!.message.content), /退出码 0/);
 });
 
@@ -510,7 +510,7 @@ test("组合：远端套用本扩展默认超时（remote-tools#12 的「只记�
   assert.equal(seen.at(-1)?.timeout, undefined, "关闭默认超时时不得凭空给远端加超时");
 });
 
-test("远端 job 托管端口（timeout-bg#4）：注册的远端 job 进 /bg 与状态条段，settle 触发同格式 followUp", async () => {
+test("远端 job 托管端口（timeout-bg#4）：注册的远端 job 进 /bg 与状态条段，settle 触发同格式通知", async () => {
   const bus = createEventBus();
   const ext = makeExtension(["bash"], {}, new FakeChild(), { events: bus });
   await ext.fire("session_start");
@@ -556,7 +556,7 @@ test("远端 job 托管端口（timeout-bg#4）：注册的远端 job 进 /bg �
 
   host.settle(ticket.id, 0);
   await wait(20);
-  assert.equal(ext.sent.length, 1, "结束通知走与本地同一条 followUp 通路");
+  assert.equal(ext.sent.length, 1, "结束通知走与本地同一条送达通路");
   assert.match(String(ext.sent[0]!.message.content), /退出码 0/);
   assert.deepEqual(ext.statuses.at(-1), { key: STATUS_KEY, text: undefined }, "两条 job 都结束后清段");
 });

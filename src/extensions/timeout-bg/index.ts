@@ -9,7 +9,9 @@
  *   ③ `run_in_background: true` 时不等超时，进程一启动就转入后台（timeout-bg-todo#5）。
  *
  * 后台任务只活在本会话（session_shutdown 全部杀掉）；自然结束时经
- * `pi.sendMessage(..., { deliverAs: "followUp", triggerTurn: true })` 送一条结果。
+ * `pi.sendMessage(..., { deliverAs: "steer", triggerTurn: true })` 送一条结果。
+ * 选 steer 而非 followUp（timeout-bg-todo#6）：agent 流式中 followUp 只在「它本来要停」的
+ * 检查点才被消费，连续干活时通知一直被压着；steer 在当前工具批结束时就进上下文。
  * 人工管理命令面：`/bg`（列表）、`/bg:kill <jobId>`、`/bg:clear`。
  *
  * 边界：只覆盖**当前启用**的 shell 工具（active 里没有的不注册，不给用户凭空加工具）；
@@ -47,7 +49,7 @@ import { createRemoteJobPort, offerRemoteJobPort } from "./shell-job-host.ts";
 import { writeBand } from "./status-band.ts";
 import {
   backgroundResultText,
-  followUpText,
+  exitNoticeText,
   formatJobList,
   jobPlace,
   shellToolDescription,
@@ -131,11 +133,14 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
         pi.sendMessage(
           {
             customType: TIMEOUT_BG_CUSTOM_TYPE,
-            content: followUpText(job, tailFileSync(job.logPath, 2000)),
+            content: exitNoticeText(job, tailFileSync(job.logPath, 2000)),
             display: true,
             details: { jobId: job.id, exitCode: job.exitCode, logPath: job.logPath },
           },
-          { deliverAs: "followUp", triggerTurn: true },
+          // steer（不是 followUp）：取证与决策见 timeout-bg-todo#6 —— 流式中 followUp 要等 agent
+          // 「本来要停」才会被 loop 取出，长期连续干活的会话里等于压在队列里不送达；steer 在下一个
+          // 工具批结束时立刻注入。空闲时两者等价（triggerTurn 直接起一轮）。
+          { deliverAs: "steer", triggerTurn: true },
         );
       } catch {
         /* 送达失败不破坏会话 */
@@ -229,7 +234,7 @@ export function createTimeoutBgExtension(deps: TimeoutBgDeps): (pi: ExtensionAPI
         execute: createRunInBackgroundDispatch({ timeout: base.execute, background: backgroundBase.execute }),
         guidelines: [
           ...((base as { promptGuidelines?: string[] }).promptGuidelines ?? []),
-          `Use ${kind} with run_in_background: true for long commands (builds, full test runs, downloads, long polls): the call returns at once, the command keeps running in the background and a follow-up message arrives when it finishes.`,
+          `Use ${kind} with run_in_background: true for long commands (builds, full test runs, downloads, long polls): the call returns at once, the command keeps running in the background and its completion notice arrives as soon as the current step finishes.`,
           `Use ${kind} with an explicit timeout for long commands: on timeout the command is moved to the background (log path in the result) instead of being killed.`,
         ],
       };
