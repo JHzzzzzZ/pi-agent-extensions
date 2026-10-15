@@ -74,6 +74,15 @@ test("单块超预算：只留最新块并截到预算（绝不返回超长文�
   assert.ok(Array.from(context.text).length <= 100);
 });
 
+test("预算把块间分隔与省略标注头一起计入（任何预算下输出都不超预算）", () => {
+  const entries = Array.from({ length: 20 }, (_, index) => user(`消息${index}`));
+  for (const budget of [1, 8, 24, 40, 80, 200]) {
+    const context = buildContextText(entries, budget);
+    const actual = Array.from(context.text).length;
+    assert.ok(actual <= budget, `budget=${budget} 实际=${actual}`);
+  }
+});
+
 test("压缩摘要与分支摘要参与上下文（侧模型知道更早的事）", () => {
   const context = buildContextText([
     { type: "compaction", summary: "之前修了 X" },

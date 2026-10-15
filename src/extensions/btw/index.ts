@@ -96,6 +96,8 @@ export function createBtwExtension(pi: ExtensionAPI, deps: BtwDeps = {}): void {
   let modelOverride: { provider: string; id: string } | undefined;
   /** 同一时刻只允许一个侧调用 */
   let inFlight = false;
+  /** 会话代际号：重置后自增，旧调用的落定不得写进新线程（跨会话零污染） */
+  let generation = 0;
 
   function notify(ctx: ExtensionContext, message: string, type: "info" | "warning" | "error" = "info"): void {
     try {
@@ -106,9 +108,11 @@ export function createBtwExtension(pi: ExtensionAPI, deps: BtwDeps = {}): void {
   }
 
   function resetSessionState(): void {
+    generation += 1;
     thread = [];
     modelOverride = undefined;
-    inFlight = false;
+    // 不重置 inFlight：飞行中的旧调用仍占单飞名额（它的 finally 释放它），
+    // 否则新会话能并发第二个侧调用，单飞失效。
   }
 
   /** 记一轮侧问答（成对入线；只保留最近 MAX_THREAD_MESSAGES 条） */
@@ -139,20 +143,21 @@ export function createBtwExtension(pi: ExtensionAPI, deps: BtwDeps = {}): void {
     return { ok: true, model: ctx.model };
   }
 
-  /** 侧调用落定：成功记轮次；降级通道（无面板）才 notify */
+  /** 侧调用落定：成功记轮次（仅同代会话）；降级通道（无面板）才 notify */
   function finishCall(
     ctx: ExtensionContext,
     question: string,
     result: SideCallResult | undefined,
-    opts: { timedOut: boolean; panel: boolean },
+    opts: { timedOut: boolean; panel: boolean; generation: number },
   ): void {
     if (!result) {
-      if (!opts.panel) notify(ctx, "侧调用没有返回结果。", "warning");
+      // 当前接线不可达（`run` 是 async 函数，不会同步抛）；响了就是接线坏了，不许静默。
+      notify(ctx, "侧调用没有返回结果。", "warning");
       return;
     }
     if (result.ok) {
       const text = result.value.text.trim();
-      if (text) recordTurn(question, text);
+      if (text && opts.generation === generation) recordTurn(question, text);
       if (!opts.panel) notify(ctx, formatNotifyAnswer(text));
       return;
     }
@@ -193,6 +198,7 @@ export function createBtwExtension(pi: ExtensionAPI, deps: BtwDeps = {}): void {
     }
 
     inFlight = true;
+    const callGeneration = generation;
     const controller = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -230,7 +236,7 @@ export function createBtwExtension(pi: ExtensionAPI, deps: BtwDeps = {}): void {
             })
           : { supported: false, result: undefined };
       const result = panel.supported ? panel.result : await runCall(undefined, controller.signal);
-      finishCall(ctx, question, result, { timedOut, panel: panel.supported });
+      finishCall(ctx, question, result, { timedOut, panel: panel.supported, generation: callGeneration });
     } finally {
       clearTimeout(timer);
       inFlight = false;

@@ -215,6 +215,33 @@ test("session_start 清空侧线程（会话切换不带旧前文）", async () 
   assert.ok(!prompts[1]!.includes("SIDE CHAT SO FAR"));
 });
 
+test("会话重置发生在飞行中：旧调用落定不得写进新线程，也不放行并发第二单", async () => {
+  const h = makeHarness();
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const prompts: string[] = [];
+  const { ctx, notifies } = makeCtx({
+    streamSimple: (_model, context) => {
+      prompts.push(promptOf(context));
+      return (async function* () {
+        await gate;
+        yield { type: "done", message: { content: [{ type: "text", text: "旧答案" }] } };
+      })();
+    },
+  });
+  const first = h.run("btw", "旧问题", ctx);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await h.handlers.get("session_start")!({}, ctx);
+  await h.run("btw", "新问题", ctx);
+  assert.equal(prompts.length, 1, "旧调用未落定前不放行并发第二单（单飞不被重置放行）");
+  assert.match(notifies.at(-1)!.message, /还在跑/);
+  release?.();
+  await first;
+  await h.run("btw", "新问题", ctx);
+  assert.ok(!prompts[1]!.includes("SIDE CHAT SO FAR"), "旧轮次不得写进新会话的线程");
+  assert.ok(!prompts[1]!.includes("旧答案"), "旧答案不得出现在新会话线程里");
+});
+
 test("/btw:model：无参数显示当前值；命中则覆盖；default 恢复跟随", async () => {
   const h = makeHarness();
   const models: unknown[] = [];

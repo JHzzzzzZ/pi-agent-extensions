@@ -104,6 +104,9 @@ async function runRpcSession(
   let stderr = "";
   child.stdout.on("data", (chunk) => (stdout += chunk));
   child.stderr.on("data", (chunk) => (stderr += chunk));
+  // pi 提前退出时写入会 EPIPE：必须挂 handler，否则 opt-in 用例以进程崩溃收场，
+  // 而不是给出可读的断言失败。
+  child.stdin.on("error", () => {});
   const exited = new Promise<number | null>((resolve) => {
     child.on("error", () => resolve(null));
     child.on("close", (code) => resolve(code));
@@ -178,6 +181,26 @@ function contentText(content: unknown): string {
     .join("\n");
 }
 
+/** 会话文件里除文件头（`type: "session"`）之外的所有条目行（零写入的强断言面）。 */
+function sessionEntryLines(configDir: string): string[] {
+  const root = path.join(configDir, "sessions");
+  const found: string[] = [];
+  for (const entry of fs.readdirSync(root, { recursive: true }) as string[]) {
+    if (!String(entry).endsWith(".jsonl")) continue;
+    const content = fs.readFileSync(path.join(root, String(entry)), "utf8");
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { type?: string };
+        if (parsed.type !== "session") found.push(line.slice(0, 160));
+      } catch {
+        found.push(line.slice(0, 160));
+      }
+    }
+  }
+  return found;
+}
+
 test("真机：空闲会话 /btw 出真实模型回答，且会话文件零新增条目", { skip: SKIP }, async (t) => {
   const configDir = makeTempAgentDir(t);
   const run = await runRpcSession(configDir, 180_000, async ({ write, waitFor }) => {
@@ -199,6 +222,9 @@ test("真机：空闲会话 /btw 出真实模型回答，且会话文件零新�
     [],
     "侧对话不得往会话文件写 user/assistant 条目",
   );
+  // 更强的口径（只跑过 /btw 的会话）：除文件头外零条目——非 message 条目（custom
+  // entry / model_change / usage 等）也不允许出现。
+  assert.deepEqual(sessionEntryLines(configDir), [], "只有 /btw 的会话不得存在任何会话条目");
 });
 
 test("真机：主 agent 流式跑工具时 /btw 仍能作答（notify 先于 agent_settled）", { skip: SKIP }, async (t) => {

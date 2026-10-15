@@ -75,10 +75,34 @@ interface HarnessOptions {
 interface Harness {
   runner: ExtensionRunner;
   calls: Array<{ model: unknown; content: string; options: Record<string, unknown> }>;
-  writes: { appendEntry: number; sendMessage: number; sendUserMessage: number };
+  writes: Record<WriteKey, number>;
   notifies: Array<{ message: string; type?: string }>;
   components: PanelLike[];
   run: (name: string, args: string) => Promise<void>;
+}
+
+/**
+ * 零写入计数面：宿主能写会话的全部公开入口（ExtensionActions + 命令上下文操作）。
+ * 单看 `appendEntry`/`sendMessage` 不够——未来回归用 `setSessionName`/`setLabel`/
+ * `newSession` 等同样会写会话，计数面必须覆盖到。
+ */
+const WRITE_KEYS = [
+  "appendEntry",
+  "sendMessage",
+  "sendUserMessage",
+  "setSessionName",
+  "setLabel",
+  "setModel",
+  "setThinkingLevel",
+  "setActiveTools",
+  "sessionControl",
+] as const;
+type WriteKey = (typeof WRITE_KEYS)[number];
+
+function assertZeroWrites(writes: Record<WriteKey, number>, label: string): void {
+  for (const key of WRITE_KEYS) {
+    assert.equal(writes[key], 0, `${label}：${key} 必须为 0（零写入主会话）`);
+  }
 }
 
 function makeUi(harness: Pick<Harness, "notifies" | "components">): ExtensionUIContext {
@@ -120,18 +144,20 @@ async function startHarness(t: TestContext, options: HarnessOptions = {}): Promi
       provider === ALT_MODEL.provider && id === ALT_MODEL.id ? ALT_MODEL : undefined,
   } as unknown as ModelRegistry;
 
-  const writes = { appendEntry: 0, sendMessage: 0, sendUserMessage: 0 };
+  const writes: Record<WriteKey, number> = Object.fromEntries(WRITE_KEYS.map((key) => [key, 0])) as Record<WriteKey, number>;
+  const count = (key: WriteKey) => () => {
+    writes[key] += 1;
+    return key === "appendEntry" ? "entry-1" : undefined;
+  };
   const actions = {
-    appendEntry: () => {
-      writes.appendEntry += 1;
-      return "entry-1";
-    },
-    sendMessage: () => {
-      writes.sendMessage += 1;
-    },
-    sendUserMessage: () => {
-      writes.sendUserMessage += 1;
-    },
+    appendEntry: count("appendEntry"),
+    sendMessage: count("sendMessage"),
+    sendUserMessage: count("sendUserMessage"),
+    setSessionName: count("setSessionName"),
+    setLabel: count("setLabel"),
+    setModel: count("setModel"),
+    setThinkingLevel: count("setThinkingLevel"),
+    setActiveTools: count("setActiveTools"),
     getAllTools: () => [],
   } as unknown as ExtensionActions;
 
@@ -156,7 +182,28 @@ async function startHarness(t: TestContext, options: HarnessOptions = {}): Promi
 
   const runner = new ExtensionRunner(loaded.extensions, loaded.runtime, EXT_DIR, sessionManager, registry);
   runner.bindCore(actions, contextActions);
-  runner.bindCommandContext({ waitForIdle: async () => {} } as unknown as ExtensionCommandContextActions);
+  runner.bindCommandContext({
+    waitForIdle: async () => {},
+    newSession: async () => {
+      writes.sessionControl += 1;
+      return { cancelled: false };
+    },
+    fork: async () => {
+      writes.sessionControl += 1;
+      return { cancelled: false };
+    },
+    navigateTree: async () => {
+      writes.sessionControl += 1;
+      return { cancelled: false };
+    },
+    switchSession: async () => {
+      writes.sessionControl += 1;
+      return { cancelled: false };
+    },
+    reload: async () => {
+      writes.sessionControl += 1;
+    },
+  } as unknown as ExtensionCommandContextActions);
   const notifies: Harness["notifies"] = [];
   const components: Harness["components"] = [];
   const ui = makeUi({ notifies, components });
@@ -216,9 +263,7 @@ test("TUI：/btw 建面板、答案上屏、上下文进 prompt，且主会话�
   assert.match(harness.calls[0]!.content, /\[助手\] 我先读文件/);
   assert.equal(harness.calls[0]!.options.sessionId, "btw-session-1");
   assert.equal(typeof harness.calls[0]!.options.maxTokens, "number");
-  assert.equal(harness.writes.appendEntry, 0, "不写会话条目");
-  assert.equal(harness.writes.sendMessage, 0, "不注入自定义消息");
-  assert.equal(harness.writes.sendUserMessage, 0, "不注入用户消息");
+  assertZeroWrites(harness.writes, "TUI 面板路径");
 });
 
 test("TUI：面板内容含答案与提问；流式增量实时上屏", async (t) => {
@@ -250,8 +295,7 @@ test("TUI：同一会话两轮追问带前文；/btw:clear 清空；session_star
   await harness.runner.emit({ type: "session_start", reason: "new" });
   await runPanelTurn(harness, "第五问");
   assert.ok(!harness.calls[4]!.content.includes("SIDE CHAT SO FAR"), "session_start 后不带旧前文");
-  assert.equal(harness.writes.appendEntry, 0);
-  assert.equal(harness.writes.sendMessage, 0);
+  assertZeroWrites(harness.writes, "追问 + 清空 + 会话重置");
 });
 
 test("TUI：/btw:model 切换对下一次调用生效（真实命令上下文）", async (t) => {
@@ -270,7 +314,7 @@ test("RPC：不自绘面板，降级 notify 完整答案，且零写入", async 
   assert.equal(harness.components.length, 0, "RPC 不建终端组件");
   assert.equal(harness.notifies.at(-1)!.message, "在跑测试，马上改 X");
   assert.equal(harness.calls.length, 1);
-  assert.equal(harness.writes.appendEntry + harness.writes.sendMessage + harness.writes.sendUserMessage, 0);
+  assertZeroWrites(harness.writes, "RPC 降级路径");
 });
 
 test("无 UI：写 stderr、零调用、零面板", async (t) => {
@@ -307,22 +351,36 @@ test("单飞：第一轮挂住时第二轮被拒绝（真实命令路径）", as
 test("错误：流内 error 在面板里可见（TUI）与 notify 里可见（RPC）", async (t) => {
   const tui = await startHarness(t, { error: "401 unauthorized" });
   await runPanelTurn(tui, "问", { until: "401 unauthorized" });
-  assert.equal(tui.writes.appendEntry + tui.writes.sendMessage + tui.writes.sendUserMessage, 0);
+  assertZeroWrites(tui.writes, "错误路径（TUI）");
 
   const rpc = await startHarness(t, { mode: "rpc", error: "401 unauthorized" });
   await rpc.run("btw", "问");
   assert.match(rpc.notifies.at(-1)!.message, /401 unauthorized/);
 });
 
-test("结构守卫：btw 源码不出现任何写会话 API（appendEntry / sendMessage / sendUserMessage）", () => {
+test("结构守卫：btw 源码不出现任何写会话 API（条目 / 消息 / 会话元数据 / 会话切换）", () => {
   for (const file of ["index.ts", "side-call.ts", "panel.ts", "context.ts", "spec.ts", "errors.ts"]) {
     const source = fs.readFileSync(path.join(EXT_DIR, file), "utf8");
     for (const api of [
       "pi.appendEntry(",
       "pi.sendMessage(",
       "pi.sendUserMessage(",
+      "pi.setSessionName(",
+      "pi.setLabel(",
+      "pi.setModel(",
+      "pi.setThinkingLevel(",
+      "pi.setActiveTools(",
       "appendCustomEntry(",
       "appendCustomMessageEntry(",
+      "appendMessage(",
+      "appendCompaction(",
+      "appendUsage(",
+      "appendContextEdit(",
+      "newSession(",
+      "switchSession(",
+      "navigateTree(",
+      "fork(",
+      "compact(",
     ]) {
       assert.ok(!source.includes(api), `${file} 不得出现 ${api}（零写入是硬不变量）`);
     }

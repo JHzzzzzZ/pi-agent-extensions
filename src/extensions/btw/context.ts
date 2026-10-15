@@ -45,11 +45,12 @@ export interface ContextText {
   omitted: number;
 }
 
-/** 按码点截断（超限追加 …），入参须已 trim */
+/** 按码点截断（超限追加 …），入参须已 trim；极端预算下只留省略号，绝不超 max */
 function clamp(text: string, max: number): string {
   const chars = Array.from(text);
   if (chars.length <= max) return text;
-  return chars.slice(0, Math.max(1, max - 1)).join("") + "…";
+  if (max <= 1) return "…";
+  return chars.slice(0, max - 1).join("") + "…";
 }
 
 /** 压单行：换行/制表符折叠为单空格（命令原文等场景） */
@@ -148,8 +149,9 @@ export function renderTranscriptEntry(entry: TranscriptEntry | undefined): strin
 }
 
 /**
- * 分支条目 → 侧对话上下文字本。预算按字符计（非 token），由新到旧装填；
- * 一个块都装不下时只留最新块并截到预算（绝不返回超长文本）。
+ * 分支条目 → 侧对话上下文字本。预算按字符计（非 token），由新到旧装填，
+ * **连分隔符（每块 `\n\n`）与省略标注头一起计入**（否则极端多小块时实际输出
+ * 可达预算的 2–3 倍）；一个块都装不下时只留最新块并截到剩余预算。
  */
 export function buildContextText(
   entries: readonly TranscriptEntry[],
@@ -160,19 +162,29 @@ export function buildContextText(
     const block = renderTranscriptEntry(entries[index]);
     if (block) newestFirst.push(block);
   }
+  // 省略标注头按最坏情况（全部条目都被省略）预留长度，装填时就不超预算。
+  const headerCost = omittedHeader(newestFirst.length).length;
+  const separator = "\n\n";
   const picked: string[] = [];
   let used = 0;
   for (const block of newestFirst) {
-    if (used + block.length > budget) break;
+    const cost = block.length + separator.length;
+    if (used + cost + headerCost > budget) break;
     picked.push(block);
-    used += block.length;
+    used += cost;
   }
-  if (picked.length === 0 && newestFirst.length > 0) picked.push(clamp(newestFirst[0]!, budget));
+  if (picked.length === 0 && newestFirst.length > 0) {
+    picked.push(clamp(newestFirst[0]!, Math.max(1, budget - headerCost)));
+  }
   const omitted = newestFirst.length - picked.length;
-  const body = picked.reverse().join("\n\n");
-  return {
-    text: omitted > 0 ? `（更早的 ${omitted} 条已省略）\n\n${body}` : body,
-    included: picked.length,
-    omitted,
-  };
+  const body = picked.reverse().join(separator);
+  // 预留已保证正常路径下标注头装得下；极小预算下宁可少一行标注也不超预算
+  // （标注是给人看的，预算是不变量）。
+  const header = omittedHeader(omitted);
+  const text = `${header.length + body.length <= budget ? header : ""}${body}`;
+  return { text, included: picked.length, omitted };
+}
+
+function omittedHeader(omitted: number): string {
+  return omitted > 0 ? `（更早的 ${omitted} 条已省略）\n\n` : "";
 }
