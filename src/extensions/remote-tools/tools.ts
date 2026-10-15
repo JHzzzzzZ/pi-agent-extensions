@@ -179,11 +179,18 @@ export async function resolveToolPath(plan: RemotePlan, input: unknown): Promise
 	return { remotePath: assertRemotePath(resolveRemoteSearchPath(candidate, home)), baseDir: home };
 }
 
-function stripRemoteFields<P extends RemoteTargetParams & { remoteCwd?: string | undefined }>(params: P) {
-	const { remote, remotePort, remoteCwd, ...rest } = params;
+/**
+ * 远端 bash 的参数面：远端定位字段 + owner 合并 schema 里的「直接转后台」（remote-tools#19）。
+ * `run_in_background` 是 timeout-bg 声明的参数，**不进**宿主内置 bash 定义（读完后立即剥掉）。
+ */
+type RemoteBashCallParams = BashToolInput & RemoteTargetParams & { remoteCwd?: string | undefined; run_in_background?: unknown };
+
+function stripRemoteFields<P extends RemoteTargetParams & { remoteCwd?: string | undefined; run_in_background?: unknown }>(params: P) {
+	const { remote, remotePort, remoteCwd, run_in_background, ...rest } = params;
 	void remote;
 	void remotePort;
 	void remoteCwd;
+	void run_in_background;
 	return rest;
 }
 
@@ -502,7 +509,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 	/** 远端分支的**单一实现**：本扩展自己的 bash 与跨扩展能力载荷共用它（不允许两份）。 */
 	async function executeRemoteBash(
 		id: string,
-		params: BashToolInput & RemoteTargetParams & { remoteCwd?: string | undefined },
+		params: RemoteBashCallParams,
 		signal: AbortSignal | undefined,
 		onUpdate: AgentToolUpdateCallback<BashToolDetails | undefined> | undefined,
 		ctx: ExtensionToolContext | undefined,
@@ -518,6 +525,8 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 			operations: createRemoteBashOps(plan.session, {
 				jobHost: currentJobHost,
 				notify: (message) => notifyTool(ctx, message),
+				// 主动后台（remote-tools#19）：参数由 owner 的合并 schema 声明，随 params 到达这里。
+				runInBackground: params.run_in_background === true,
 			}),
 		});
 		return definition.execute(id, rest, signal, onUpdate, remoteContext(ctx, cwd.remotePath));
@@ -528,6 +537,8 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		parameters: bashProperties,
 		isRemoteCall: isRemoteBashCall,
 		executeRemote: executeRemoteBash,
+		// owner（timeout-bg）靠这个位决定：远端不支持时就 fail-closed，不静默前台跑。
+		runInBackground: true,
 		guideline: BASH_REMOTE_GUIDELINE,
 	});
 
@@ -552,7 +563,7 @@ export function registerRemoteTools(pi: ExtensionAPI, deps: RemoteToolsDeps): vo
 		promptGuidelines: [...(bashBase.promptGuidelines ?? []), REMOTE_GUIDELINE],
 		parameters: Type.Object({ ...bashBase.parameters.properties, ...bashProperties }),
 		async execute(id, params, signal, onUpdate, ctx): Promise<AgentToolResult<BashToolDetails | undefined>> {
-			const rest = stripRemoteFields<BashToolInput & RemoteTargetParams & { remoteCwd?: string | undefined }>(params);
+			const rest = stripRemoteFields<RemoteBashCallParams>(params);
 			if (!isRemoteBashCall(params)) {
 				return createBashToolDefinition(ctx?.cwd ?? deps.cwd).execute(id, rest, signal, onUpdate, ctx);
 			}

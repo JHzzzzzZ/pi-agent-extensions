@@ -441,6 +441,12 @@ export interface RemoteBashJobDeps {
 	jobHost: () => RemoteJobPort | null;
 	/** 转后台不可用/失败时的可见性通知（异常隔离由调用方保证）。 */
 	notify?: ((message: string) => void) | undefined;
+	/**
+	 * 本次调用是否要求「直接转后台」（remote-tools#19，参数 `run_in_background`）。
+	 * 为真时必须拿得到带 `registerBackground` 的托管端口，否则 fail-closed
+	 * （`REMOTE_BACKGROUND_UNSUPPORTED`）——静默按前台跑等于把「让路」吞掉。
+	 */
+	runInBackground?: boolean | undefined;
 }
 
 /** 远端超时结果里附带的最近输出上限（字符；与 timeout-bg 本地口径一致）。 */
@@ -534,12 +540,14 @@ async function killRemoteJob(session: RemoteSession, pidFile: string): Promise<v
 /**
  * bash 的远端执行接缝。
  *
- * 两条路径：
+ * 三条路径：
  *   - **旧路径**（没有 job 托管端口，即只装了 remote-tools）：超时交给传输层杀 ssh，
  *     与宿主同文案 `timeout:<秒>`——行为与今天逐字一致。
  *   - **托管路径**（与 timeout-bg 组合）：自己计时，命中超时**不断连**——本地继续持有同一 ssh、
  *     输出继续写 job 日志，命令登记进统一 job 面（/bg:kill 走 pid 文件杀远端进程组）；
  *     本次 tool call 以超时结果文本结束，跑完由 owner 发完成通知。
+ *   - **主动后台**（remote-tools#19）：`run_in_background: true` 时不等超时，ssh 一启动就登记 job，
+ *     工具本次调用立刻结束；拿不到托管端口就 fail-closed（不走旧路径）。
  */
 export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBashJobDeps): BashOperations {
 	/** 旧路径：传输层 timeout → `timeout:<秒>`，宿主 bash 会渲染成原生超时文案。 */
@@ -568,13 +576,20 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 		return { exitCode: result.exitCode };
 	}
 
-	/** 托管路径：超时不断连，转后台 + 登记 job。 */
+	/** 托管路径：超时不断连，转后台 + 登记 job；主动后台时不等超时、启动即登记。 */
 	async function execHosted(command: string, remoteCwd: string, options: BashExecOptions, host: RemoteJobPort): Promise<{ exitCode: number }> {
 		const { onData, signal, timeout, env } = options;
-		const timeoutMs = resolveRemoteTimeoutMs(timeout);
+		const backgroundNow = jobDeps?.runInBackground === true;
+		// 显式 timeout 仍然校验（非法值不静默吞掉）；主动后台只是**不装计时器**。
+		const requestedTimeoutMs = timeout === undefined ? undefined : resolveRemoteTimeoutMs(timeout);
+		const timeoutMs = backgroundNow ? undefined : requestedTimeoutMs;
 		const ticket = host.allocate();
 		const logStream = openJobLog(ticket.logPath);
 		if (logStream === null) {
+			// 主动后台不能退回旧路径：那会变成前台等待，用户要的「让路」被默默吞掉 ⇒ fail-closed。
+			if (backgroundNow) {
+				fail(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED, "远端直接转后台失败：无法创建后台日志，已拒绝执行（未前台等待）。");
+			}
 			jobDeps?.notify?.(`无法创建远端后台日志（${ticket.logPath}）：本次远端调用按原有超时语义执行。`);
 			return execLegacy(command, remoteCwd, options);
 		}
@@ -621,6 +636,54 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 				finish();
 			};
 
+			/**
+			 * 转后台登记（超时与主动后台共用）：登记给 owner，本次 tool call 以 owner 返回的文本结束。
+			 * 登记失败一律 fail-closed：复位 backgrounded（ssh 退出时不再对未登记的 id settle）、
+			 * 断开 ssh 并 notify 一次。
+			 */
+			const registerJob = (registration: { reason: "timeout"; timeoutSeconds: number } | { reason: "background" }): void => {
+				backgrounded = true;
+				// 本次 tool call 到此结束：之后的外部 abort（Esc）不再波及后台任务（与本地一致）。
+				detachAbort();
+				let text: string;
+				try {
+					const payload = {
+						id: ticket.id,
+						logPath: ticket.logPath,
+						command,
+						target: formatTarget(session.target),
+						tail: recentTail,
+						terminate: () => {
+							// 先尽力杀远端进程组，再断开本地 ssh（失败时的退化路径）。
+							void killRemoteJob(session, pidFile);
+							controller.abort();
+						},
+					};
+					if (registration.reason === "timeout") {
+						text = host.register({ ...payload, timeoutSeconds: registration.timeoutSeconds });
+					} else {
+						// 探测不到新方法就不登记（调用入口已挡，这里只是类型收窄 + 双保险）。
+						if (typeof host.registerBackground !== "function") {
+							throw new Error(`${ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED}: job 托管端口缺 registerBackground。`);
+						}
+						text = host.registerBackground(payload);
+					}
+				} catch (error) {
+					// 登记失败：本次 tool call 已结束（backgrounded 复位，ssh 退出时不再对未登记的 id settle）。
+					backgrounded = false;
+					controller.abort();
+					jobDeps?.notify?.(REMOTE_BACKGROUND_FAILED);
+					// 错误自己带了错误码（端口形状 / 能力不支持）时原样保留，不把归因吞掉。
+					const own =
+						error instanceof Error &&
+						(error.message.includes(ErrorCodes.REMOTE_JOB_PORT_INVALID) || error.message.includes(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED));
+					const message = own ? (error as Error).message : `${ErrorCodes.REMOTE_BACKGROUND_FAILED}: ${REMOTE_BACKGROUND_FAILED}`;
+					settleOnce(() => reject(new Error(message)));
+					return;
+				}
+				settleOnce(() => reject(new Error(text)));
+			};
+
 			running.then(
 				(result) => {
 					// 日志先落盘再收尾：通知/结果不能读到半截日志（与本地同口径）。
@@ -652,43 +715,38 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 				},
 			);
 
+			if (backgroundNow) {
+				registerJob({ reason: "background" });
+				return;
+			}
+
 			if (timeoutMs !== undefined) {
 				timer = setTimeout(() => {
 					if (settled || backgrounded) return;
-					backgrounded = true;
-					// 本次 tool call 到此结束：之后的外部 abort（Esc）不再波及后台任务（与本地一致）。
-					detachAbort();
-					let text: string;
-					try {
-						text = host.register({
-							id: ticket.id,
-							logPath: ticket.logPath,
-							command,
-							target: formatTarget(session.target),
-							timeoutSeconds: timeoutMs / 1000,
-							tail: recentTail,
-							terminate: () => {
-								// 先尽力杀远端进程组，再断开本地 ssh（失败时的退化路径）。
-								void killRemoteJob(session, pidFile);
-								controller.abort();
-							},
-						});
-					} catch (error) {
-						// 登记失败：本次 tool call 已结束（backgrounded 复位，ssh 退出时不再对未登记的 id settle）。
-						backgrounded = false;
-						controller.abort();
-						jobDeps?.notify?.(REMOTE_BACKGROUND_FAILED);
-						// 端口守卫自己带了错误码（REMOTE_JOB_PORT_INVALID）时原样保留，不把归因吞掉。
-						const message =
-							error instanceof Error && error.message.includes(ErrorCodes.REMOTE_JOB_PORT_INVALID)
-								? error.message
-								: `${ErrorCodes.REMOTE_BACKGROUND_FAILED}: ${REMOTE_BACKGROUND_FAILED}`;
-						return settleOnce(() => reject(new Error(message)));
-					}
-					settleOnce(() => reject(new Error(text)));
+					registerJob({ reason: "timeout", timeoutSeconds: timeoutMs / 1000 });
 				}, timeoutMs);
 			}
 		});
+	}
+
+	/**
+	 * 主动后台入口（remote-tools#19）：spawn **之前**就把「有没有托管能力」判掉——
+	 * 拿不到端口 / 端口是旧版（没有 registerBackground）都 fail-closed，绝不静默退回旧路径
+	 *（那是前台等待，用户要的让路会被吞掉；也不在本机跑远端意图的命令）。
+	 */
+	async function execBackground(
+		command: string,
+		remoteCwd: string,
+		options: BashExecOptions,
+		host: RemoteJobPort | null,
+	): Promise<{ exitCode: number }> {
+		if (host === null) {
+			fail(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED, "远端直接转后台需要 timeout-bg（未取到 job 托管端口）：已拒绝执行。");
+		}
+		if (typeof host.registerBackground !== "function") {
+			fail(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED, "timeout-bg 版本不支持远端直接转后台（托管端口缺 registerBackground）：已拒绝执行。");
+		}
+		return execHosted(command, remoteCwd, options, host);
 	}
 
 	return {
@@ -696,6 +754,7 @@ export function createRemoteBashOps(session: RemoteSession, jobDeps?: RemoteBash
 			const remoteCwd = requireRemotePath(cwd);
 			if (options.signal?.aborted === true) throw new Error("aborted");
 			const host = jobDeps === undefined ? null : jobDeps.jobHost();
+			if (jobDeps?.runInBackground === true) return execBackground(command, remoteCwd, options, host);
 			if (host === null) return execLegacy(command, remoteCwd, options);
 			return execHosted(command, remoteCwd, options, host);
 		},

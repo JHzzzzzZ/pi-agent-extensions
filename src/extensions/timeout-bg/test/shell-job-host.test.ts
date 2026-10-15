@@ -19,7 +19,7 @@ import {
   createRemoteJobPort,
   offerRemoteJobPort,
 } from "../shell-job-host.ts";
-import { formatJobList, timeoutResultText } from "../text.ts";
+import { backgroundResultText, formatJobList, timeoutResultText } from "../text.ts";
 
 function makePort() {
   let seq = 0;
@@ -30,6 +30,7 @@ function makePort() {
     logPathFor: (id) => resolveJobLogPath("/logs", id),
     registry,
     timeoutText: timeoutResultText,
+    backgroundText: backgroundResultText,
   });
   return { port, registry, exits };
 }
@@ -81,6 +82,54 @@ test("register：登记 running job 并返回本地同格式的超时结果文�
   assert.match(list, new RegExp(ticket.id));
   assert.match(list, /remote deploy@10\.0\.0\.7/);
   assert.doesNotMatch(list, /pid \?/, "远端 job 不该显示未知 pid");
+});
+
+test("registerBackground：主动后台登记（来源标记 + 结果文本与本地同源），不带超时秒数", () => {
+  const { port, registry, exits } = makePort();
+  const ticket = port.allocate();
+  const text = port.registerBackground({
+    id: ticket.id,
+    logPath: ticket.logPath,
+    command: "npm run build\nsecond line",
+    target: "deploy@10.0.0.7",
+    tail: "",
+    terminate: () => {},
+  });
+
+  const job = registry.get(ticket.id);
+  assert.ok(job !== undefined);
+  assert.equal(job.origin, "background", "来源标记：主动后台（/bg 列表据此显示 [后台]）");
+  assert.equal(job.status, "running");
+  assert.equal(job.target, "deploy@10.0.0.7");
+  assert.equal(job.command, "npm run build", "命令只留首行");
+  assert.match(text, /已直接转入后台运行/, "文本由本扩展单源持有（提供方不自己拼）");
+  assert.doesNotMatch(text, /超时/);
+  assert.match(text, new RegExp(`job: ${ticket.id}`));
+  assert.match(text, /remote deploy@10\.0\.0\.7/);
+  assert.ok(text.includes(ticket.logPath));
+
+  assert.match(formatJobList(registry.list(), 5_100), /\[后台\]/, "/bg 列表标出来源");
+
+  // 结束路径与超时 job 完全一致（settle → 完成通知）。
+  port.settle(ticket.id, 0);
+  assert.equal(registry.get(ticket.id)!.status, "exited");
+  assert.deepEqual(exits.map((j) => j.id), [ticket.id]);
+});
+
+test("registerBackground：终止钩子非函数时按「没有钩子」处理（跨扩展载荷 fail-soft）", () => {
+  const { port, registry } = makePort();
+  const ticket = port.allocate();
+  port.registerBackground({
+    id: ticket.id,
+    logPath: ticket.logPath,
+    command: "ls",
+    target: "deploy@host",
+    tail: "",
+    terminate: "not-a-function" as never,
+  });
+  const job = registry.get(ticket.id)!;
+  assert.equal(job.terminate, undefined);
+  assert.equal(registry.kill(ticket.id), true, "没有钩子时走 killTree（不抛错）");
 });
 
 test("register：命令与目标也按本地口径清洗（首行 400 字符、剔控制字符）", () => {

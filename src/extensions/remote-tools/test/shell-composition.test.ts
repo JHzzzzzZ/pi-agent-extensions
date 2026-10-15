@@ -134,7 +134,7 @@ test("组合后生效的 bash = 合并版：远端三参数 + timeout-bg 的语�
   const bash = runner.getToolDefinition("bash");
   assert.ok(bash !== undefined, "bash 必须注册");
 
-  assert.deepEqual(parameterNames(bash), ["command", "remote", "remoteCwd", "remotePort", "timeout"]);
+  assert.deepEqual(parameterNames(bash), ["command", "remote", "remoteCwd", "remotePort", "run_in_background", "timeout"]);
   assert.match(bash.description, /keeps running in the background/, "生效的必须是 timeout-bg 的文案（合并发生在 owner 侧）");
   assert.ok((bash.promptGuidelines ?? []).some((line) => line.includes("远端主机")), "远端指南必须拼进 promptGuidelines");
   assert.deepEqual(notifies, [], "正常组合不应有任何冲突提示");
@@ -145,6 +145,14 @@ test("组合后生效的 bash = 合并版：远端三参数 + timeout-bg 的语�
 
   const localError = await failureOf(() => bash.execute("call-2", { command: "echo hi", timeout: -1 }, undefined, undefined, ctx));
   assert.match(localError, /Invalid timeout/, "本地调用必须进 timeout-bg 的 ops（解析先于 spawn ⇒ 零 spawn）");
+
+  // remote-tools 声明了 runInBackground ⇒ owner 不得误报「远端不支持」：带后台参数的远端调用
+  // 仍必须进远端分支（错误码来自目标校验，而不是 REMOTE_BACKGROUND_UNSUPPORTED）。
+  const remoteBackgroundError = await failureOf(() =>
+    bash.execute("call-3", { command: "uname -s", remote: "bad host", run_in_background: true }, undefined, undefined, ctx),
+  );
+  assert.match(remoteBackgroundError, new RegExp(ErrorCodes.INVALID_REMOTE_TARGET));
+  assert.doesNotMatch(remoteBackgroundError, new RegExp(ErrorCodes.REMOTE_BACKGROUND_UNSUPPORTED), "对端支持时不得 fail-closed");
 });
 
 test("跨扩展 job 托管（timeout-bg#4）：真加载两扩展就能索取到端口，注册的远端 job 进 /bg 与状态条段", async (t) => {
@@ -170,15 +178,35 @@ test("跨扩展 job 托管（timeout-bg#4）：真加载两扩展就能索取到
   assert.match(text, /remote deploy@host/);
   assert.deepEqual(statuses.at(-1), { key: "80:timeout-bg", text: "⏱ 1 bg" }, "远端 job 计入状态条段");
 
+  // 主动后台（timeout-bg#5 / remote-tools#19）：owner 拿到请求就登记，文本与本地同源。
+  const registerBackground = host.registerBackground;
+  assert.ok(registerBackground !== undefined, "owner 必须提供 registerBackground（#5 新增端口方法）");
+  const backgroundTicket = host.allocate();
+  const backgroundText = registerBackground({
+    id: backgroundTicket.id,
+    logPath: backgroundTicket.logPath,
+    command: "npm run build",
+    target: "deploy@host",
+    tail: "",
+    terminate: () => {},
+  });
+  assert.match(backgroundText, /已直接转入后台运行/, "后台文本也由 owner 单源提供");
+  assert.deepEqual(statuses.at(-1), { key: "80:timeout-bg", text: "⏱ 2 bg" });
+
   const command = runner.getCommand("bg");
   assert.ok(command !== undefined, "/bg 命令面必须注册");
   const notices: string[] = [];
   await command.handler("", { hasUI: true, ui: { notify: (message: string) => notices.push(message) } } as never);
   assert.match(notices[0] ?? "", new RegExp(ticket.id), "远端 job 进统一列表");
   assert.match(notices[0] ?? "", /remote deploy@host/);
+  assert.match(notices[0] ?? "", /\[超时\]/);
+  assert.match(notices[0] ?? "", /\[后台\]/, "两个来源在同一列表里可分辨");
 
   host.settle(ticket.id, 0);
-  assert.deepEqual(statuses.at(-1), { key: "80:timeout-bg", text: undefined }, "任务结束后清段");
+  assert.deepEqual(statuses.at(-1), { key: "80:timeout-bg", text: "⏱ 1 bg" }, "超时 job 结束后只剩后台 job 在跑");
+
+  host.settle(backgroundTicket.id, 0);
+  assert.deepEqual(statuses.at(-1), { key: "80:timeout-bg", text: undefined }, "两个 job 都结束后清段");
 });
 
 test("加载顺序相反时：宿主 first-wins 让 remote-tools 的 bash 生效（timeout-bg 语义丢失），且 timeout-bg 提示冲突而不是静默", async (t) => {

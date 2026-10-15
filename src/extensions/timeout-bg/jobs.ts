@@ -1,14 +1,15 @@
 /**
- * timeout-bg — 后台任务注册表（timeout-bg-todo#1）
+ * timeout-bg — 后台任务注册表（timeout-bg-todo#1 / #5）
  *
- * 只有「命中超时、被转入后台继续运行」的命令才进这里；正常结束的命令不进。
+ * 进这里的是「转入后台继续运行」的命令：命中超时的（`origin: "timeout"`）与调用方主动
+ * 要求后台的（`origin: "background"`，timeout-bg-todo#5）；正常前台结束的命令不进。
  * 状态机很小：running → exited（自然结束，触发一次完成通知）
  *                     → killed（用户 /kill 或会话关闭时杀掉，不通知）。
  *
  * 依赖注入：`now`（确定性时间）、`killTree`（进程树终止是进程边界，测试注入 fake）、
  * `onExit`（完成通知出口，由 index.ts 接到 pi.sendMessage）。
  */
-import type { BackgroundJob } from "./shell-ops.ts";
+import type { BackgroundJob, JobOrigin } from "./shell-ops.ts";
 
 /** 注册表条目：后台命令的可查询状态。 */
 export interface JobRecord {
@@ -20,6 +21,8 @@ export interface JobRecord {
   logPath: string;
   /** 远端 job 的目标主机（展示用；本地 job 为 undefined）。 */
   target?: string | undefined;
+  /** 来源：命中超时 / 调用方主动要求（`/bg` 列表里的 `[超时]` / `[后台]`）。 */
+  origin: JobOrigin;
   startedAtMs: number;
   endedAtMs: number | null;
   exitCode: number | null;
@@ -85,6 +88,7 @@ export function createJobRegistry(deps: JobRegistryDeps): JobRegistry {
         command: input.command,
         logPath: input.logPath,
         target: input.target,
+        origin: input.origin ?? "timeout",
         startedAtMs: deps.now(),
         endedAtMs: null,
         exitCode: null,

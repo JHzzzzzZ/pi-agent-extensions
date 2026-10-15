@@ -8,10 +8,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
-import type { EventBus, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { EventBus, ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import {
   SHELL_CAPABILITY_CHANNEL,
+  type ShellCapability,
+  applyDefaultTimeout,
   collectBashCapability,
+  createBashDispatch,
   describeForeignBash,
   describeLostBashRegistration,
   mergeBashParameters,
@@ -113,4 +116,88 @@ test("describeForeignBash / describeLostBashRegistration：内置不算接管，
   const noGetAllTools = {} as ExtensionAPI;
   assert.equal(describeForeignBash(noGetAllTools), null, "拿不到工具表时按无信息处理（旧宿主/结构 fake）");
   assert.equal(describeLostBashRegistration(noGetAllTools, "ours"), null);
+});
+
+test("能力载荷：runInBackground 缺席/非布尔 = 不支持（加法式扩展，不判畸形）", () => {
+  const base = { parameters: {}, isRemoteCall: () => true, executeRemote: () => Promise.resolve() };
+  assert.equal(collectBashCapability(busFilling({ ...base, runInBackground: true })).capability?.runInBackground, true);
+
+  const absent = collectBashCapability(busFilling(base));
+  assert.equal(absent.capability?.runInBackground, false, "旧提供方 ⇒ 不支持（不报错、原行为可用）");
+  assert.equal(absent.warning, null);
+
+  const weird = collectBashCapability(busFilling({ ...base, runInBackground: "yes" }));
+  assert.equal(weird.capability?.runInBackground, false);
+  assert.equal(weird.warning, null, "非布尔不当畸形（只是不支持）");
+});
+
+test("applyDefaultTimeout：主动后台不注入默认超时（后台任务不受超时约束）", () => {
+  assert.deepEqual(applyDefaultTimeout({ command: "x" }, 300), { command: "x", timeout: 300 });
+  assert.deepEqual(applyDefaultTimeout({ command: "x", timeout: 5 }, 300), { command: "x", timeout: 5 }, "显式值不碰");
+  assert.deepEqual(applyDefaultTimeout({ command: "x", run_in_background: true }, 300), { command: "x", run_in_background: true });
+  assert.deepEqual(applyDefaultTimeout({ command: "x" }, undefined), { command: "x" });
+});
+
+function capability(overrides: Partial<ShellCapability> = {}): ShellCapability {
+  return {
+    parameters: {},
+    isRemoteCall: () => true,
+    executeRemote: async () => ({ content: [] } as never),
+    runInBackground: true,
+    ...overrides,
+  };
+}
+
+/** 分派只关心「有没有转交/会不会 fail-closed」：ctx 不在测试范围（宿主交互）。 */
+const CTX = undefined as unknown as ExtensionToolContext;
+
+test("分派：远端不支持主动后台时 fail-closed（notify + 报错），绝不静默前台跑也不回退本机", async () => {
+  const notifies: string[] = [];
+  const remoteCalls: unknown[] = [];
+  const localCalls: unknown[] = [];
+  const dispatch = createBashDispatch({
+    local: (async (...args: unknown[]) => {
+      localCalls.push(args);
+      return { content: [] };
+    }) as never,
+    capability: capability({
+      runInBackground: false,
+      executeRemote: async (...args: unknown[]) => {
+        remoteCalls.push(args);
+        return { content: [] };
+      },
+    }),
+    notify: (_ctx, message) => notifies.push(message),
+    defaultTimeoutSeconds: 300,
+  });
+
+  await assert.rejects(
+    () => dispatch("call-1", { command: "make", remote: "deploy@host", run_in_background: true }, undefined, undefined, CTX),
+    /不支持直接转后台/,
+  );
+  assert.deepEqual(remoteCalls, [], "不支持就不该转交（否则会变成前台等待）");
+  assert.deepEqual(localCalls, [], "更不得回退本机");
+  assert.equal(notifies.length, 1);
+  assert.match(notifies[0] ?? "", /不支持直接转后台/);
+});
+
+test("分派：远端支持时原样转交（含 run_in_background，且不注入默认超时）", async () => {
+  const forwarded: Array<unknown> = [];
+  const dispatch = createBashDispatch({
+    local: (async () => ({ content: [] })) as never,
+    capability: capability({
+      executeRemote: async (_id, params) => {
+        forwarded.push(params);
+        return { content: [] } as never;
+      },
+    }),
+    notify: () => {},
+    defaultTimeoutSeconds: 300,
+  });
+
+  await dispatch("call-1", { command: "make", remote: "deploy@host", run_in_background: true }, undefined, undefined, CTX);
+  assert.deepEqual(forwarded[0], { command: "make", remote: "deploy@host", run_in_background: true });
+
+  await dispatch("call-2", { command: "make", remote: "deploy@host" }, undefined, undefined, CTX);
+  assert.deepEqual(forwarded[1], { command: "make", remote: "deploy@host", timeout: 300 }, "非后台调用仍套默认超时");
 });

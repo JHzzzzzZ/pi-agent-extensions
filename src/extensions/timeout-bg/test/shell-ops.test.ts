@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createJobRegistry, type JobRecord } from "../jobs.ts";
-import { createTimeoutOps, type SpawnedProcess } from "../shell-ops.ts";
+import { createTimeoutOps, type SpawnedProcess, type TimeoutMode } from "../shell-ops.ts";
 
 class FakeChild extends EventEmitter {
   pid: number;
@@ -39,7 +39,7 @@ class FakeChild extends EventEmitter {
  * 让 spawn 出的子进程由测试驱动：每次 exec 前用一个已建好的 FakeChild 接到 spawn 上
  * （只有一个子进程在飞，避免共享可变状态掩盖时序问题）。
  */
-function harnessWithChild(options: { defaultSeconds?: number; commandTransport?: "argv" | "stdin" } = {}) {
+function harnessWithChild(options: { defaultSeconds?: number; commandTransport?: "argv" | "stdin"; mode?: TimeoutMode } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "timeout-bg-op-"));
   const logDir = path.join(dir, "logs");
   const spawns: Array<{ file: string; args: readonly string[]; options: { cwd?: string; detached?: boolean } }> = [];
@@ -61,6 +61,7 @@ function harnessWithChild(options: { defaultSeconds?: number; commandTransport?:
     logRoot: logDir,
     defaultTimeoutSeconds: options.defaultSeconds,
     platform: "linux",
+    mode: options.mode,
   });
   return { ops, child, spawns, killCalls, exits, jobs, dir, logDir };
 }
@@ -174,5 +175,59 @@ test("stdin 传输命令：argv 不带命令，命令写进 stdin（宿主 comma
   assert.deepEqual(h.spawns[0]!.args, ["-lc"]);
   assert.equal(h.child.stdin!.data, "echo hi");
   h.child.exit(0);
+  await pending;
+});
+
+test("主动后台（run_in_background）：不等超时就登记，本次调用立即结束，进程继续跑并落盘", async () => {
+  // defaultSeconds 给 300s：主动后台不得等它（真的等超时会在这里挂住用例）。
+  const h = harnessWithChild({ defaultSeconds: 300, mode: "background" });
+  const chunks: string[] = [];
+  const error = await h.ops.exec("sleep 20; echo DONE", h.dir, { onData: (b: Buffer) => chunks.push(b.toString("utf8")), env: {} }).then(
+    () => null,
+    (e: unknown) => e as Error,
+  );
+  assert.ok(error instanceof Error, "主动后台以错误结束本次 tool call（宿主 exec 契约只有 resolve/reject）");
+  assert.match(error.message, /已直接转入后台运行/);
+  assert.doesNotMatch(error.message, /超时/, "主动后台不得读成超时事故");
+  assert.match(error.message, /job: bg-1/);
+  assert.match(error.message, /日志: /);
+  assert.deepEqual(h.killCalls, [], "转后台绝不杀进程");
+
+  const job = h.jobs.list()[0];
+  assert.ok(job, "spawn 后立即进后台注册表");
+  assert.equal(job.status, "running");
+  assert.equal(job.origin, "background", "来源标记：主动后台");
+  assert.equal(job.pid, 4_242);
+
+  // 调用结束后进程继续写日志，但输出不再喂给早已结束的这一次 tool call。
+  h.child.emitData("still running\n");
+  await wait(30);
+  assert.ok(fs.readFileSync(job.logPath, "utf8").includes("still running"), "输出继续落盘（日志流没提前关闭）");
+  assert.deepEqual(chunks, [], "settle 之后不再喂 onData");
+
+  h.child.exit(0);
+  await wait(30);
+  assert.equal(h.jobs.get(job.id)!.status, "exited");
+  assert.equal(h.jobs.get(job.id)!.exitCode, 0);
+  assert.deepEqual(h.exits.map((j) => j.id), [job.id], "结束触发一次完成通知");
+});
+
+test("主动后台：显式 timeout 仍然校验（非法值不静默吞掉），合法值只是不装计时器", async () => {
+  const invalid = harnessWithChild({ mode: "background" });
+  const error = await invalid.ops.exec("ls", invalid.dir, { onData: () => {}, timeout: 0, env: {} }).then(
+    () => null,
+    (e: unknown) => e as Error,
+  );
+  assert.match(error?.message ?? "", /Invalid timeout: must be a finite number of seconds/);
+  assert.equal(invalid.spawns.length, 0, "非法 timeout 不 spawn");
+
+  const valid = harnessWithChild({ mode: "background" });
+  // 主动后台的本次调用本来就以错误结束：先接住，不得让它变成未处理的 rejection。
+  const pending = valid.ops.exec("sleep 20", valid.dir, { onData: () => {}, timeout: 0.01, env: {} }).catch(() => undefined);
+  const job = valid.jobs.list()[0];
+  assert.ok(job, "合法 timeout 不影响立即转后台");
+  await wait(40);
+  assert.equal(valid.jobs.get(job.id)!.status, "running", "计时器不起作用（0.01s 早已过去）");
+  valid.child.exit(0);
   await pending;
 });

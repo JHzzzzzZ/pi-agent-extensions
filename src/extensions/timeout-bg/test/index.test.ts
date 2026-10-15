@@ -200,6 +200,38 @@ test("超时：工具以错误结束并给出日志路径；进程随后退出 �
   assert.match(String(ext.sent[0]!.message.content), /退出码 0|exit code 0/);
 });
 
+test("主动后台（run_in_background）：不等超时就登记，工具立即以「已转入后台」结束，/bg 标出来源", async () => {
+  const ext = makeExtension(["bash"]);
+  await ext.fire("session_start");
+  const tool = ext.tools.get("bash")!;
+  assert.equal((tool.parameters?.properties ?? {}).run_in_background !== undefined, true, "模型面必须看得到 run_in_background");
+
+  // 默认超时 300s：真的等它的话，这里会直接把用例挂死。
+  const started = Date.now();
+  const error = await tool
+    .execute("call-1", { command: "npm run build", run_in_background: true }, undefined, undefined, toolCtx(ext.dir))
+    .then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+  assert.ok(error instanceof Error, "主动后台也以错误结束本次 tool call（与超时路径同构，不谎报 exit_code 0）");
+  assert.match(error.message, /已直接转入后台运行/);
+  assert.doesNotMatch(error.message, /超时/);
+  assert.match(error.message, /bg-1/);
+  assert.ok(error.message.includes(path.join(ext.dir, "bg-jobs")), "错误文本含日志路径");
+  assert.ok(Date.now() - started < 1000, "不得等超时");
+  assert.deepEqual(ext.killCalls, [], "不杀进程");
+
+  await ext.run("bg");
+  assert.match(ext.notices.at(-1)!, /\[后台\]/, "/bg 列表标出「主动后台」");
+  assert.match(ext.notices.at(-1)!, /npm run build/);
+
+  ext.child.exit(0);
+  await wait(50);
+  assert.equal(ext.sent.length, 1, "结束照旧送一条 followUp（复用超时路径的通知）");
+  assert.match(String(ext.sent[0]!.message.content), /退出码 0/);
+});
+
 test("命令面：/bg 列出后台任务，/bg:kill 杀进程树，/bg:clear 清已结束记录", async () => {
   const ext = makeExtension(["bash"]);
   await ext.fire("session_start");
@@ -351,6 +383,7 @@ test("跨扩展组合：能力载荷 ⇒ schema 合并 + 按参数分派（远�
   }
   assert.ok((tool.promptGuidelines ?? []).includes("远端 bash 指南"), "能力指南必须拼进 promptGuidelines");
   assert.match(tool.description ?? "", /keeps running in the background/, "description 仍是 timeout-bg 的文案");
+  assert.match((tool.promptGuidelines ?? []).join("\n"), /run_in_background/, "指南要告诉模型这个参数存在");
 
   const remote = (await tool.execute("call-1", { command: "uname -s", remote: "deploy@host" }, undefined, undefined, toolCtx(ext.dir))) as ToolResult;
   assert.equal(remoteCalls.length, 1, "远端意图必须交给能力执行");
