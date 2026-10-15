@@ -206,3 +206,10 @@
 - 根因：为了让远端 pid 文件自清理，命令前缀挂了 `trap 'rm -f "$pidfile"' EXIT HUP INT TERM`。**带 trap 的 shell 收到 TERM 不会死**：它执行 trap（删文件）后继续往下跑命令列表，于是 `sleep`（被进程组 TERM 杀掉）后面的 `printf` 照常执行；KILL 兜底（`sleep 1` 之后）来得太晚。
 - 处置：TERM/HUP 的 trap 改为显式退出（`trap '…; exit 143' TERM`、`trap '…; exit 129' HUP`），单测锁定该文本；真机用例从「超时不断连」扩到「kill 后远端进程组归零 + 标记文件不再生成」。
 - 教训：① **清理用的 trap ≠ 信号处理**：`trap … TERM` 的语义是「捕获并继续」，要终止必须显式 `exit`——写「顺手挂个清理 trap」之前先问「这改掉了哪些信号的默认语义」。② **进程边界的行为只能拿真进程验**：假 ssh 能验协议、时序与分支，验不了远端 shell 的信号/退出语义；需求一旦涉及信号、退出码、孤儿进程，opt-in 真机用例不是可选项。③ 真机用例的检查手段也会自欺：`pgrep -f 'sleep 987654' | wc -l` 永远 ≥ 1——**管道让 shell 无法做 exec 优化**，检查命令自己的命令行就含那个字面串；改成字符类写法（`sleep 98765[4]`）避免自匹配。
+
+## 独立验收的两个假信号：`pi update` 不刷扩展 + headless 会话按设计杀后台任务（timeout-bg #5，2026-10-15）
+
+- 症状：独立验收 subagent 用「已安装的 package + 真实 pi」验收 `run_in_background`（主动后台），出现 1 条 FAIL：headless `pi --print` 一次性运行里，后台 job 的最后一截输出不落盘（3/3 复现：日志 0 字节、命令写的标记文件永不出现）。
+- 根因（两条叠加，**都不是被测代码的缺陷**）：① **`pi update` 默认跳过扩展**（实测输出 `Extensions are skipped. Run pi update --extensions to update extensions.`），只刷了 pi 本体——若验收止步于此，跑的是**上一个提交**的扩展（包缓存 clone 的 HEAD 仍是旧 commit），要么假绿要么假红；必须 `pi update --extensions`，并用 `git -C ~/.pi/agent/git/github.com/<owner>/<repo> rev-parse HEAD` 与目标提交对账。② 后台任务的生命周期是**会话级**（`session_shutdown` 杀光，见 `docs/extensions/timeout-bg.md` 不变量）——headless 一次性会话里 pi 退出即杀任务，于是「跨进程等 12 秒再 cat 日志」永远看不到尾部输出；会话内等待的那一轮（转后台后用前台命令等一会儿）日志与结束通知都正常。
+- 处置：验收设计改为「同会话内等待」并复跑通过；两条语义写进 README（`timeout-bg` 边界段）与卡片（会话级生命周期条）；`pi update --extensions` 记进本文件与 `docs/tools/install-smoke.md` 同源的刷新口径。
+- 教训：① **验收先证明「跑的是哪份代码」**——`pi update` 不刷扩展、包缓存 clone 可能落后，验收第一步固定为「推送 + `pi update --extensions` + 对账缓存 HEAD」，否则后面所有结论都可能作用在旧代码上（本仓 2026-09-15 已有一次同型事故）。② **验收断言不能与产品的已声明语义冲突**——「后台任务只活在本会话」是本插件的既有不变量，用跨进程等待去断言它，测出来的是「会话结束了」，不是「功能坏了」；写验收用例前先把待测语义读一遍。③ 独立验收的价值在于它**不共享实现者的假设**，所以它踩出的「假 FAIL」也要当正经产出处理：写进文档与事故记录，下次就不会重复烧一轮。

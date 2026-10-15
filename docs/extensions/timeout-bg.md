@@ -37,6 +37,7 @@
   并改写 `description` 与 `timeout` 参数说明（宿主原文写着 "no default timeout"，与新语义冲突）。
 - **日志布局**：`<PI_TIMEOUT_BG_DIR | ~/.pi/agent/bg-jobs>/<pi pid>/<jobId>.log`；保留最近 50 个 / 7 天，`session_start` 时清理。
 - **会话级生命周期**：`session_shutdown` 杀光本会话遗留的后台任务；不做跨会话守护、不写 pid 文件。
+  含义在 headless（`pi --print`）里最直观：pi 一退后台任务即被杀，日志停在被杀那一刻——验收这类链路必须**在同一会话内**等它结束（先转后台，再用前台命令等一会儿），跨进程等待永远看不到尾部输出。
 - **killTree 自实现**：宿主的 `killProcessTree` 不在包导出面。Windows 用 `taskkill /pid <pid> /T /F`；
   其余平台 `process.kill(-pid)`（spawn 时 `detached: true` 建进程组，与宿主一致）。
 - **结构化结果靠「spread 宿主工具」天然对齐（timeout-bg#2）**：注册的工具是宿主 `createBashTool(cwd, { operations })` 的返回值

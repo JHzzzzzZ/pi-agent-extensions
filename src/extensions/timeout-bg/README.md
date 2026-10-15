@@ -24,7 +24,7 @@ shell 工具（`bash` / `powershell`）的**超时语义改写 + 主动转后台
 - 只覆盖**当前启用**的 shell 工具（`active` 里没有的不注册，不凭空加工具）；用户手敲的 `!` 命令与其它带
   `timeoutMs` 的工具（agent-team / pwr / subagent 等，属调度语义）不受影响。
 - **Esc（abort）仍然是 kill**：取消 ≠ 超时。
-- 后台任务**只活在本会话**，`session_shutdown` 时全部杀掉；不做跨会话守护。
+- 后台任务**只活在本会话**，`session_shutdown` 时全部杀掉；不做跨会话守护。headless（`pi --print`）一次性会话里，会话一结束（pi 退出）后台任务即被杀、日志停在那刻——跨进程「等它跑完再 cat 日志」永远等不到；同会话内验收要「先转后台，再用前台命令等一会儿」。
 - 对端不支持主动后台（没装 remote-tools 的远端分支 / 旧版端口）时，该组合 **fail-closed 报错**——
   不静默退化成前台等待、不在本机执行远端意图的命令。
 - 日志：`<PI_TIMEOUT_BG_DIR 或 ~/.pi/agent/bg-jobs>/<pi pid>/<jobId>.log`，保留最近 50 个 / 7 天。

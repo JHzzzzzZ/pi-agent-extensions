@@ -556,7 +556,7 @@ shell 工具（`bash` / `powershell`）的**超时语义改写**：命中 `timeo
 - **与 remote-tools 共存** — 两个扩展都要覆盖 `bash`，而宿主对同名工具按扩展加载顺序 first-wins、无法包裹下层：本扩展在注册前用 `pi.events` 收集「shell 能力」，把 remote-tools 的远端参数并进合并后的 `bash`（`remote`/`remotePort`/`remoteCwd` + 超时语义同时在）；没装 remote-tools 时行为与今天逐字一致。要求 `timeout-bg` 先于 `remote-tools` 加载（仓库 `package.json` 顺序即如此），顺序相反时会提示冲突而不是静默。契约见 [`docs/cross/shell-tool-capability.md`](docs/cross/shell-tool-capability.md)
 - **远端超时也转后台** — 装了 remote-tools 时，远端 `bash` 命中超时**不再杀本地 ssh**：命令继续跑、输出继续落本地 job 日志，本次调用返回 jobId + 日志路径，结束时同样发 followUp；远端任务进同一个 `/bg` 列表、`/bg:kill`（尽力杀远端进程组）、`/bg:clear` 与状态条段；远端未显式给 `timeout` 时沿用同一个默认 300s；**`run_in_background: true` 在远端同样生效**（ssh 一启动即登记）；对端是旧版/没装时该组合 fail-closed 报错，不静默退化成前台等待
 - **命令面** — `/bg`（列表：状态 / pid / 命令首行 / 日志路径）、`/bg:kill <jobId>`（杀整棵进程树）、`/bg:clear`（清已结束记录）
-- **边界** — 只覆盖**当前启用**的 shell 工具（active 里没有的不注册，不凭空加工具）；用户手敲的 `!` 命令与其它带 `timeoutMs` 的工具（agent-team / pwr / subagent 等，属调度语义）不受影响；**Esc 主动取消仍然 kill**（超时 ≠ 取消）；后台任务**只活在本会话**，`session_shutdown` 时全部杀掉
+- **边界** — 只覆盖**当前启用**的 shell 工具（active 里没有的不注册，不凭空加工具）；用户手敲的 `!` 命令与其它带 `timeoutMs` 的工具（agent-team / pwr / subagent 等，属调度语义）不受影响；**Esc 主动取消仍然 kill**（超时 ≠ 取消）；后台任务**只活在本会话**，`session_shutdown` 时全部杀掉——headless（`pi --print`）一次性会话尤为明显：会话一结束任务即被杀，日志停在被杀那一刻；想在**同一次会话内**验收后台链路，要「先转后台，再用前台命令等一会儿」再看日志/通知
 - **codemode 脚本视角** — 脚本调 `tools.bash` 拿到的就是本扩展注册的工具，结构化结果（`output` 1 MiB 上限 / `truncated` / `full_output_path` / `exit_code` / `wall_time_seconds`）与内置一致（原样透传宿主 `outputSchema`，只改写 description 与 timeout 参数说明）；超时那次 call 仍以错误结束（结果文本带 jobId / 日志路径）
 - **日志** — `<PI_TIMEOUT_BG_DIR 或 ~/.pi/agent/bg-jobs>/<pi pid>/<jobId>.log`，保留最近 50 个 / 7 天（启动时清理）
 - **状态条** — 底部状态条出现 `⏱ <N> bg`（N = 运行中的后台任务数，本地 + 远端同一个注册表），没有运行中的任务时不占位置
