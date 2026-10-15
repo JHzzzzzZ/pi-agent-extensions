@@ -45,7 +45,7 @@
 
 ```bash
 # 安装：整目录复制到 ~/.pi/agent/extensions/btw/ 或 <项目>/.pi/extensions/，Pi 内 /reload
-cd src/extensions/btw && npm install && npm test && npm run typecheck   # 61 个 + 2 真机 opt-in
+cd src/extensions/btw && npm install && npm test && npm run typecheck   # 62 个 + 2 真机 opt-in
 ```
 
 真机验收（验收标准 1–2，需真实模型 + 凭据）——可以直接跑 opt-in 用例，也可以手动：
